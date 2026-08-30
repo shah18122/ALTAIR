@@ -50,6 +50,20 @@ struct ReplayTick {
     /// Monotonic sequence number within the session. UNIT: none.
     std::uint64_t seqno;
     /// Instrument token. UNIT: none. A token, never a symbol string.
+    ///
+    /// WARNING — P2-01 MUST NOT INHERIT THIS FIELD AS-IS. A broker token is
+    /// not an instrument key. Kite's `instrument_token` and XTS's
+    /// `ExchangeInstrumentID` are different number spaces for the same
+    /// contract, so this field means different things depending on which feed
+    /// produced the tick. P2-05 switches the primary feed mid-session; with a
+    /// broker token in the tick, every instrument would appear to vanish and a
+    /// stranger appear in its place, and the book and ledger would follow.
+    ///
+    /// The normalised Tick must carry the canonical `InstrumentId` assigned by
+    /// the spec store (ROADMAP §6.2). Decoders map (source, broker_token) ->
+    /// InstrumentId; nothing downstream ever sees a broker token. That is what
+    /// P2-04 exists for. This field is a Phase 0 skeleton and is single-source
+    /// by construction — one synthetic generator, one token space.
     std::uint32_t token;
     std::uint32_t reserved;
     /// Last traded price. UNIT: paise.
