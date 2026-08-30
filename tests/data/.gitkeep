@@ -1,0 +1,2 @@
+Golden test data. Referenced by ALTAIR_TEST_DATA_DIR.
+Small fixtures only — real tick captures live in data/ and are gitignored.

@@ -1,0 +1,237 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  ALTAIR — ENGINE CONFIGURATION
+#  Hot-reloadable. Every load is hashed; the hash is recorded on every order
+#  so any decision is reproducible.
+#
+#  NOTE: there are no lot sizes, tick sizes, expiries, or margin multipliers in
+#  this file, and there never will be. Those are auto-learned daily by
+#  instruments/ and stored point-in-time. See ROADMAP.md §6.
+# ═══════════════════════════════════════════════════════════════════════════
+
+schema_version = 1
+
+[engine]
+mode              = "paper"        # paper | shadow | canary | live
+timezone          = "Asia/Kolkata"
+kill_switch_file  = "run/KILL"     # existence of this file flattens everything
+state_dir         = "run/state"
+log_dir           = "logs"
+
+[engine.threads]
+# CPU core pinning. -1 = unpinned. Set real core ids on the production box.
+ingest      = -1
+book        = -1
+analytics_a = -1
+analytics_b = -1
+models      = -1
+risk        = -1
+oms         = -1
+flagging    = -1
+ui          = -1
+
+[session]
+# Exchange session windows, IST. Verified against the exchange calendar daily.
+pre_open_start      = "09:00"
+market_open         = "09:15"
+market_close        = "15:30"
+no_new_entries_after = "15:00"
+auto_squareoff      = "15:15"
+skip_first_minutes  = 5
+
+# ───────────────────────────────────────────────────────────────────────────
+# DATA FEEDS
+# ───────────────────────────────────────────────────────────────────────────
+[feed]
+primary            = "kite"        # kite | xts
+secondary          = "xts"
+failover_enabled   = true
+staleness_ms       = 250           # no tick for this long -> switch primary
+failback_stable_s  = 60            # primary must be healthy this long to return
+record_all_ticks   = true
+
+[feed.kite]
+enabled     = true
+# Credentials come from environment variables, never from this file.
+api_key_env    = "ALTAIR_KITE_API_KEY"
+api_secret_env = "ALTAIR_KITE_API_SECRET"
+ws_mode        = "full"            # ltp | quote | full  (full = 5-level depth)
+max_subscriptions = 3000
+
+[feed.xts]
+enabled     = true
+md_key_env      = "ALTAIR_XTS_MD_KEY"
+md_secret_env   = "ALTAIR_XTS_MD_SECRET"
+int_key_env     = "ALTAIR_XTS_INT_KEY"
+int_secret_env  = "ALTAIR_XTS_INT_SECRET"
+events          = [1501, 1502, 1505]   # touchline, depth, candle
+max_subscriptions = 3000
+
+# ───────────────────────────────────────────────────────────────────────────
+# INSTRUMENT MASTER  (ROADMAP §6)
+# ───────────────────────────────────────────────────────────────────────────
+[instruments]
+refresh_time         = "08:15"     # IST, pre-open
+sources              = ["nse", "bse", "kite", "xts"]
+require_agreement_on = ["lot_size", "tick_size", "expiry", "strike"]
+on_disagreement      = "block_symbol"   # block_symbol | block_all | warn_only
+snapshot_dir         = "data/instruments"
+keep_snapshots_days  = 3650             # point-in-time backtesting needs history
+on_lot_size_change   = "invalidate_models_and_retrain"
+
+[instruments.margin]
+source          = "broker_api"     # broker_api | local_span | both
+refresh_time    = "08:30"
+refresh_on_position_change = true
+
+# ───────────────────────────────────────────────────────────────────────────
+# UNIVERSE — symbols only. All contract detail is auto-learned.
+# ───────────────────────────────────────────────────────────────────────────
+[universe]
+indices        = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]
+index_futures  = true
+index_options  = true
+option_strikes_around_atm = 20      # each side
+stock_futures  = ["RELIANCE", "HDFCBANK", "ICICIBANK", "AXISBANK", "SBIN",
+                  "INFY", "TCS", "ONGC", "SAIL", "TATASTEEL"]
+stock_cash     = []                 # populated by the hedge-book screener
+exclude        = []                 # manual blocklist
+
+# ───────────────────────────────────────────────────────────────────────────
+# RISK  (ROADMAP §8 — these are the fixed rules; no model may override them)
+# ───────────────────────────────────────────────────────────────────────────
+[risk]
+capital                   = 500000.0   # ₹ — set to your real deployable capital
+risk_per_trade            = 0.005      # 0.5% of capital
+risk_per_trade_hard_cap   = 0.02       # 2% — refuses to size above this, ever
+daily_loss_halt           = 0.02       # 2% of capital -> halt every strategy
+max_open_positions        = 8
+max_positions_per_underlying = 1
+kelly_fraction_cap        = 0.25       # quarter-Kelly ceiling
+target_daily_vol          = 0.008
+vol_lookback_days         = 20
+use_edge_lower_bound      = true       # size on the LB of edge, not the mean
+
+[risk.cooldown]
+after_loss_minutes   = 15
+after_win_minutes    = 3
+same_side_block_minutes = 30
+
+[risk.liquidity]
+min_depth_multiple_of_size = 3.0   # quoted depth at touch >= 3x intended size
+max_pct_of_adv             = 0.01  # never exceed 1% of average daily volume
+
+[risk.limits]
+max_net_delta_pct_capital  = 0.30
+max_net_vega_pct_capital   = 0.05
+max_sector_exposure_pct    = 0.25
+max_margin_utilisation     = 0.60
+
+[risk.exit_ladder]
+# R = initial risk (entry to stop distance). The TIGHTER stop is always
+# evaluated BEFORE the original stop. See ROADMAP §13 rule 8.
+breakeven_at_R      = 0.5
+lock_30pct_at_R     = 1.0
+lock_60pct_at_R     = 1.5
+trail_from_R        = 2.0
+trail_atr_multiple  = 1.5
+
+# ───────────────────────────────────────────────────────────────────────────
+# MODELS / AGGREGATOR
+# ───────────────────────────────────────────────────────────────────────────
+[models]
+registry_dir      = "models/artifacts"
+serving_backend   = "onnx"         # onnx | torchscript
+warm_on_start     = true
+inference_threads = 1              # batch-1 latency beats throughput here
+
+[models.retrain]
+schedule           = "quarterly"   # Mar / Jun / Sep / Dec
+trigger_on_drift   = true
+trigger_on_spec_change = true
+shadow_sessions    = 10
+canary_sessions    = 5
+canary_size_pct    = 0.10
+auto_rollback      = true
+
+[aggregator]
+enforce_horizon_match = true       # ROADMAP §7.4 — non-negotiable
+weight_update        = "session_close"
+weight_lookback_sessions = 60
+min_sessions_before_weighting = 20
+confidence_threshold_default = 0.60
+
+[flagging]
+regimes = ["trending_up", "trending_down", "ranging", "volatile"]
+
+[flagging.drift]
+psi_threshold   = 0.25
+ks_pvalue       = 0.01
+adwin_delta     = 0.002
+on_alarm        = "deweight_and_retrain"
+
+# ───────────────────────────────────────────────────────────────────────────
+# STRATEGIES — enable/disable and per-strategy budget.
+# Detailed parameters live in config/strategies/<name>.toml
+# ───────────────────────────────────────────────────────────────────────────
+[strategies.arb_cash_fut]
+enabled = false
+capital_share = 0.20
+
+[strategies.arb_options]
+enabled = false
+capital_share = 0.20
+
+[strategies.quant_momentum]
+enabled = false
+capital_share = 0.25
+
+[strategies.forecast_10m]
+enabled = false
+capital_share = 0.15
+
+[strategies.hedge_sector]
+enabled = false
+capital_share = 0.15
+
+[strategies.vol_vix]
+enabled = false
+capital_share = 0.05
+
+# ───────────────────────────────────────────────────────────────────────────
+# STORAGE
+# ───────────────────────────────────────────────────────────────────────────
+[storage]
+tick_dir            = "data/ticks"
+archive_dir         = "data/archive"
+archive_format      = "parquet"
+archive_at          = "16:00"
+retain_raw_days     = 90
+retain_archive_days = 3650
+
+# ───────────────────────────────────────────────────────────────────────────
+# UI
+# ───────────────────────────────────────────────────────────────────────────
+[ui]
+enabled       = true
+bind          = "127.0.0.1"
+port          = 8443
+pin_env       = "ALTAIR_UI_PIN"    # never store the PIN in this file
+theme_default = "dark"
+
+[ui.rates]
+# Server push cadence, Hz. The engine is event-driven; only the UI is polled.
+quotes_hz     = 10
+book_hz       = 10
+greeks_hz     = 4
+positions_hz  = 2
+scorecards_hz = 0.2
+
+[ui.grid]
+virtual_row_budget = 1000000
+export_formats     = ["csv", "tsv", "json", "xlsx", "pdf"]
+
+[ui.charts]
+renderer            = "webgl"
+target_fps          = 60
+downsample_algorithm = "lttb"
+max_points_per_series = 200000

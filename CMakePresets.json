@@ -1,0 +1,101 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "default",
+      "displayName": "Dev — RelWithDebInfo, tests. No vcpkg needed until P0-03.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "ALTAIR_BUILD_TESTS": "ON",
+        "ALTAIR_BUILD_BENCH": "OFF"
+      }
+    },
+    {
+      "name": "vcpkg",
+      "displayName": "Dev + vcpkg — needed from P0-03 onward",
+      "inherits": "default",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_FEATURES": "testing",
+        "ALTAIR_BUILD_BENCH": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug — full invariants",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ALTAIR_BUILD_TESTS": "ON",
+        "ALTAIR_STRICT_INVARIANTS": "ON"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "Debug + Address/UB sanitizer",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ALTAIR_ENABLE_ASAN": "ON",
+        "ALTAIR_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "Debug + Thread sanitizer",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ALTAIR_ENABLE_TSAN": "ON",
+        "ALTAIR_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "prod",
+      "displayName": "Production — Release, no tests, native arch",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ALTAIR_BUILD_TESTS": "OFF",
+        "ALTAIR_BUILD_BENCH": "OFF",
+        "ALTAIR_NATIVE_ARCH": "ON",
+        "ALTAIR_STRICT_INVARIANTS": "OFF"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    { "name": "default", "configurePreset": "default" },
+    { "name": "vcpkg",   "configurePreset": "vcpkg" },
+    { "name": "debug",   "configurePreset": "debug" },
+    { "name": "asan",    "configurePreset": "asan" },
+    { "name": "tsan",    "configurePreset": "tsan" },
+    { "name": "prod",    "configurePreset": "prod" }
+  ],
+
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": { "outputOnFailure": true },
+      "execution": { "stopOnFailure": false }
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

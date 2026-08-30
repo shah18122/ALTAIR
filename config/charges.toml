@@ -1,0 +1,193 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  ALTAIR — CHARGE SCHEDULE
+# ═══════════════════════════════════════════════════════════════════════════
+#
+#  EFFECTIVE-DATED. The backtester applies the schedule that was live on the
+#  historical date being replayed; the live engine applies today's.
+#
+#  ⚠  EVERY NUMBER HERE MUST BE VERIFIED against the current NSE/BSE circular
+#     and your broker's published schedule before go-live. A 3 bps error turns
+#     a profitable arbitrage into a losing one.
+#
+#  CI job `charges_diff` fetches the published schedules monthly and fails the
+#  build on any mismatch with this file.
+#
+#  Rates are FRACTIONS, not percentages.  0.0005 == 0.05%
+#  Sides: "buy" | "sell" | "both" | "none"
+# ═══════════════════════════════════════════════════════════════════════════
+
+schema_version = 1
+last_verified  = "UNVERIFIED"      # set to an ISO date once you have checked it
+verified_by    = ""
+
+# ───────────────────────────────────────────────────────────────────────────
+# Regulator-level, segment independent
+# ───────────────────────────────────────────────────────────────────────────
+[common]
+gst_rate               = 0.18       # on (brokerage + exchange txn + SEBI + IPFT)
+sebi_turnover_per_cr   = 10.0       # ₹10 per ₹1 crore of turnover
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SCHEDULE 1 — effective up to 2026-03-31
+# ═══════════════════════════════════════════════════════════════════════════
+[[schedule]]
+valid_from = "2000-01-01"
+valid_to   = "2026-03-31"
+note       = "Pre Union-Budget-2026 STT regime"
+
+  [schedule.equity_delivery]
+  stt_rate = 0.001        ; stt_side = "both"
+  exch_txn_nse = 0.0000297 ; exch_txn_bse = 0.0000375
+  stamp_duty = 0.00015    ; stamp_side = "buy"
+  ipft_nse = 0.000001
+  dp_charge_per_scrip_sell = 15.34   # ₹, flat, sell side only
+
+  [schedule.equity_intraday]
+  stt_rate = 0.00025      ; stt_side = "sell"
+  exch_txn_nse = 0.0000297 ; exch_txn_bse = 0.0000375
+  stamp_duty = 0.00003    ; stamp_side = "buy"
+  ipft_nse = 0.000001
+
+  [schedule.equity_futures]
+  stt_rate = 0.0002       ; stt_side = "sell"
+  exch_txn_nse = 0.0000173 ; exch_txn_bse = 0.0
+  stamp_duty = 0.00002    ; stamp_side = "buy"
+  ipft_nse = 0.0000005
+
+  [schedule.equity_options]
+  # NOTE: options turnover for STT and exchange charges is PREMIUM, not notional.
+  turnover_basis = "premium"
+  stt_rate = 0.001        ; stt_side = "sell"
+  exch_txn_nse = 0.0003503 ; exch_txn_bse = 0.000325
+  stamp_duty = 0.00003    ; stamp_side = "buy"
+  ipft_nse = 0.000005
+
+  [schedule.currency_futures]
+  turnover_basis = "notional"
+  stt_rate = 0.0          ; stt_side = "none"
+  exch_txn_nse = 0.0000035
+  stamp_duty = 0.000001   ; stamp_side = "buy"
+
+  [schedule.currency_options]
+  turnover_basis = "premium"
+  stt_rate = 0.0          ; stt_side = "none"
+  exch_txn_nse = 0.0003503
+  stamp_duty = 0.000001   ; stamp_side = "buy"
+
+  [schedule.commodity_futures]
+  turnover_basis = "notional"
+  ctt_rate = 0.0001       ; ctt_side = "sell"    # non-agri
+  exch_txn_mcx = 0.000026
+  stamp_duty = 0.00002    ; stamp_side = "buy"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SCHEDULE 2 — effective from 2026-04-01
+#   Union Budget 2026 raised F&O STT.  VERIFY the equity cash rates too.
+# ═══════════════════════════════════════════════════════════════════════════
+[[schedule]]
+valid_from = "2026-04-01"
+valid_to   = "2099-12-31"
+note       = "Post Union-Budget-2026 STT regime. F&O STT raised."
+
+  [schedule.equity_delivery]
+  stt_rate = 0.001        ; stt_side = "both"      # VERIFY
+  exch_txn_nse = 0.0000297 ; exch_txn_bse = 0.0000375
+  stamp_duty = 0.00015    ; stamp_side = "buy"
+  ipft_nse = 0.000001
+  dp_charge_per_scrip_sell = 15.34
+
+  [schedule.equity_intraday]
+  stt_rate = 0.00025      ; stt_side = "sell"      # VERIFY
+  exch_txn_nse = 0.0000297 ; exch_txn_bse = 0.0000375
+  stamp_duty = 0.00003    ; stamp_side = "buy"
+  ipft_nse = 0.000001
+
+  [schedule.equity_futures]
+  stt_rate = 0.0005       ; stt_side = "sell"      # RAISED 0.02% -> 0.05%
+  exch_txn_nse = 0.0000173 ; exch_txn_bse = 0.0
+  stamp_duty = 0.00002    ; stamp_side = "buy"
+  ipft_nse = 0.0000005
+
+  [schedule.equity_options]
+  turnover_basis = "premium"
+  stt_rate = 0.0015       ; stt_side = "sell"      # RAISED 0.10% -> 0.15%
+  exch_txn_nse = 0.0003503 ; exch_txn_bse = 0.000325
+  stamp_duty = 0.00003    ; stamp_side = "buy"
+  ipft_nse = 0.000005
+
+  [schedule.currency_futures]
+  turnover_basis = "notional"
+  stt_rate = 0.0          ; stt_side = "none"
+  exch_txn_nse = 0.0000035
+  stamp_duty = 0.000001   ; stamp_side = "buy"
+
+  [schedule.currency_options]
+  turnover_basis = "premium"
+  stt_rate = 0.0          ; stt_side = "none"
+  exch_txn_nse = 0.0003503
+  stamp_duty = 0.000001   ; stamp_side = "buy"
+
+  [schedule.commodity_futures]
+  turnover_basis = "notional"
+  ctt_rate = 0.0001       ; ctt_side = "sell"      # VERIFY
+  exch_txn_mcx = 0.000026
+  stamp_duty = 0.00002    ; stamp_side = "buy"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BROKER SLABS
+#   Per-order brokerage. Verify against your own contract note.
+# ═══════════════════════════════════════════════════════════════════════════
+[broker.kite]
+display_name = "Zerodha Kite"
+equity_delivery = { type = "flat",    amount = 0.0 }
+equity_intraday = { type = "pct_cap", pct = 0.0003, cap = 20.0 }
+equity_futures  = { type = "pct_cap", pct = 0.0003, cap = 20.0 }
+equity_options  = { type = "flat",    amount = 20.0 }
+currency_fo     = { type = "pct_cap", pct = 0.0003, cap = 20.0 }
+call_and_trade  = 50.0
+auto_squareoff  = 50.0
+
+[broker.xts]
+display_name = "XTS Symphony"
+# Symphony is a platform, not a broker — the slab depends on YOUR broker.
+# Fill these in from your contract note. Zeros here would silently understate cost,
+# so the cost calculator REFUSES to price an XTS order until they are set.
+configured = false
+equity_delivery = { type = "unset" }
+equity_intraday = { type = "unset" }
+equity_futures  = { type = "unset" }
+equity_options  = { type = "unset" }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# IMPLICIT COSTS — learned, not typed. These are seed values only; the engine
+# overwrites them from its own fill history after 60 sessions.
+# ═══════════════════════════════════════════════════════════════════════════
+[implicit]
+learned              = false
+min_sessions_to_learn = 60
+
+  [implicit.slippage_seed]
+  # Fraction of the quoted spread expected to be paid, by order type.
+  market_order   = 1.0      # cross the full spread
+  limit_at_touch = 0.35     # partial fill risk priced in
+  limit_passive  = 0.0
+
+  [implicit.impact_seed]
+  # Square-root law fallback: dP = Y * sigma * sqrt(Q / V)
+  Y_index_futures = 0.30
+  Y_index_options = 0.55
+  Y_stock_futures = 0.45
+  Y_stock_cash    = 0.40
+  # Kyle lambda, when enough own-fill history exists, overrides the above.
+  use_kyle_lambda_after_fills = 200
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SAFETY
+# ═══════════════════════════════════════════════════════════════════════════
+[safety]
+# Expected edge must exceed total cost by this multiple before a trade is allowed.
+edge_over_cost_factor = 2.5
+# Refuse to price anything whose schedule is missing or unverified.
+block_on_unverified_schedule = true
+# Refuse to price a broker whose slab is "unset".
+block_on_unset_broker_slab = true

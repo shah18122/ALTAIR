@@ -1,0 +1,86 @@
+# ── Build ────────────────────────────────────────────────────────────────
+build/
+out/
+cmake-build-*/
+compile_commands.json
+CMakeUserPresets.json
+vcpkg_installed/
+.cache/
+
+# ── Binaries / objects ───────────────────────────────────────────────────
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# ── IDE ──────────────────────────────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+
+# ── SECRETS — never commit ───────────────────────────────────────────────
+.env
+.env.*
+config/secrets.toml
+config/*.local.toml
+**/kite_session.json
+**/mt_accounts.json
+**/*credentials*
+**/*api_key*
+
+# ── DATA — large, regenerable, or licensed ───────────────────────────────
+data/ticks/
+data/instruments/
+data/fundamentals/
+data/archive/
+*.parquet
+*.tick
+*.duckdb
+
+# ── Third-party reference clones — read for protocol facts, not vendored ─
+research/reference/
+
+# ── Research papers — licensed PDFs stay off the remote ──────────────────
+research/papers/inbox/*.pdf
+research/papers/processed/*.pdf
+research/papers/rejected/*.pdf
+research/replication/**/data/
+
+# ── Models — large binaries, tracked in the registry not in git ──────────
+models/artifacts/
+*.pt
+*.pth
+*.onnx
+*.torchscript
+
+# ── Logs ─────────────────────────────────────────────────────────────────
+logs/
+*.log
+*.binlog
+
+# ── SEPARATE PROJECTS living in this folder — NOT part of Altair ────────
+# Quants/ is QUANTLAB, its own research system (~3.5 GB). Nothing in Altair's
+# build or docs references it. It belongs in its own repository; vacuuming it
+# into Altair's history would be permanent and wrong.
+Quants/
+
+# ── Python virtualenvs ──────────────────────────────────────────
+# NOTE: the `venv/` pattern below does NOT match `.venv/` — different names.
+.venv/
+
+# ── Predecessor Python tree — reference only, not part of the build ──────
+RXT_trade/
+RXT_trade 2/
+__pycache__/
+*.pyc
+venv/
