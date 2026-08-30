@@ -101,7 +101,7 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 add_subdirectory(core)              # Phase 0
 
-# add_subdirectory(instruments)     # Phase 1
+add_subdirectory(instruments)       # Phase 1 — ContractSpec + spec store
 add_subdirectory(feed)              # Phase 0 replay skeleton; decoders in Phase 2
 # add_subdirectory(book)            # Phase 2
 # add_subdirectory(analytics)       # Phase 3

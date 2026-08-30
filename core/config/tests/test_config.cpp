@@ -293,6 +293,14 @@ void test_config_store_concurrent_readers()
                 break;
             }
             if (!store.refresh(local)) {
+                // YIELD, do not hot-spin. An unchanged refresh() is 0.63 ns
+                // while a publish copies a 9 KB snapshot, so a spinning reader
+                // burns the whole attempt cap before a loaded writer can
+                // produce kTargetChanges versions — 4 failures in 6 loaded
+                // passes. Yielding makes an "attempt" a real scheduling
+                // opportunity instead of a spin iteration, which is also what
+                // an actual reader would do.
+                std::this_thread::yield();
                 continue;
             }
             ++changes;

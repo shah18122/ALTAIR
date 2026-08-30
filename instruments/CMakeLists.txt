@@ -1,0 +1,21 @@
+# instruments/ — ContractSpec and the point-in-time spec store (P1-01).
+# Parsers for the exchange and broker masters land in P1-02..P1-05.
+# Header-only: the INTERFACE library carries the include root so consumers
+# write `#include <instruments/contract_spec.hpp>`.
+
+add_library(altair_instruments INTERFACE)
+add_library(altair::instruments ALIAS altair_instruments)
+
+target_include_directories(altair_instruments INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(altair_instruments INTERFACE
+    altair_types
+    altair_time
+    altair_flags
+)
+
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_spec_store_test tests/test_spec_store.cpp)
+    target_link_libraries(altair_spec_store_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME spec_store COMMAND altair_spec_store_test)
+endif()

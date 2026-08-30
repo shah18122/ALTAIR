@@ -548,6 +548,13 @@ so any observed snapshot must satisfy double_n == 2 * n and flag == (n even).
 Each reader refreshes into its own local copy and, whenever refresh() returns
 true, checks that invariant.
 
+**The reader MUST yield when refresh() returns false.** An unchanged refresh
+is 0.63 ns while a publish copies a 9 KB snapshot, so a hot-spinning reader
+burns the whole attempt cap before a loaded writer can produce the target
+number of versions -- 4 failures in 6 loaded passes. Yielding makes an
+attempt a real scheduling opportunity rather than a spin iteration, which is
+also what an actual reader would do. Verified 10 loaded runs, zero failures.
+
 Each reader runs until it has seen kTargetChanges (1'000) DISTINCT versions,
 with an attempt cap as a loud backstop. Terminating on the evidence, not on a
 timer, is what stopped the P0-06b test passing vacuously - do the same here.
