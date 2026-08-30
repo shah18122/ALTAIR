@@ -28,8 +28,8 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 
 | Card | File | Deliverable | Status | Gates | Commit |
 |---|---|---|---|---|---|
-| P0-01 | [`P0-01_core_types.md`](P0-01_core_types.md) + [`c1`](P0-01c1_correction.md) | `core/types` — dimensional units, exact paise money, tick rounding | **DONE** | 1✓ 2✓ 3✓ 4✓ 5✓ 6 n/a 7✓ 8✓ | — |
-| P0-02 | [`P0-02_core_time_timestamp.md`](P0-02_core_time_timestamp.md) | `core/time/timestamp.hpp` — affine time algebra, IST, floor semantics | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ 6 n/a 7✓ 8✓ | — |
+| P0-01 | [`P0-01_core_types.md`](P0-01_core_types.md) + [`c1`](P0-01c1_correction.md) | `core/types` — dimensional units, exact paise money, tick rounding | **DONE** | 1✓ 2✓ 3✓ 4✓ 5✓ 6 n/a 7✓ 8✓ | `eeab54b` |
+| P0-02 | [`P0-02_core_time_timestamp.md`](P0-02_core_time_timestamp.md) | `core/time/timestamp.hpp` — affine time algebra, IST, floor semantics | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ 6 n/a 7✓ 8✓ | `03c3062` |
 
 > **P0-02 process note.** Implemented by Claude, not DeepSeek, at Smit's
 > instruction on 2026-08-29 — a deliberate departure from the role split in
@@ -44,7 +44,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > `Duration / scalar` in item 9 (`StrongInt` defines no `operator/`), and a
 > "14 hours" comment for a 22-hour span. Literal coverage was also added to §6 —
 > the six `operator""` literals were in the contract but untested.
-| P0-03 | [`P0-03_core_time_tsc_clock.md`](P0-03_core_time_tsc_clock.md) | `core/time/tsc_clock` — invariant-TSC detect, calibration, drift uncertainty | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7✓ 8✓ | — |
+| P0-03 | [`P0-03_core_time_tsc_clock.md`](P0-03_core_time_tsc_clock.md) | `core/time/tsc_clock` — invariant-TSC detect, calibration, drift uncertainty | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7✓ 8✓ | `6d9c8f1` |
 
 > **P0-03 bench (gate 6, first live one).** `TscClock::now()` p50 = 16 ns,
 > **p99 = 18 ns** against a 25 ns budget, on an invariant TSC at 2.112 GHz.
@@ -70,7 +70,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 >
 > Implemented by Claude, not DeepSeek (as with P0-02). Gate 2 run mechanically:
 > 24/24 contract declarations matched verbatim. ᵐ = gate 1 on MSVC only.
-| P0-04 | [`P0-04_core_time_exchange_ts.md`](P0-04_core_time_exchange_ts.md) | `core/time/exchange_ts` — per-source epoch normalisation + plausibility gate | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ 6 n/a 7✓ 8✓ | — |
+| P0-04 | [`P0-04_core_time_exchange_ts.md`](P0-04_core_time_exchange_ts.md) | `core/time/exchange_ts` — per-source epoch normalisation + plausibility gate | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ 6 n/a 7✓ 8✓ | `016c390` |
 
 > **P0-04 notes.** Header-only and fully `constexpr`, so the epoch arithmetic is
 > proven by three namespace-scope `static_assert`s rather than only at runtime.
@@ -97,8 +97,8 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > "fails both floor and ceiling" case as first written failed only one — it needs
 > `local_now` *below* the floor for both to trip. Implemented by Claude, not
 > DeepSeek. Gate 2 run mechanically: 29/29 declarations verbatim. ᵐ = MSVC only.
-| P0-05a | [`P0-05a_core_mem_page_alloc.md`](P0-05a_core_mem_page_alloc.md) | `core/mem/page_alloc` — OS pages, hugepage attempt, honest reporting | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ 6 n/a 7 n/a 8✓ | — |
-| P0-05b | [`P0-05b_core_mem_arena_pool.md`](P0-05b_core_mem_arena_pool.md) | `core/mem/arena` + `core/mem/pool` — O(1) bump and free-list allocators | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ | — |
+| P0-05a | [`P0-05a_core_mem_page_alloc.md`](P0-05a_core_mem_page_alloc.md) | `core/mem/page_alloc` — OS pages, hugepage attempt, honest reporting | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ 6 n/a 7 n/a 8✓ | `bac0264` |
+| P0-05b | [`P0-05b_core_mem_arena_pool.md`](P0-05b_core_mem_arena_pool.md) | `core/mem/arena` + `core/mem/pool` — O(1) bump and free-list allocators | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ | `066a679` |
 
 > **P0-05 was split.** As scoped in this ledger it needed six files
 > (`page_alloc.hpp/.cpp`, `arena.hpp`, `pool.hpp`, a `CMakeLists.txt`, tests) and
@@ -137,8 +137,8 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > Both implemented by Claude, not DeepSeek. Gate 2 run mechanically: 15/15, 19/19,
 > and 21/21 declarations verbatim across the three headers. Gate 7 n/a — no money,
 > prices, or time arithmetic in either card. ᵐ = gate 1 on MSVC only.
-| P0-06a | [`P0-06a_core_lockfree_spsc_ring.md`](P0-06a_core_lockfree_spsc_ring.md) | `core/lockfree/spsc_ring` — the feed→strategy hot path | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ᵗ | — |
-| P0-06b | [`P0-06b_core_lockfree_mpsc_seqlock.md`](P0-06b_core_lockfree_mpsc_seqlock.md) | `core/lockfree/mpsc_ring` + `seqlock` — many writers, one reader | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ᵗ | — |
+| P0-06a | [`P0-06a_core_lockfree_spsc_ring.md`](P0-06a_core_lockfree_spsc_ring.md) | `core/lockfree/spsc_ring` — the feed→strategy hot path | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ᵗ | `f75717e` |
+| P0-06b | [`P0-06b_core_lockfree_mpsc_seqlock.md`](P0-06b_core_lockfree_mpsc_seqlock.md) | `core/lockfree/mpsc_ring` + `seqlock` — many writers, one reader | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ᵗ | `0e2fb84` |
 
 > **P0-06 was split**, same reason as P0-05: three lock-free structures need
 > five-plus files and well over eight tests. **Card total 111 → 112.**
@@ -198,7 +198,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 >
 > Both implemented by Claude, not DeepSeek. Gate 2 mechanical: 20/20, 14/14,
 > 10/10 declarations verbatim. Gate 7 n/a — no money, price, or time arithmetic.
-| P0-07 | [`P0-07_core_log.md`](P0-07_core_log.md) | `core/log` — binary async logger + off-thread decoder | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ | — |
+| P0-07 | [`P0-07_core_log.md`](P0-07_core_log.md) | `core/log` — binary async logger + off-thread decoder | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ | `78545fa` |
 
 > **P0-07 bench.** `Logger::write(u64, i64, f64)` **23.14 ns/call** against a
 > derived 40 ns budget — roughly 12 ns of that is the irreducible ordered TSC
@@ -234,7 +234,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > Implemented by Claude, not DeepSeek. Gate 2 mechanical: 38/38 and 7/7
 > declarations verbatim. Gate 7 n/a — no money, price, or time arithmetic beyond
 > the tick→ns conversion P0-03 already owns. ᵐ = gate 1 on MSVC only.
-| P0-08a | [`P0-08a_core_config_store.md`](P0-08a_core_config_store.md) | `core/config` — versioned, hashed, hot-swappable config store | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ | — |
+| P0-08a | [`P0-08a_core_config_store.md`](P0-08a_core_config_store.md) | `core/config` — versioned, hashed, hot-swappable config store | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ | `6570bc8` |
 | P0-08b | — | `core/config/toml_source` — TOML → snapshot loader | **BLOCKED** | — | — |
 
 > **P0-08 was split, and the second half is BLOCKED.** The practical reason:
@@ -279,8 +279,8 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > a timer — and observed 2'000 distinct versions with zero inconsistent
 > snapshots. 74 checks, clean on the first run. Implemented by Claude, not
 > DeepSeek. Gate 2 mechanical: 39/39 and 8/8 verbatim. ᵐ = gate 1 on MSVC only.
-| P0-09a | [`P0-09a_core_invariant.md`](P0-09a_core_invariant.md) | `core/invariant` — the conservation ledger (§3.6 laws 1 and 2) | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** **7✓** 8✓ | — |
-| P0-09b | [`P0-09b_feed_replay.md`](P0-09b_feed_replay.md) | `feed/replay` — a replayer that cannot expose a future tick | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ | — |
+| P0-09a | [`P0-09a_core_invariant.md`](P0-09a_core_invariant.md) | `core/invariant` — the conservation ledger (§3.6 laws 1 and 2) | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** **7✓** 8✓ | `01b12a1` |
+| P0-09b | [`P0-09b_feed_replay.md`](P0-09b_feed_replay.md) | `feed/replay` — a replayer that cannot expose a future tick | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7 n/a 8✓ | `76228d4` |
 
 > **P0-09 was split**, the fourth and last of Phase 0. `core/invariant` is
 > 3 files; `feed/replay` needs 4 of its own including the root `CMakeLists.txt`
@@ -331,7 +331,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > **111 M ticks/s**. 82 + 55 checks. Implemented by Claude, not DeepSeek. Gate 2
 > mechanical: 26/26 and 21/21 verbatim. ᵐ = gate 1 on MSVC only.
 
-| P0-10 | [`P0-10_app_entry_point.md`](P0-10_app_entry_point.md) | `app/` — the `altair` binary; the Phase 0 exit criterion | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ 6 n/a 7 n/a 8✓ | — |
+| P0-10 | [`P0-10_app_entry_point.md`](P0-10_app_entry_point.md) | `app/` — the `altair` binary; the Phase 0 exit criterion | **DONE** | 1✓ᵐ 2✓ 3✓ 4✓ 5✓ 6 n/a 7 n/a 8✓ | `22a64c5` |
 
 > **P0-10 — the exit criterion now actually runs.** Added to close gate item 7:
 > ROADMAP §12 asks for `altair --replay sample.tick` end to end with a null
