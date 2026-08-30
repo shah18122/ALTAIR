@@ -3,7 +3,7 @@
 115 cards. One card = one DeepSeek prompt = one review = one commit.
 Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 
-**Progress: 13 / 115 · Phase 0 · 11%**
+**Progress: 14 / 115 · Phase 0 done bar one, Phase 1 started · 12%**
 
 > Count corrected 2026-08-29: the header read 96 while the per-phase headings
 > summed to 110 — the per-phase numbers were right and matched the rows, only the
@@ -15,6 +15,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 
 | From | Item | Resolve in |
 |---|---|---|
+| P1-02 / P1-03 / P1-05 / P1-07 | **Four Phase 1 cards cannot be implemented here.** P1-02 and P1-03 parse exchange master files I have no sample of; P1-05 needs an XTS schema I do not have; P1-07 needs broker credentials. Writing a wire-format parser against a guessed schema is exactly the confident-plausible-wrong failure the protocol exists to stop. **Cards can be written now; implementation needs one sample file each (P1-02/03/05) and credentials (P1-07).** | Smit — sample files |
 | P0-01 | `apply_bps` uses `long double`, which is 64-bit on MSVC. Exact for realistic single-trade magnitudes (₹100 cr turnover × 15 bps ≪ 2⁵³) and all five specified tie cases verified correct. **Accumulated session turnover is a different question** — revisit with scaled-integer arithmetic. | P3-09 |
 | P0-01 … P0-10 | **Gate 1 verified on MSVC only.** No GCC or Clang on the dev box (no clang-cl in the VS install, no WSL distro), so `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wold-style-cast` is unverified for all thirteen cards. MSVC `/W4 /permissive-` and `/analyze` are clean, and `/Wall` shows only C4514 (off-by-default). PROTOCOL §10 requires a clean build on Windows **and** Linux. | Phase 0 gate |
 | P0-03 | `mul_shift32`'s portable 64×64→128 branch is **dead code on this box** — MSVC x64 takes `_umul128` and GCC/Clang take `unsigned __int128`. It is exercised by no test and no compiler here. Reachable only on an exotic target; verify before trusting any such build. | Phase 0 gate |
@@ -396,7 +397,7 @@ synthetic session; a captured one is still needed (blocker #6).
 
 | Card | Deliverable | Status |
 |---|---|---|
-| P1-01 | `ContractSpec` type + point-in-time spec store | TODO |
+| P1-01 | `ContractSpec` type + point-in-time spec store — **DONE** `bf732a6` · 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7✓ 8✓ · 57 checks | **DONE** |
 | P1-02 | NSE contract master + `fo_mktlots` downloader/parser | TODO |
 | P1-03 | BSE contract master downloader/parser | TODO |
 | P1-04 | Kite instruments dump parser + token map | TODO |
