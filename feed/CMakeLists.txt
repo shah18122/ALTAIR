@@ -27,4 +27,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_kite_decoder_test tests/test_kite_decoder.cpp)
     target_link_libraries(altair_kite_decoder_test PRIVATE altair_feed altair_flags)
     add_test(NAME kite_decoder COMMAND altair_kite_decoder_test)
+
+    add_executable(altair_normaliser_test tests/test_normaliser.cpp)
+    target_link_libraries(altair_normaliser_test PRIVATE altair_feed altair_flags)
+    add_test(NAME normaliser COMMAND altair_normaliser_test)
 endif()
