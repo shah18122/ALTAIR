@@ -21,4 +21,11 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_kite_auth_test tests/test_kite_auth.cpp)
     target_link_libraries(altair_kite_auth_test PRIVATE altair_broker altair_flags)
     add_test(NAME kite_auth COMMAND altair_kite_auth_test)
+
+    # Links altair_instruments as well: the round-trip test proves this
+    # header's paise->rupees formatter is the exact inverse of P1-04's parser.
+    add_executable(altair_kite_api_test tests/test_kite_api.cpp)
+    target_link_libraries(altair_kite_api_test
+        PRIVATE altair_broker altair_instruments altair_flags)
+    add_test(NAME kite_api COMMAND altair_kite_api_test)
 endif()
