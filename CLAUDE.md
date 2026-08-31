@@ -184,12 +184,39 @@ Symbols are lower-case. `dataset/` is gitignored — it is large and regenerable
 ## Build
 
 ```powershell
+.\build.bat                     # configure + build + test, preset `default`
+.\build.bat debug               # any other preset by name
+```
+
+`build.bat` is a thin wrapper, not a second build system. It exists because on
+this box neither `cmake` nor `ninja` is on `PATH` — both ship inside VS Build
+Tools — and because `vcvars64.bat` cannot export into PowerShell: it runs in a
+child process and its environment dies with it. The wrapper calls `vcvars` in
+the *same* cmd process, prepends the bundled `cmake`/`ninja`, then runs:
+
+```powershell
 cmake --preset default          # no vcpkg needed until P0-05
 cmake --build --preset default
 ctest --preset default
 ```
 
+Those three are still the real commands, and work directly from a Developer
+Command Prompt with cmake and ninja on `PATH`.
+
 Presets: `default` · `vcpkg` · `debug` · `asan` · `tsan` · `prod`.
+
+### Seeing it run
+
+```powershell
+.\build\default\app\altair.exe --instruments    # Phase 1, end to end
+.\build\default\app\altair.exe --selftest       # Phase 0 wiring
+.\build\default\app\altair.exe --help
+```
+
+`--instruments` walks the whole instrument-master pipeline: the
+download-failure policy, the Kite parser, three-way reconciliation, and the
+spec store — with a built-in sample so it runs against no files. Pass a real
+Kite `instruments.csv` as an argument to run it at full scale.
 
 ---
 

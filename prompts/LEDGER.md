@@ -23,7 +23,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 | **P0-01 / CLAUDE.md rule 3** | **Integer paise is NOT sufficient for currency derivatives.** Confirmed against Zerodha's own client (`gokiteconnect/ticker/ticker.go`, `convertPrice`): the wire price divisor is **segment-dependent** — `NseCD` divides by 10'000'000 and `BseCD` by 10'000, while everything else divides by 100. So an NSE-CD wire integer is in units of 10⁻⁷ rupees, **five decimal places finer than a paisa**, and storing it in `Price` (integer paise) truncates silently. Does **not** bite today: the configured universe is indices, index F&O and stock futures — no CDS. It becomes live the moment a USDINR contract is added. `ContractSpec` must carry a `price_scale` (wire units per rupee) and P2-02 must normalise, or the universe must **block** currency derivatives outright (rule 9). Decide in P1-01; enforce in P2-02. | **P1-01 + P2-02** |
 | **P0-09b → P2-01** | **A broker token is not an instrument key.** `ReplayTick.token` is a bare `uint32` documented as "a token". Kite's `instrument_token` and XTS's `ExchangeInstrumentID` are **different number spaces for the same contract**, so that field means different things depending on which feed produced the tick. P2-05 switches the primary feed mid-session: with a broker token in the tick, every instrument would appear to vanish and a stranger appear in its place, and the book, ledger and strategies would all follow it. The normalised `Tick` must carry the canonical `InstrumentId` from the spec store (ROADMAP §6.2); decoders map (source, broker_token) → InstrumentId and nothing downstream ever sees a broker token. The Phase 0 skeleton is safe only because it is single-source by construction. **Warning is in the header at the field.** | **P2-01 + P2-04** |
 | ~~**P1-01**~~ **PARTLY RESOLVED 2026-08-31** | ~~**`ContractSpec` has no home for broker tokens.**~~ P1-01 gave it `token[kFeedSourceCount]` indexed by `FeedSource`, and **P1-06 is where the map is actually assembled**: the merged spec takes `token[Kite]` from the Kite source and `token[Xts]` from the XTS source, so the mapping is bidirectional through the store (`id_of(src, token)` and `token_of(id, src)`) and nothing compares a token across sources. What remains is only that the XTS half is untestable against real data until P1-05 has a sample file. Original text: **`ContractSpec` has no home for broker tokens.** ROADMAP §6.2 gives it an `InstrumentId` but no `kite_token` / `xts_instrument_id`. P1-04 and P1-05 are named "token map" cards so the intent exists, but P1-01 must decide *where* the mapping lives — fields on the spec, or a separate table — and it must be **bidirectional**: decode needs token→id, subscription needs id→token. | **P1-01** |
-| **P1-04 → P2-04** | **`load_kite_dump` writes the store directly; every later parser writes the Reconciler.** P1-04 predates P1-06, so it calls `SpecStore::add` — which means a Kite dump can populate the store without ever facing the three-way check. The four master-parser cards written 2026-08-31 all take `Reconciler&` instead, deliberately: a parser that *can* write the store is a parser that can bypass reconciliation. `load_kite_dump` needs a `Reconciler&` overload, and the direct-to-store form should become test-only. Not urgent while Kite is the only source; **must land before a second source does.** | **P1-05 or P2-04** |
+| ~~**P1-04 → P2-04**~~ **RESOLVED 2026-08-31** | The loop is now a sink-templated `detail::load_kite_dump_into`, with `load_kite_dump(…, Reconciler&, …)` as the correct path and `load_kite_dump_unreconciled(…, SpecStore&, …)` retained for single-source tests and named for what it skips. `KiteLoadReport::rejected_by_store` became `rejected_by_sink` — there are two sinks now and only one is a store. A test loads a dump into a Reconciler, adds a disagreeing NSE row, and asserts the symbol **blocks** rather than Kite quietly winning. Original text: **`load_kite_dump` writes the store directly; every later parser writes the Reconciler.** P1-04 predates P1-06, so it calls `SpecStore::add` — which means a Kite dump can populate the store without ever facing the three-way check. The four master-parser cards written 2026-08-31 all take `Reconciler&` instead, deliberately: a parser that *can* write the store is a parser that can bypass reconciliation. `load_kite_dump` needs a `Reconciler&` overload, and the direct-to-store form should become test-only. Not urgent while Kite is the only source; **must land before a second source does.** | **P1-05 or P2-04** |
 | **P7-00 → P6 / P8** | **The first bar-data drop has a hole exactly where the flagship strategy is graded.** NIFTY 1-minute is missing **15:16–15:27 on every day** (12 consecutive minutes, 4 of 4 days), while India VIX has all 375. That window is where a 10-minute-horizon label lives and where NIFTY and VIX stop being joinable bar for bar. **Do not interpolate** — a fabricated close-window bar is a fabricated measurement in the exact window the model is scored on. Either source those minutes from Kite historical or make every close-window label explicitly unavailable. Three smaller ones: India VIX daily `open` equals the previous close on 524/526 bars (a copy, not a measurement); NIFTY daily has 1'408 zero-volume backfilled bars before 1997-01-01; and TradingView row caps mean NIFTY 1m covers **4 trading days**, not four months. Full detail in `prompts/P7-00_dataset_bar_ingest.md` §6. | **P6 + P8** |
 | **P1-04 → P2-04** | **`load_kite_dump` will overflow the store on a real dump.** `SpecStore::kMaxInstruments` is 8'192; the live Kite `instruments.csv` is ~100'000 rows. The throughput test makes this concrete: 10'000 rows in, **8'192 added, 1'808 rejected**. The loader behaves correctly — it reports `rejected_by_store` rather than failing — but a caller that hands it the raw dump gets a **silently truncated universe**, and which 8'192 survive depends on CSV row order. Nothing may hand it an unfiltered dump. The universe filter (config `[universe]`) must run **before** `add`, or `kMaxInstruments` must be raised to cover the whole dump (~100k × 176 B = ~18 MB, plus a 2x token index — affordable, but it makes the store a different object). Decide in P2-04. | **P2-04** |
 | ~~**P1-02 / P1-03 / P1-05**~~ **POLICY DECIDED 2026-08-31** | The `on_download_failure` half of this row is **closed** by P1-08a: the policy is a function of snapshot age **in trading days** AND whether an F&O expiry has been crossed — age alone gets it exactly backwards on the one day a month it matters, because rollover is when lot sizes change. Withheld sources are simply not fed to the Reconciler, so P1-06's existing `MissingPrimary`/`NoBroker` verdicts do the blocking and no second blocking path exists to disagree with the first. No snapshot at all **halts**. The scraping-fragility half of this row remains open. Original text: **Symbol mapping depends on files downloaded from the exchange, not on a broker API.** ROADMAP §6.1 already makes the NSE and BSE contract masters *primary* for lot size, tick size and expiry, with Kite/XTS as cross-check — so XTS symbol mapping cannot be satisfied by the XTS API alone. That makes these scraping cards, the most fragile kind: NSE's endpoints want specific headers and cookies, payloads are gzipped, and URLs move without notice. `config/altair.toml` sets `snapshot_dir` and `keep_snapshots_days = 3650`, which is the right shape — but there is **no `on_download_failure` policy**. There is one for *disagreement* (`block_symbol`) and none for *unavailability*. Pre-open is 08:15 and the market opens 09:15: decide now whether a failed fetch falls back to the last good snapshot with a loud flag, or halts the session. Rule 9 says it must not silently start with no specs. | **P1-01 (policy) + P1-02** |
@@ -653,6 +653,22 @@ the more serious of the two and contradicts CLAUDE.md rule 3 as written.
 
 ---
 
+## Build
+
+`build.bat` wraps `cmake --preset`. Added 2026-08-31 after discovering the
+documented build had **never been run**: 16 targets had been built with ad-hoc
+`cl` invocations, and `build/default` held a stale configure predating
+`instruments/`. Neither `cmake` nor `ninja` is on PATH on this box (both ship
+inside VS Build Tools) and `vcvars64.bat` cannot export into PowerShell. First
+real run: 40 compile/link steps, **0 warnings**, 19/19 tests.
+
+Two cmd.exe traps cost a cycle each and are worth remembering: a batch file
+with UTF-8 box-drawing in comments is unparseable, and the VS path contains
+`(x86)`, so echoing it inside a parenthesised `if` block closes the block early
+and produces the baffling `\Microsoft was unexpected at this time`.
+
+---
+
 ## Standing test techniques
 
 1. **Run the full tree under deliberate CPU load and capture every `FAIL`
@@ -664,7 +680,12 @@ the more serious of the two and contradicts CLAUDE.md rule 3 as written.
    proving the point twice in one session. Reworded to "is REFUSED".
 3. **Rebuild before sweeping.** A stale `.exe` reports the previous revision's
    behaviour with total confidence.
-4. **Put the evidence requirement in the loop's termination condition**, never
+4. **Never route backslash escapes through a bash heredoc in this
+   environment.** `\n` inside a `<<'EOF'` heredoc still collapses to a real
+   newline, silently breaking C string literals. It cost three build cycles
+   before the pattern was recognised. Use the Edit tool for anything with
+   escapes.
+5. **Put the evidence requirement in the loop's termination condition**, never
    in an assertion after it, or a loop that ran zero times passes vacuously.
 
 ---
@@ -690,6 +711,32 @@ the more serious of the two and contradicts CLAUDE.md rule 3 as written.
 |---|---|---|---|
 | 0 | 2026-08-29 | **NO-GO** | 12 of 13 cards DONE, 711 assertions, every budget met. Four checklist items unevidenced. |
 | 0 | 2026-08-31 | **NO-GO** (re-gate) | 13 of 14 DONE, 737 assertions across 13 targets. **Item 7 now PASSES** — `altair --replay` runs 500'000 ticks end to end at 54.23 M ticks/s with invariants armed. Three items remain, all needing tooling this box does not have. |
+
+### Phase 1 gate record — 2026-08-31
+
+Run against PROTOCOL §10. **Verdict: NO-GO.**
+
+Nothing built is broken — 3'012 assertions across 17 test binaries, 51 loaded
+runs, zero failures, zero warnings, and the whole tree now builds and tests
+through the *documented* path rather than ad-hoc scripts. The gate fails on
+coverage, not on quality.
+
+| § | Check | Result |
+|---|---|---|
+| 1 | Every card in the phase DONE | **NO** — 5 of 9. P1-02a/b/c and P1-03a blocked on sample files (blocker 9); P1-05 on an XTS sample; P1-07 on credentials; P1-08b on vcpkg |
+| 2 | Zero warnings, `/W4` | **YES** — 40 compile/link steps, 0 warnings |
+| 3 | `ctest` green | **YES** — 19/19, three consecutive loaded runs |
+| 4 | Contracts honoured | **YES** — P1-04, P1-06 and P1-08a cards each amended where the contract, not the code, was wrong |
+| 5 | No hot-path allocation | **YES** — every Phase 1 path is pre-open; none is `ALTAIR_HOT` |
+| 6 | Latency budgets | **YES** — `id_of` 1.26 ns; Kite parse 2.8 M rows/s |
+| 7 | Numerical / financial | **YES** — no floating point in any parser; exact integer comparison in the reconciler |
+| 8 | Physics | **YES** — IST day boundaries via P0-02 throughout; every weekday claim verified against an independent implementation |
+| 9 | Exit criterion: *"a full session's universe auto-loads pre-open with zero hardcoded lot sizes; a deliberately corrupted source is caught and blocks only its symbol"* | **PARTIAL** — the second half is **demonstrated**: `altair --instruments` shows a lot-size disagreement blocking exactly one symbol while five others load. The first half cannot be met without the master files |
+
+**Blocking the gate:** blocker 9 (four sample files), blocker 7 (vcpkg),
+credentials for P1-07. Every one of them is an input, not a defect.
+
+---
 
 ### Phase 0 gate record — 2026-08-29
 

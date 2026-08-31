@@ -11,6 +11,7 @@
 // could reach a broker is one that could place an order.
 
 #include <app/session_file.hpp>
+#include "instruments_demo.hpp"
 
 #include <config/config.hpp>
 #include <config/store.hpp>
@@ -189,6 +190,7 @@ void print_usage()
 {
     std::printf(
         "altair — tick-to-tick trading engine (Phase 0)\n\n"
+        "  altair --instruments [file]       Phase 1: parse, reconcile, block\n"
         "  altair --replay <file>            replay a session with the null strategy\n"
         "  altair --gen <file> [--ticks N]   generate a synthetic session (default 100000)\n"
         "  altair --selftest                 run the built-in checks\n"
@@ -495,6 +497,9 @@ int main(int argc, char** argv)
     }
     if (std::strcmp(cmd, "--selftest") == 0) {
         return run_selftest();
+    }
+    if (std::strcmp(cmd, "--instruments") == 0) {
+        return demo::run_instruments(argc >= 3 ? argv[2] : nullptr);
     }
     if (std::strcmp(cmd, "--replay") == 0) {
         if (argc < 3) {

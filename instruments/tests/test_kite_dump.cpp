@@ -244,7 +244,7 @@ void test_kite_load_dump_skips_bad_rows()
         "4,14,SYMD,NIFTY,0,2026-13-99,0,0.05,75,FUT,NFO-FUT,NFO\n"
         "5,15,SYME,NIFTY,0,2026-09-24,0,0.05,75,FUT,NFO-FUT,NFO\n";
 
-    const auto r = load_kite_dump(dump, sizeof(dump) - 1, st, kSnap);
+    const auto r = load_kite_dump_unreconciled(dump, sizeof(dump) - 1, st, kSnap);
     check(r.has_value(), "a dump with bad rows still loads");
     if (r.has_value()) {
         check(r->added == 3, "three good rows added");
@@ -264,16 +264,16 @@ void test_kite_load_dump_skips_bad_rows()
         "strike,tick_size,lot_size,instrument_type,segment,exchange\n"
         "1,11,SYMA,NIFTY,0,2026-09-24,0,0.05,abc,FUT,NFO-FUT,NFO\n"
         "2,12,SYMB,NIFTY,0,2026-09-24,0,0.05,abc,FUT,NFO-FUT,NFO\n";
-    const auto r2 = load_kite_dump(allbad, sizeof(allbad) - 1, st2, kSnap);
+    const auto r2 = load_kite_dump_unreconciled(allbad, sizeof(allbad) - 1, st2, kSnap);
     check(r2.has_value() && r2->added == 0 && r2->unparseable == 2,
           "an all-bad dump reports rather than errors");
 
-    check(load_kite_dump("", 0, st2, kSnap).error() == KiteParseError::EmptyInput,
+    check(load_kite_dump_unreconciled("", 0, st2, kSnap).error() == KiteParseError::EmptyInput,
           "an empty buffer is EmptyInput");
     static const char hdr_only[] =
         "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,"
         "strike,tick_size,lot_size,instrument_type,segment,exchange\n";
-    check(load_kite_dump(hdr_only, sizeof(hdr_only) - 1, st2, kSnap).error()
+    check(load_kite_dump_unreconciled(hdr_only, sizeof(hdr_only) - 1, st2, kSnap).error()
               == KiteParseError::EmptyInput,
           "a header-only buffer is EmptyInput");
 }
@@ -287,7 +287,7 @@ void test_kite_load_dump_into_store()
         "12345,678,NIFTY26SEPFUT,NIFTY,0,2026-09-24,0,0.05,75,FUT,NFO-FUT,NFO\n"
         "12346,679,BANKNIFTY26SEPFUT,BANKNIFTY,0,2026-09-24,0,0.05,30,FUT,NFO-FUT,NFO\n";
 
-    const auto r = load_kite_dump(dump, sizeof(dump) - 1, st, kSnap);
+    const auto r = load_kite_dump_unreconciled(dump, sizeof(dump) - 1, st, kSnap);
     check(r.has_value() && r->added == 2, "two rows loaded");
     check(st.size() == 2, "store size matches the report");
 
@@ -299,10 +299,10 @@ void test_kite_load_dump_into_store()
 
     // A second load of the SAME dump: every row is a duplicate token. The
     // store's guard is what makes a re-load idempotent.
-    const auto r2 = load_kite_dump(dump, sizeof(dump) - 1, st, kSnap);
+    const auto r2 = load_kite_dump_unreconciled(dump, sizeof(dump) - 1, st, kSnap);
     check(r2.has_value(), "a re-load returns a report");
     check(r2->added == 0, "nothing added the second time");
-    check(r2->rejected_by_store == 2, "both rows rejected as duplicates");
+    check(r2->rejected_by_sink == 2, "both rows rejected as duplicates");
     check(st.size() == 2, "and the store is unchanged");
 }
 
@@ -325,18 +325,85 @@ void report_throughput()
 
     static SpecStore st;
     const auto t0 = std::chrono::steady_clock::now();
-    const auto r = load_kite_dump(buf, n, st, kSnap);
+    const auto r = load_kite_dump_unreconciled(buf, n, st, kSnap);
     const auto t1 = std::chrono::steady_clock::now();
     const double sec = std::chrono::duration<double>(t1 - t0).count();
 
     if (r.has_value()) {
         std::printf("  %zu rows parsed, %zu added, %zu rejected in %.4f s\n",
-                    kRows, r->added, r->rejected_by_store, sec);
+                    kRows, r->added, r->rejected_by_sink, sec);
         std::printf("  = %.2f M rows/s (runs once pre-open, not on a tick)\n",
                     static_cast<double>(kRows) / sec / 1e6);
     } else {
         std::printf("  load failed\n");
     }
+}
+
+} // namespace
+
+namespace {
+
+// The Reconciler overload added when P1-06 landed. Kite is a CROSS-CHECK, not
+// an authority: loading it into the reconciler is what subjects it to the
+// three-way check. The unreconciled overload cannot do this, which is why it
+// is now named for what it skips.
+Reconciler g_rec;
+
+void loads_into_the_reconciler()
+{
+    std::printf("\nreconciled load path\n");
+    g_rec.clear();
+
+    const char* dump =
+        "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,"
+        "strike,tick_size,lot_size,instrument_type,segment,exchange\n"
+        "11111,43,NIFTY26SEP25000CE,NIFTY,0,2026-09-24,25000,0.05,75,CE,NFO-OPT,NFO\n";
+
+    const auto r = load_kite_dump(dump, std::strlen(dump), g_rec, kSnap);
+    check(r.has_value(), "a dump loads into a Reconciler");
+    check(r.has_value() && r->added == 1, "one contract added");
+
+    // Alone, Kite is uncorroborated -- and says so.
+    ReconcileReport rep = g_rec.reconcile();
+    check(rep.single_source == 1,
+          "Kite alone is SingleSource, not silently authoritative");
+    check(!rep.primary_source_seen, "and no primary was seen");
+
+    // Now an exchange master that DISAGREES about the lot size. Through the
+    // store this would simply have overwritten nothing and gone unnoticed;
+    // through the reconciler it blocks.
+    ContractSpec nse{};
+    nse.id = InstrumentId::Invalid;
+    nse.lot_size = LotSize{50};
+    nse.tick_size = Price{5};
+    nse.strike = Price{2500000};
+    nse.price_scale = 100;
+    nse.expiry = *parse_kite_expiry("2026-09-24", 10);
+    nse.valid_from = kSnap;
+    nse.valid_to = Timestamp::max();
+    nse.source_hash = 0x9911;
+    nse.snapshot_at = kSnap;
+    nse.exchange = Exchange::NSE;
+    nse.segment = Segment::Opt;
+    nse.opt_type = OptionType::CE;
+    nse.source = SpecSource::NseMaster;
+    std::snprintf(nse.symbol, sizeof(nse.symbol), "NIFTY26SEP25000CE");
+    std::snprintf(nse.underlying, sizeof(nse.underlying), "NIFTY");
+    check(g_rec.add(nse).has_value(), "an NSE master row is added");
+
+    rep = g_rec.reconcile();
+    check(rep.contracts == 1,
+          "the Kite row and the NSE row are ONE contract -- the tuple joined "
+          "them across two number spaces");
+    check(rep.conflicts == 1, "and they disagree on lot size");
+    check(rep.blocked == 1, "so the symbol is BLOCKED, not quietly resolved");
+
+    const ContractVerdict* v = *g_rec.verdict_at(0);
+    check(v->field == ConflictField::LotSize, "the conflict is the lot size");
+    check(v->values[static_cast<std::size_t>(SpecSource::KiteDump)] == 75,
+          "Kite said 75");
+    check(v->values[static_cast<std::size_t>(SpecSource::NseMaster)] == 50,
+          "the exchange said 50 -- and neither is guessed at");
 }
 
 } // namespace
@@ -352,6 +419,7 @@ int main()
     test_kite_row_rejects_bad_input();
     test_kite_load_dump_skips_bad_rows();
     test_kite_load_dump_into_store();
+    loads_into_the_reconciler();
 
     report_throughput();
 

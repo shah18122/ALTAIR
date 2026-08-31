@@ -26,6 +26,7 @@
 // credentials it should not have.
 
 #include <instruments/contract_spec.hpp>
+#include <instruments/reconcile.hpp>
 #include <time/timestamp.hpp>
 #include <types/units.hpp>
 
@@ -425,7 +426,10 @@ struct KiteLoadReport {
     /// Rows that produced a spec and were added. UNIT: rows.
     std::size_t added;
     /// Rows the store refused — a duplicate token, or Full. UNIT: rows.
-    std::size_t rejected_by_store;
+    /// Refused by the destination — a duplicate token for a SpecStore, a
+    /// full table for a Reconciler. Named for the sink rather than the
+    /// store because there are now two sinks and only one of them is a store.
+    std::size_t rejected_by_sink;
     /// Rows that would not parse. UNIT: rows.
     std::size_t unparseable;
     /// The first parse error seen, for diagnosis. Only meaningful when
@@ -441,9 +445,18 @@ struct KiteLoadReport {
 /// and the caller decides whether the count is tolerable.
 /// PRECONDITION: `csv` is the complete file, header first. Not NUL-terminated
 /// is fine; `len` bounds it. Allocates nothing.
+namespace detail {
+
+/// The row loop, parameterised on where accepted specs go.
+///
+/// `sink` is any callable `bool(const ContractSpec&)` returning whether the
+/// spec was accepted. A template rather than std::function: no allocation and
+/// no indirect call, which matters because this same loop will one day run
+/// over a 100k-row dump.
+template <class Sink>
 [[nodiscard]] inline std::expected<KiteLoadReport, KiteParseError>
-load_kite_dump(const char* csv, std::size_t len,
-               SpecStore& store, Timestamp snapshot_at) noexcept {
+load_kite_dump_into(const char* csv, std::size_t len,
+                    Sink sink, Timestamp snapshot_at) noexcept {
     if (csv == nullptr || len == 0) {
         return std::unexpected(KiteParseError::EmptyInput);
     }
@@ -486,10 +499,10 @@ load_kite_dump(const char* csv, std::size_t len,
                     rep.first_error_row = row_no;
                 }
                 ++rep.unparseable;
-            } else if (store.add(*spec).has_value()) {
+            } else if (sink(*spec)) {
                 ++rep.added;
             } else {
-                ++rep.rejected_by_store;
+                ++rep.rejected_by_sink;
             }
         }
         pos = e < len ? e + 1 : len;
@@ -499,6 +512,39 @@ load_kite_dump(const char* csv, std::size_t len,
         return std::unexpected(KiteParseError::EmptyInput);
     }
     return rep;
+}
+
+} // namespace detail
+
+/// Load a Kite dump into the RECONCILER. This is the correct path.
+///
+/// Kite is a CROSS-CHECK, not an authority (ROADMAP §6.1). Feeding the
+/// reconciler is what subjects it to the three-way agreement check, so a Kite
+/// lot size that disagrees with the exchange master blocks the symbol instead
+/// of silently winning. Every later master parser takes a `Reconciler&` for
+/// exactly this reason: a parser that CAN write the store is a parser that can
+/// bypass reconciliation.
+[[nodiscard]] inline std::expected<KiteLoadReport, KiteParseError>
+load_kite_dump(const char* csv, std::size_t len,
+               Reconciler& rec, Timestamp snapshot_at) noexcept {
+    return detail::load_kite_dump_into(
+        csv, len,
+        [&rec](const ContractSpec& s) noexcept { return rec.add(s).has_value(); },
+        snapshot_at);
+}
+
+/// Load straight into a SpecStore, with NO reconciliation.
+///
+/// Retained for single-source tests and for the pre-open smoke path, where
+/// there is by construction nothing to reconcile against. **Do not use it once
+/// a second source exists** — it is the bypass the overload above closes.
+[[nodiscard]] inline std::expected<KiteLoadReport, KiteParseError>
+load_kite_dump_unreconciled(const char* csv, std::size_t len,
+                            SpecStore& store, Timestamp snapshot_at) noexcept {
+    return detail::load_kite_dump_into(
+        csv, len,
+        [&store](const ContractSpec& s) noexcept { return store.add(s).has_value(); },
+        snapshot_at);
 }
 
 } // namespace altair
