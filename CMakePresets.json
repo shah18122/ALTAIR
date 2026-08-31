@@ -1,7 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
-
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -14,7 +17,7 @@
     },
     {
       "name": "default",
-      "displayName": "Dev — RelWithDebInfo, tests. No vcpkg needed until P0-03.",
+      "displayName": "Dev \u2014 RelWithDebInfo, tests. No vcpkg needed until P0-03.",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
@@ -24,17 +27,17 @@
     },
     {
       "name": "vcpkg",
-      "displayName": "Dev + vcpkg — needed from P0-03 onward",
+      "displayName": "Dev + vcpkg \u2014 needed from P0-03 onward",
       "inherits": "default",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_MANIFEST_FEATURES": "testing",
+        "VCPKG_MANIFEST_FEATURES": "config",
         "ALTAIR_BUILD_BENCH": "ON"
       }
     },
     {
       "name": "debug",
-      "displayName": "Debug — full invariants",
+      "displayName": "Debug \u2014 full invariants",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
@@ -64,7 +67,7 @@
     },
     {
       "name": "prod",
-      "displayName": "Production — Release, no tests, native arch",
+      "displayName": "Production \u2014 Release, no tests, native arch",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
@@ -75,27 +78,59 @@
       }
     }
   ],
-
   "buildPresets": [
-    { "name": "default", "configurePreset": "default" },
-    { "name": "vcpkg",   "configurePreset": "vcpkg" },
-    { "name": "debug",   "configurePreset": "debug" },
-    { "name": "asan",    "configurePreset": "asan" },
-    { "name": "tsan",    "configurePreset": "tsan" },
-    { "name": "prod",    "configurePreset": "prod" }
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "vcpkg",
+      "configurePreset": "vcpkg"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
+    },
+    {
+      "name": "prod",
+      "configurePreset": "prod"
+    }
   ],
-
   "testPresets": [
     {
       "name": "default",
       "configurePreset": "default",
-      "output": { "outputOnFailure": true },
-      "execution": { "stopOnFailure": false }
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": false
+      }
     },
     {
       "name": "debug",
       "configurePreset": "debug",
-      "output": { "outputOnFailure": true }
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "vcpkg",
+      "configurePreset": "vcpkg",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": false
+      }
     }
   ]
 }

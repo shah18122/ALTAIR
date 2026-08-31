@@ -26,6 +26,11 @@ set "NINJADIR=%VSROOT%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja"
 
 if not exist "%VCVARS%" goto no_vcvars
 
+REM From P0-08b the `vcpkg` preset needs VCPKG_ROOT. Point it at the tree
+REM bootstrap created, so the preset works with no extra setup.
+if "%VCPKG_ROOT%"=="" if exist "C:\PycharmProjects\vcpkg\vcpkg.exe" set "VCPKG_ROOT=C:\PycharmProjects\vcpkg"
+set "VCPKG_DISABLE_METRICS=1"
+
 set "PRESET=%~1"
 if "%PRESET%"=="" set "PRESET=default"
 

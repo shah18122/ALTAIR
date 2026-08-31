@@ -2,48 +2,72 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "altair",
   "version": "0.1.0",
-  "description": "Tick-to-tick multi-strategy trading engine for NSE & BSE",
-  "_comment_dependencies": "DELIBERATELY EMPTY. Cards P0-01 and P0-02 need nothing but the standard library, so the tree configures and builds with no vcpkg at all. Every dependency is a feature, switched on as its phase lands — at which point set builtin-baseline to a vcpkg commit SHA and configure with the `vcpkg` preset. DeepSeek MUST NOT add to this file.",
-
+  "description": "Tick-to-tick multi-strategy trading engine for NSE & BSE. dependencies[] is deliberately empty: every dependency is a FEATURE, switched on as its phase lands, so the tree builds with no vcpkg at all until one is needed.",
+  "builtin-baseline": "30ef65cad98f08e7197c9a1656fbd871bcb72f2d",
   "dependencies": [],
-
   "features": {
     "testing": {
-      "description": "Phase 0 (from P0-03) — Catch2 and Google Benchmark",
+      "description": "Phase 0 (from P0-03) \u2014 Catch2 and Google Benchmark",
       "dependencies": [
-        { "name": "catch2", "version>=": "3.5.0" },
-        { "name": "benchmark", "version>=": "1.8.3" }
+        {
+          "name": "catch2",
+          "version>=": "3.5.0"
+        },
+        {
+          "name": "benchmark",
+          "version>=": "1.8.3"
+        }
       ]
     },
     "config": {
-      "description": "Phase 0 — TOML configuration",
-      "dependencies": [ "tomlplusplus" ]
+      "description": "Phase 0 \u2014 TOML configuration",
+      "dependencies": [
+        "tomlplusplus"
+      ]
     },
     "net": {
-      "description": "Phase 2 — networking and JSON",
+      "description": "Phase 2 \u2014 networking and JSON",
       "dependencies": [
-        { "name": "boost-asio", "version>=": "1.84.0" },
-        { "name": "boost-beast", "version>=": "1.84.0" },
+        {
+          "name": "boost-asio",
+          "version>=": "1.84.0"
+        },
+        {
+          "name": "boost-beast",
+          "version>=": "1.84.0"
+        },
         "simdjson",
         "openssl",
         "zlib"
       ]
     },
     "math": {
-      "description": "Phase 3 — linear algebra and SIMD",
-      "dependencies": [ "eigen3", "xsimd", "boost-math" ]
+      "description": "Phase 3 \u2014 linear algebra and SIMD",
+      "dependencies": [
+        "eigen3",
+        "xsimd",
+        "boost-math"
+      ]
     },
     "storage": {
-      "description": "Phase 2/6 — columnar storage and research queries",
-      "dependencies": [ "arrow", "duckdb" ]
+      "description": "Phase 2/6 \u2014 columnar storage and research queries",
+      "dependencies": [
+        "arrow",
+        "duckdb"
+      ]
     },
     "ui": {
-      "description": "Phase 11 — dashboard server and XLSX export",
-      "dependencies": [ "unofficial-uwebsockets", "libxlsxwriter" ]
+      "description": "Phase 11 \u2014 dashboard server and XLSX export",
+      "dependencies": [
+        "unofficial-uwebsockets",
+        "libxlsxwriter"
+      ]
     },
     "ml": {
-      "description": "Phase 8 — LibTorch C++ training and ONNX serving",
-      "dependencies": [ "onnxruntime-gpu" ]
+      "description": "Phase 8 \u2014 LibTorch C++ training and ONNX serving",
+      "dependencies": [
+        "onnxruntime-gpu"
+      ]
     }
   }
 }
