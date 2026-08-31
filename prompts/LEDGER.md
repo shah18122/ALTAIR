@@ -435,7 +435,7 @@ sizes; a deliberately corrupted source is caught and blocks only its symbol.
 | P2-09 | OBI, weighted OBI, microprice, VPIN, Kyle λ, queue position | TODO |
 | **P2-10a** | `broker/sha256.hpp` — FIPS 180-4, NIST-verified, cross-checked against `hashlib` — **DONE** · 24 checks | **DONE** |
 | **P2-10b** | `broker/kite_session.hpp` — login URL + session checksum — **DONE** | **DONE** |
-| P2-10c | `/session/token` POST + `data/kite_session.json` persistence | BLOCKED — vcpkg |
+| P2-10c | `/session/token` POST + `data/kite_session.json` persistence | BLOCKED — vcpkg. Stopgap: `broker/tools/kite_login.py` (stdlib only) |
 
 **Exit:** 6 h of live NIFTY + BANKNIFTY captured, replayed bit-identically, zero
 drops, p99 decode < 3 µs.

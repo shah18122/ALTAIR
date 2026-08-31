@@ -51,7 +51,7 @@ against NIST vectors, leaving only the HTTP call for when vcpkg unblocks.
 |---|---|---|
 | **P2-10a** | `broker/sha256.hpp` — FIPS 180-4, NIST-verified | **DONE** |
 | **P2-10b** | `broker/kite_session.hpp` — login URL + session checksum | **DONE** |
-| P2-10c | the `/session/token` POST + `data/kite_session.json` persistence | BLOCKED — vcpkg |
+| P2-10c | the `/session/token` POST + `data/kite_session.json` persistence | BLOCKED — vcpkg. **Stopgap: `broker/tools/kite_login.py`**, stdlib-only, same directory because `broker/` owns credentials. Delete it when P2-10c ships. |
 
 ## 4. FILE MANIFEST (a + b)
 
@@ -113,3 +113,26 @@ financial. A wrong checksum means no session, which means no feed and no
 orders — a total outage rather than a wrong number. That is the right way for
 this to fail, and it is why the input is proven offline rather than debugged
 against a live endpoint that answers "invalid" and nothing more.
+
+---
+
+## ADDENDUM 2026-08-31 — why the exchange is not automated here
+
+The token exchange was attempted from this session and **refused by the
+sandbox**: an outbound network call carrying a credential is exactly what that
+boundary exists to stop, and routing around it would have been the wrong
+instinct.
+
+That is the correct outcome even setting the sandbox aside. The flow now is:
+
+* Smit opens the login URL and authenticates — the step that needs a user ID,
+  password and TOTP, and that nothing here can or should do.
+* Smit runs `broker/tools/kite_login.py` with the redirect URL. The secret
+  comes from the environment; it is never printed, never written to a file, and
+  never passed on a command line where shell history or a process listing would
+  capture it.
+* The `access_token` lands in `data/kite_session.json`, gitignored, and expires
+  the next morning.
+
+The script accepts the **whole redirect URL** rather than a bare token, because
+copying the entire address bar is what actually happens.
