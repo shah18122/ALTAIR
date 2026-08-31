@@ -103,7 +103,7 @@ add_subdirectory(core)              # Phase 0
 
 add_subdirectory(instruments)       # Phase 1 — ContractSpec + spec store
 add_subdirectory(feed)              # Phase 0 replay skeleton; decoders in Phase 2
-# add_subdirectory(book)            # Phase 2
+add_subdirectory(book)              # Phase 2 — L2 book skeleton (P2-08)
 # add_subdirectory(analytics)       # Phase 3
 # add_subdirectory(risk)            # Phase 4
 # add_subdirectory(oms)             # Phase 4
@@ -112,7 +112,8 @@ add_subdirectory(feed)              # Phase 0 replay skeleton; decoders in Phase
 # add_subdirectory(backtest)        # Phase 6
 # add_subdirectory(models)          # Phase 8
 # add_subdirectory(flagging)        # Phase 9
-# add_subdirectory(ui)              # Phase 11
+# add_subdirectory(server)          # Phase 11 — BACKEND ONLY, renders nothing
+# add_subdirectory(client)          # Phase 11 — DESKTOP ONLY, links no engine header
 add_subdirectory(app)               # main() — the `altair` binary
 
 if(ALTAIR_BUILD_TESTS)

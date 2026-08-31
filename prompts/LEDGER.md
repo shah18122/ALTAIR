@@ -422,13 +422,13 @@ sizes; a deliberately corrupted source is caught and blocks only its symbol.
 | Card | Deliverable | Status |
 |---|---|---|
 | P2-01 | `Tick` / `DepthUpdate` normalised structs + wire schema — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 51 checks | **DONE** |
-| P2-02 | Kite binary decoder | TODO |
+| P2-02 | Kite binary decoder — **UNBLOCKED**, the wire format is fully documented in the `gokiteconnect` clone (see reference findings) | TODO — implementable now |
 | P2-03 | XTS Socket.IO 1501/1502/1505 decoder | TODO |
 | P2-04 | Normaliser + spec-store binding (token → ContractSpec) | TODO |
 | P2-05 | Failover watchdog + seamless primary switch | TODO |
 | P2-06 | mmap'd columnar tick store (writer) | TODO |
 | P2-07 | Tick store reader + Parquet archiver | TODO |
-| P2-08 | L2 order book, O(1) update, crossed-book guard | TODO |
+| P2-08 | L2 order book, O(1) update, crossed-book guard — **SKELETON on disk** (`book/l2_book.hpp`), `apply` returns `NotImplemented` | SKELETON |
 | P2-09 | OBI, weighted OBI, microprice, VPIN, Kyle λ, queue position | TODO |
 
 **Exit:** 6 h of live NIFTY + BANKNIFTY captured, replayed bit-identically, zero
