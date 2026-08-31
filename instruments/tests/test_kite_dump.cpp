@@ -349,6 +349,40 @@ namespace {
 // is now named for what it skips.
 Reconciler g_rec;
 
+// Found by running the real 106'150-row dump: Kite quotes the `name` column.
+// Left in place, the underlying becomes "NIFTY" WITH the quote characters, and
+// P1-06's D1 key can never match an exchange master that writes NIFTY bare --
+// so every contract reconciles as SingleSource and the three-way check
+// silently does nothing at all.
+void quoted_name_is_unquoted()
+{
+    std::printf("\nquoted name column\n");
+
+    const char* dump =
+        "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,"
+        "strike,tick_size,lot_size,instrument_type,segment,exchange\n"
+        "77777,43,NIFTY26SEPFUT,\"NIFTY\",0,2026-09-24,0,0.05,65,FUT,NFO-FUT,NFO\n";
+
+    // static, NOT a local: SpecStore is 1.63 MB and MSVC's default stack is
+    // 1 MB. A local here segfaults -- which it duly did, in a hazard this
+    // repo had already documented in P1-06 and then walked into anyway.
+    static SpecStore local;
+    const auto r = load_kite_dump_unreconciled(dump, std::strlen(dump), local, kSnap);
+    check(r.has_value() && r->added == 1, "the real quoted form parses");
+
+    const auto id = local.id_of(FeedSource::Kite, 77777);
+    check(id.has_value(), "and resolves");
+    const auto sp = local.current(*id);
+    check(sp.has_value() && std::strcmp((*sp)->underlying, "NIFTY") == 0,
+          "the underlying is NIFTY, WITHOUT the quote characters -- with them "
+          "it could never match an exchange master and every contract would "
+          "reconcile as SingleSource");
+    check(sp.has_value() && std::strcmp((*sp)->symbol, "NIFTY26SEPFUT") == 0,
+          "and an unquoted column is untouched");
+    check(sp.has_value() && (*sp)->lot_size.raw() == 65,
+          "lot size 65 -- the live NIFTY lot, not the 75 of earlier examples");
+}
+
 void loads_into_the_reconciler()
 {
     std::printf("\nreconciled load path\n");
@@ -419,6 +453,7 @@ int main()
     test_kite_row_rejects_bad_input();
     test_kite_load_dump_skips_bad_rows();
     test_kite_load_dump_into_store();
+    quoted_name_is_unquoted();
     loads_into_the_reconciler();
 
     report_throughput();

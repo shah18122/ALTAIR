@@ -86,8 +86,24 @@ struct KiteField {
     for (std::size_t i = 0; i <= len; ++i) {
         if (i == len || row[i] == ',') {
             if (n < cap) {
-                out[n].p = row + start;
-                out[n].n = i - start;
+                std::size_t b = start;
+                std::size_t e = i;
+                // Strip ONE layer of surrounding double quotes.
+                //
+                // Kite quotes the `name` column and nothing else: a real row
+                // reads ...,NIFTY26SEPFUT,"NIFTY",0,... Left in place, the
+                // underlying becomes the four characters " N I F T Y " and
+                // P1-06's D1 key can NEVER match an exchange master that
+                // writes NIFTY unquoted -- so every contract reconciles as
+                // SingleSource and the three-way check silently does nothing.
+                // Found by running the real 106'150-row dump, not by reading
+                // the schema.
+                if (e - b >= 2 && row[b] == '"' && row[e - 1] == '"') {
+                    ++b;
+                    --e;
+                }
+                out[n].p = row + b;
+                out[n].n = e - b;
             }
             ++n;
             start = i + 1;

@@ -44,14 +44,19 @@ if errorlevel 1 goto no_cmake
 where ninja >nul 2>&1
 if errorlevel 1 goto no_ninja
 
+REM `if errorlevel 1` tests errorlevel >= 1, so it is FALSE for a NEGATIVE
+REM exit code -- and a failed MSVC link returns 4294967295, i.e. -1. That trap
+REM let a link failure through and ran ctest against a STALE binary, which
+REM then "passed" tests for code that had never been compiled. NEQ 0 reads the
+REM actual value and catches both signs.
 echo === configure [%PRESET%] ===
 cmake --preset %PRESET%
-if errorlevel 1 exit /b 1
+if %ERRORLEVEL% NEQ 0 exit /b 1
 
 echo.
 echo === build [%PRESET%] ===
 cmake --build --preset %PRESET%
-if errorlevel 1 exit /b 1
+if %ERRORLEVEL% NEQ 0 exit /b 1
 
 echo.
 echo === test [%PRESET%] ===
