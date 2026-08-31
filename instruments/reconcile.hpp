@@ -357,7 +357,9 @@ private:
         v.present_mask = e.present_mask;
         v.merged = merge(e);
 
-        const std::size_t wi = static_cast<std::size_t>(e.winner_src);
+        // The comparison reference is no longer the precedence winner's value
+        // but the highest-precedence NON-ZERO one (D10), so `winner_src` is
+        // not consulted here any more.
 
         // ValueConflict first: lot, then tick, then scale (req 5 ordering).
         const std::int64_t* fields[3] = { e.lot, e.tick, e.scale };
@@ -365,9 +367,26 @@ private:
                                          ConflictField::TickSize,
                                          ConflictField::PriceScale };
         for (std::size_t f = 0; f < 3; ++f) {
+            // D10: a ZERO means "this source does not carry the field", not
+            // "the value is zero", so it is excluded from the comparison.
+            //
+            // D2 already said exactly this about freeze_qty and the bands and
+            // then failed to apply it to the three compared fields. Real data
+            // made the gap obvious: the NSE UDiFF bhavcopy has no tick-size
+            // column at all, so it reports 0, and comparing that against
+            // Kite's 5 made every single NSE contract a ValueConflict -- the
+            // reconciler blocking the entire universe because its most
+            // authoritative source declined to answer one question.
+            //
+            // A zero lot size stays dangerous, but the danger is that it might
+            // WIN, not that it disagrees -- and merge() below refuses to let a
+            // zero win. Absence and disagreement are different claims.
+            const std::int64_t ref = pick_nonzero(fields[f], e.present_mask,
+                                                  e.key.exchange);
             std::uint8_t mask = 0;
             for (std::size_t s = 0; s < kSpecSourceCount; ++s) {
-                if ((e.present_mask & (1u << s)) != 0 && fields[f][s] != fields[f][wi]) {
+                if ((e.present_mask & (1u << s)) != 0 && fields[f][s] != 0
+                    && ref != 0 && fields[f][s] != ref) {
                     mask = static_cast<std::uint8_t>(mask | (1u << s));
                 }
             }
@@ -407,9 +426,41 @@ private:
     }
 
     /// Requirements 6, 7, 8.
+    /// The value of `field` from the highest-precedence source that actually
+    /// carries it. Zero means "not carried" (D10), so a source that declined
+    /// to answer never overrides one that did.
+    [[nodiscard]] static std::int64_t
+    pick_nonzero(const std::int64_t* field, std::uint8_t present,
+                 Exchange ex) noexcept {
+        std::int64_t best = 0;
+        int best_prec = -1;
+        for (std::size_t s = 0; s < kSpecSourceCount; ++s) {
+            if ((present & (1u << s)) == 0 || field[s] == 0) {
+                continue;
+            }
+            const int p = detail::source_prec(static_cast<SpecSource>(s), ex);
+            if (p > best_prec) {
+                best_prec = p;
+                best = field[s];
+            }
+        }
+        return best;
+    }
+
     static ContractSpec merge(const detail::Entry& e) noexcept {
         ContractSpec m = e.winner;                      // req 6, req 8
         m.id = InstrumentId::Invalid;                   // the store assigns it
+
+        // D10: each compared field comes from the highest-precedence source
+        // that CARRIES it. Taking them blindly from the precedence winner
+        // would let the exchange master's absent tick size (0) override the
+        // broker's real one, and every order would then round to a zero tick.
+        const std::int64_t lot = pick_nonzero(e.lot, e.present_mask, e.key.exchange);
+        const std::int64_t tick = pick_nonzero(e.tick, e.present_mask, e.key.exchange);
+        const std::int64_t scale = pick_nonzero(e.scale, e.present_mask, e.key.exchange);
+        m.lot_size = LotSize{lot};
+        m.tick_size = Price{tick};
+        m.price_scale = scale;
         m.token[static_cast<std::size_t>(FeedSource::Kite)] = e.kite_token;
         m.token[static_cast<std::size_t>(FeedSource::Xts)]  = e.xts_token;
 

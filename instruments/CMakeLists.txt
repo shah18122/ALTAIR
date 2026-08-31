@@ -38,4 +38,9 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_nse_masters_test
         PRIVATE altair_instruments altair_flags)
     add_test(NAME nse_masters COMMAND altair_nse_masters_test)
+
+    add_executable(altair_udiff_master_test tests/test_udiff_master.cpp)
+    target_link_libraries(altair_udiff_master_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME udiff_master COMMAND altair_udiff_master_test)
 endif()

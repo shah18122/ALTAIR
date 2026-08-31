@@ -406,10 +406,10 @@ synthetic session; a captured one is still needed (blocker #6).
 | Card | Deliverable | Status |
 |---|---|---|
 | P1-01 | `ContractSpec` type + point-in-time spec store — **DONE** `bf732a6` · 1✓ᵐ 2✓ 3✓ 4✓ 5✓ **6✓** 7✓ 8✓ · 57 checks | **DONE** |
-| P1-02a | NSE F&O contract master parser (**primary** for NSE F&O) — card written; **SKELETON on disk** — real signatures, bodies return `SchemaNotConfigured` | SKELETON — needs sample |
+| P1-02a | NSE F&O UDiFF bhavcopy → `ContractSpec` — **DONE** · `udiff_master.hpp` · 43 checks | **DONE** |
 | P1-02b | NSE `fo_mktlots.csv` → lot-size table (wide format, rolls monthly) — card written; **SKELETON on disk** — real signatures, bodies return `SchemaNotConfigured` | SKELETON — needs sample |
 | P1-02c | NSE `EQUITY_L.csv` → cash `ContractSpec` — card written; **SKELETON on disk** — real signatures, bodies return `SchemaNotConfigured` | SKELETON — needs sample |
-| P1-03a | BSE scrip + contract masters (**primary** for BSE) — card written | BLOCKED — sample |
+| P1-03a | BSE derivatives master — **DONE**, and it is the SAME parser: BSE publishes the identical UDiFF layout. Only the stamped `Exchange` differs. (BSE **cash** scrip master remains a separate artefact.) | **DONE** |
 | P1-04 | Kite instruments dump parser + token map — **DONE** · 1✓ᵐ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 94 checks | **DONE** |
 | P1-05 | XTS instruments master parser + token map | TODO |
 | P1-06 | Three-way reconciler + disagreement flags + symbol blocking — **DONE** · 1✓ᵐ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 77 checks | **DONE** |
