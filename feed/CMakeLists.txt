@@ -32,6 +32,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_failover_test PRIVATE altair_feed altair_flags)
     add_test(NAME failover COMMAND altair_failover_test)
 
+    add_executable(altair_tick_store_test tests/test_tick_store.cpp)
+    target_link_libraries(altair_tick_store_test PRIVATE altair_feed altair_flags)
+    add_test(NAME tick_store COMMAND altair_tick_store_test)
+
     add_executable(altair_normaliser_test tests/test_normaliser.cpp)
     target_link_libraries(altair_normaliser_test PRIVATE altair_feed altair_flags)
     add_test(NAME normaliser COMMAND altair_normaliser_test)

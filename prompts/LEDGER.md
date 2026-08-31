@@ -431,8 +431,8 @@ sizes; a deliberately corrupted source is caught and blocks only its symbol.
 | P2-03 | XTS Socket.IO 1501/1502/1505 decoder | TODO |
 | P2-04 | Normaliser: gating, per-instrument ordering, source routing — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ **6✓ 11.4 ns/submit** 7✓ 8✓ · 47 checks. (The token→`InstrumentId` binding is in P2-02 — a decoder that cannot resolve a token cannot make a `Tick` at all.) | **DONE** |
 | P2-05 | Failover watchdog + seamless primary switch — **DONE** · keys on `recv_ts` · 38 checks | **DONE** |
-| P2-06 | mmap'd columnar tick store (writer) | TODO |
-| P2-07 | Tick store reader + Parquet archiver | TODO |
+| P2-06 | Session tick store — writer — **DONE** · 65 B/tick, byte-exact round trip | **DONE** |
+| P2-07 | Tick store reader — **DONE** (shipped with P2-06; the Parquet archiver is deferred to P6, where a research query actually needs it) | **DONE** |
 | P2-08 | L2 order book, O(1) update, crossed-book handling — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ **6✓ 29.4 ns/apply** 7✓ 8✓ · 48 checks | **DONE** |
 | **P2-09a** | OBI, weighted OBI, microprice — **DONE** · 1✓ 2✓ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 43 checks | **DONE** |
 | P2-09b | VPIN + Kyle λ — **DONE** · volume-bucketed, through-the-origin, both report sample size · 45 checks | **DONE** |
