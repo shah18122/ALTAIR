@@ -54,6 +54,12 @@ enabled     = true
 # Credentials come from environment variables, never from this file.
 api_key_env    = "ALTAIR_KITE_API_KEY"
 api_secret_env = "ALTAIR_KITE_API_SECRET"
+# Not secrets: the redirect is public (it appears in the login URL the browser
+# follows) and the postback is an endpoint Zerodha calls. Both are registered
+# on the Kite app and must match it byte for byte or login fails with a
+# checksum error that does not say why.
+redirect_url   = "https://altair.thesmitshah.com/zerodha/callback"
+postback_url   = "https://altair.thesmitshah.com/zerodha/postback"
 ws_mode        = "full"            # ltp | quote | full  (full = 5-level depth)
 max_subscriptions = 3000
 
