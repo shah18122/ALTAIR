@@ -28,6 +28,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_kite_decoder_test PRIVATE altair_feed altair_flags)
     add_test(NAME kite_decoder COMMAND altair_kite_decoder_test)
 
+    add_executable(altair_failover_test tests/test_failover.cpp)
+    target_link_libraries(altair_failover_test PRIVATE altair_feed altair_flags)
+    add_test(NAME failover COMMAND altair_failover_test)
+
     add_executable(altair_normaliser_test tests/test_normaliser.cpp)
     target_link_libraries(altair_normaliser_test PRIVATE altair_feed altair_flags)
     add_test(NAME normaliser COMMAND altair_normaliser_test)
