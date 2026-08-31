@@ -17,4 +17,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_l2_book_test tests/test_l2_book.cpp)
     target_link_libraries(altair_l2_book_test PRIVATE altair_book altair_flags)
     add_test(NAME l2_book COMMAND altair_l2_book_test)
+
+    add_executable(altair_microstructure_test tests/test_microstructure.cpp)
+    target_link_libraries(altair_microstructure_test PRIVATE altair_book altair_flags)
+    add_test(NAME microstructure COMMAND altair_microstructure_test)
 endif()
