@@ -16,6 +16,7 @@
 #pragma once
 
 #include <instruments/contract_spec.hpp>
+#include <instruments/universe.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -43,7 +44,10 @@ enum class ReconcileError : std::uint8_t {
     BadSymbol,     // underlying null, empty, or over-long
     BadSource,     // SpecSource out of range
     OutOfRange,    // verdict_at called past size()
-    NotReconciled  // verdicts requested before reconcile(), or stale after add()
+    NotReconciled, // verdicts requested before reconcile(), or stale after add()
+    /// D11 -- outside the configured universe. NOT a failure: it is the filter
+    /// working, and a caller counts it apart from anything broken.
+    OutOfUniverse
 };
 
 /// One contract's outcome. Carries enough to debug a conflict at 08:20 without
@@ -186,6 +190,20 @@ public:
             return std::unexpected(ReconcileError::BadSymbol);
         }
 
+        // D11: the universe filter runs HERE, at the single point where a
+        // contract enters the system, and BEFORE anything is stored.
+        //
+        // A filter applied by each loader is a filter one loader can forget,
+        // and the one that forgets is the one that fills the store with 40'000
+        // far-out-of-the-money options nobody will trade. Filtering after the
+        // fact would be worse still: the store holds 8'192 and the two real
+        // files carry 136'000 rows between them, so whichever loaded first
+        // would win and WHICH 8'192 survived would depend on CSV row order --
+        // an ordering nobody chose and nobody could reproduce.
+        if (universe_ != nullptr && !universe_->admit(spec, universe_today_)) {
+            return std::unexpected(ReconcileError::OutOfUniverse);
+        }
+
         detail::ContractKey key{};
         key.expiry   = spec.expiry;
         key.strike   = spec.strike;
@@ -248,6 +266,20 @@ public:
         }
         dirty_ = true;
         return {};
+    }
+
+    /// Install the universe filter. UNIT: none.
+    ///
+    /// `today` is STORED rather than read from a clock, so the same universe on
+    /// the same date admits exactly the same set (rule 6, rule 10). Pass
+    /// nullptr to admit everything, which is what the reconciler's own tests do.
+    void set_universe(UniverseFilter* u, Timestamp today) noexcept {
+        universe_ = u;
+        universe_today_ = today;
+    }
+
+    [[nodiscard]] const UniverseFilter* universe() const noexcept {
+        return universe_;
     }
 
     /// Decide every accumulated contract. UNIT: none. Idempotent (req 10).
@@ -502,6 +534,8 @@ private:
     std::uint32_t   key_index_[kKeyIndexCap]{};
     std::uint32_t   count_ = 0;
     bool            dirty_ = false;
+    UniverseFilter* universe_ = nullptr;
+    Timestamp       universe_today_{};
 };
 
 /// Add every verdict to the store, blocking those that must be blocked (D6).

@@ -16,6 +16,7 @@
 #include <instruments/udiff_master.hpp>
 #include <instruments/reconcile.hpp>
 #include <instruments/snapshot.hpp>
+#include <instruments/universe.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -29,12 +30,14 @@ namespace {
 Reconciler g_rec;
 SpecStore g_store;
 
-/// The demo universe. Production reads this from config [universe].
-// October futures. Chosen because BOTH files spell a trading symbol the
-// same way -- UDiFF FinInstrmNm and Kite tradingsymbol are both
-// NIFTY26OCTFUT -- whereas ",NIFTY," matches only the exchange file:
-// Kite QUOTES its name column, so the Kite side is ,"NIFTY",.
-constexpr const char* kDemoUniverse = "26OCTFUT";
+// ── the universe (P1-09) ─────────────────────────────────────────────────
+// Production reads these from config [universe]. The references are real:
+// NIFTY around 24'080 and BANKNIFTY around 54'000, in paise.
+constexpr UniverseEntry kUniverseEntries[] = {
+    {"NIFTY",     Price{2'408'000}},
+    {"BANKNIFTY", Price{5'400'000}},
+};
+UniverseFilter g_universe;
 
 void rule(const char* title)
 {
@@ -142,40 +145,6 @@ char* slurp(const char* path, std::size_t& len)
     len = std::fread(buf, 1, static_cast<std::size_t>(n), f);
     std::fclose(f);
     return buf;
-}
-
-/// Keep the header plus rows whose text contains `needle`, in place.
-///
-/// A stand-in for the real universe filter. It exists because the capacity
-/// debt is not theoretical: the live Kite dump is 106'150 rows and the NSE
-/// bhavcopy 30'488, against a store of 8'192. Production filters to the
-/// configured universe BEFORE adding; this filters by substring so the demo
-/// can show the pipeline on a universe that fits.
-std::size_t filter_rows(char* csv, std::size_t len, const char* needle)
-{
-    const std::size_t nlen = std::strlen(needle);
-    std::size_t out = 0;
-    std::size_t pos = 0;
-    bool header = true;
-    while (pos < len) {
-        std::size_t e = pos;
-        while (e < len && csv[e] != '\n') { ++e; }
-        const std::size_t row = e - pos;
-        bool keep = header;
-        if (!header && row >= nlen) {
-            for (std::size_t i = 0; i + nlen <= row && !keep; ++i) {
-                if (std::memcmp(csv + pos + i, needle, nlen) == 0) { keep = true; }
-            }
-        }
-        if (keep) {
-            std::memmove(csv + out, csv + pos, row);
-            out += row;
-            csv[out++] = '\n';
-        }
-        header = false;
-        pos = e < len ? e + 1 : len;
-    }
-    return out;
 }
 
 /// One synthetic exchange-master row, so the reconciler has a second opinion.
@@ -301,7 +270,6 @@ void stage_reconcile_real(const char* path, Timestamp snap)
         std::printf("  cannot read %s\n", path);
         return;
     }
-    n = filter_rows(owned, n, kDemoUniverse);
     const auto r = load_udiff_master(owned, n, Exchange::NSE, g_rec, snap);
     if (!r) {
         std::printf("  parse failed: error %u\n",
@@ -337,6 +305,22 @@ void stage_reconcile_real(const char* path, Timestamp snap)
                     static_cast<long long>(cv->merged.lot_size.raw()),
                     static_cast<long long>(cv->merged.tick_size.raw()));
         ++shown;
+    }
+    {
+        // This function only runs when a real master was given, which is the
+        // only case where the universe filter is installed.
+        const auto& u = g_universe.stats();
+        std::printf("\n  universe filter: admitted %llu, rejected %llu\n",
+                    static_cast<unsigned long long>(u.admitted),
+                    static_cast<unsigned long long>(u.rejected()));
+        std::printf("    underlying %llu  segment %llu  exchange %llu"
+                    "  expired %llu  horizon %llu  strike %llu\n",
+                    static_cast<unsigned long long>(u.underlying),
+                    static_cast<unsigned long long>(u.segment),
+                    static_cast<unsigned long long>(u.exchange),
+                    static_cast<unsigned long long>(u.expired),
+                    static_cast<unsigned long long>(u.too_far_out),
+                    static_cast<unsigned long long>(u.strike_band));
     }
     if (shown == 0) {
         std::printf("  (no agreed contracts to show)\n");
@@ -469,11 +453,28 @@ int run_instruments(const char* path, const char* master_path)
         // entirely -- which is exactly what happened the first time this ran
         // against 106'150 Kite rows and 30'488 exchange rows.
         if (master_path != nullptr) {
-            n = filter_rows(owned, n, kDemoUniverse);
-        }
+                }
         csv = owned;
         len = n;
         origin = path;
+    }
+
+    // P1-09: install the universe BEFORE anything is parsed. With real files
+    // this is not optional -- 106'150 Kite rows and 30'488 exchange rows
+    // against a store of 8'192 means the first file loaded fills it and the
+    // second is refused entirely.
+    if (master_path != nullptr) {
+        UniverseConfig uc{};
+        uc.entries = kUniverseEntries;
+        uc.entry_count = sizeof(kUniverseEntries) / sizeof(kUniverseEntries[0]);
+        uc.segments = static_cast<std::uint8_t>(seg_bit(Segment::Cash)
+                                                | seg_bit(Segment::Fut)
+                                                | seg_bit(Segment::Opt));
+        uc.exchanges = ex_bit(Exchange::NSE);
+        uc.max_expiry_days = 45;
+        uc.strike_band = 100'000;          // Rs 1000 either side
+        g_universe = UniverseFilter{uc};
+        g_rec.set_universe(&g_universe, today);
     }
 
     stage_snapshot_policy(today);
