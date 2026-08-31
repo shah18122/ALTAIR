@@ -18,4 +18,9 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_spec_store_test
         PRIVATE altair_instruments altair_flags)
     add_test(NAME spec_store COMMAND altair_spec_store_test)
+
+    add_executable(altair_kite_dump_test tests/test_kite_dump.cpp)
+    target_link_libraries(altair_kite_dump_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME kite_dump COMMAND altair_kite_dump_test)
 endif()
