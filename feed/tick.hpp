@@ -40,7 +40,13 @@ enum class TickFlag : std::uint16_t {
     Snapshot    = 1u << 0,   // a full image, not a delta
     Stale       = 1u << 1,   // exchange_ts failed P0-04's plausibility gate
     Synthetic   = 1u << 2,   // produced by replay; a live feed never sets this
-    ClosingAuct = 1u << 3    // inside the closing auction window
+    ClosingAuct = 1u << 3,   // inside the closing auction window
+
+    /// The packet carried NO exchange timestamp, so `exchange_ts` was filled
+    /// from `recv_ts` to keep ordering usable. Added by P2-02 (D5): Kite's LTP
+    /// and quote modes carry no timestamp at all. Anything computing exchange
+    /// latency MUST exclude these — the number would be zero by construction.
+    NoExchangeTs = 1u << 4
 };
 
 [[nodiscard]] constexpr bool has_flag(std::uint16_t flags, TickFlag f) noexcept {
