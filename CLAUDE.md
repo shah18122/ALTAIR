@@ -123,15 +123,63 @@ features/      versioned, horizon-banded feature registry
 models/        LibTorch training, ONNX serving, Monte Carlo, DCF, aggregator
 strategies/    arbitrage, quant momentum, 10-min forecast, sector hedge, vol
 risk/          sizing, limits, portfolio greeks, COST CALCULATOR
-oms/           router, broker adapters, state machine, reconciliation
+oms/           THE TRADE HANDLER — router, broker adapters, state machine,
+               reconciliation. Nothing else places or amends an order.
 flagging/      per-model scorecards, drift detection, auto-correction
 backtest/      tick replayer, walk-forward, purged CV
-ui/            uWebSockets server, Excel-grade grid, WebGL charts
+server/        BACKEND ONLY — uWebSockets, the binary delta-frame protocol,
+               auth, session. Renders nothing and knows no pixels.
+client/        DESKTOP CLIENT ONLY — the grid, WebGL charts, panels. Talks to
+               server/ over the wire protocol and NOTHING else. It never links
+               an engine header and never touches a broker.
+app/           main() — the `altair` binary
+dataset/       TRAINING AND RESEARCH DATA, partitioned by segment then symbol
 research/      papers/inbox/ — PDFs get dropped here
 config/        altair.toml, charges.toml (effective-dated), strategies/*.toml
 prompts/       PROTOCOL.md, LEDGER.md, task cards
 RXT_trade*/    predecessor Python tree — REFERENCE ONLY, not part of the build
+Quants/        SEPARATE PROJECT (QUANTLAB) — not part of Altair, own repo
 ```
+
+### One component, one directory — this is a hard rule
+
+A directory is a **deployment and blast-radius boundary**, not a filing
+convenience. The trade handler, the backend server and the desktop client are
+three separate programs that fail, deploy and get audited separately, so they
+are three separate directories with no header crossing between them.
+
+- **`oms/` is the only thing that can place an order.** If order-placing code
+  appears anywhere else, that is a review failure, not a refactor opportunity.
+- **`server/` and `client/` never share a header.** They share a wire protocol
+  and nothing more. A client that can `#include` an engine header is a client
+  that can be made to trade.
+- A card's manifest **never spans two of these directories.** If a change
+  needs both, it is two cards with an explicit interface between them.
+
+### `dataset/` layout
+
+Training data is **directory-partitioned**, `dataset/<segment>/<symbol>/`:
+
+```
+dataset/
+  spot/          # cash / underlying
+    nifty/       # e.g. dataset/spot/nifty/
+    banknifty/
+    reliance/
+  fut/
+    nifty/
+  opt/
+    nifty/
+```
+
+The partition is the point: a model trained on NIFTY spot reads exactly one
+directory, so its training set is defined by a path rather than by a filter
+someone has to get right. It also makes walk-forward folds and per-symbol
+retraining trivially separable, and makes it impossible to leak another
+symbol's data into a fold by accident.
+
+Segment names on disk are `spot` (`Segment::Cash`), `fut`, `opt`, `cur`, `com`.
+Symbols are lower-case. `dataset/` is gitignored — it is large and regenerable.
 
 ## Build
 

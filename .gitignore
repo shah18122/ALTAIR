@@ -39,6 +39,7 @@ config/*.local.toml
 **/*api_key*
 
 # ── DATA — large, regenerable, or licensed ───────────────────────────────
+dataset/
 data/ticks/
 data/instruments/
 data/fundamentals/

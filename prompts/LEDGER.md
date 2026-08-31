@@ -574,6 +574,11 @@ back with no human action.
 
 ## Phase 11 — UI (14)
 
+> **Split by the one-component-one-directory rule.** P11-01 is `server/` —
+> backend only, renders nothing. P11-02..P11-14 are `client/` — desktop only,
+> talks to the server over the wire protocol and links no engine header. No
+> card in this phase may span both.
+
 | Card | Deliverable | Status |
 |---|---|---|
 | P11-01 | uWebSockets server + binary delta frame protocol | TODO |
