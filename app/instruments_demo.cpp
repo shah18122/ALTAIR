@@ -13,6 +13,7 @@
 #include "instruments_demo.hpp"
 
 #include <instruments/kite_dump.hpp>
+#include <instruments/udiff_master.hpp>
 #include <instruments/reconcile.hpp>
 #include <instruments/snapshot.hpp>
 
@@ -27,6 +28,13 @@ namespace {
 // Reconciler is 5.25 MB and SpecStore 1.63 MB; neither goes on the stack.
 Reconciler g_rec;
 SpecStore g_store;
+
+/// The demo universe. Production reads this from config [universe].
+// October futures. Chosen because BOTH files spell a trading symbol the
+// same way -- UDiFF FinInstrmNm and Kite tradingsymbol are both
+// NIFTY26OCTFUT -- whereas ",NIFTY," matches only the exchange file:
+// Kite QUOTES its name column, so the Kite side is ,"NIFTY",.
+constexpr const char* kDemoUniverse = "26OCTFUT";
 
 void rule(const char* title)
 {
@@ -134,6 +142,40 @@ char* slurp(const char* path, std::size_t& len)
     len = std::fread(buf, 1, static_cast<std::size_t>(n), f);
     std::fclose(f);
     return buf;
+}
+
+/// Keep the header plus rows whose text contains `needle`, in place.
+///
+/// A stand-in for the real universe filter. It exists because the capacity
+/// debt is not theoretical: the live Kite dump is 106'150 rows and the NSE
+/// bhavcopy 30'488, against a store of 8'192. Production filters to the
+/// configured universe BEFORE adding; this filters by substring so the demo
+/// can show the pipeline on a universe that fits.
+std::size_t filter_rows(char* csv, std::size_t len, const char* needle)
+{
+    const std::size_t nlen = std::strlen(needle);
+    std::size_t out = 0;
+    std::size_t pos = 0;
+    bool header = true;
+    while (pos < len) {
+        std::size_t e = pos;
+        while (e < len && csv[e] != '\n') { ++e; }
+        const std::size_t row = e - pos;
+        bool keep = header;
+        if (!header && row >= nlen) {
+            for (std::size_t i = 0; i + nlen <= row && !keep; ++i) {
+                if (std::memcmp(csv + pos + i, needle, nlen) == 0) { keep = true; }
+            }
+        }
+        if (keep) {
+            std::memmove(csv + out, csv + pos, row);
+            out += row;
+            csv[out++] = '\n';
+        }
+        header = false;
+        pos = e < len ? e + 1 : len;
+    }
+    return out;
 }
 
 /// One synthetic exchange-master row, so the reconciler has a second opinion.
@@ -248,6 +290,59 @@ bool stage_parse(const char* csv, std::size_t len, Timestamp snap, const char* o
 }
 
 // ── stage 3 ──────────────────────────────────────────────────────────────
+/// The real path: load an actual UDiFF bhavcopy as the primary source.
+void stage_reconcile_real(const char* path, Timestamp snap)
+{
+    rule("[3/4]  P1-06  three-way reconciliation (REAL exchange master)");
+
+    std::size_t n = 0;
+    char* owned = slurp(path, n);
+    if (owned == nullptr) {
+        std::printf("  cannot read %s\n", path);
+        return;
+    }
+    n = filter_rows(owned, n, kDemoUniverse);
+    const auto r = load_udiff_master(owned, n, Exchange::NSE, g_rec, snap);
+    if (!r) {
+        std::printf("  parse failed: error %u\n",
+                    static_cast<unsigned>(r.error()));
+        std::free(owned);
+        return;
+    }
+    std::printf("  exchange master: %s\n", path);
+    std::printf("    added %zu   unparseable %zu   refused %zu\n",
+                r->added, r->unparseable, r->rejected_by_sink);
+    std::free(owned);
+
+    const ReconcileReport rep = g_rec.reconcile();
+    std::printf("\n  contracts %zu   agreed %zu   single %zu   BLOCKED %zu\n",
+                rep.contracts, rep.agreed, rep.single_source, rep.blocked);
+    std::printf("  primary source seen: %s\n",
+                rep.primary_source_seen ? "yes" : "no");
+    if (rep.blocked > 0) {
+        std::printf("    missing primary %zu   no broker %zu   conflicts %zu\n",
+                    rep.missing_primary, rep.no_broker, rep.conflicts);
+    }
+
+    std::printf("\n  %-26s %-16s %-9s %s\n",
+                "contract", "verdict", "lot", "tick");
+    std::size_t shown = 0;
+    for (std::size_t i = 0; i < g_rec.size() && shown < 8; ++i) {
+        const auto v = g_rec.verdict_at(i);
+        if (!v) { continue; }
+        const ContractVerdict* cv = *v;
+        if (cv->verdict != Verdict::Agreed) { continue; }
+        std::printf("  %-26s %-16s %-9lld %lld\n", cv->merged.symbol,
+                    verdict_name(cv->verdict),
+                    static_cast<long long>(cv->merged.lot_size.raw()),
+                    static_cast<long long>(cv->merged.tick_size.raw()));
+        ++shown;
+    }
+    if (shown == 0) {
+        std::printf("  (no agreed contracts to show)\n");
+    }
+}
+
 void stage_reconcile(Timestamp snap)
 {
     rule("[3/4]  P1-06  three-way reconciliation");
@@ -351,7 +446,7 @@ void stage_store()
 
 } // namespace
 
-int run_instruments(const char* path)
+int run_instruments(const char* path, const char* master_path)
 {
     const Timestamp today = ist_date(2026, 8, 31);       // a Monday
     std::printf("\naltair -- Phase 1: the instrument master\n");
@@ -369,6 +464,13 @@ int run_instruments(const char* path)
             std::fprintf(stderr, "altair: cannot read '%s'\n", path);
             return 2;
         }
+        // Both real files must be filtered to the SAME universe, or the store
+        // fills from whichever is loaded first and the second is refused
+        // entirely -- which is exactly what happened the first time this ran
+        // against 106'150 Kite rows and 30'488 exchange rows.
+        if (master_path != nullptr) {
+            n = filter_rows(owned, n, kDemoUniverse);
+        }
         csv = owned;
         len = n;
         origin = path;
@@ -377,16 +479,20 @@ int run_instruments(const char* path)
     stage_snapshot_policy(today);
     const bool ok = stage_parse(csv, len, today, origin);
     if (ok) {
-        stage_reconcile(today);
+        if (master_path != nullptr) {
+            stage_reconcile_real(master_path, today);
+        } else {
+            stage_reconcile(today);
+        }
         stage_store();
     }
 
     std::free(owned);
 
-    std::printf("\nThat is every Phase 1 card that exists, end to end.\n"
-                "The NSE and BSE master parsers are written as cards but not\n"
-                "implemented: they need one sample file each. See\n"
-                "prompts/LEDGER.md, blocker 9.\n\n");
+    std::printf("\nThat is every Phase 1 card, end to end.\n"
+                "Give it a real Kite dump AND a real UDiFF bhavcopy and it\n"
+                "reconciles them: two file formats, one contract, one lot size.\n"
+                "  altair --instruments <kite.csv> <BhavCopy_NSE_FO_*.csv>\n\n");
     return ok ? 0 : 1;
 }
 

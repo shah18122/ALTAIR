@@ -13,6 +13,8 @@ namespace altair::demo {
 ///
 /// `path` may be nullptr, in which case a small built-in dump is used so the
 /// demo runs with no files present. Returns a process exit code.
-[[nodiscard]] int run_instruments(const char* path);
+/// `master_path` may be nullptr, in which case a synthetic exchange master
+/// is used. Give it a real UDiFF bhavcopy to reconcile against the real one.
+[[nodiscard]] int run_instruments(const char* path, const char* master_path);
 
 } // namespace altair::demo

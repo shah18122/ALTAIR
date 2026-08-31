@@ -34,10 +34,15 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE altair_instruments altair_flags)
     add_test(NAME snapshot COMMAND altair_snapshot_test)
 
-    add_executable(altair_nse_masters_test tests/test_nse_masters.cpp)
-    target_link_libraries(altair_nse_masters_test
+    add_executable(altair_nse_mktlots_test tests/test_nse_mktlots.cpp)
+    target_link_libraries(altair_nse_mktlots_test
         PRIVATE altair_instruments altair_flags)
-    add_test(NAME nse_masters COMMAND altair_nse_masters_test)
+    add_test(NAME nse_mktlots COMMAND altair_nse_mktlots_test)
+
+    add_executable(altair_nse_equity_test tests/test_nse_equity_master.cpp)
+    target_link_libraries(altair_nse_equity_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME nse_equity COMMAND altair_nse_equity_test)
 
     add_executable(altair_udiff_master_test tests/test_udiff_master.cpp)
     target_link_libraries(altair_udiff_master_test

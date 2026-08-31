@@ -499,7 +499,8 @@ int main(int argc, char** argv)
         return run_selftest();
     }
     if (std::strcmp(cmd, "--instruments") == 0) {
-        return demo::run_instruments(argc >= 3 ? argv[2] : nullptr);
+        return demo::run_instruments(argc >= 3 ? argv[2] : nullptr,
+                                     argc >= 4 ? argv[3] : nullptr);
     }
     if (std::strcmp(cmd, "--replay") == 0) {
         if (argc < 3) {

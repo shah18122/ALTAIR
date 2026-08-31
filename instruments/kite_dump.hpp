@@ -430,9 +430,24 @@ parse_kite_row(const char* row, std::size_t len,
 
     std::memcpy(s.symbol, sym.p, sym.n);
     s.symbol[sym.n] = '\0';
-    const detail::KiteField& nm = f[cols.name];
-    const std::size_t un = nm.n < kMaxUnderlyingLen ? nm.n : kMaxUnderlyingLen;
-    std::memcpy(s.underlying, nm.p, un);
+
+    // THE UNDERLYING OF A CASH INSTRUMENT IS ITSELF, and it is the TRADING
+    // SYMBOL rather than the `name` column.
+    //
+    // For derivatives the two agree: a NIFTY future has name "NIFTY", which is
+    // exactly what fo_mktlots' SYMBOL and UDiFF's TckrSymb carry. For cash they
+    // do not. Kite's RELIANCE row has tradingsymbol RELIANCE and name
+    // "RELIANCE INDUSTRIES", while EQUITY_L has SYMBOL RELIANCE and NAME OF
+    // COMPANY "Reliance Industries Limited". Only the trading symbol agrees, so
+    // keying cash on `name` would join nothing.
+    //
+    // It also collided 6'531 real BSE cash rows whose `name` is EMPTY onto a
+    // single key, plus 373 more where two ETFs from the same fund house share a
+    // company name. Found by loading the real 106'150-row dump.
+    const detail::KiteField& src =
+        (seg == Segment::Cash) ? sym : f[cols.name];
+    const std::size_t un = src.n < kMaxUnderlyingLen ? src.n : kMaxUnderlyingLen;
+    std::memcpy(s.underlying, src.p, un);
     s.underlying[un] = '\0';
     return s;
 }
