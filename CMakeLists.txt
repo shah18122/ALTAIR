@@ -102,6 +102,7 @@ endif()
 add_subdirectory(core)              # Phase 0
 
 add_subdirectory(instruments)       # Phase 1 — ContractSpec + spec store
+add_subdirectory(broker)            # Phase 2 - the ONLY dir touching a credential
 add_subdirectory(feed)              # Phase 0 replay skeleton; decoders in Phase 2
 add_subdirectory(book)              # Phase 2 — L2 book skeleton (P2-08)
 # add_subdirectory(analytics)       # Phase 3
