@@ -415,7 +415,7 @@ synthetic session; a captured one is still needed (blocker #6).
 | P1-06 | Three-way reconciler + disagreement flags + symbol blocking — **DONE** · 1✓ᵐ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 77 checks | **DONE** |
 | P1-07 | Margin fetch (SPAN + ELM) + change detection → retrain trigger | BLOCKED — creds |
 | **P1-08a** | Snapshot age + expiry-crossing + download-failure policy — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 50 checks | **DONE** |
-| P1-08b | Master downloader (atomic replace, parse-verify) — card written | BLOCKED — vcpkg |
+| P1-08b | Master downloader (atomic replace, parse-verify) — card written | READY — needs the vcpkg `net` feature built (boost-beast + openssl), no longer blocked on vcpkg itself |
 
 **Exit:** a full session's universe auto-loads pre-open with zero hardcoded lot
 sizes; a deliberately corrupted source is caught and blocks only its symbol.
@@ -439,7 +439,7 @@ sizes; a deliberately corrupted source is caught and blocks only its symbol.
 | P2-09c | Queue position — needs live order state; really Phase 4 | TODO — deferred to P4 |
 | **P2-10a** | `broker/sha256.hpp` — FIPS 180-4, NIST-verified, cross-checked against `hashlib` — **DONE** · 24 checks | **DONE** |
 | **P2-10b** | `broker/kite_session.hpp` — login URL + session checksum — **DONE** | **DONE** |
-| P2-10c | `/session/token` POST + `data/kite_session.json` persistence | BLOCKED — vcpkg. Stopgap: `broker/tools/kite_login.py` (stdlib only) |
+| P2-10c | `/session/token` POST + `data/kite_session.json` persistence | READY — needs the vcpkg `net` feature built. Stopgap in use: `broker/tools/kite_login.py` (stdlib only) |
 | **P2-11** | `broker/kite_api.hpp` — the whole Kite surface transcribed from gokiteconnect **v4.4.2**, plus the paise↔rupees converter — **DONE** · 31 checks | **DONE** |
 
 **Exit:** 6 h of live NIFTY + BANKNIFTY captured, replayed bit-identically, zero
@@ -677,6 +677,29 @@ Two cmd.exe traps cost a cycle each and are worth remembering: a batch file
 with UTF-8 box-drawing in comments is unparseable, and the VS path contains
 `(x86)`, so echoing it inside a parenthesised `if` block closes the block early
 and produces the baffling `\Microsoft was unexpected at this time`.
+
+---
+
+## Toolchain
+
+vcpkg installed natively on Windows 2026-08-31 at `C:/PycharmProjects/vcpkg`,
+`builtin-baseline` pinned to `30ef65ca`. `build.bat` sets `VCPKG_ROOT` itself.
+
+**WSL is NOT enabled** and vcpkg never needed it. `wsl.exe` exists (it always
+does) but the optional Windows component is missing; enabling it takes
+`wsl.exe --install --no-distribution` **as Administrator** plus a reboot. That
+matters only for the Linux half of gate 1, which remains unevidenced.
+
+Two presets, both green and both warning-free:
+
+| Preset | Deps | Tests |
+|---|---|---|
+| `default` | none | 30 — the tree still builds with no vcpkg at all |
+| `vcpkg` | `config` (tomlplusplus) | 31 — adds the P0-08b TOML loader |
+
+The `testing` feature (Catch2 + Google Benchmark) is deliberately **off**: the
+28 test binaries use a plain `int main()`, and migrating them is a card nobody
+has written. Turn it on when one does, not before.
 
 ---
 
