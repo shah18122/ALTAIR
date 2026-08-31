@@ -11,6 +11,7 @@ target_link_libraries(altair_feed INTERFACE
     altair_types
     altair_time
     altair_invariant
+    altair_instruments   # P2-01: a normalised Tick carries an InstrumentId
     altair_flags
 )
 
@@ -18,4 +19,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_replay_test tests/test_replay.cpp)
     target_link_libraries(altair_replay_test PRIVATE altair_feed altair_flags)
     add_test(NAME replay COMMAND altair_replay_test)
+
+    add_executable(altair_tick_test tests/test_tick.cpp)
+    target_link_libraries(altair_tick_test PRIVATE altair_feed altair_flags)
+    add_test(NAME tick COMMAND altair_tick_test)
 endif()

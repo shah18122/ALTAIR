@@ -33,4 +33,9 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_snapshot_test
         PRIVATE altair_instruments altair_flags)
     add_test(NAME snapshot COMMAND altair_snapshot_test)
+
+    add_executable(altair_nse_masters_test tests/test_nse_masters.cpp)
+    target_link_libraries(altair_nse_masters_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME nse_masters COMMAND altair_nse_masters_test)
 endif()
