@@ -1,23 +1,27 @@
 // book/l2_book.hpp — the L2 order book.
 //
-// P2-08. ***SKELETON. `apply` IS NOT IMPLEMENTED.***
+// P2-08. Kite's full mode and XTS 1502 both deliver a five-level SNAPSHOT, not
+// deltas, so applying an update is a replace and O(1) is trivial at this depth.
+// A price-keyed map would be slower, would allocate, and would model a problem
+// Altair does not have. If a tick-by-tick order-level feed ever arrives, that
+// is a different card, not an extension of this one.
 //
-// The structure is decided; the update path is not written. `apply` returns
-// `NotImplemented` so a caller that wires this up finds out immediately rather
-// than trading against an empty book that reports a bid of zero.
+// Two decisions carry the weight, and the first REVERSES what the skeleton of
+// this file originally said:
 //
-// Two things about the shape are already settled and should not drift:
+//   * A crossed book is STORED AND MARKED, never rejected. During NSE's
+//     pre-open call auction, orders are collected WITHOUT MATCHING, so the book
+//     legitimately crosses while the equilibrium price is found. Rejecting
+//     would leave the previous continuous-session book in place and present it
+//     as current -- stale data masquerading as live, which is strictly worse
+//     than crossed data correctly labelled. Flag, do not drop: the same rule
+//     P2-04 follows, where only a rule-7 look-ahead violation drops.
 //
-//   * Kite's full mode delivers a five-level SNAPSHOT, not deltas, so applying
-//     an update is a replace rather than an incremental edit. XTS 1502 is also
-//     a snapshot. That makes O(1) update trivial for this depth and is why
-//     kDepthLevels is fixed — a price-keyed map would be slower and would
-//     allocate.
-//   * A crossed or locked book is REJECTED, not stored. Rule 9: a book where
-//     the bid is at or above the ask is a decoder bug or a genuinely broken
-//     feed, and either way it is not a trading opportunity. The predecessor's
-//     class of "free money" signal comes from exactly this state being taken
-//     at face value.
+//   * A book that has never been updated is NotFound, not empty. A default
+//     BookState reads as "no liquidity" when the truth is "no data", and those
+//     are different claims -- the first one is a lie a strategy would act on.
+//
+// Decisions D1..D6 are fixed in prompts/P2-08_l2_book.md.
 
 #pragma once
 
@@ -30,59 +34,201 @@
 namespace altair {
 
 enum class BookError : std::uint8_t {
-    NotFound,        // no book for that instrument
-    Full,            // more instruments than kMaxBookInstruments
-    Crossed,         // bid >= ask; refused, not stored
-    StaleSequence,   // an update older than the one already applied
-    NotImplemented   // P2-08 is a skeleton; `apply` does not work yet
+    NotFound,        // never updated — NOT the same as empty (D1)
+    BadInstrument,   // id outside the addressable range
+    StaleSequence    // seq not greater than the stored one (D3)
 };
 
-/// One instrument's book. Fixed depth, no allocation, trivially copyable so it
-/// can ride a seqlock out to the analytics thread.
+/// One instrument's book. Trivially copyable so it can ride a seqlock out to
+/// the analytics thread without a lock.
 struct BookState {
     InstrumentId  id;
-    std::uint32_t seq;            // the seq of the update that produced this
+    std::uint32_t seq;
     Timestamp     exchange_ts;
+    Timestamp     recv_ts;
     DepthLevel    bid[kDepthLevels];
     DepthLevel    ask[kDepthLevels];
     std::uint8_t  bid_levels;
     std::uint8_t  ask_levels;
-    std::uint8_t  reserved[6];
+
+    /// D2: bid >= ask with both sides present. Stored, marked, not tradable.
+    /// Legitimate during the pre-open auction; a fault at any other time.
+    bool          crossed;
+    std::uint8_t  reserved;
+
+    /// D4: rejections since the last ACCEPTED update. Resets on success, so a
+    /// non-zero value means "right now", not "ever". Per instrument, because a
+    /// single symbol with a broken feed is the realistic failure and a global
+    /// counter would show a slow climb and name nothing.
+    std::uint16_t consecutive_rejects;
+    std::uint16_t flags;
 };
 
 static_assert(std::is_trivially_copyable_v<BookState>);
 
-inline constexpr std::size_t kMaxBookInstruments = 4096;
+/// The single question a strategy should ask before acting on a book.
+///
+/// Both sides must have liquidity AND the book must not be crossed. An
+/// empty-sided book is not tradable even though it is not crossed — there is
+/// simply nothing there to trade against.
+[[nodiscard]] constexpr bool is_tradable(const BookState& b) noexcept {
+    return b.bid_levels > 0 && b.ask_levels > 0 && !b.crossed;
+}
 
+/// UNIT: paise. Empty unless both sides have a level. Mirrors the DepthUpdate
+/// accessors in feed/tick.hpp so a consumer reads a book the same way whether
+/// it holds an update or stored state.
+[[nodiscard]] constexpr const DepthLevel* best_bid(const BookState& b) noexcept {
+    return b.bid_levels > 0 ? &b.bid[0] : nullptr;
+}
+
+[[nodiscard]] constexpr const DepthLevel* best_ask(const BookState& b) noexcept {
+    return b.ask_levels > 0 ? &b.ask[0] : nullptr;
+}
+
+[[nodiscard]] constexpr std::optional<Price> mid(const BookState& b) noexcept {
+    const DepthLevel* lo = best_bid(b);
+    const DepthLevel* hi = best_ask(b);
+    if (lo == nullptr || hi == nullptr) {
+        return std::nullopt;
+    }
+    // bid + (ask - bid) / 2, never (bid + ask) / 2 — see feed/tick.hpp.
+    return Price{lo->px.raw() + (hi->px.raw() - lo->px.raw()) / 2};
+}
+
+[[nodiscard]] constexpr std::optional<Price> spread(const BookState& b) noexcept {
+    const DepthLevel* lo = best_bid(b);
+    const DepthLevel* hi = best_ask(b);
+    if (lo == nullptr || hi == nullptr) {
+        return std::nullopt;
+    }
+    return Price{hi->px.raw() - lo->px.raw()};
+}
+
+/// Addressable instruments. `InstrumentId` is dense from 0 (P1-01 assigns it
+/// that way), so it indexes the array directly — no hash, no probe.
+inline constexpr std::size_t kMaxBookInstruments = kMaxInstruments;
+
+// ─────────────────────────────────────────────────────────────────────────
+// L2Book
+//
+// 2.13 MB measured (BookState is 272 bytes x 8192, plus the seen bitmap).
+// Not a stack object; hold it as a member, like SpecStore.
+// ─────────────────────────────────────────────────────────────────────────
 class L2Book {
 public:
-    L2Book() noexcept = default;
+    struct Stats {
+        std::uint64_t applied = 0;
+        std::uint64_t crossed = 0;          // stored, but marked
+        std::uint64_t stale_sequence = 0;   // rejected
+        std::uint64_t bad_instrument = 0;   // rejected
+        std::uint64_t instruments = 0;      // distinct ids seen
+    };
+
+    L2Book() noexcept { clear(); }
     L2Book(const L2Book&) = delete;
     L2Book& operator=(const L2Book&) = delete;
 
-    /// Apply one depth update. UNIT: none.
+    /// Apply one depth snapshot. UNIT: none. ALTAIR_HOT.
     ///
-    /// NOT IMPLEMENTED. When it is: reject a crossed or locked book with
-    /// `Crossed` and leave the previous state intact, reject an out-of-order
-    /// `seq` with `StaleSequence`, and otherwise replace the five levels.
-    [[nodiscard]] std::expected<void, BookError>
+    /// Replaces rather than merges: five slots always, with the ones past
+    /// `*_levels` zeroed, so old levels cannot show through beneath a shorter
+    /// new book and invent liquidity that is not there.
+    [[nodiscard]] ALTAIR_HOT std::expected<void, BookError>
     apply(const DepthUpdate& d) noexcept {
-        (void)d;
-        return std::unexpected(BookError::NotImplemented);
+        const std::uint32_t i = static_cast<std::uint32_t>(d.id);
+        if (i >= kMaxBookInstruments) {
+            ++stats_.bad_instrument;
+            return std::unexpected(BookError::BadInstrument);
+        }
+
+        BookState& b = books_[i];
+
+        // D3: an out-of-order update carries no information — it is a strictly
+        // worse view of a moment already superseded, and applying it would move
+        // the book backwards. `seq` comes from P2-04 and is monotonic across a
+        // failover by construction, so this test holds through a primary
+        // switch.
+        if (seen_[i] && d.seq <= b.seq) {
+            ++stats_.stale_sequence;
+            if (b.consecutive_rejects < 0xFFFFu) {
+                ++b.consecutive_rejects;
+            }
+            return std::unexpected(BookError::StaleSequence);
+        }
+
+        b.id = d.id;
+        b.seq = d.seq;
+        b.exchange_ts = d.exchange_ts;
+        b.recv_ts = d.recv_ts;
+        b.flags = d.flags;
+        b.bid_levels = d.bid_levels;
+        b.ask_levels = d.ask_levels;
+        b.consecutive_rejects = 0;              // D4: resets on acceptance
+
+        for (std::size_t k = 0; k < kDepthLevels; ++k) {
+            b.bid[k] = (k < d.bid_levels) ? d.bid[k] : DepthLevel{};
+            b.ask[k] = (k < d.ask_levels) ? d.ask[k] : DepthLevel{};
+        }
+
+        // D2: stored and marked, not rejected. Locked counts — a zero spread
+        // is not a free trade, it is a book that cannot be traded.
+        b.crossed = (d.bid_levels > 0 && d.ask_levels > 0
+                     && d.bid[0].px.raw() >= d.ask[0].px.raw());
+        if (b.crossed) {
+            ++stats_.crossed;
+        }
+
+        if (!seen_[i]) {
+            seen_[i] = true;
+            ++stats_.instruments;
+        }
+        ++stats_.applied;
+        return {};
     }
 
-    /// The current book for an instrument. UNIT: none.
-    [[nodiscard]] std::expected<const BookState*, BookError>
+    /// The current book. UNIT: none.
+    ///
+    /// `NotFound` when this instrument has never been updated — which is NOT
+    /// the same as an empty book, and a caller must be able to tell. An
+    /// instrument updated with zero levels on both sides returns a state: that
+    /// is a real observation of an empty book, and distinct from no
+    /// observation at all.
+    [[nodiscard]] ALTAIR_HOT std::expected<const BookState*, BookError>
     at(InstrumentId id) const noexcept {
-        (void)id;
-        return std::unexpected(BookError::NotImplemented);
+        const std::uint32_t i = static_cast<std::uint32_t>(id);
+        if (i >= kMaxBookInstruments) {
+            return std::unexpected(BookError::BadInstrument);
+        }
+        if (!seen_[i]) {
+            return std::unexpected(BookError::NotFound);
+        }
+        return &books_[i];
     }
 
-    [[nodiscard]] std::size_t size() const noexcept { return count_; }
-    void clear() noexcept { count_ = 0; }
+    [[nodiscard]] bool has(InstrumentId id) const noexcept {
+        const std::uint32_t i = static_cast<std::uint32_t>(id);
+        return i < kMaxBookInstruments && seen_[i];
+    }
+
+    [[nodiscard]] std::size_t size() const noexcept {
+        return static_cast<std::size_t>(stats_.instruments);
+    }
+
+    [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
+
+    void clear() noexcept {
+        stats_ = Stats{};
+        for (std::size_t i = 0; i < kMaxBookInstruments; ++i) {
+            seen_[i] = false;
+            books_[i] = BookState{};
+        }
+    }
 
 private:
-    std::size_t count_ = 0;
+    BookState books_[kMaxBookInstruments]{};
+    bool      seen_[kMaxBookInstruments]{};
+    Stats     stats_{};
 };
 
 } // namespace altair
