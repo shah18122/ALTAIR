@@ -23,4 +23,9 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_kite_dump_test
         PRIVATE altair_instruments altair_flags)
     add_test(NAME kite_dump COMMAND altair_kite_dump_test)
+
+    add_executable(altair_reconcile_test tests/test_reconcile.cpp)
+    target_link_libraries(altair_reconcile_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME reconcile COMMAND altair_reconcile_test)
 endif()

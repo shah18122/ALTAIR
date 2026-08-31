@@ -22,7 +22,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 | P0-04 | `to_utc` rejects `raw == INT64_MIN` for `TimeUnit::Nanos`, where it would in fact be representable. Deliberately conservative: the bound is written as `raw < -limit` so `-INT64_MIN` is never formed. Costs one representable value at year 1677. | — (accepted) |
 | **P0-01 / CLAUDE.md rule 3** | **Integer paise is NOT sufficient for currency derivatives.** Confirmed against Zerodha's own client (`gokiteconnect/ticker/ticker.go`, `convertPrice`): the wire price divisor is **segment-dependent** — `NseCD` divides by 10'000'000 and `BseCD` by 10'000, while everything else divides by 100. So an NSE-CD wire integer is in units of 10⁻⁷ rupees, **five decimal places finer than a paisa**, and storing it in `Price` (integer paise) truncates silently. Does **not** bite today: the configured universe is indices, index F&O and stock futures — no CDS. It becomes live the moment a USDINR contract is added. `ContractSpec` must carry a `price_scale` (wire units per rupee) and P2-02 must normalise, or the universe must **block** currency derivatives outright (rule 9). Decide in P1-01; enforce in P2-02. | **P1-01 + P2-02** |
 | **P0-09b → P2-01** | **A broker token is not an instrument key.** `ReplayTick.token` is a bare `uint32` documented as "a token". Kite's `instrument_token` and XTS's `ExchangeInstrumentID` are **different number spaces for the same contract**, so that field means different things depending on which feed produced the tick. P2-05 switches the primary feed mid-session: with a broker token in the tick, every instrument would appear to vanish and a stranger appear in its place, and the book, ledger and strategies would all follow it. The normalised `Tick` must carry the canonical `InstrumentId` from the spec store (ROADMAP §6.2); decoders map (source, broker_token) → InstrumentId and nothing downstream ever sees a broker token. The Phase 0 skeleton is safe only because it is single-source by construction. **Warning is in the header at the field.** | **P2-01 + P2-04** |
-| **P1-01** | **`ContractSpec` has no home for broker tokens.** ROADMAP §6.2 gives it an `InstrumentId` but no `kite_token` / `xts_instrument_id`. P1-04 and P1-05 are named "token map" cards so the intent exists, but P1-01 must decide *where* the mapping lives — fields on the spec, or a separate table — and it must be **bidirectional**: decode needs token→id, subscription needs id→token. | **P1-01** |
+| ~~**P1-01**~~ **PARTLY RESOLVED 2026-08-31** | ~~**`ContractSpec` has no home for broker tokens.**~~ P1-01 gave it `token[kFeedSourceCount]` indexed by `FeedSource`, and **P1-06 is where the map is actually assembled**: the merged spec takes `token[Kite]` from the Kite source and `token[Xts]` from the XTS source, so the mapping is bidirectional through the store (`id_of(src, token)` and `token_of(id, src)`) and nothing compares a token across sources. What remains is only that the XTS half is untestable against real data until P1-05 has a sample file. Original text: **`ContractSpec` has no home for broker tokens.** ROADMAP §6.2 gives it an `InstrumentId` but no `kite_token` / `xts_instrument_id`. P1-04 and P1-05 are named "token map" cards so the intent exists, but P1-01 must decide *where* the mapping lives — fields on the spec, or a separate table — and it must be **bidirectional**: decode needs token→id, subscription needs id→token. | **P1-01** |
 | **P1-04 → P2-04** | **`load_kite_dump` will overflow the store on a real dump.** `SpecStore::kMaxInstruments` is 8'192; the live Kite `instruments.csv` is ~100'000 rows. The throughput test makes this concrete: 10'000 rows in, **8'192 added, 1'808 rejected**. The loader behaves correctly — it reports `rejected_by_store` rather than failing — but a caller that hands it the raw dump gets a **silently truncated universe**, and which 8'192 survive depends on CSV row order. Nothing may hand it an unfiltered dump. The universe filter (config `[universe]`) must run **before** `add`, or `kMaxInstruments` must be raised to cover the whole dump (~100k × 176 B = ~18 MB, plus a 2x token index — affordable, but it makes the store a different object). Decide in P2-04. | **P2-04** |
 | **P1-02 / P1-03 / P1-05** | **Symbol mapping depends on files downloaded from the exchange, not on a broker API.** ROADMAP §6.1 already makes the NSE and BSE contract masters *primary* for lot size, tick size and expiry, with Kite/XTS as cross-check — so XTS symbol mapping cannot be satisfied by the XTS API alone. That makes these scraping cards, the most fragile kind: NSE's endpoints want specific headers and cookies, payloads are gzipped, and URLs move without notice. `config/altair.toml` sets `snapshot_dir` and `keep_snapshots_days = 3650`, which is the right shape — but there is **no `on_download_failure` policy**. There is one for *disagreement* (`block_symbol`) and none for *unavailability*. Pre-open is 08:15 and the market opens 09:15: decide now whether a failed fetch falls back to the last good snapshot with a loud flag, or halts the session. Rule 9 says it must not silently start with no specs. | **P1-01 (policy) + P1-02** |
 | ~~suite-wide~~ | ~~One unreproduced suite failure.~~ **RESOLVED 2026-08-29.** It was the P0-06b seqlock test asserting `successes == 2 * kTargetPerReader`. The reader loop continues while *either* its success target or its value-change target is unmet, so a reader holding 100'000 successes but still short on changes keeps sampling and **overshoots** — roughly 1 run in 36, which is why 96 earlier runs missed it. The loop was correct; the assertion should have been `>=`. Found by running the full tree under deliberate CPU load with every FAIL line captured, which is now the standing technique. **72 loaded suite runs since, zero failures.** | — (closed) |
@@ -403,7 +403,7 @@ synthetic session; a captured one is still needed (blocker #6).
 | P1-03 | BSE contract master downloader/parser | TODO |
 | P1-04 | Kite instruments dump parser + token map — **DONE** · 1✓ᵐ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 94 checks | **DONE** |
 | P1-05 | XTS instruments master parser + token map | TODO |
-| P1-06 | Three-way reconciler + disagreement flags + symbol blocking | TODO |
+| P1-06 | Three-way reconciler + disagreement flags + symbol blocking — **DONE** · 1✓ᵐ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 77 checks | **DONE** |
 | P1-07 | Margin fetch (SPAN + ELM) + change detection → retrain trigger | TODO |
 
 **Exit:** a full session's universe auto-loads pre-open with zero hardcoded lot
@@ -643,6 +643,22 @@ read, which `to_utc(std::int64_t, ...)` already forces.
 
 **2. The price scale is segment-dependent — see carried debt above.** This is
 the more serious of the two and contradicts CLAUDE.md rule 3 as written.
+
+---
+
+## Standing test techniques
+
+1. **Run the full tree under deliberate CPU load and capture every `FAIL`
+   line.** Four spinners, several passes. This is what finally caught the
+   P0-06b overshoot after 96 clean unloaded runs.
+2. **No check description may contain the substring `FAIL`.** P1-06 briefly had
+   one reading "a verdict read before reconcile() FAILS", which showed up as a
+   phantom failure in technique 1 — and then did it again from a stale binary,
+   proving the point twice in one session. Reworded to "is REFUSED".
+3. **Rebuild before sweeping.** A stale `.exe` reports the previous revision's
+   behaviour with total confidence.
+4. **Put the evidence requirement in the loop's termination condition**, never
+   in an assertion after it, or a loop that ran zero times passes vacuously.
 
 ---
 
