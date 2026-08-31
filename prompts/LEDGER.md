@@ -430,12 +430,12 @@ sizes; a deliberately corrupted source is caught and blocks only its symbol.
 | P2-02 | Kite binary decoder — **DONE** · 1✓ 2✓ᶜᶜ 3✓ 4✓ 5✓ **6✓ 70 ns/packet** 7✓ 8✓ · 71 checks | **DONE** |
 | P2-03 | XTS Socket.IO 1501/1502/1505 decoder | TODO |
 | P2-04 | Normaliser: gating, per-instrument ordering, source routing — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ **6✓ 11.4 ns/submit** 7✓ 8✓ · 47 checks. (The token→`InstrumentId` binding is in P2-02 — a decoder that cannot resolve a token cannot make a `Tick` at all.) | **DONE** |
-| P2-05 | Failover watchdog + seamless primary switch | TODO |
+| P2-05 | Failover watchdog + seamless primary switch — **DONE** · keys on `recv_ts` · 38 checks | **DONE** |
 | P2-06 | mmap'd columnar tick store (writer) | TODO |
 | P2-07 | Tick store reader + Parquet archiver | TODO |
 | P2-08 | L2 order book, O(1) update, crossed-book handling — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ **6✓ 29.4 ns/apply** 7✓ 8✓ · 48 checks | **DONE** |
 | **P2-09a** | OBI, weighted OBI, microprice — **DONE** · 1✓ 2✓ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 43 checks | **DONE** |
-| P2-09b | VPIN + Kyle λ — needs rolling windows over trade flow | TODO — implementable |
+| P2-09b | VPIN + Kyle λ — **DONE** · volume-bucketed, through-the-origin, both report sample size · 45 checks | **DONE** |
 | P2-09c | Queue position — needs live order state; really Phase 4 | TODO — deferred to P4 |
 | **P2-10a** | `broker/sha256.hpp` — FIPS 180-4, NIST-verified, cross-checked against `hashlib` — **DONE** · 24 checks | **DONE** |
 | **P2-10b** | `broker/kite_session.hpp` — login URL + session checksum — **DONE** | **DONE** |
