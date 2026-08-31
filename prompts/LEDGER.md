@@ -409,7 +409,7 @@ synthetic session; a captured one is still needed (blocker #6).
 | P1-05 | XTS instruments master parser + token map | TODO |
 | P1-06 | Three-way reconciler + disagreement flags + symbol blocking — **DONE** · 1✓ᵐ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 77 checks | **DONE** |
 | P1-07 | Margin fetch (SPAN + ELM) + change detection → retrain trigger | BLOCKED — creds |
-| **P1-08a** | **Snapshot age + expiry-crossing + download-failure policy — card written** | **TODO — IMPLEMENTABLE NOW** |
+| **P1-08a** | Snapshot age + expiry-crossing + download-failure policy — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 50 checks | **DONE** |
 | P1-08b | Master downloader (atomic replace, parse-verify) — card written | BLOCKED — vcpkg |
 
 **Exit:** a full session's universe auto-loads pre-open with zero hardcoded lot

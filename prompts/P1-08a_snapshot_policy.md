@@ -1,6 +1,6 @@
 # P1-08a — `instruments/snapshot`: snapshot age, expiry crossing, and the download-failure policy
 
-> Phase 1 · Card 8a of 9 · Status: **TODO — IMPLEMENTABLE NOW**
+> Phase 1 · Card 8a of 9 · Status: **DONE** 2026-08-31
 > Depends on: P1-01 DONE · P1-06 DONE · P0-02 (`timestamp.hpp`) DONE
 > Feeds: P1-02a/b/c, P1-03a, P1-05, P1-08b, P2-04
 >
@@ -93,8 +93,10 @@ MODIFY   instruments/CMakeLists.txt
 
 namespace altair {
 
-inline constexpr std::size_t kMaxHolidays = 64;    // per year, generous
-inline constexpr std::size_t kMaxExpiries = 512;
+// Sizing guidance for CALLERS. Nothing here enforces them and nothing here
+// stores a calendar — this header only reads the arrays it is handed.
+inline constexpr std::size_t kSuggestedHolidayCap = 64;
+inline constexpr std::size_t kSuggestedExpiryCap = 512;
 
 enum class SnapshotVerdict : std::uint8_t {
     Fresh,          // the fetch succeeded
@@ -143,7 +145,9 @@ struct SnapshotState {
 trading_days_between(Timestamp from, Timestamp to,
                      const MarketCalendar& cal) noexcept;
 
-/// True when any listed expiry falls in (from, to].
+/// True when `to` is strictly after `from` AND a listed expiry falls in the
+/// CLOSED interval [from, to]. See requirement 4 — the closed lower bound is
+/// a correction, not an oversight.
 [[nodiscard]] inline bool
 expiry_crossed(Timestamp from, Timestamp to, const MarketCalendar& cal) noexcept;
 
@@ -176,8 +180,15 @@ judge_snapshot(const SnapshotState& s, Timestamp now,
    binary-search but must **not** assume sortedness silently — an unsorted
    array is a caller bug and `judge_snapshot` must still be correct, so use a
    linear scan unless sortedness is asserted.
-4. `expiry_crossed` uses the half-open interval `(from, to]`. An expiry
-   *on the snapshot date itself* has not been crossed; one *today* has.
+4. **CORRECTED DURING IMPLEMENTATION — see the review record.**
+   `expiry_crossed` is true when `to` is strictly after `from` **and** an
+   expiry falls in the **closed** interval `[from, to]`. The originally
+   specified half-open `(from, to]` was wrong: a master snapshot stamped with
+   trading date D is fetched at 08:15 on D, *before* that day's 15:30 expiry,
+   so it is a **pre-rollover** file. Excluding `e == from` handed it to D+1's
+   session as usable and sized every derivative from the previous cycle's lot
+   table. The `to > from` guard keeps the same day safe — this morning's own
+   snapshot is fine on the day it was taken, expiry or not.
 5. The verdict ladder is evaluated in this order: `NoSnapshot`, `Fresh`,
    `ExpiryCrossed`, `TooOld`, `StaleUsable`, `StaleAging`. **`ExpiryCrossed`
    outranks `TooOld` and both outrank any age-only verdict** — a one-day-old
@@ -207,8 +218,11 @@ judge_snapshot(const SnapshotState& s, Timestamp now,
    straddles an expiry gives `ExpiryCrossed`, **not** `StaleUsable`. This is
    requirement 5 and the single most important test in the card: it is the case
    where the intuitive answer (young snapshot, therefore fine) is wrong.
-5. **`expiry_interval_is_half_open`** — an expiry on the snapshot date is not
-   crossed; an expiry today is.
+5. **`expiry_interval_bounds`** — an expiry **on** the snapshot date **is**
+   crossed once we are past that day; an expiry today is crossed; on the day
+   itself nothing is crossed; a backwards or zero-length span crosses nothing;
+   and an expiry strictly before the snapshot is **not** crossed, so the
+   closed bound has not simply made everything true.
 6. **`withheld_verdicts_block_through_p1_06`** — take a contract carried only
    by a withheld primary, do not `add` that source to a `Reconciler`, add a
    Kite source, and assert P1-06 returns `MissingPrimary` with
@@ -235,3 +249,47 @@ judge_snapshot(const SnapshotState& s, Timestamp now,
   wrong — it looks like an off-by-one nobody can reproduce.
 - **Inventing a holiday calendar.** Muhurat trading alone guarantees it is
   wrong, and no test in this card would catch it.
+
+---
+
+## REVIEW RECORD — P1-08a
+
+Reviewed 2026-08-31. MSVC 19.51.36256, `/std:c++latest /W4 /permissive- /O2`.
+
+| Gate | Verdict | Evidence |
+|---|---|---|
+| 1 compiles clean | PASS | zero warnings, first build. |
+| 2 contract honoured | PASS, **card amended** | requirement 4's interval corrected (below); `kMaxHolidays`/`kMaxExpiries` renamed to `kSuggested*Cap`. |
+| 3 manifest respected | PASS | only `instruments/snapshot.hpp`, `instruments/tests/test_snapshot.cpp`, `instruments/CMakeLists.txt`. |
+| 4 tests pass | PASS | 8 named tests + policy edges, 50 checks, zero failures. |
+| 5 no hot-path allocation | PASS | no `ALTAIR_HOT` — pre-open only. No allocation anywhere; the calendar is borrowed, never owned. |
+| 6 latency budget | PASS (no budget) | runs once at 08:15. |
+| 7 numerical / financial | PASS | no floating point. The whole card is the financial judgement: **age in trading days AND expiry crossing**, because rollover is when lot sizes change. |
+| 8 physics | PASS | the IST day boundary is 18:30 UTC the previous day, so weekday is derived in IST via P0-02's `ist_days_between` rather than re-derived. Floor-mod, not truncating `%`, so a pre-1970 day number cannot produce a negative weekday. Every weekday claim in the tests was **verified against an independent implementation**, not asserted from the code under test. |
+
+### The defect review found — in the card, not the code
+
+Requirement 4 originally specified the half-open interval `(from, to]`, and the
+implementation matched it. **The specification was wrong.**
+
+A master snapshot stamped with trading date D is fetched at 08:15 on D — before
+that day's 15:30 expiry — so it is a **pre-rollover** file. Under `(from, to]`
+an expiry on D is `e == from` and therefore *not* crossed, so on D+1 the file
+was judged `StaleUsable` and handed to the session. Every derivative would then
+be sized from the previous cycle's lot table: **rule 1's exact failure mode,
+arriving through the back door of a policy written to prevent it.**
+
+Corrected to a closed lower bound, guarded by `to > from` so the same day stays
+safe. We cannot tell from outside whether a given file is pre- or post-
+rollover, and rule 9 says ambiguity blocks rather than guesses. Test 5 now
+proves both directions, including that the closed bound did not simply make
+everything true.
+
+### What did not need building
+
+`verdict_withholds` needs **no blocking machinery of its own**. A withheld
+source is simply not `add`ed to the `Reconciler`, and P1-06's existing
+`MissingPrimary` / `NoBroker` verdicts block it. Test 6 proves the composition
+end to end rather than asserting it in a comment. A second blocking path would
+have been a second thing that can disagree with the first about whether a
+symbol is tradable.

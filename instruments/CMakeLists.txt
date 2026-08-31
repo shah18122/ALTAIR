@@ -28,4 +28,9 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_reconcile_test
         PRIVATE altair_instruments altair_flags)
     add_test(NAME reconcile COMMAND altair_reconcile_test)
+
+    add_executable(altair_snapshot_test tests/test_snapshot.cpp)
+    target_link_libraries(altair_snapshot_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME snapshot COMMAND altair_snapshot_test)
 endif()
