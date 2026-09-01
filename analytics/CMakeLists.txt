@@ -37,4 +37,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_svi_test tests/test_svi.cpp)
     target_link_libraries(altair_svi_test PRIVATE altair_analytics altair_flags)
     add_test(NAME svi COMMAND altair_svi_test)
+
+    add_executable(altair_svi_fit_test tests/test_svi_fit.cpp)
+    target_link_libraries(altair_svi_fit_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME svi_fit COMMAND altair_svi_fit_test)
 endif()
