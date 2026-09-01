@@ -49,4 +49,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_vix_test tests/test_vix.cpp)
     target_link_libraries(altair_vix_test PRIVATE altair_analytics altair_flags)
     add_test(NAME vix COMMAND altair_vix_test)
+
+    add_executable(altair_derivatives_test tests/test_derivatives.cpp)
+    target_link_libraries(altair_derivatives_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME derivatives COMMAND altair_derivatives_test)
 endif()
