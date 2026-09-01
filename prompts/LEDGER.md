@@ -463,7 +463,7 @@ drops, p99 decode < 3 µs.
 | P3-06b | EWMA + EWMA variance, decayed in TIME — **DONE** · fixed-alpha shown spreading 90.5 price points on identical data · variance bias-corrected (was 76% low) · 45 checks | **DONE** |
 | P3-06c | Hurst by rescaled range — **DONE** · Anis-Lloyd corrected (uncorrected reads +0.057 high at n=512) · std error floored at 1/sqrt(n) after it flagged pure noise as significant · 29 checks | **DONE** |
 | P3-07 | Derivatives: velocity, acceleration, jerk, multi-scale | TODO |
-| P3-08 | India VIX replication | TODO |
+| P3-08 | India VIX replication — **DONE** · model-free variance swap · flat 15-vol recovers 15.0028 · agrees with the SVI surface to 0.0025 sharing no code · 47 checks | **DONE** |
 | P3-09 | **Cost calculator** — **DONE** · exact 128-bit integer paise, premium-vs-notional, side-aware · 46 checks · measured 5.95 bps round trip | **DONE** |
 | P3-10 | Slippage + Kyle-λ impact learned from fill history | TODO |
 
