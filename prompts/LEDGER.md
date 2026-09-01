@@ -461,7 +461,7 @@ drops, p99 decode < 3 µs.
 | P3-06 | Rolling stats: mean, var, skew, kurt, z, EWMA, Hurst | TODO |
 | P3-07 | Derivatives: velocity, acceleration, jerk, multi-scale | TODO |
 | P3-08 | India VIX replication | TODO |
-| P3-09 | **Cost calculator** — full stack, effective-dated `charges.toml` | TODO |
+| P3-09 | **Cost calculator** — **DONE** · exact 128-bit integer paise, premium-vs-notional, side-aware · 46 checks · measured 5.95 bps round trip | **DONE** |
 | P3-10 | Slippage + Kyle-λ impact learned from fill history | TODO |
 
 **Exit:** full-chain greeks < 50 µs; cost calculator matches a real contract note
