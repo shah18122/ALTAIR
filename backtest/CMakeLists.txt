@@ -25,4 +25,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_backtest_engine_test tests/test_engine.cpp)
     target_link_libraries(altair_backtest_engine_test PRIVATE altair_backtest altair_flags)
     add_test(NAME backtest_engine COMMAND altair_backtest_engine_test)
+
+    add_executable(altair_validation_test tests/test_validation.cpp)
+    target_link_libraries(altair_validation_test PRIVATE altair_backtest altair_flags)
+    add_test(NAME backtest_validation COMMAND altair_validation_test)
 endif()
