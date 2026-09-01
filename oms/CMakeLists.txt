@@ -19,4 +19,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_order_state_test tests/test_order_state.cpp)
     target_link_libraries(altair_order_state_test PRIVATE altair_oms altair_flags)
     add_test(NAME order_state COMMAND altair_order_state_test)
+
+    add_executable(altair_exit_ladder_test tests/test_exit_ladder.cpp)
+    target_link_libraries(altair_exit_ladder_test PRIVATE altair_oms altair_flags)
+    add_test(NAME exit_ladder COMMAND altair_exit_ladder_test)
 endif()
