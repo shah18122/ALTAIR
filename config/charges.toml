@@ -36,49 +36,67 @@ valid_to   = "2026-03-31"
 note       = "Pre Union-Budget-2026 STT regime"
 
   [schedule.equity_delivery]
-  stt_rate = 0.001        ; stt_side = "both"
-  exch_txn_nse = 0.0000297 ; exch_txn_bse = 0.0000375
-  stamp_duty = 0.00015    ; stamp_side = "buy"
+  stt_rate = 0.001
+  stt_side = "both"
+  exch_txn_nse = 0.0000297
+  exch_txn_bse = 0.0000375
+  stamp_duty = 0.00015
+  stamp_side = "buy"
   ipft_nse = 0.000001
   dp_charge_per_scrip_sell = 15.34   # ₹, flat, sell side only
 
   [schedule.equity_intraday]
-  stt_rate = 0.00025      ; stt_side = "sell"
-  exch_txn_nse = 0.0000297 ; exch_txn_bse = 0.0000375
-  stamp_duty = 0.00003    ; stamp_side = "buy"
+  stt_rate = 0.00025
+  stt_side = "sell"
+  exch_txn_nse = 0.0000297
+  exch_txn_bse = 0.0000375
+  stamp_duty = 0.00003
+  stamp_side = "buy"
   ipft_nse = 0.000001
 
   [schedule.equity_futures]
-  stt_rate = 0.0002       ; stt_side = "sell"
-  exch_txn_nse = 0.0000173 ; exch_txn_bse = 0.0
-  stamp_duty = 0.00002    ; stamp_side = "buy"
+  stt_rate = 0.0002
+  stt_side = "sell"
+  exch_txn_nse = 0.0000173
+  exch_txn_bse = 0.0
+  stamp_duty = 0.00002
+  stamp_side = "buy"
   ipft_nse = 0.0000005
 
   [schedule.equity_options]
   # NOTE: options turnover for STT and exchange charges is PREMIUM, not notional.
   turnover_basis = "premium"
-  stt_rate = 0.001        ; stt_side = "sell"
-  exch_txn_nse = 0.0003503 ; exch_txn_bse = 0.000325
-  stamp_duty = 0.00003    ; stamp_side = "buy"
+  stt_rate = 0.001
+  stt_side = "sell"
+  exch_txn_nse = 0.0003503
+  exch_txn_bse = 0.000325
+  stamp_duty = 0.00003
+  stamp_side = "buy"
   ipft_nse = 0.000005
 
   [schedule.currency_futures]
   turnover_basis = "notional"
-  stt_rate = 0.0          ; stt_side = "none"
+  stt_rate = 0.0
+  stt_side = "none"
   exch_txn_nse = 0.0000035
-  stamp_duty = 0.000001   ; stamp_side = "buy"
+  stamp_duty = 0.000001
+  stamp_side = "buy"
 
   [schedule.currency_options]
   turnover_basis = "premium"
-  stt_rate = 0.0          ; stt_side = "none"
+  stt_rate = 0.0
+  stt_side = "none"
   exch_txn_nse = 0.0003503
-  stamp_duty = 0.000001   ; stamp_side = "buy"
+  stamp_duty = 0.000001
+  stamp_side = "buy"
 
   [schedule.commodity_futures]
   turnover_basis = "notional"
-  ctt_rate = 0.0001       ; ctt_side = "sell"    # non-agri
+  ctt_rate = 0.0001  # non-agri
+  ctt_side = "sell"
   exch_txn_mcx = 0.000026
-  stamp_duty = 0.00002    ; stamp_side = "buy"
+  stamp_duty = 0.00002
+  stamp_side = "buy"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SCHEDULE 2 — effective from 2026-04-01
@@ -90,48 +108,66 @@ valid_to   = "2099-12-31"
 note       = "Post Union-Budget-2026 STT regime. F&O STT raised."
 
   [schedule.equity_delivery]
-  stt_rate = 0.001        ; stt_side = "both"      # VERIFY
-  exch_txn_nse = 0.0000297 ; exch_txn_bse = 0.0000375
-  stamp_duty = 0.00015    ; stamp_side = "buy"
+  stt_rate = 0.001  # VERIFY
+  stt_side = "both"
+  exch_txn_nse = 0.0000297
+  exch_txn_bse = 0.0000375
+  stamp_duty = 0.00015
+  stamp_side = "buy"
   ipft_nse = 0.000001
   dp_charge_per_scrip_sell = 15.34
 
   [schedule.equity_intraday]
-  stt_rate = 0.00025      ; stt_side = "sell"      # VERIFY
-  exch_txn_nse = 0.0000297 ; exch_txn_bse = 0.0000375
-  stamp_duty = 0.00003    ; stamp_side = "buy"
+  stt_rate = 0.00025  # VERIFY
+  stt_side = "sell"
+  exch_txn_nse = 0.0000297
+  exch_txn_bse = 0.0000375
+  stamp_duty = 0.00003
+  stamp_side = "buy"
   ipft_nse = 0.000001
 
   [schedule.equity_futures]
-  stt_rate = 0.0005       ; stt_side = "sell"      # RAISED 0.02% -> 0.05%
-  exch_txn_nse = 0.0000173 ; exch_txn_bse = 0.0
-  stamp_duty = 0.00002    ; stamp_side = "buy"
+  stt_rate = 0.0005  # RAISED 0.02% -> 0.05%
+  stt_side = "sell"
+  exch_txn_nse = 0.0000173
+  exch_txn_bse = 0.0
+  stamp_duty = 0.00002
+  stamp_side = "buy"
   ipft_nse = 0.0000005
 
   [schedule.equity_options]
   turnover_basis = "premium"
-  stt_rate = 0.0015       ; stt_side = "sell"      # RAISED 0.10% -> 0.15%
-  exch_txn_nse = 0.0003503 ; exch_txn_bse = 0.000325
-  stamp_duty = 0.00003    ; stamp_side = "buy"
+  stt_rate = 0.0015  # RAISED 0.10% -> 0.15%
+  stt_side = "sell"
+  exch_txn_nse = 0.0003503
+  exch_txn_bse = 0.000325
+  stamp_duty = 0.00003
+  stamp_side = "buy"
   ipft_nse = 0.000005
 
   [schedule.currency_futures]
   turnover_basis = "notional"
-  stt_rate = 0.0          ; stt_side = "none"
+  stt_rate = 0.0
+  stt_side = "none"
   exch_txn_nse = 0.0000035
-  stamp_duty = 0.000001   ; stamp_side = "buy"
+  stamp_duty = 0.000001
+  stamp_side = "buy"
 
   [schedule.currency_options]
   turnover_basis = "premium"
-  stt_rate = 0.0          ; stt_side = "none"
+  stt_rate = 0.0
+  stt_side = "none"
   exch_txn_nse = 0.0003503
-  stamp_duty = 0.000001   ; stamp_side = "buy"
+  stamp_duty = 0.000001
+  stamp_side = "buy"
 
   [schedule.commodity_futures]
   turnover_basis = "notional"
-  ctt_rate = 0.0001       ; ctt_side = "sell"      # VERIFY
+  ctt_rate = 0.0001  # VERIFY
+  ctt_side = "sell"
   exch_txn_mcx = 0.000026
-  stamp_duty = 0.00002    ; stamp_side = "buy"
+  stamp_duty = 0.00002
+  stamp_side = "buy"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # BROKER SLABS
