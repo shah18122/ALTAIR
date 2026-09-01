@@ -115,6 +115,7 @@ add_subdirectory(backtest)          # Phase 6 — replayer, walk-forward, Monte 
 # add_subdirectory(flagging)        # Phase 9
 # add_subdirectory(server)          # Phase 11 — BACKEND ONLY, renders nothing
 # add_subdirectory(client)          # Phase 11 — DESKTOP ONLY, links no engine header
+add_subdirectory(research)          # Phase 7 — paper pipeline (decides, does not trade)
 add_subdirectory(app)               # main() — the `altair` binary
 
 if(ALTAIR_BUILD_TESTS)

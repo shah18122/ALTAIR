@@ -533,10 +533,10 @@ itself waits on a real tape.)*
 | Card | Deliverable | Status |
 |---|---|---|
 | P7-00 | TradingView bar exports → `dataset/` partition + coverage validation — **DONE** · 17'327 bars, 41 partitions | **DONE** |
-| P7-01 | Paper ingest → feature card → `registry.json` | TODO |
-| P7-02 | Feature-card → C++ builder scaffold generator | TODO |
-| P7-03 | Replication harness: pass/fail on your data | TODO |
-| P7-04 | Paper → live promotion gate (replicated + post-cost edge) | TODO |
+| P7-01 | Paper ingest → feature card → registry — **DONE** · **the registry counts ATTEMPTS, not successes**: 50 ingested, 10 trials, 1 replicated, and the 9 rejected STAY — a registry that dropped its failures would hand the deflated Sharpe a 1 and report the survivor as significant · a claimed effect with no venue/universe/period is REFUSED — a 1965-2009 US futures Sharpe is a fact about that market and a HYPOTHESIS about NSE 2026 · lifecycle is an enumerated state machine, so Ingested→Promoted is impossible however promising it looked | **DONE** |
+| P7-02 | Feature-card → C++ builder scaffold generator — **DONE** · generates the CONTRACT (slots, band, warmup, `std_error`, the kSkip absence discipline) and **stops at the transform with an `#error`** · a generated scaffold that COMPILES is one that can ship with a plausible confident wrong transform inside it — the compile error means the only way to a building binary is for somebody to have read the paper · a buffer too small is refused rather than truncated (truncation could lose the `#error`) | **DONE** |
+| P7-03 | Replication harness — **DONE** · **the same Sharpe of 1.50 over 1000 observations is 1.0000 deflated after 5 trials and 0.0000 after 20** — the null bar rises 0.000 → 1.193 → 1.901 → 2.276 → 2.766 across 1/5/20/50/200 trials · **non-normality decides marginal cases: at SR 2.50 the deflated value is 0.9998 for normal returns and 0.9591 at skew −1.2, kurtosis 9** · `preregister` before `evaluate` is a state machine, not a convention — a threshold chosen after seeing the result is not a threshold, and it cannot be registered twice | **DONE** |
+| P7-04 | Paper → live promotion gate — **DONE** · a CONJUNCTION of four terms — replicated status, deflated-significant, out-of-sample, net-of-cost edge — each able to veto, and the gate returns WHICH · “did not promote” is four different pieces of news and only one of them means the idea was wrong · ordinal 0 is Unknown on both enums, so zeroed evidence does not promote · 33 checks across P7-01..04 | **DONE** |
 
 **Exit:** three papers ingested, implemented, replicated or rejected with evidence.
 
