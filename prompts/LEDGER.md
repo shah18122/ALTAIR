@@ -499,7 +499,7 @@ breaks, invariants never trip.
 | P5-01 | Feature registry — **DONE** · the hash covers ORDER, not just the set (a model's weights are positional) · horizon bands ENFORCED, not advisory · sealed is immutable · 41 checks | **DONE** |
 | P5-02 | Feature builders: kinematics + distribution — **DONE** · an unready feature is ABSENT, not zero · warmup per FEATURE not per vector · Hurst fed returns, once, where it shows · 35 checks | **DONE** |
 | P5-03 | Feature builders: book + flow — **DONE** · an empty book is NOT a balanced book, it fills NOTHING · a crossed book is data: flag present, levels absent · sample counts travel with the estimates · 24 checks | **DONE** |
-| P5-04 | Feature builders — options + cross-asset + calendar | TODO |
+| P5-04 | Feature builders: options + cross-asset + calendar — **DONE** · KNOW WHAT WRAPS: the session clock does NOT (a circle puts the open and the close 0.000 apart), the expiry cycle DOES (linear puts consecutive sessions 4x too far) · the trading calendar is passed IN, never derived from a timestamp · the IV band travels as its own feature: 25x wider in the wing, 2070x if the chain is flat · correlation on returns, never levels (0.492 vs 0.031 on independent walks) · 34 checks | **DONE** |
 | P5-05 | Cash–futures basis + cross-venue scanner | TODO |
 | P5-06 | Put–call parity + box + butterfly scanner | TODO |
 | P5-07 | Calendar spread scanner | TODO |

@@ -28,4 +28,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_book_flow_test tests/test_book_flow.cpp)
     target_link_libraries(altair_book_flow_test PRIVATE altair_features altair_flags)
     add_test(NAME feature_book_flow COMMAND altair_book_flow_test)
+
+    add_executable(altair_options_calendar_test tests/test_options_calendar.cpp)
+    target_link_libraries(altair_options_calendar_test PRIVATE altair_features altair_flags)
+    add_test(NAME feature_options_calendar COMMAND altair_options_calendar_test)
 endif()
