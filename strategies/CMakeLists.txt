@@ -37,4 +37,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_oppty_log_test tests/test_oppty_log.cpp)
     target_link_libraries(altair_oppty_log_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_oppty_log COMMAND altair_oppty_log_test)
+
+    add_executable(altair_regime_test tests/test_regime.cpp)
+    target_link_libraries(altair_regime_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_regime COMMAND altair_regime_test)
 endif()

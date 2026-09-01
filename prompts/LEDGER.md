@@ -516,7 +516,7 @@ edge — the empirical answer to whether the edge exists.
 |---|---|---|
 | P6-01 | SIMD indicators: EMA, RSI, ATR, MACD, BB, Keltner, Supertrend | TODO |
 | P6-02 | Ichimoku, Stochastic, Heikin-Ashi, pivots, market structure — **DONE** · **THE LOOK-AHEAD CARD (rule 7)**: Chikou, pivots and swing points share one defect · **measured: the same Chikou rule on 3000 bars of a RANDOM WALK makes Rs 1,367 acted on where it became known and Rs 5,698 acted on where it is drawn — 4.2x out of a series with no edge** · every value carries `describes` and `known_at` as separate fields · no overload returns today’s pivots from today’s bar (that function cannot be written honestly) · swings confirm at exactly K bars, never sooner · HA closes are inside the real range on 1500/1500 bars and below it on the bullish ones · 25 checks | **DONE** |
-| P6-03 | Regime detector | TODO |
+| P6-03 | Regime detector — **DONE** · **a regime boundary is a threshold on a NOISY estimate**, and near the boundary is exactly where a conditional model switches behaviour · **measured on 4000 bars of a PURE RANDOM WALK: the naive rule labels 3,872 regimes (100%), the error bar leaves 273 (7.1%)** — and not zero, because a 2σ test fires ~5% on a true null by construction · on a genuinely persistent series it still says Trending on 3,868 of 3,872 · hysteresis + dwell cuts regime changes 119 → 25 · vol SE is 9.2% of the estimate at n=60, so a threshold 5% away is inside the bar · causal only, no method takes a series · thresholds have NO defaults · 22 checks | **DONE** |
 | P6-04 | Score engine, regime-conditional, multi-timeframe | TODO |
 | P6-05 | Tick-level backtest replayer, cost-aware | TODO |
 | P6-06 | Walk-forward harness + purged K-fold + embargo | TODO |
