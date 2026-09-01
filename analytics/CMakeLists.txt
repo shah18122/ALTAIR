@@ -57,4 +57,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_american_test tests/test_american.cpp)
     target_link_libraries(altair_american_test PRIVATE altair_analytics altair_flags)
     add_test(NAME american COMMAND altair_american_test)
+
+    add_executable(altair_indicators_test tests/test_indicators.cpp)
+    target_link_libraries(altair_indicators_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME indicators COMMAND altair_indicators_test)
 endif()
