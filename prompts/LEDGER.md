@@ -457,7 +457,8 @@ drops, p99 decode < 3 µs.
 | P3-02 | 2nd/3rd order greeks (Vanna, Volga, Charm, Veta, Speed, Zomma) | TODO |
 | P3-03 | Bjerksund–Stensland American pricer | TODO |
 | P3-04 | IV solver + **Black-Scholes on spot** — **DONE** · safeguarded Newton on the same pricer, no duplicated formula · refuses outside no-arb bounds · returns vega as the error propagator · 61 checks · 1.6 µs/solve | **DONE** |
-| P3-05 | SVI surface fit + arbitrage-free checks | TODO |
+| P3-05a | SVI slice + butterfly/calendar arbitrage checks — **DONE** · g<0 shown to be a NEGATIVE BUTTERFLY PRICE, 42/42 agreement · density integrates to 1.0 · 46 checks | **DONE** |
+| P3-05b | SVI calibration (quasi-explicit) | TODO |
 | P3-06a | Rolling stats: mean, var, skew, kurt, z — **DONE** · Welford + Pebay, two-pass window · naive formula shown reporting 4.9x too much vol on a quiet high-priced counter · 55 checks | **DONE** |
 | P3-06b | EWMA + EWMA variance, decayed in TIME — **DONE** · fixed-alpha shown spreading 90.5 price points on identical data · variance bias-corrected (was 76% low) · 45 checks | **DONE** |
 | P3-06c | Hurst by rescaled range — **DONE** · Anis-Lloyd corrected (uncorrected reads +0.057 high at n=512) · std error floored at 1/sqrt(n) after it flagged pure noise as significant · 29 checks | **DONE** |

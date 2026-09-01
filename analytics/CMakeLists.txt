@@ -33,4 +33,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_hurst_test tests/test_hurst.cpp)
     target_link_libraries(altair_hurst_test PRIVATE altair_analytics altair_flags)
     add_test(NAME hurst COMMAND altair_hurst_test)
+
+    add_executable(altair_svi_test tests/test_svi.cpp)
+    target_link_libraries(altair_svi_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME svi COMMAND altair_svi_test)
 endif()
