@@ -6,24 +6,40 @@ exchanges the token, and writes data/kite_session.json. Then it stops.
 
     python broker/tools/kite_callback.py
 
-BEFORE THIS WORKS you must change the redirect URL registered on your Kite app
-to exactly:
+TWO ADDRESSES, AND THEY ARE NOT THE SAME ONE.
+
+Kite redirects to the URL registered on the app -- never to whatever we ask
+for -- and that is the PUBLIC one:
+
+    https://altair.thesmitshah.com/zerodha/callback
+
+A tunnel forwards it to where this server actually listens:
 
     http://127.0.0.1:53123/zerodha/callback
 
-Kite redirects to the URL registered on the app, not to whatever we ask for.
-While it points at https://altair.thesmitshah.com/zerodha/callback, the browser
-goes there and this server never sees anything. The script says so on startup
-rather than sitting silent.
+So the registered redirect stays as it is; nothing on the Kite app needs
+changing. What has to be true is that the tunnel is UP and the paths match on
+both sides. Override the public URL with ALTAIR_KITE_REDIRECT if the tunnel
+address ever changes.
+
+THE TUNNEL IS CHECKED BEFORE YOU LOG IN, not after. A request_token is SINGLE
+USE and expires in minutes, so a tunnel that is down costs a whole login round
+trip to discover. On startup this fetches its own public URL with a probe
+parameter and confirms the request arrives here. If it does not, it says so and
+stops, before anything is burned.
 
 SECURITY
 --------
-  * Binds 127.0.0.1 only. Never 0.0.0.0 -- a request_token arriving on a
-    LAN-visible port is a request_token anyone on the LAN can take.
+  * Binds 127.0.0.1 only. Never 0.0.0.0. That still matters WITH a tunnel: the
+    tunnel client connects from localhost, so binding wider would additionally
+    expose the port on the LAN and buy nothing.
+  * The tunnel does make this endpoint reachable from the internet while it is
+    up. Bring it up for the login and take it down afterwards. The server also
+    stops itself after one successful capture, so the window is short by
+    construction.
+  * A probe request carries no token and never triggers an exchange.
   * The secret comes from the environment. Never printed, never written to a
     file, never on a command line.
-  * Serves exactly one path and shuts down after one successful capture. A
-    callback listener that outlives the login is a listener nobody is watching.
   * The access_token is written to data/kite_session.json (gitignored) and is
     a LIVE TRADING CREDENTIAL until tomorrow morning. Treat the file the way
     you treat the secret.
@@ -38,6 +54,8 @@ import json
 import os
 import socket
 import sys
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,9 +63,18 @@ import urllib.request
 HOST = "127.0.0.1"
 PORT = 53123
 CALLBACK_PATH = "/zerodha/callback"
-REDIRECT_URL = f"http://{HOST}:{PORT}{CALLBACK_PATH}"
+# Where this process listens. The tunnel forwards to here.
+LISTEN_URL = f"http://{HOST}:{PORT}{CALLBACK_PATH}"
+# Where KITE redirects. Must equal the redirect registered on the Kite app,
+# byte for byte -- Kite compares it as a string, so a trailing slash or http
+# for https is a rejected login rather than a warning.
+PUBLIC_REDIRECT = os.environ.get(
+    "ALTAIR_KITE_REDIRECT",
+    "https://altair.thesmitshah.com/zerodha/callback").strip()
 SESSION_URL = "https://api.kite.trade/session/token"
 OUT_PATH = os.path.join("data", "kite_session.json")
+# Query parameter that marks a liveness probe rather than a real callback.
+PROBE_PARAM = "altair_probe"
 
 _result: dict = {}
 
@@ -129,6 +156,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         q = urllib.parse.parse_qs(parts.query)
+
+        # A liveness probe. Answered before anything else looks for a token,
+        # so a probe can never be mistaken for a login or trigger an exchange.
+        probe = (q.get(PROBE_PARAM) or [""])[0]
+        if probe:
+            _result["probe_seen"] = probe
+            self._reply(200, "Tunnel is up",
+                        "This probe reached the local callback server.")
+            return
+
         status = (q.get("status") or [""])[0]
         req_tok = (q.get("request_token") or [""])[0]
 
@@ -159,6 +196,60 @@ class Handler(http.server.BaseHTTPRequestHandler):
         _result["done"] = True
 
 
+def probe_tunnel(srv: http.server.HTTPServer) -> tuple[bool, str]:
+    """Fetch our own PUBLIC url and confirm the request lands here.
+
+    Runs the fetch on a background thread and services exactly one request on
+    the main thread, because a single-threaded server cannot answer a request
+    it is itself blocked on making.
+    """
+    nonce = hashlib.sha256(os.urandom(16)).hexdigest()[:16]
+    sep = "&" if "?" in PUBLIC_REDIRECT else "?"
+    url = f"{PUBLIC_REDIRECT}{sep}{PROBE_PARAM}={nonce}"
+    outcome: dict = {}
+
+    def fetch() -> None:
+        try:
+            # A BROWSER user agent, and this is not cosmetic. The tunnel here
+            # sits behind Cloudflare, whose bot rules answer the default
+            # "Python-urllib/3.x" with 403 while letting a browser through --
+            # measured, on this exact hostname: curl 200, browser 200,
+            # Python-urllib 403. A probe that lies about being blocked is
+            # worse than no probe, because it reports a working tunnel as
+            # broken. The real callback IS a browser navigation, so looking
+            # like one is what makes this a faithful test.
+            req = urllib.request.Request(url, method="GET", headers={
+                "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/131.0.0.0 Safari/537.36"),
+                "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+            })
+            with urllib.request.urlopen(req, timeout=8) as r:
+                outcome["code"] = r.status
+        except urllib.error.HTTPError as e:
+            outcome["code"] = e.code
+        except Exception as e:                       # noqa: BLE001
+            outcome["error"] = f"{type(e).__name__}: {e}"
+
+    t = threading.Thread(target=fetch, daemon=True)
+    t.start()
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and not _result.get("probe_seen"):
+        try:
+            srv.handle_request()
+        except socket.timeout:
+            continue
+    t.join(timeout=2.0)
+
+    if _result.get("probe_seen") == nonce:
+        return True, "the probe arrived here with the nonce it was sent with"
+    if "error" in outcome:
+        return False, outcome["error"]
+    if _result.get("probe_seen"):
+        return False, "a probe arrived, but not the one just sent"
+    return False, f"no probe arrived (remote replied {outcome.get('code')})"
+
+
 def main() -> int:
     api_key = os.environ.get("ALTAIR_KITE_API_KEY", "").strip()
     secret = os.environ.get("ALTAIR_KITE_API_SECRET", "").strip()
@@ -167,25 +258,18 @@ def main() -> int:
         print("Set them with setx, then open a NEW terminal.")
         return 2
 
+    skip_probe = "--no-probe" in sys.argv
+
     login = (f"https://kite.zerodha.com/connect/login"
              f"?api_key={urllib.parse.quote(api_key)}&v=3")
 
     print()
     print("  Kite login callback server")
-    print("  " + "-" * 60)
-    print(f"  listening on   {REDIRECT_URL}")
+    print("  " + "-" * 62)
+    print(f"  listening on   {LISTEN_URL}")
     print(f"  bound to       {HOST} only (never 0.0.0.0)")
-    print()
-    print("  FIRST: set the redirect URL on your Kite app to EXACTLY")
-    print(f"      {REDIRECT_URL}")
-    print("  Kite redirects to the URL registered on the app. While it still")
-    print("  points elsewhere, the browser goes there and this server sees")
-    print("  nothing at all.")
-    print()
-    print("  THEN open this and log in:")
-    print(f"      {login}")
-    print()
-    print("  Waiting for one callback, then stopping. Ctrl-C to give up.")
+    print(f"  Kite redirects to  {PUBLIC_REDIRECT}")
+    print("                 (must match the redirect on the Kite app exactly)")
     print()
 
     try:
@@ -194,8 +278,40 @@ def main() -> int:
         print(f"  cannot bind {HOST}:{PORT} -- {e}")
         print("  another process may already hold it.")
         return 2
-
     srv.socket.settimeout(1.0)
+
+    # Check the tunnel BEFORE the login, because a request_token is single use
+    # and expires in minutes: discovering a dead tunnel afterwards costs a
+    # whole round trip through Zerodha's 2FA.
+    if not skip_probe:
+        print("  checking the tunnel before you log in...")
+        ok, why = probe_tunnel(srv)
+        if not ok:
+            print(f"  TUNNEL DID NOT ANSWER: {why}")
+            print()
+            print(f"  {PUBLIC_REDIRECT}")
+            print(f"  must reach {LISTEN_URL}")
+            print()
+            print("  Start the tunnel and run this again. Nothing has been")
+            print("  used up -- no login was attempted.")
+            print()
+            print("  If you believe the tunnel IS up, the probe may be the")
+            print("  thing being blocked rather than the tunnel being down --")
+            print("  a gateway that rejects non-browser clients would do that.")
+            print("  Check by hand, and use --no-probe to go ahead regardless:")
+            print(f"      curl -i \"{PUBLIC_REDIRECT}?{PROBE_PARAM}=1\"")
+            srv.server_close()
+            return 2
+        print(f"  tunnel is up: {why}")
+        _result.pop("probe_seen", None)
+        print()
+
+    print("  Now open this and log in:")
+    print(f"      {login}")
+    print()
+    print("  Waiting for one callback, then stopping. Ctrl-C to give up.")
+    print()
+
     try:
         while not _result.get("done"):
             srv.handle_request()
