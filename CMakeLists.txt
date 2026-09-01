@@ -105,7 +105,7 @@ add_subdirectory(instruments)       # Phase 1 — ContractSpec + spec store
 add_subdirectory(broker)            # Phase 2 - the ONLY dir touching a credential
 add_subdirectory(feed)              # Phase 0 replay skeleton; decoders in Phase 2
 add_subdirectory(book)              # Phase 2 — L2 book skeleton (P2-08)
-# add_subdirectory(analytics)       # Phase 3
+add_subdirectory(analytics)         # Phase 3 - greeks, IV, stats
 add_subdirectory(risk)              # Phase 3 - cost calculator (P3-09)
 # add_subdirectory(oms)             # Phase 4
 # add_subdirectory(features)        # Phase 5

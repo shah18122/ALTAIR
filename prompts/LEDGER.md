@@ -453,7 +453,7 @@ drops, p99 decode < 3 µs.
 
 | Card | Deliverable | Status |
 |---|---|---|
-| P3-01 | Black–Scholes greeks, 1st order, SIMD | TODO |
+| P3-01 | Black-76 price + 1st-order greeks — **DONE** · erfc tail, finite-difference verified · 44 checks | **DONE** |
 | P3-02 | 2nd/3rd order greeks (Vanna, Volga, Charm, Veta, Speed, Zomma) | TODO |
 | P3-03 | Bjerksund–Stensland American pricer | TODO |
 | P3-04 | Jäckel IV solver | TODO |
