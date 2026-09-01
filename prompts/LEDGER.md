@@ -480,7 +480,7 @@ to the paisa on 50 historical trades.
 | P4-02 | Pre-trade limits + kill switch — **DONE** · every check runs, full violation mask · sticky switch needing an explicit token · conservation in exact paise (double misses a 1-paisa breach) · 49 checks | **DONE** |
 | P4-03 | Portfolio greeks + sector + margin — **DONE** · aggregates in MONEY, not raw greeks · predicts a real reprice to 0.08% while the raw delta sum has the OPPOSITE SIGN · vega bucketed by expiry · 35 checks | **DONE** |
 | P4-04 | Order state machine — **DONE** · `oms/` opened · duplicates are traffic, stale fills never walk the position back, a fill AFTER cancel-ack is accepted · 56 checks | **DONE** |
-| P4-05 | Kite execution adapter | TODO |
+| P4-05 | Kite execution adapter — **DONE** · translation only, no transport, so it tests with no network · an UNKNOWN STATUS IS REFUSED (no default arm) · partial fill derived from quantities, Kite has no status for it · 51 checks | **DONE** |
 | P4-06 | XTS execution adapter | TODO |
 | P4-07 | Smart router + per-broker throttle | TODO |
 | P4-08 | Reconciliation + orphan sweeper — **DONE** · an ORPHAN trips the kill switch, a ghost does not · quantity exact, price toleranced · unsorted input REFUSED (would fake orphans) · 37 checks | **DONE** |
