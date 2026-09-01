@@ -1,0 +1,22 @@
+# features/ - the versioned, horizon-banded feature registry and its builders.
+#
+# This is the modelling side of the tree. Nothing here places an order or
+# knows a broker exists: features are computed from ticks and books and handed
+# to models/, and the trade handler in oms/ decides what to do with the answer.
+
+add_library(altair_features INTERFACE)
+add_library(altair::features ALIAS altair_features)
+
+target_include_directories(altair_features INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(altair_features INTERFACE
+    altair_types
+    altair_time
+    altair_analytics
+    altair_flags
+)
+
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_registry_test tests/test_registry.cpp)
+    target_link_libraries(altair_registry_test PRIVATE altair_features altair_flags)
+    add_test(NAME feature_registry COMMAND altair_registry_test)
+endif()

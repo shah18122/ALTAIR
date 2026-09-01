@@ -120,6 +120,14 @@ struct SizeDecision {
 
 /// What the caller must supply. All of it, deliberately: a sizer with
 /// defaults is a sizer that sizes on a default nobody chose.
+///
+/// The five policy numbers below are ZERO, and every one of them is refused as
+/// zero by `size_position`. That is not an oversight -- it is the point. An
+/// earlier version of this file shipped 1% risk, quarter Kelly, a 10% vol
+/// target and 1x leverage as defaults, which are CAPITAL DECISIONS and belong
+/// to Smit, not here (CLAUDE.md role table). A struct that compiles with
+/// plausible-looking risk parameters nobody chose is how those numbers end up
+/// in production unexamined.
 struct SizingInputs {
     /// Account equity. UNIT: paise.
     Notional capital{0};
@@ -136,25 +144,25 @@ struct SizingInputs {
     /// Standard error of that edge. UNIT: bps.
     Bps edge_std_error_bps{0.0};
     /// How many standard errors to subtract before sizing. 2.0 is the usual.
-    double edge_sigmas = 2.0;
+    double edge_sigmas = 0.0;
 
     /// Volatility of the instrument over the holding period, as a fraction.
     Vol period_vol{0.0};
 
     /// Fraction of capital risked if the stop is hit. 0.01 is 1%.
-    double risk_fraction = 0.01;
+    double risk_fraction = 0.0;
     /// Distance from entry to stop. UNIT: paise per unit.
     Price stop_distance{0};
 
     /// Kelly denominator. 4.0 is quarter Kelly. 1.0 is full Kelly and is
     /// almost never right -- see the header table.
-    double kelly_divisor = 4.0;
+    double kelly_divisor = 0.0;
 
     /// Target portfolio volatility for the vol-targeting leg, as a fraction
     /// over the same period as `period_vol`.
-    double target_vol = 0.10;
+    double target_vol = 0.0;
     /// Hard ceiling on notional / capital, whatever the methods say.
-    double max_leverage = 1.0;
+    double max_leverage = 0.0;
 };
 
 /// Whole lots that fit in a notional budget at this price. Rounds DOWN.

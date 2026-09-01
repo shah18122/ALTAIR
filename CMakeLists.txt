@@ -108,7 +108,7 @@ add_subdirectory(book)              # Phase 2 — L2 book skeleton (P2-08)
 add_subdirectory(analytics)         # Phase 3 - greeks, IV, stats
 add_subdirectory(risk)              # Phase 3 - cost calculator (P3-09)
 add_subdirectory(oms)               # Phase 4 - THE TRADE HANDLER
-# add_subdirectory(features)        # Phase 5
+add_subdirectory(features)          # Phase 5 - feature registry + builders
 # add_subdirectory(strategies)      # Phase 5-6
 # add_subdirectory(backtest)        # Phase 6
 # add_subdirectory(models)          # Phase 8
