@@ -25,4 +25,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_basis_test tests/test_basis.cpp)
     target_link_libraries(altair_basis_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_basis COMMAND altair_basis_test)
+
+    add_executable(altair_parity_test tests/test_parity.cpp)
+    target_link_libraries(altair_parity_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_parity COMMAND altair_parity_test)
 endif()
