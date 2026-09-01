@@ -107,7 +107,7 @@ add_subdirectory(feed)              # Phase 0 replay skeleton; decoders in Phase
 add_subdirectory(book)              # Phase 2 — L2 book skeleton (P2-08)
 add_subdirectory(analytics)         # Phase 3 - greeks, IV, stats
 add_subdirectory(risk)              # Phase 3 - cost calculator (P3-09)
-# add_subdirectory(oms)             # Phase 4
+add_subdirectory(oms)               # Phase 4 - THE TRADE HANDLER
 # add_subdirectory(features)        # Phase 5
 # add_subdirectory(strategies)      # Phase 5-6
 # add_subdirectory(backtest)        # Phase 6
