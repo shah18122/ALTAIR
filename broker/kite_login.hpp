@@ -65,6 +65,23 @@ enum class LoginError : std::uint8_t {
     PersistFailed
 };
 
+/// A failure, WITH what Kite said about it.
+///
+/// A bare error code was not enough, and that was a defect in this file rather
+/// than a limitation: the header claimed Kite "puts a machine-readable reason
+/// in the body" and then threw the body away, so every refusal read as the
+/// same generic sentence. A spent token, an expired token, a wrong checksum
+/// and a disabled app are four different problems with four different fixes.
+struct LoginFailure {
+    LoginError code = LoginError::Refused;
+    /// Kite's own `message`, when it gave one. Empty otherwise.
+    std::string message;
+    /// Kite's `error_type`, when it gave one.
+    std::string error_type;
+    /// HTTP status, 0 when the exchange never happened.
+    unsigned status = 0;
+};
+
 /// What came back.
 ///
 /// CONTAINS the `KiteSession` that P2-10a declared, rather than defining a
@@ -127,14 +144,14 @@ namespace detail {
 ///
 /// `api_key` and `api_secret` come from the caller, which reads them from the
 /// environment. The secret is used to build one checksum and is not retained.
-[[nodiscard]] inline std::expected<KiteLoginResult, LoginError>
+[[nodiscard]] inline std::expected<KiteLoginResult, LoginFailure>
 kite_exchange_token(std::string_view api_key, std::string_view api_secret,
                     std::string_view request_token, Timestamp now) {
     if (api_key.empty() || api_secret.empty()) {
-        return std::unexpected(LoginError::MissingCredentials);
+        return std::unexpected(LoginFailure{LoginError::MissingCredentials, {}, {}, 0});
     }
     if (request_token.empty()) {
-        return std::unexpected(LoginError::MissingRequestToken);
+        return std::unexpected(LoginFailure{LoginError::MissingRequestToken, {}, {}, 0});
     }
 
     // The checksum, from the P2-10a header that is verified against NIST
@@ -147,7 +164,7 @@ kite_exchange_token(std::string_view api_key, std::string_view api_secret,
     char checksum[kSha256HexChars + 1]{};
     if (!kite_session_checksum(key_s.c_str(), tok_s.c_str(), sec_s.c_str(),
                                checksum, sizeof checksum)) {
-        return std::unexpected(LoginError::MissingCredentials);
+        return std::unexpected(LoginFailure{LoginError::MissingCredentials, {}, {}, 0});
     }
 
     std::string body;
@@ -161,29 +178,34 @@ kite_exchange_token(std::string_view api_key, std::string_view api_secret,
     if (!res) {
         switch (res.error()) {
         case HttpError::ResolveFailed:
-            return std::unexpected(LoginError::ResolveFailed);
+            return std::unexpected(LoginFailure{LoginError::ResolveFailed, {}, {}, 0});
         case HttpError::ConnectFailed:
-            return std::unexpected(LoginError::ConnectFailed);
+            return std::unexpected(LoginFailure{LoginError::ConnectFailed, {}, {}, 0});
         case HttpError::TlsFailed:
-            return std::unexpected(LoginError::TlsFailed);
+            return std::unexpected(LoginFailure{LoginError::TlsFailed, {}, {}, 0});
         case HttpError::TransportFailed:
         case HttpError::Unknown:
             break;
         }
-        return std::unexpected(LoginError::TransportFailed);
+        return std::unexpected(LoginFailure{LoginError::TransportFailed, {}, {}, 0});
     }
 
     if (res->status != 200) {
-        // Kite answers a spent or expired request_token with 400/403. That is
-        // NOT retryable and the caller must be told so, because retrying with
-        // the same token is the natural instinct and it can never work.
-        return std::unexpected(LoginError::Refused);
+        // Kite answers a spent or expired request_token with 400/403, and puts
+        // the actual reason in the body. Carry it out: "Token is invalid or
+        // has expired" and "Invalid `checksum`" are the same status code and
+        // completely different bugs.
+        return std::unexpected(LoginFailure{
+            LoginError::Refused,
+            detail::json_string_field(res->body, "message"),
+            detail::json_string_field(res->body, "error_type"),
+            res->status});
     }
 
     const std::string access = detail::json_string_field(res->body,
                                                          "access_token");
     if (access.empty()) {
-        return std::unexpected(LoginError::MalformedResponse);
+        return std::unexpected(LoginFailure{LoginError::MalformedResponse, {}, {}, res->status});
     }
 
     KiteLoginResult r{};
@@ -205,7 +227,7 @@ kite_exchange_token(std::string_view api_key, std::string_view api_secret,
         || !detail::copy_into(r.session.user_id, sizeof r.session.user_id,
                               detail::json_string_field(res->body,
                                                         "user_id"))) {
-        return std::unexpected(LoginError::MalformedResponse);
+        return std::unexpected(LoginFailure{LoginError::MalformedResponse, {}, {}, res->status});
     }
     return r;
 }

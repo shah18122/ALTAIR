@@ -125,7 +125,19 @@ int main(int argc, char** argv)
                 token.size());
     const auto r = kite_exchange_token(api_key, api_secret, token, now);
     if (!r) {
-        std::printf("  exchange did not succeed: %s\n", explain(r.error()));
+        const LoginFailure& f = r.error();
+        std::printf("  exchange did not succeed: %s\n", explain(f.code));
+        if (f.status != 0) {
+            std::printf("  Kite answered HTTP %u\n", f.status);
+        }
+        // Kite's own words. A spent token, an expired token and a wrong
+        // checksum are all HTTP 400 and are three different bugs.
+        if (!f.message.empty()) {
+            std::printf("  Kite said     : %s\n", f.message.c_str());
+        }
+        if (!f.error_type.empty()) {
+            std::printf("  error_type    : %s\n", f.error_type.c_str());
+        }
         return 1;
     }
 

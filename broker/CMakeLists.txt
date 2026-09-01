@@ -22,7 +22,6 @@ target_link_libraries(altair_broker INTERFACE
 
 # The networked half. Only defined when the net feature actually built.
 find_package(OpenSSL QUIET)
-find_package(Boost QUIET COMPONENTS system)
 if(OpenSSL_FOUND)
     add_library(altair_broker_net INTERFACE)
     add_library(altair::broker_net ALIAS altair_broker_net)
