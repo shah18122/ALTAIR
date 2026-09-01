@@ -39,4 +39,8 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_kite_adapter_test
         PRIVATE altair_oms altair_broker altair_risk altair_flags)
     add_test(NAME kite_adapter COMMAND altair_kite_adapter_test)
+
+    add_executable(altair_throttle_test tests/test_throttle.cpp)
+    target_link_libraries(altair_throttle_test PRIVATE altair_oms altair_flags)
+    add_test(NAME throttle COMMAND altair_throttle_test)
 endif()

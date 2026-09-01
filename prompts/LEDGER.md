@@ -481,8 +481,8 @@ to the paisa on 50 historical trades.
 | P4-03 | Portfolio greeks + sector + margin — **DONE** · aggregates in MONEY, not raw greeks · predicts a real reprice to 0.08% while the raw delta sum has the OPPOSITE SIGN · vega bucketed by expiry · 35 checks | **DONE** |
 | P4-04 | Order state machine — **DONE** · `oms/` opened · duplicates are traffic, stale fills never walk the position back, a fill AFTER cancel-ack is accepted · 56 checks | **DONE** |
 | P4-05 | Kite execution adapter — **DONE** · translation only, no transport, so it tests with no network · an UNKNOWN STATUS IS REFUSED (no default arm) · partial fill derived from quantities, Kite has no status for it · 51 checks | **DONE** |
-| P4-06 | XTS execution adapter | TODO |
-| P4-07 | Smart router + per-broker throttle | TODO |
+| P4-06 | XTS execution adapter | **DEFERRED** — Smit set XTS aside ("avoid xts master sample for now"). No XTS spec sample, no credentials, and `oms/throttle.hpp` REFUSES `Venue::Xts` rather than falling back to Kite, so nothing routes there by accident until this lands |
+| P4-07 | Router + per-broker throttle — **DONE** · three windows, tightest binds and SAYS WHICH · 2 orders/sec exhausts the DAILY budget in 25 min while the fast limits never bind · unavailable venue REFUSED, never a silent fallback · 31 checks | **DONE** |
 | P4-08 | Reconciliation + orphan sweeper — **DONE** · an ORPHAN trips the kill switch, a ghost does not · quantity exact, price toleranced · unsorted input REFUSED (would fake orphans) · 37 checks | **DONE** |
 | P4-09 | Exit ladder + auto square-off — **DONE** · RULE 8 enforced and MEASURED: tighter-stop-first is worth Rs 1,50,000 on one gap · stops can only tighten · clock beats target · 38 checks | **DONE** |
 
