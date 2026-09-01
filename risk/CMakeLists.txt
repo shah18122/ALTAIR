@@ -23,4 +23,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_slippage_test tests/test_slippage.cpp)
     target_link_libraries(altair_slippage_test PRIVATE altair_risk altair_flags)
     add_test(NAME slippage COMMAND altair_slippage_test)
+
+    add_executable(altair_sizing_test tests/test_sizing.cpp)
+    target_link_libraries(altair_sizing_test PRIVATE altair_risk altair_flags)
+    add_test(NAME sizing COMMAND altair_sizing_test)
 endif()
