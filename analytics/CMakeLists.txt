@@ -29,4 +29,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_ewma_test tests/test_ewma.cpp)
     target_link_libraries(altair_ewma_test PRIVATE altair_analytics altair_flags)
     add_test(NAME ewma COMMAND altair_ewma_test)
+
+    add_executable(altair_hurst_test tests/test_hurst.cpp)
+    target_link_libraries(altair_hurst_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME hurst COMMAND altair_hurst_test)
 endif()
