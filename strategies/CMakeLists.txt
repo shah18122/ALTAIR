@@ -33,4 +33,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_calendar_test tests/test_calendar.cpp)
     target_link_libraries(altair_calendar_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_calendar COMMAND altair_calendar_test)
+
+    add_executable(altair_oppty_log_test tests/test_oppty_log.cpp)
+    target_link_libraries(altair_oppty_log_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_oppty_log COMMAND altair_oppty_log_test)
 endif()
