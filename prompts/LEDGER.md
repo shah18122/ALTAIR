@@ -483,7 +483,7 @@ to the paisa on 50 historical trades.
 | P4-05 | Kite execution adapter | TODO |
 | P4-06 | XTS execution adapter | TODO |
 | P4-07 | Smart router + per-broker throttle | TODO |
-| P4-08 | Reconciliation + orphan sweeper | TODO |
+| P4-08 | Reconciliation + orphan sweeper — **DONE** · an ORPHAN trips the kill switch, a ghost does not · quantity exact, price toleranced · unsorted input REFUSED (would fake orphans) · 37 checks | **DONE** |
 | P4-09 | Exit ladder + auto square-off — **DONE** · RULE 8 enforced and MEASURED: tighter-stop-first is worth Rs 1,50,000 on one gap · stops can only tighten · clock beats target · 38 checks | **DONE** |
 
 **Exit:** paper-trades a trivial strategy live 5 sessions, zero reconciliation
