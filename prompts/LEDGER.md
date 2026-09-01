@@ -455,7 +455,7 @@ drops, p99 decode < 3 µs.
 |---|---|---|
 | P3-01 | Black-76 price + 1st-order greeks — **DONE** · erfc tail, finite-difference verified · 44 checks | **DONE** |
 | P3-02 | 2nd/3rd order greeks — **DONE** · every greek finite-differenced against P3-01 · vanna verified BOTH ways (Clairaut) · charm is the one that is NOT right-independent, by exactly r*df · 50 checks | **DONE** |
-| P3-03 | Bjerksund–Stensland American pricer | TODO |
+| P3-03 | Bjerksund–Stensland American pricer — **DONE** · verified against a 1500-step binomial · LOWER BOUND always, worst case 0.28 of a tick · **not on any NSE path: NSE options are European** · 26 checks | **DONE** |
 | P3-04 | IV solver + **Black-Scholes on spot** — **DONE** · safeguarded Newton on the same pricer, no duplicated formula · refuses outside no-arb bounds · returns vega as the error propagator · 61 checks · 1.6 µs/solve | **DONE** |
 | P3-05a | SVI slice + butterfly/calendar arbitrage checks — **DONE** · g<0 shown to be a NEGATIVE BUTTERFLY PRICE, 42/42 agreement · density integrates to 1.0 · 46 checks | **DONE** |
 | P3-05b | SVI calibration, quasi-explicit — **DONE** · inner (a,c,d) linear + Nelder-Mead on (m,log sigma) · weights from P3-04's error bar, 97x better at the money · 43 checks | **DONE** |

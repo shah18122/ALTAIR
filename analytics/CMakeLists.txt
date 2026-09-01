@@ -53,4 +53,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_derivatives_test tests/test_derivatives.cpp)
     target_link_libraries(altair_derivatives_test PRIVATE altair_analytics altair_flags)
     add_test(NAME derivatives COMMAND altair_derivatives_test)
+
+    add_executable(altair_american_test tests/test_american.cpp)
+    target_link_libraries(altair_american_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME american COMMAND altair_american_test)
 endif()
