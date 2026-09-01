@@ -500,7 +500,7 @@ breaks, invariants never trip.
 | P5-02 | Feature builders: kinematics + distribution — **DONE** · an unready feature is ABSENT, not zero · warmup per FEATURE not per vector · Hurst fed returns, once, where it shows · 35 checks | **DONE** |
 | P5-03 | Feature builders: book + flow — **DONE** · an empty book is NOT a balanced book, it fills NOTHING · a crossed book is data: flag present, levels absent · sample counts travel with the estimates · 24 checks | **DONE** |
 | P5-04 | Feature builders: options + cross-asset + calendar — **DONE** · KNOW WHAT WRAPS: the session clock does NOT (a circle puts the open and the close 0.000 apart), the expiry cycle DOES (linear puts consecutive sessions 4x too far) · the trading calendar is passed IN, never derived from a timestamp · the IV band travels as its own feature: 25x wider in the wing, 2070x if the chain is flat · correlation on returns, never levels (0.492 vs 0.031 on independent walks) · 34 checks | **DONE** |
-| P5-05 | Cash–futures basis + cross-venue scanner | TODO |
+| P5-05 | Cash–futures basis + cross-venue scanner — **DONE** · HALF THE DIRECTIONS CANNOT BE TRADED: no short cash delivery in India, so the reverse carry is arithmetic and not edge · executability travels with every result, ordinal 0 is Unknown · no gross-edge field exists (rule 5) · **measured: a carry breaks even at 9.2% implied repo against a 6.5% real rate — a 270bp hurdle; a 60-paise NSE/BSE cross nets MINUS Rs 284** · a Rs 12 basis on a 2950 spot is a Rs 1.85 DISCOUNT · 33 checks | **DONE** |
 | P5-06 | Put–call parity + box + butterfly scanner | TODO |
 | P5-07 | Calendar spread scanner | TODO |
 | P5-08 | Arbitrage opportunity log + post-cost edge report | TODO |
