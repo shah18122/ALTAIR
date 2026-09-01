@@ -456,7 +456,7 @@ drops, p99 decode < 3 µs.
 | P3-01 | Black-76 price + 1st-order greeks — **DONE** · erfc tail, finite-difference verified · 44 checks | **DONE** |
 | P3-02 | 2nd/3rd order greeks (Vanna, Volga, Charm, Veta, Speed, Zomma) | TODO |
 | P3-03 | Bjerksund–Stensland American pricer | TODO |
-| P3-04 | Jäckel IV solver | TODO |
+| P3-04 | IV solver + **Black-Scholes on spot** — **DONE** · safeguarded Newton on the same pricer, no duplicated formula · refuses outside no-arb bounds · returns vega as the error propagator · 61 checks · 1.6 µs/solve | **DONE** |
 | P3-05 | SVI surface fit + arbitrage-free checks | TODO |
 | P3-06 | Rolling stats: mean, var, skew, kurt, z, EWMA, Hurst | TODO |
 | P3-07 | Derivatives: velocity, acceleration, jerk, multi-scale | TODO |

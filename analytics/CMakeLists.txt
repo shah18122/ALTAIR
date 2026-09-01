@@ -17,4 +17,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_greeks_test tests/test_greeks.cpp)
     target_link_libraries(altair_greeks_test PRIVATE altair_analytics altair_flags)
     add_test(NAME greeks COMMAND altair_greeks_test)
+
+    add_executable(altair_iv_test tests/test_iv.cpp)
+    target_link_libraries(altair_iv_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME iv COMMAND altair_iv_test)
 endif()
