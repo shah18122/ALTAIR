@@ -19,4 +19,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_registry_test tests/test_registry.cpp)
     target_link_libraries(altair_registry_test PRIVATE altair_features altair_flags)
     add_test(NAME feature_registry COMMAND altair_registry_test)
+
+    add_executable(altair_kinematics_test tests/test_kinematics.cpp)
+    target_link_libraries(altair_kinematics_test PRIVATE altair_features altair_flags)
+    add_test(NAME feature_kinematics COMMAND altair_kinematics_test)
 endif()
