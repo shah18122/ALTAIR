@@ -25,4 +25,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_rolling_test tests/test_rolling.cpp)
     target_link_libraries(altair_rolling_test PRIVATE altair_analytics altair_flags)
     add_test(NAME rolling COMMAND altair_rolling_test)
+
+    add_executable(altair_ewma_test tests/test_ewma.cpp)
+    target_link_libraries(altair_ewma_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME ewma COMMAND altair_ewma_test)
 endif()
