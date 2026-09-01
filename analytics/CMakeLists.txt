@@ -21,4 +21,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_iv_test tests/test_iv.cpp)
     target_link_libraries(altair_iv_test PRIVATE altair_analytics altair_flags)
     add_test(NAME iv COMMAND altair_iv_test)
+
+    add_executable(altair_rolling_test tests/test_rolling.cpp)
+    target_link_libraries(altair_rolling_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME rolling COMMAND altair_rolling_test)
 endif()
