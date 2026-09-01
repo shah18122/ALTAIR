@@ -76,6 +76,14 @@
         "ALTAIR_NATIVE_ARCH": "ON",
         "ALTAIR_STRICT_INVARIANTS": "OFF"
       }
+    },
+    {
+      "name": "net",
+      "displayName": "Dev + vcpkg net - HTTPS/TLS, needed from P2-10c",
+      "inherits": "vcpkg",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "config;net"
+      }
     }
   ],
   "buildPresets": [
@@ -102,6 +110,11 @@
     {
       "name": "prod",
       "configurePreset": "prod"
+    },
+    {
+      "name": "net",
+      "configurePreset": "net",
+      "jobs": 4
     }
   ],
   "testPresets": [
@@ -125,6 +138,16 @@
     {
       "name": "vcpkg",
       "configurePreset": "vcpkg",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": false
+      }
+    },
+    {
+      "name": "net",
+      "configurePreset": "net",
       "output": {
         "outputOnFailure": true
       },

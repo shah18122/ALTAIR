@@ -16,3 +16,19 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME app_selftest COMMAND altair --selftest)
     add_test(NAME app_instruments COMMAND altair --instruments)
 endif()
+
+# ── the Kite login, P2-10c ────────────────────────────────────────────────
+#
+# A SEPARATE BINARY, not a mode of `altair`. It is run by hand a few times a
+# day, it is the only thing in the tree that reaches the public internet with
+# a credential, and it links OpenSSL. Folding it into the engine binary would
+# put a TLS stack and a secret-reading code path inside the process that
+# places orders, for no benefit.
+#
+# Built only when the vcpkg `net` feature is present, so `--preset default`
+# keeps working with no vcpkg at all.
+if(ALTAIR_HAVE_NET)
+    add_executable(altair_kite_login kite_login_main.cpp)
+    target_link_libraries(altair_kite_login PRIVATE
+        altair_broker_net altair_flags)
+endif()

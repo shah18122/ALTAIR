@@ -5,7 +5,10 @@
 # live in either without the other including it -- and a client that can
 # include an OMS header is a client that can be made to trade.
 #
-# Header-only. The HTTP half (P2-10c) lands when vcpkg unblocks.
+# Header-only, except that the HTTP half (P2-10c) needs OpenSSL and Beast.
+# Those are behind the vcpkg `net` feature, so altair_broker_net is a SEPARATE
+# target: the rest of the tree must keep building with no vcpkg at all, which
+# the `default` preset does and which every card before this one relied on.
 
 add_library(altair_broker INTERFACE)
 add_library(altair::broker ALIAS altair_broker)
@@ -16,6 +19,31 @@ target_link_libraries(altair_broker INTERFACE
     altair_time
     altair_flags
 )
+
+# The networked half. Only defined when the net feature actually built.
+find_package(OpenSSL QUIET)
+find_package(Boost QUIET COMPONENTS system)
+if(OpenSSL_FOUND)
+    add_library(altair_broker_net INTERFACE)
+    add_library(altair::broker_net ALIAS altair_broker_net)
+    target_include_directories(altair_broker_net
+        INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_link_libraries(altair_broker_net INTERFACE
+        altair_broker
+        OpenSSL::SSL
+        OpenSSL::Crypto)
+    if(WIN32)
+        # CertOpenSystemStore / CertEnumCertificatesInStore. Needed because
+        # OpenSSL's default verify paths are empty on Windows, so the platform
+        # trust store has to be loaded by hand -- see broker/https_client.hpp.
+        target_link_libraries(altair_broker_net INTERFACE crypt32)
+    endif()
+    set(ALTAIR_HAVE_NET ON CACHE INTERNAL "broker net half is available")
+    message(STATUS "altair: broker net half ENABLED (OpenSSL found)")
+else()
+    message(STATUS "altair: broker net half disabled (no OpenSSL) -- "
+                   "configure with --preset net for P2-10c")
+endif()
 
 if(ALTAIR_BUILD_TESTS)
     add_executable(altair_kite_auth_test tests/test_kite_auth.cpp)

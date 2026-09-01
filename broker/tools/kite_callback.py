@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """A localhost callback server that captures a Kite request_token.
 
+IT NO LONGER TOUCHES THE SECRET. Since P2-10c the exchange is done by
+`altair_kite_login` (C++), and this script only catches the redirect and hands
+the request_token over. So ALTAIR_KITE_API_SECRET is read by exactly one
+program in the tree, and that program is the engine rather than a helper.
+
 Run it, open the login URL it prints, log in, and it captures the redirect,
 exchanges the token, and writes data/kite_session.json. Then it stops.
 
@@ -48,11 +53,11 @@ SECURITY
 from __future__ import annotations
 
 import datetime
-import hashlib
 import http.server
 import json
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -71,7 +76,6 @@ LISTEN_URL = f"http://{HOST}:{PORT}{CALLBACK_PATH}"
 PUBLIC_REDIRECT = os.environ.get(
     "ALTAIR_KITE_REDIRECT",
     "https://altair.thesmitshah.com/zerodha/callback").strip()
-SESSION_URL = "https://api.kite.trade/session/token"
 OUT_PATH = os.path.join("data", "kite_session.json")
 # Query parameter that marks a liveness probe rather than a real callback.
 PROBE_PARAM = "altair_probe"
@@ -79,56 +83,34 @@ PROBE_PARAM = "altair_probe"
 _result: dict = {}
 
 
-def exchange(api_key: str, secret: str, req_tok: str) -> tuple[bool, str]:
-    """Swap a request_token for an access_token. Returns (ok, message)."""
-    checksum = hashlib.sha256((api_key + req_tok + secret).encode()).hexdigest()
-    body = urllib.parse.urlencode({
-        "api_key": api_key,
-        "request_token": req_tok,
-        "checksum": checksum,
-    }).encode()
-    req = urllib.request.Request(
-        SESSION_URL, data=body,
-        headers={"X-Kite-Version": "3",
-                 "Content-Type": "application/x-www-form-urlencoded"},
-        method="POST")
+def exchange(req_tok: str) -> tuple[bool, str]:
+    """Hand the request_token to the C++ binary, which does the exchange.
+
+    Takes NO credentials. The key and secret stay in the environment, which the
+    child process inherits, so they are never held by this process and never
+    appear on a command line where they would land in a process listing.
+    """
+    exe = None
+    for candidate in (os.path.join("build", "net", "app", "altair_kite_login.exe"),
+                      os.path.join("build", "net", "app", "altair_kite_login")):
+        if os.path.exists(candidate):
+            exe = candidate
+            break
+    if exe is None:
+        return False, ("altair_kite_login is not built. Configure and build "
+                       "the `net` preset:  .\\build.bat net")
+
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            payload = json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode()[:300]
-        hint = ""
-        if e.code in (400, 403):
-            hint = ("\nA request_token is SINGLE USE and expires within "
-                    "minutes. Log in again.")
-        return False, f"HTTP {e.code}: {detail}{hint}"
-    except Exception as e:                      # noqa: BLE001
-        return False, f"network error: {type(e).__name__}: {e}"
+        proc = subprocess.run([exe, req_tok], capture_output=True, text=True,
+                              timeout=60)
+    except Exception as e:                       # noqa: BLE001
+        return False, f"could not run {exe}: {type(e).__name__}: {e}"
 
-    if payload.get("status") != "success":
-        return False, f"non-success: {json.dumps(payload)[:300]}"
-
-    d = payload["data"]
-    out = {
-        "user_id": d.get("user_id"),
-        "user_name": d.get("user_name"),
-        "broker": d.get("broker"),
-        "access_token": d.get("access_token"),
-        "public_token": d.get("public_token"),
-        "login_time": d.get("login_time"),
-        "issued_at_utc": datetime.datetime.now(datetime.timezone.utc)
-                         .isoformat(timespec="seconds"),
-        "exchanges": d.get("exchanges"),
-        "products": d.get("products"),
-        "order_types": d.get("order_types"),
-    }
-    os.makedirs("data", exist_ok=True)
-    with open(OUT_PATH, "w", encoding="utf-8") as fh:
-        json.dump(out, fh, indent=2)
-    _result.update(out)
-    at = out["access_token"] or ""
-    return True, (f"user {out['user_id']} ({out['user_name']}), "
-                  f"token {at[:6]}...{at[-4:]} ({len(at)} chars)")
+    out = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        return False, out.strip() or f"exit code {proc.returncode}"
+    _result["access_token"] = "written"          # the C++ side wrote the file
+    return True, out.strip()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -181,8 +163,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         print(f"  captured request_token ({len(req_tok)} chars); exchanging...")
-        ok, msg = exchange(os.environ["ALTAIR_KITE_API_KEY"],
-                           os.environ["ALTAIR_KITE_API_SECRET"], req_tok)
+        # The secret is deliberately NOT read here. It stays in the
+        # environment, the child inherits it, and this process never holds it.
+        ok, msg = exchange(req_tok)
         if ok:
             self._reply(200, "Session established",
                         f"Written to <code>{OUT_PATH}</code>. "
@@ -203,7 +186,7 @@ def probe_tunnel(srv: http.server.HTTPServer) -> tuple[bool, str]:
     the main thread, because a single-threaded server cannot answer a request
     it is itself blocked on making.
     """
-    nonce = hashlib.sha256(os.urandom(16)).hexdigest()[:16]
+    nonce = os.urandom(8).hex()
     sep = "&" if "?" in PUBLIC_REDIRECT else "?"
     url = f"{PUBLIC_REDIRECT}{sep}{PROBE_PARAM}={nonce}"
     outcome: dict = {}
@@ -252,8 +235,11 @@ def probe_tunnel(srv: http.server.HTTPServer) -> tuple[bool, str]:
 
 def main() -> int:
     api_key = os.environ.get("ALTAIR_KITE_API_KEY", "").strip()
-    secret = os.environ.get("ALTAIR_KITE_API_SECRET", "").strip()
-    if not api_key or not secret:
+    # PRESENCE only, never the value. Checked here rather than left to the
+    # child so that a missing secret is discovered BEFORE the login, not after
+    # a single-use request_token has already been spent on it.
+    have_secret = bool(os.environ.get("ALTAIR_KITE_API_SECRET", "").strip())
+    if not api_key or not have_secret:
         print("ALTAIR_KITE_API_KEY and ALTAIR_KITE_API_SECRET must be set.")
         print("Set them with setx, then open a NEW terminal.")
         return 2

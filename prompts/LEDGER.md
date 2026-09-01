@@ -441,7 +441,7 @@ sizes; a deliberately corrupted source is caught and blocks only its symbol.
 | P2-09c | Queue position — needs live order state; really Phase 4 | TODO — deferred to P4 |
 | **P2-10a** | `broker/sha256.hpp` — FIPS 180-4, NIST-verified, cross-checked against `hashlib` — **DONE** · 24 checks | **DONE** |
 | **P2-10b** | `broker/kite_session.hpp` — login URL + session checksum — **DONE** | **DONE** |
-| P2-10c | `/session/token` POST + `data/kite_session.json` persistence | READY — needs the vcpkg `net` feature built. Stopgap in use: `broker/tools/kite_login.py` (stdlib only) |
+| P2-10c | `/session/token` POST + `data/kite_session.json` persistence — **DONE** · vcpkg `net` built (62 pkgs, 15 min) · `broker/https_client.hpp` + `broker/kite_login.hpp` + `altair_kite_login` · TLS verified end-to-end against api.kite.trade (HTTP 400 on a bogus token) · Python stopgap DELETED | **DONE** |
 | **P2-11** | `broker/kite_api.hpp` — the whole Kite surface transcribed from gokiteconnect **v4.4.2**, plus the paise↔rupees converter — **DONE** · 31 checks | **DONE** |
 
 **Exit:** 6 h of live NIFTY + BANKNIFTY captured, replayed bit-identically, zero
