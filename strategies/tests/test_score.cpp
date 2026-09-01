@@ -35,6 +35,24 @@ void check(bool ok, const char* what)
 bool near(double a, double b, double tol) { return std::fabs(a - b) <= tol; }
 double rupees(std::int64_t p) { return static_cast<double>(p) / 100.0; }
 
+/// A fixed-alpha exponential smoother, defined HERE because this is a test
+/// fixture and not an indicator. The engine under test takes standardised
+/// signals and does not care where they came from; this exists only to
+/// manufacture a set of signals that are correlated the way a real
+/// multi-timeframe stack is.
+struct Smoother {
+    double alpha;
+    double v = 0.0;
+    bool seeded = false;
+    explicit Smoother(int period)
+        : alpha(2.0 / (static_cast<double>(period) + 1.0)) {}
+    double update(double x)
+    {
+        if (!seeded) { v = x; seeded = true; } else { v += alpha * (x - v); }
+        return v;
+    }
+};
+
 struct Lcg {
     std::uint64_t s;
     double uniform()
@@ -93,8 +111,10 @@ void ten_correlated_signals_are_not_ten_signals()
     // their data by construction.
     Lcg g{0x5C02E};
     const int periods[kSignals] = {5, 8, 12, 18, 26, 38, 55, 80, 115, 165};
-    Ema emas[kSignals] = {Ema{5},  Ema{8},   Ema{12},  Ema{18}, Ema{26},
-                          Ema{38}, Ema{55},  Ema{80},  Ema{115}, Ema{165}};
+    Smoother emas[kSignals] = {
+        Smoother{5},  Smoother{8},   Smoother{12},  Smoother{18},
+        Smoother{26}, Smoother{38},  Smoother{55},  Smoother{80},
+        Smoother{115}, Smoother{165}};
     double p = 2'400'000.0;
     for (std::size_t t = 0; t < kLen; ++t) {
         p += g.normal() * 2000.0;

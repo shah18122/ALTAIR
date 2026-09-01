@@ -67,7 +67,6 @@
 #pragma once
 
 #include <analytics/hurst.hpp>
-#include <analytics/indicators.hpp>
 #include <analytics/rolling.hpp>
 
 #include <cmath>
