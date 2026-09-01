@@ -12,6 +12,7 @@ target_link_libraries(altair_features INTERFACE
     altair_types
     altair_time
     altair_analytics
+    altair_book
     altair_flags
 )
 
@@ -23,4 +24,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_kinematics_test tests/test_kinematics.cpp)
     target_link_libraries(altair_kinematics_test PRIVATE altair_features altair_flags)
     add_test(NAME feature_kinematics COMMAND altair_kinematics_test)
+
+    add_executable(altair_book_flow_test tests/test_book_flow.cpp)
+    target_link_libraries(altair_book_flow_test PRIVATE altair_features altair_flags)
+    add_test(NAME feature_book_flow COMMAND altair_book_flow_test)
 endif()

@@ -147,10 +147,8 @@ kinematics_at(const PriceHistory<N>& h, Timestamp now, Duration scale,
 
 /// Write the kinematics family into a vector at the given slots.
 ///
-/// A slot of `kSkip` means the caller did not register that feature, and it is
-/// skipped rather than defaulted -- a builder that invented a slot would write
-/// over whatever the registry actually put there.
-inline constexpr FeatureIndex kSkip = 0xFFFF;
+/// A slot of `kSkip` (see features/vector.hpp) means the caller did not
+/// register that feature, and it is skipped rather than defaulted.
 
 struct KinematicSlots {
     FeatureIndex velocity = kSkip;

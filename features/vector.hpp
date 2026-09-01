@@ -37,6 +37,14 @@
 
 namespace altair {
 
+/// A slot the caller did not register. Builders skip it rather than writing
+/// to some default index -- a builder that invented a slot would write over
+/// whatever the registry actually put there.
+///
+/// Lives here, not in one family's header, because every family shares the
+/// convention and two definitions of it would eventually disagree.
+inline constexpr FeatureIndex kSkip = 0xFFFF;
+
 enum class VectorError : std::uint8_t {
     /// The feature index is past the end of this vector.
     OutOfRange,
