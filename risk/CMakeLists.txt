@@ -27,4 +27,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_sizing_test tests/test_sizing.cpp)
     target_link_libraries(altair_sizing_test PRIVATE altair_risk altair_flags)
     add_test(NAME sizing COMMAND altair_sizing_test)
+
+    add_executable(altair_limits_test tests/test_limits.cpp)
+    target_link_libraries(altair_limits_test PRIVATE altair_risk altair_flags)
+    add_test(NAME limits COMMAND altair_limits_test)
 endif()
