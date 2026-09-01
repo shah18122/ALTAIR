@@ -29,4 +29,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_parity_test tests/test_parity.cpp)
     target_link_libraries(altair_parity_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_parity COMMAND altair_parity_test)
+
+    add_executable(altair_calendar_test tests/test_calendar.cpp)
+    target_link_libraries(altair_calendar_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_calendar COMMAND altair_calendar_test)
 endif()
