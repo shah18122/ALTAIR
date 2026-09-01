@@ -465,7 +465,7 @@ drops, p99 decode < 3 µs.
 | P3-07 | Multi-scale derivatives — **DONE** · local polynomial, not smooth-then-difference · naive two-point difference shown reporting 500 paise/s on a series that is NOT MOVING · 34 checks | **DONE** |
 | P3-08 | India VIX replication — **DONE** · model-free variance swap · flat 15-vol recovers 15.0028 · agrees with the SVI surface to 0.0025 sharing no code · 47 checks | **DONE** |
 | P3-09 | **Cost calculator** — **DONE** · exact 128-bit integer paise, premium-vs-notional, side-aware · 46 checks · measured 5.95 bps round trip | **DONE** |
-| P3-10 | Slippage + Kyle-λ impact learned from fill history | TODO |
+| P3-10 | Slippage learned from fill history — **DONE** · square-root impact law · fitting on FILLS ONLY understates cost 0.635 vs 0.900 truth · sizes on the pessimistic bound · 43 checks | **DONE** |
 
 **Exit:** full-chain greeks < 50 µs; cost calculator matches a real contract note
 to the paisa on 50 historical trades.

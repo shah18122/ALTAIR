@@ -19,4 +19,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_cost_test tests/test_cost.cpp)
     target_link_libraries(altair_cost_test PRIVATE altair_risk altair_flags)
     add_test(NAME cost COMMAND altair_cost_test)
+
+    add_executable(altair_slippage_test tests/test_slippage.cpp)
+    target_link_libraries(altair_slippage_test PRIVATE altair_risk altair_flags)
+    add_test(NAME slippage COMMAND altair_slippage_test)
 endif()
