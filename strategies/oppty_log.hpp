@@ -242,7 +242,7 @@ template <std::size_t N>
 class OpportunityLog {
 public:
     explicit OpportunityLog(std::uint64_t seed = 0x9E3779B97F4A7C15ull) noexcept
-        : rng_(seed | 1ull) {}
+        : rng_(seed != 0 ? seed : 0x9E3779B97F4A7C15ull) {}
 
     /// Record one observation. Returns true when it was retained in the
     /// sample; the aggregates are updated either way, which is the whole
@@ -299,7 +299,7 @@ public:
 
     void reset(std::uint64_t seed = 0x9E3779B97F4A7C15ull) noexcept {
         r_ = SessionReport{};
-        rng_ = seed | 1ull;
+        rng_ = seed != 0 ? seed : 0x9E3779B97F4A7C15ull;
     }
 
 private:

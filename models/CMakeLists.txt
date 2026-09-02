@@ -28,4 +28,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_labels_test tests/test_labels.cpp)
     target_link_libraries(altair_labels_test PRIVATE altair_models altair_flags)
     add_test(NAME models_labels COMMAND altair_labels_test)
+
+    add_executable(altair_dataset_test tests/test_dataset.cpp)
+    target_link_libraries(altair_dataset_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_dataset COMMAND altair_dataset_test)
 endif()

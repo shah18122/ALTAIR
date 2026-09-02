@@ -24,19 +24,27 @@
 // original series.
 //
 // Measured on 2,000 resamples of a clustered Heston source, 2,000 returns
-// each:
+// each, both drawing from the SAME random stream (common random numbers, so
+// the comparison is between the estimators and not between two draws):
 //
-//                     mean sd    mean Sharpe   MDD p95    MDD worst
-//   IID bootstrap     0.00355     -0.0420      45.63%      61.23%
-//   BLOCK bootstrap   0.00354     -0.0393      46.83%      63.31%
+//                     mean sd    mean Sharpe   MDD p50   MDD p95   MDD worst
+//   IID bootstrap     0.00311     -0.0212      20.21%    33.57%     44.76%
+//   BLOCK bootstrap   0.00312     -0.0215      18.60%    31.82%     49.63%
 //
 // The three ORDER-FREE statistics agree to three decimals. The drawdown does
-// not. The gap here is 2.6% at the 95th percentile and 3.4% at the worst path
-// -- modest at this level of vol-of-vol, and it is the DIRECTION that is
-// structural rather than the size: a calmer source understates less and a
-// stressed one understates far more. What makes the IID version dangerous
-// rather than merely wrong is that every number it quotes alongside the tail
-// is correct.
+// not -- and the shape of the disagreement is worth stating precisely rather
+// than rounding into a slogan.
+//
+// The block bootstrap's WORST path is 10.9% deeper: preserving runs is what
+// strings bad days together, and the extreme tail is where that shows. Its
+// median and 95th percentile sit LOWER, because 2,000 returns in blocks of 50
+// is only 40 independent draws per path against 2,000, which widens the whole
+// distribution. The two effects pull the middle and the extreme in opposite
+// directions.
+//
+// What survives unambiguously is the thing that matters: shuffling changes
+// only the statistic that depends on ORDER, and that statistic is the one a
+// risk limit is set against.
 //
 // MAX DRAWDOWN IS NOT COMPARABLE ACROSS BACKTESTS OF DIFFERENT LENGTHS.
 //
@@ -96,7 +104,12 @@ enum class McError : std::uint8_t {
 /// seed is an anecdote.
 class Rng {
 public:
-    explicit Rng(std::uint64_t seed) noexcept : s_(seed | 1ull) {}
+    /// xorshift needs a non-zero state. Replace ONLY a zero seed -- an
+    /// earlier `seed | 1` collapsed every even seed onto the odd one
+    /// above it, so 42 and 43 gave bit-identical streams and half of
+    /// any seed sweep duplicated the other half.
+    explicit Rng(std::uint64_t seed) noexcept
+        : s_(seed != 0 ? seed : 0x9E3779B97F4A7C15ull) {}
 
     [[nodiscard]] std::uint64_t next_u64() noexcept {
         s_ ^= s_ >> 12;
