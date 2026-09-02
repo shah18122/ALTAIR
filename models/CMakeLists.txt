@@ -22,6 +22,7 @@ target_link_libraries(altair_models INTERFACE
     altair_features
     altair_backtest
     altair_risk
+    altair_strategies
 )
 
 if(ALTAIR_BUILD_TESTS)
@@ -44,4 +45,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_attention_test tests/test_attention.cpp)
     target_link_libraries(altair_attention_test PRIVATE altair_models altair_flags)
     add_test(NAME models_attention COMMAND altair_attention_test)
+
+    add_executable(altair_serving_test tests/test_serving.cpp)
+    target_link_libraries(altair_serving_test PRIVATE altair_models altair_strategies altair_flags)
+    add_test(NAME models_serving COMMAND altair_serving_test)
 endif()
