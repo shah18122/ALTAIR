@@ -33,6 +33,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_limits_test PRIVATE altair_risk altair_flags)
     add_test(NAME limits COMMAND altair_limits_test)
 
+    add_executable(altair_hedge_book_test tests/test_hedge_book.cpp)
+    target_link_libraries(altair_hedge_book_test PRIVATE altair_risk altair_strategies altair_flags)
+    add_test(NAME hedge_book COMMAND altair_hedge_book_test)
+
     add_executable(altair_portfolio_test tests/test_portfolio.cpp)
     target_link_libraries(altair_portfolio_test PRIVATE altair_risk altair_flags)
     add_test(NAME portfolio COMMAND altair_portfolio_test)
