@@ -72,10 +72,6 @@
 
 namespace altair {
 
-inline constexpr std::size_t kMaxHidden = 64;
-inline constexpr std::size_t kMaxInput = 32;
-inline constexpr std::size_t kMaxSeq = 64;
-
 enum class RecurrentError : std::uint8_t {
     /// A dimension exceeded the fixed capacity.
     TooLarge,

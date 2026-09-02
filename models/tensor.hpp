@@ -35,6 +35,16 @@
 
 namespace altair {
 
+/// Fixed dimension caps, shared by every model in this directory.
+///
+/// Here rather than in one architecture's header because two of them need the
+/// same numbers, and a second definition would eventually disagree with the
+/// first -- the same reason kSkip lives in features/vector.hpp rather than in
+/// whichever family happened to need it first.
+inline constexpr std::size_t kMaxHidden = 64;
+inline constexpr std::size_t kMaxInput = 32;
+inline constexpr std::size_t kMaxSeq = 64;
+
 enum class TensorError : std::uint8_t {
     /// The shapes are not compatible for this operation.
     ShapeMismatch,
