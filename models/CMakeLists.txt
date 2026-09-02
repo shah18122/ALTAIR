@@ -36,4 +36,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_training_test tests/test_training.cpp)
     target_link_libraries(altair_training_test PRIVATE altair_models altair_flags)
     add_test(NAME models_training COMMAND altair_training_test)
+
+    add_executable(altair_recurrent_test tests/test_recurrent.cpp)
+    target_link_libraries(altair_recurrent_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_recurrent COMMAND altair_recurrent_test)
 endif()
