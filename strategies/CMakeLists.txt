@@ -45,4 +45,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_score_test tests/test_score.cpp)
     target_link_libraries(altair_score_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_score COMMAND altair_score_test)
+
+    add_executable(altair_fundamentals_test tests/test_fundamentals.cpp)
+    target_link_libraries(altair_fundamentals_test PRIVATE altair_strategies altair_models altair_flags)
+    add_test(NAME strategies_fundamentals COMMAND altair_fundamentals_test)
 endif()
