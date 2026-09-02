@@ -546,7 +546,7 @@ itself waits on a real tape.)*
 
 | Card | Deliverable | Status |
 |---|---|---|
-| P8-01 | Triple-barrier label builder | TODO |
+| P8-01 | Triple-barrier label builder — **DONE** · **the FIRST TOUCH wins**: two independent existence tests with the target preferred label a path that stopped out on bar 2 and recovered on bar 6 as a WIN — **802 of 2,852 labels flip, 28.1%** · this is CLAUDE.md hard rule 8 in the labelling path (the ordering bug that cost ~₹41K), and worse, because the model trained on it goes looking for more of them · within one bar the STOP is assumed · **the label window ends at the TOUCH: mean 2.92 bars against a 30-bar horizon, so purging on the horizon over-purges by 926%** · **2,000 consecutive labels are 558.9 effective observations, 0.279 each — deflated Sharpe fed the row count overstates evidence 3.6x** · fixed-width barriers are a REGIME label (11.5% vs 100% touched across regimes) · vertical policy has no default · 26 checks | **DONE** |
 | P8-02 | Dataset builder: tensor assembly from the tick archive | TODO |
 | P8-03 | LibTorch training harness (loop, checkpoint, early stop, LR schedule) | TODO |
 | P8-04 | LSTM model | TODO |

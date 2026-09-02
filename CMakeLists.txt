@@ -111,7 +111,7 @@ add_subdirectory(oms)               # Phase 4 - THE TRADE HANDLER
 add_subdirectory(features)          # Phase 5 - feature registry + builders
 add_subdirectory(strategies)        # Phase 5 — arbitrage scanners (detect only)
 add_subdirectory(backtest)          # Phase 6 — replayer, walk-forward, Monte Carlo
-# add_subdirectory(models)          # Phase 8
+add_subdirectory(models)            # Phase 8 — labels, training, the model zoo
 # add_subdirectory(flagging)        # Phase 9
 # add_subdirectory(server)          # Phase 11 — BACKEND ONLY, renders nothing
 # add_subdirectory(client)          # Phase 11 — DESKTOP ONLY, links no engine header
