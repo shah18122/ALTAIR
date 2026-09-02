@@ -112,7 +112,7 @@ add_subdirectory(features)          # Phase 5 - feature registry + builders
 add_subdirectory(strategies)        # Phase 5 — arbitrage scanners (detect only)
 add_subdirectory(backtest)          # Phase 6 — replayer, walk-forward, Monte Carlo
 add_subdirectory(models)            # Phase 8 — labels, training, the model zoo
-# add_subdirectory(flagging)        # Phase 9
+add_subdirectory(flagging)          # Phase 9 — scorecards, drift, auto-correction
 # add_subdirectory(server)          # Phase 11 — BACKEND ONLY, renders nothing
 # add_subdirectory(client)          # Phase 11 — DESKTOP ONLY, links no engine header
 add_subdirectory(research)          # Phase 7 — paper pipeline (decides, does not trade)
