@@ -1,9 +1,9 @@
 # Task Card Ledger
 
-142 cards. One card = one DeepSeek prompt = one review = one commit.
+143 cards. One card = one DeepSeek prompt = one review = one commit.
 Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 
-**Progress: 122 / 142 · 86%**
+**Progress: 123 / 143 · 86%**
 
 > Recounted 2026-09-04 BY SCRIPT, not by hand. The line read `14 / 115` and
 > had since the second week — Phase 0 done bar one, Phase 1 started — while
@@ -15,7 +15,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > hash (Phase 0's older form). Counting only `**DONE**` reported Phase 0 as
 > 0 / 14, which is how the two formats were noticed at all.
 >
-> The total moved 115 → 142 because the tree grew: Phase 8 took two more cards
+> The total moved 115 → 143 because the tree grew: Phase 8 took two more cards
 > (P8-13 the Markov chain, P8-14 its walk-forward), Phase 11 ran to 16, and
 > Phase 11Q — the Qt client — is 11 cards that did not exist when 115 was
 > written.
@@ -25,7 +25,7 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > | 0 | 13 | 14 | | 7 | 5 | 5 |
 > | 1 | 7 | 10 | | 8 | 14 | 14 |
 > | 2 | 9 | 11 | | 9 | 7 | 7 |
-> | 3 | 13 | 13 | | 10 | 8 | 8 |
+> | 3 | 14 | 14 | | 10 | 8 | 8 |
 > | 4 | 8 | 10 | | 11 | 16 | 16 |
 > | 5 | 8 | 8 | | 11Q | 9 | 11 |
 > | 6 | 5 | 7 | | 12 | 0 | 7 |
@@ -47,6 +47,12 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > The count above treats WITHDRAWN and DEFERRED as not-done, which understates
 > completion. That is deliberate: "we decided not to" and "we finished it" are
 > different facts and collapsing them is how a progress bar starts lying.
+>
+> The per-phase HEADINGS were stale too, and by more than one: Phase 2 claimed
+> 14 cards over 11 rows, Phase 3 claimed 10 over 14, Phase 4 claimed 9 over 10,
+> Phase 11 claimed 14 over 16, Phase 12 claimed 6 over 7. All five now come
+> from counting the rows. Every hand-maintained count in this file has been
+> wrong at least once, which is the argument for the script.
 
 > Count corrected 2026-08-29: the header read 96 while the per-phase headings
 > summed to 110 — the per-phase numbers were right and matched the rows, only the
@@ -64,6 +70,8 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 | P0-03 | `mul_shift32`'s portable 64×64→128 branch is **dead code on this box** — MSVC x64 takes `_umul128` and GCC/Clang take `unsigned __int128`. It is exercised by no test and no compiler here. Reachable only on an exotic target; verify before trusting any such build. | Phase 0 gate |
 | P0-04 | `to_utc` rejects `raw == INT64_MIN` for `TimeUnit::Nanos`, where it would in fact be representable. Deliberately conservative: the bound is written as `raw < -limit` so `-INT64_MIN` is never formed. Costs one representable value at year 1677. | — (accepted) |
 | **P0-01 / CLAUDE.md rule 3** | **Integer paise is NOT sufficient for currency derivatives.** Confirmed against Zerodha's own client (`gokiteconnect/ticker/ticker.go`, `convertPrice`): the wire price divisor is **segment-dependent** — `NseCD` divides by 10'000'000 and `BseCD` by 10'000, while everything else divides by 100. So an NSE-CD wire integer is in units of 10⁻⁷ rupees, **five decimal places finer than a paisa**, and storing it in `Price` (integer paise) truncates silently. Does **not** bite today: the configured universe is indices, index F&O and stock futures — no CDS. It becomes live the moment a USDINR contract is added. `ContractSpec` must carry a `price_scale` (wire units per rupee) and P2-02 must normalise, or the universe must **block** currency derivatives outright (rule 9). Decide in P1-01; enforce in P2-02. | **P1-01 + P2-02** |
+| P3-09b / P0-08b | **The `vcpkg` preset needs `CMAKE_BUILD_PARALLEL_LEVEL=3` on this box.** At full parallelism MSVC dies with `C1060: compiler is out of heap space` in `instruments/reconcile.hpp:533` and `book/l2_book.hpp:229` — seven targets at once, each `cl.exe` holding a large template instantiation set. Not a code defect and not a preset defect: the box does not have the RAM for eight simultaneous heavy TUs. It matters because the TWO cards that need vcpkg (the TOML loaders) are the two that cannot be built without hitting it, so anyone reaching for that preset meets this first. `build.bat` has no jobs flag; the environment variable is the way in. | build.bat, if it recurs |
+| **P3-09b** | **The DEFAULT preset still has no charge-schedule source.** `charges.toml` is now genuinely loaded, but only where tomlplusplus exists, which is the `vcpkg` preset. In the default preset `altair_charges_toml` is skipped and the only rates in the process are still the hand-mirrored ones in `test_cost.cpp`. Nothing reads those outside the test, so nothing is *wrong* today — but any code that wants a schedule in a default build has no source, and the first thing to reach for one will be the cost panel. Either make vcpkg the default preset or vendor a minimal TOML reader. | P11Q-05a |
 | ~~**P0-09b → P2-01**~~ **RESOLVED 2026-08-31** | Closed by P2-01. The normalised `Tick` carries `InstrumentId` and **has no token field at all**; `source` records which feed produced it as a diagnostic. Test 2 puts one contract in a `SpecStore` with two unrelated broker tokens and asserts both resolve to the same `InstrumentId`. `feed/replay.hpp`'s `ReplayTick` still carries the bare `token` — migrating the replayer to emit `Tick` is P2-06/P2-07, and the warning block stays in that header until it does. Original text: **A broker token is not an instrument key.** `ReplayTick.token` is a bare `uint32` documented as "a token". Kite's `instrument_token` and XTS's `ExchangeInstrumentID` are **different number spaces for the same contract**, so that field means different things depending on which feed produced the tick. P2-05 switches the primary feed mid-session: with a broker token in the tick, every instrument would appear to vanish and a stranger appear in its place, and the book, ledger and strategies would all follow it. The normalised `Tick` must carry the canonical `InstrumentId` from the spec store (ROADMAP §6.2); decoders map (source, broker_token) → InstrumentId and nothing downstream ever sees a broker token. The Phase 0 skeleton is safe only because it is single-source by construction. **Warning is in the header at the field.** | **P2-01 + P2-04** |
 | ~~**P1-01**~~ **PARTLY RESOLVED 2026-08-31** | ~~**`ContractSpec` has no home for broker tokens.**~~ P1-01 gave it `token[kFeedSourceCount]` indexed by `FeedSource`, and **P1-06 is where the map is actually assembled**: the merged spec takes `token[Kite]` from the Kite source and `token[Xts]` from the XTS source, so the mapping is bidirectional through the store (`id_of(src, token)` and `token_of(id, src)`) and nothing compares a token across sources. What remains is only that the XTS half is untestable against real data until P1-05 has a sample file. Original text: **`ContractSpec` has no home for broker tokens.** ROADMAP §6.2 gives it an `InstrumentId` but no `kite_token` / `xts_instrument_id`. P1-04 and P1-05 are named "token map" cards so the intent exists, but P1-01 must decide *where* the mapping lives — fields on the spec, or a separate table — and it must be **bidirectional**: decode needs token→id, subscription needs id→token. | **P1-01** |
 | ~~**P1-04 → P2-04**~~ **RESOLVED 2026-08-31** | The loop is now a sink-templated `detail::load_kite_dump_into`, with `load_kite_dump(…, Reconciler&, …)` as the correct path and `load_kite_dump_unreconciled(…, SpecStore&, …)` retained for single-source tests and named for what it skips. `KiteLoadReport::rejected_by_store` became `rejected_by_sink` — there are two sinks now and only one is a store. A test loads a dump into a Reconciler, adds a disagreeing NSE row, and asserts the symbol **blocks** rather than Kite quietly winning. Original text: **`load_kite_dump` writes the store directly; every later parser writes the Reconciler.** P1-04 predates P1-06, so it calls `SpecStore::add` — which means a Kite dump can populate the store without ever facing the three-way check. The four master-parser cards written 2026-08-31 all take `Reconciler&` instead, deliberately: a parser that *can* write the store is a parser that can bypass reconciliation. `load_kite_dump` needs a `Reconciler&` overload, and the direct-to-store form should become test-only. Not urgent while Kite is the only source; **must land before a second source does.** | **P1-05 or P2-04** |
@@ -467,7 +475,7 @@ sizes; a deliberately corrupted source is caught and blocks only its symbol.
 
 ---
 
-## Phase 2 — Feed & book (14)
+## Phase 2 — Feed & book (11)
 
 | Card | Deliverable | Status |
 |---|---|---|
@@ -492,7 +500,7 @@ drops, p99 decode < 3 µs.
 
 ---
 
-## Phase 3 — Analytics & cost (10)
+## Phase 3 — Analytics & cost (14)
 
 | Card | Deliverable | Status |
 |---|---|---|
@@ -515,7 +523,9 @@ to the paisa on 50 historical trades.
 
 ---
 
-## Phase 4 — Risk, OMS, paper trading (9)
+| P3-09b | **charges.toml was never read by anything** — **DONE**, a correction card whose defect is that the reader did not exist · P3-09 shipped as “effective-dated `charges.toml`” and the CALCULATOR is right, but ROADMAP §9 says the rates “live in `config/charges.toml`, never in code” and they were in code: the only place the real numbers existed was `test_cost.cpp`, which mirrors the file BY HAND and says so — the two agreed for as long as somebody kept editing both, and nothing checked · nothing loaded it because nothing COULD: `core/config/toml_source.hpp` flattens into a seqlock'd int64/double/bool snapshot and charges.toml is two `[[schedule]]` blocks, an array of tables, which that walker counts as `skipped_other` and never turns into keys — verified by READING `toml_source.cpp:119`, not assumed · **the boundary this most easily gets wrong**: `schedule_for` matches an INCLUSIVE range and `valid_to` is a DAY, so parsed to midnight a trade at 09:15 on 2026-03-31 falls between the two schedules and gets `NoSchedule` — the last trading day of the old STT regime silently unpriceable; `valid_to` becomes that day's LAST nanosecond and the test asserts 09:15 *and* 23:59 both resolve, to a different schedule than 1 April · read from the file, the rise is **futures 200000→500000 nano (0.02→0.05%) and options 1000000→1500000 (0.10→0.15%)** — exactly what CLAUDE.md's reality check states, written independently, which is the first time those two artefacts have been ABLE to contradict each other · **a missing rate BLOCKS, it does not default to zero** — a charge that silently becomes zero makes every strategy look more profitable, the direction nobody investigates (rule 9), so an unparseable rate, an unknown side, an undated schedule and two schedules covering one instant are all refused; the last because `schedule_for` returns the FIRST match, so an overlap lets FILE ORDER decide a backtest's rates · an ABSENT segment is a different thing and is not an error: `present=false`, which `compute_cost` already turns into `UnknownSegment` rather than a free trade — both halves asserted · priced end to end: 75 × ₹50 NIFTY option SELL = **₹30.80 on ₹3,750 of premium, 82 bps**, turnover PREMIUM not notional (notional would be 500×), every component verified by hand and the parts asserted to sum EXACTLY to the total in integer paise · D7 propagates — the file says UNVERIFIED, so every schedule and every breakdown says so, and only the TOML can flip it · vcpkg preset only, like P0-08b | **DONE** |
+
+## Phase 4 — Risk, OMS, paper trading (10)
 
 | Card | Deliverable | Status |
 |---|---|---|
@@ -643,7 +653,7 @@ back with no human action.
 
 ---
 
-## Phase 11 — UI (14)
+## Phase 11 — UI (16)
 
 > **Split by the one-component-one-directory rule.** P11-01/01b are `server/` —
 > backend only, renders nothing. P11-02..P11-14 are `client/` — the frontend,
@@ -719,7 +729,7 @@ in the grid and every export byte-correct.
 | P11Q-07b | The fit that froze the window — **DONE** · three defects, all found by trying to PHOTOGRAPH the panel, none visible from reading the code · **a blocked event loop does not look like a bug from outside, it looks like a slow machine**: row 0 is selected on construction, so the live fit ran during startup on the UI thread and the window never became ready — the capture got a null handle · cause was in `models/markov.hpp`, not the UI: `expanding_states` copied the whole past and re-sorted it every step, O(n² log n) with an allocation per step, ~9×10⁸ operations — now ONE sorted vector with an insert, **7.3 s → 0.08 s (91×**, past the ~26× the move count predicts, because the per-step allocation cost more than the sort) and bit-identical output · **`--page` took an index and `toInt()` returns 0 for anything else**, so `--page models` opened the Live Grid and looked like it worked — the first capture of this session is of the wrong panel for that reason · fixed twice: it first validated AFTER the login dialog (a typo cost a password entry, then refused) and printed with `qCritical` from a GUI-subsystem binary with no console attached — a silent failure wearing the costume of a loud one · **and the table contradicted the pane three inches apart**: the Markov row read “χ² 298 vs 19 shuffled” while the live pane computed 13.08 — neither wrong, the control is ONE permutation, but a dashboard showing two numbers for one label has lost the reader, who cannot tell which is stale · a literal cannot track a fit, so the `has` column now describes DATA HELD (verified against the files) and every fitted number comes from the pane that computes it | **DONE** |
 | P11Q-08 | Train button + gate 3 as an allow-list — **DONE** · **it does not fit a model, it tries to break one**: “Train” on an already-fitted row would reproduce the numbers the pane above it shows, and a button that reproduces the display teaches nobody anything — the question a person clicking Train has is “does this work”, so it runs P8-14 live and prints both windows and the decomposition · status line in red: **no directional edge under either window**, and `no_directional_edge` is COMPUTED from the two sign comparisons rather than asserted, so if the market changes its mind the text follows the numbers instead of contradicting them three lines above · **the in-sample pane pointed at a card that had landed** — it closed “that is P11Q-08 and rule 5”, true until P11Q-08 shipped, which is the same stale-literal failure P11Q-07b fixed with the shuffled χ²; it now names the button and states the conclusion, because a reader who never clicks would leave with 298 and nothing qualifying it · `--train` exists for the same reason `--page` does: a capture script cannot click, and a synthesised click goes to whatever window has focus — which in this session put three arrow keys into the user's browser · **and gate 3 is now an ALLOW-LIST**: the audit failed on {altair_oms, altair_broker}, which catches the mistake somebody makes today and nothing else — a future altair_execution, a convenience façade, a broker SDK arriving transitively all pass a deny-list silently, because a deny-list encodes the failures you have already imagined · “the UI cannot trade” is the ONE property kept by construction after the in-process decision gave up blast radius, so configure now fails on anything not permitted and the error says to add it with a comment saying why, not to widen the list until the build passes · header-only engine code the UI includes without linking never reaches LINK_LIBRARIES, noted at the audit because it cannot see it | **DONE** |
 
-## Phase 12 — Production (6)
+## Phase 12 — Production (7)
 
 | Card | Deliverable | Status |
 |---|---|---|
