@@ -33,8 +33,10 @@ qt_add_executable(altair_desktop
     tick_model.hpp
     filter.hpp
     market_clock.hpp
+    format.hpp
     chart/chart_widget.hpp
     chart/candles.hpp
+    data/bar_csv.hpp
 )
 
 # READ-SIDE ONLY. See the header comment; this list is the safety property.
@@ -48,6 +50,11 @@ target_link_libraries(altair_desktop PRIVATE
 )
 
 target_include_directories(altair_desktop PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+# dataset/ is gitignored and regenerable, so its location is a build-time
+# constant rather than something the UI hunts for at runtime.
+target_compile_definitions(altair_desktop PRIVATE
+    ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
 
 # ── The gate 3 audit ─────────────────────────────────────────────────────────
 # A human reading a diff can miss a line added to target_link_libraries. This
@@ -83,11 +90,30 @@ if(ALTAIR_BUILD_TESTS)
     # candles.hpp has no Q_OBJECT, so this one needs no moc and no Qt at all
     # beyond the engine types it already uses.
     add_executable(altair_desktop_chart_test tests/test_chart.cpp)
+    # Qt6::Core for format.hpp's QString formatting in the axis regression.
     target_link_libraries(altair_desktop_chart_test PRIVATE
-        altair_types altair_time altair_feed)
+        altair_types altair_time altair_feed Qt6::Core)
     target_include_directories(altair_desktop_chart_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME desktop_chart COMMAND altair_desktop_chart_test)
+
+    # Runs against the REAL series in dataset/, not a fixture. dataset/ is
+    # gitignored and regenerable, so the test skips loudly rather than failing
+    # if it is absent -- see the guard in the test's own output.
+    qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
+    # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.
+    target_link_libraries(altair_bar_csv_test PRIVATE
+        altair_types altair_time altair_feed Qt6::Core Qt6::Gui)
+    target_include_directories(altair_bar_csv_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_bar_csv_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    set_target_properties(altair_bar_csv_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_bar_csv COMMAND altair_bar_csv_test)
+    if(WIN32)
+        set_tests_properties(desktop_bar_csv PROPERTIES
+            ENVIRONMENT "PATH=${ALTAIR_QT_ROOT}/bin;$ENV{PATH}")
+    endif()
     if(WIN32)
         # The test needs the Qt DLLs on PATH; point ctest at the Qt bin dir
         # rather than copying a second set next to the test binary.

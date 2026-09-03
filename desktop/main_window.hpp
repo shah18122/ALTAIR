@@ -33,6 +33,7 @@
 #include <feed/replay.hpp>
 
 #include "chart/chart_widget.hpp"
+#include "data/bar_csv.hpp"
 #include "filter.hpp"
 #include "market_clock.hpp"
 #include "tick_model.hpp"
@@ -145,6 +146,14 @@ public:
     /// populated chart instead of an empty one.
     void prime(std::size_t n) {
         seek(static_cast<int>(n));
+    }
+
+    /// Select a chart data source by index. Same reason as `show_page`:
+    /// starting where the work is, without simulating a click.
+    void show_source(int index) {
+        if (source_ != nullptr && index >= 0 && index < source_->count()) {
+            source_->setCurrentIndex(index);
+        }
     }
 
     void add_instrument(std::uint32_t token, const QString& symbol) {
@@ -362,6 +371,24 @@ private:
     void build_chart() {
         chart_ = new ChartWidget;
 
+        // WHAT THE CHART IS LOOKING AT. The synthetic replay and the real
+        // series on disk are DIFFERENT KINDS OF THING -- one is a tape being
+        // bucketed live, the other is bars that were already aggregated by
+        // whoever produced the file -- so they are separate entries rather
+        // than one list with a hidden mode.
+        source_ = new QComboBox;
+        source_->addItem(QStringLiteral("Synthetic replay"), QString());
+        source_->addItem(QStringLiteral("NIFTY 1-minute (real)"),
+                         QStringLiteral("spot/nifty/1m|60"));
+        source_->addItem(QStringLiteral("NIFTY 60-minute (real)"),
+                         QStringLiteral("spot/nifty/60m|3600"));
+        source_->addItem(QStringLiteral("NIFTY daily (real, 35 years)"),
+                         QStringLiteral("spot/nifty/1d|86400"));
+        source_->addItem(QStringLiteral("India VIX daily (real)"),
+                         QStringLiteral("spot/indiavix/1d|86400"));
+        connect(source_, &QComboBox::currentIndexChanged, this,
+                [this](int) { rebuild_chart(); });
+
         instrument_ = new QComboBox;
         connect(instrument_, &QComboBox::currentIndexChanged, this,
                 [this](int) { rebuild_chart(); });
@@ -376,6 +403,9 @@ private:
                 [this](int) { rebuild_chart(); });
 
         auto* controls = new QHBoxLayout;
+        controls->addWidget(new QLabel(QStringLiteral("Source")));
+        controls->addWidget(source_);
+        controls->addSpacing(16);
         controls->addWidget(new QLabel(QStringLiteral("Instrument")));
         controls->addWidget(instrument_);
         controls->addSpacing(16);
@@ -396,20 +426,116 @@ private:
     /// `count_` here instead would let the chart draw the afternoon while the
     /// scrubber sits at 10:15, which is precisely the look-ahead P11-13
     /// measured. The bound is the argument, not a filter applied afterwards.
+    /// A bar width in words. Used when the file's native span is what is
+    /// actually drawn, so the header names it rather than repeating whatever
+    /// the bucket box happens to say.
+    [[nodiscard]] static QString describe_span(std::int64_t ns) {
+        const std::int64_t s = ns / 1'000'000'000LL;
+        if (s % 86400 == 0) {
+            return QStringLiteral("%1 day").arg(s / 86400)
+                 + (s / 86400 == 1 ? QString() : QStringLiteral("s"));
+        }
+        if (s % 3600 == 0) {
+            return QStringLiteral("%1 hour").arg(s / 3600)
+                 + (s / 3600 == 1 ? QString() : QStringLiteral("s"));
+        }
+        if (s % 60 == 0) {
+            return QStringLiteral("%1 minute").arg(s / 60)
+                 + (s / 60 == 1 ? QString() : QStringLiteral("s"));
+        }
+        return QStringLiteral("%1 s").arg(s);
+    }
+
     void rebuild_chart() {
-        if (chart_ == nullptr || instrument_ == nullptr || applied_ == 0) {
+        if (chart_ == nullptr || source_ == nullptr) {
             return;
         }
+        const QString spec = source_->currentData().toString();
+        if (spec.isEmpty()) {
+            rebuild_from_replay();
+        } else {
+            rebuild_from_disk(spec);
+        }
+    }
+
+    void rebuild_from_replay() {
+        if (instrument_ == nullptr || applied_ == 0) {
+            return;
+        }
+        instrument_->setEnabled(true);
         const auto token = instrument_->currentData().toUInt();
         const auto bucket = bucket_->currentData().toLongLong();
         auto built = build_candles(ticks_, applied_, token, bucket,
                                    last_ts_ns_);
-        const auto k =
-            check_conservation(ticks_, applied_, token, built);
-        chart_->set_title(QStringLiteral("%1 — %2")
+        const auto k = check_conservation(ticks_, applied_, token, built);
+        chart_->set_note(QString());   // the reconciliation shows instead
+        chart_->set_title(QStringLiteral("%1 - %2  (synthetic replay)")
                               .arg(instrument_->currentText(),
                                    bucket_->currentText()));
         chart_->set_candles(std::move(built), k);
+    }
+
+    /// Load a real series off disk.
+    ///
+    /// Bars load DIRECTLY into candles. They are NOT pushed through the tick
+    /// pipeline: a bar's close is not a tick, and re-bucketing closes throws
+    /// away the high and the low -- measured at 37.8% of the range on the real
+    /// 2026-08-27 session.
+    void rebuild_from_disk(const QString& spec) {
+        instrument_->setEnabled(false);   // the path names the instrument
+        const QStringList parts = spec.split(QLatin1Char('|'));
+        if (parts.size() != 2) {
+            return;
+        }
+        const QString rel = parts[0];
+        const std::int64_t native_span =
+            parts[1].toLongLong() * 1'000'000'000LL;
+
+        const QString dir = QStringLiteral("%1/%2")
+                                .arg(QStringLiteral(ALTAIR_DATASET_DIR), rel);
+
+        LoadResult r = load_bars_dir(dir, native_span,
+                                     DailyStamp::SessionClose,
+                                     /*zero_volume_is_absent=*/true);
+        if (!r.ok()) {
+            chart_->set_note(r.error);
+            chart_->set_candles({}, Conservation{});
+            chart_->set_title(rel);
+            return;
+        }
+
+        // Aggregate UP if the chosen bucket is coarser than the file's native
+        // one. Never DOWN: a coarser file cannot be split into finer bars, and
+        // interpolating one would invent prices that never traded.
+        // Aggregate UP only. A request for a bucket FINER than the file's
+        // native one is not an error -- it is a request the data cannot
+        // satisfy -- so the native bars are drawn and the title says which
+        // bucket is actually on screen. Silently labelling daily bars
+        // "1 minute" is how a chart stops meaning what its header says.
+        const std::int64_t want = bucket_->currentData().toLongLong();
+        const bool aggregated = want > native_span;
+        std::vector<Candle> bars =
+            aggregated ? aggregate_bars(r.bars, want) : r.bars;
+        const QString drawn_bucket =
+            aggregated ? bucket_->currentText() : describe_span(native_span);
+
+        const double rounded_pct =
+            r.bars.empty() ? 0.0
+                           : 100.0 * static_cast<double>(r.rounded_fields)
+                                 / static_cast<double>(r.bars.size() * 4);
+        chart_->set_note(
+            QStringLiteral("%1 bars - %2 price fields rounded to the paisa"
+                           " (%3%) - %4 with no reported volume")
+                .arg(r.bars.size())
+                .arg(r.rounded_fields)
+                .arg(rounded_pct, 0, 'f', 1)
+                .arg(r.zero_volume_rows));
+        chart_->set_title(
+            QStringLiteral("%1 - %2%3")
+                .arg(rel, drawn_bucket,
+                     aggregated ? QStringLiteral(" (aggregated)")
+                                : QStringLiteral(" (file's native bars)")));
+        chart_->set_candles(std::move(bars), Conservation{});
     }
 
     void build_pages() {
@@ -535,7 +661,12 @@ private:
     void refresh_status() {
         if (++since_chart_ >= 15) {
             since_chart_ = 0;
-            if (pages_->currentIndex() == 1) {
+            // Only the live replay needs redrawing. A series loaded from
+            // disk does not change under us, and reloading it four times a
+            // second would re-read 8,756 rows to draw the same picture.
+            if (pages_->currentIndex() == 1
+                && source_ != nullptr
+                && source_->currentData().toString().isEmpty()) {
                 rebuild_chart();
             }
         }
@@ -598,6 +729,7 @@ private:
     QStackedWidget* pages_ = nullptr;
 
     ChartWidget* chart_ = nullptr;
+    QComboBox* source_ = nullptr;
     QComboBox* instrument_ = nullptr;
     QComboBox* bucket_ = nullptr;
     int since_chart_ = 0;

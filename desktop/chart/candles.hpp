@@ -71,6 +71,12 @@ struct Candle {
     std::uint32_t ticks = 0;
     /// False for the bucket the tape is still inside.
     bool complete = false;
+    /// False when the SOURCE did not report a volume, as distinct from
+    /// reporting zero. 1,408 daily NIFTY rows carry 0 because the index
+    /// published no turnover in the early years, and drawing that as a
+    /// zero-height bar says nothing traded on a day the market was open.
+    /// True for anything built from ticks, where a quantity always exists.
+    bool volume_known = true;
 };
 
 /// Bucket ticks for ONE instrument into candles.
@@ -210,8 +216,24 @@ price_axis(const std::vector<Candle>& built, double pad_fraction = 0.06) {
     const std::int64_t span = raw > 0 ? raw : 1;
     const auto pad = static_cast<std::int64_t>(
         static_cast<double>(span) * pad_fraction);
-    a.origin_paise = lo - pad;
-    a.span_paise = span + 2 * pad;
+
+    // A PRICE AXIS MUST NOT GO BELOW ZERO.
+    //
+    // Padding symmetrically is right for a P&L series, which is signed. It is
+    // wrong for a price: NIFTY's 35-year daily range is 279 to 27,939, so six
+    // percent of the span is 1,659 paise and the padded origin lands at
+    // MINUS 1,286.63. The axis then labels a price that cannot exist, and the
+    // first version of this function did exactly that -- visible on screen the
+    // moment the real series was loaded.
+    //
+    // The pad below is clamped so the origin stops at zero. The pad above is
+    // untouched; there is no upper bound on a price.
+    const std::int64_t lo_padded = lo - pad;
+    a.origin_paise = lo_padded < 0 ? 0 : lo_padded;
+    a.span_paise = (lo + span + pad) - a.origin_paise;
+    if (a.span_paise <= 0) {
+        a.span_paise = 1;
+    }
     return a;
 }
 

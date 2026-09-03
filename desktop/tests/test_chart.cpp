@@ -16,6 +16,7 @@
 // No check description here may contain the substring FAIL.
 
 #include "../chart/candles.hpp"
+#include "../format.hpp"
 
 #include <cstdio>
 #include <set>
@@ -261,6 +262,25 @@ static void test_forming_gaps_and_crosshair()
     check(price_axis(flat).span_paise > 0,
           "a flat series gets a non-zero price span rather than dividing by"
           " zero and drawing a line at NaN");
+
+    // A PRICE AXIS MUST NOT GO BELOW ZERO. The real 35-year NIFTY series
+    // ranges 279 to 27,939, and six percent of that span is 1,659 paise -- so
+    // a symmetric pad puts the origin at MINUS 1,286.63. That is a price that
+    // cannot exist, and it was visible on screen the moment the real series
+    // loaded.
+    std::vector<Candle> wide{
+        Candle{0, 1, 27902, 27902, 27902, 27902, 0, 1, true},
+        Candle{1, 2, 2793885, 2793885, 2793885, 2793885, 0, 1, true}};
+    const PriceAxis a = price_axis(wide);
+    std::printf("    a 279..27,939 series pads to an origin of %s\n",
+                format_paise(a.origin_paise).toUtf8().constData());
+    check(a.origin_paise >= 0,
+          "the padded origin is clamped at zero, because a price axis labelled"
+          " with a negative rupee value is drawing something that cannot"
+          " happen");
+    check(a.span_paise > 2793885 - a.origin_paise,
+          "while the pad ABOVE is untouched -- there is no upper bound on a"
+          " price, so only the low end needs the clamp");
 }
 
 int main()

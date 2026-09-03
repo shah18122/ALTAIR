@@ -64,6 +64,15 @@ public:
         update();
     }
 
+    /// Replaces the conservation line for a series LOADED from disk, where
+    /// there is no tape to reconcile against. Left empty for a replayed
+    /// series, so the reconciliation shows instead -- the two are different
+    /// claims and the header should not pretend otherwise.
+    void set_note(const QString& n) {
+        note_ = n;
+        update();
+    }
+
     /// Replace the series. Recomputes both axes from the data, per series.
     void set_candles(std::vector<Candle> c, const Conservation& k) {
         candles_ = std::move(c);
@@ -137,6 +146,14 @@ private:
         f.setBold(false);
         p.setFont(f);
 
+        if (!note_.isEmpty()) {
+            p.setPen(QColor(0x7F, 0x8C, 0x8D));
+            p.drawText(
+                width() - QFontMetrics(p.font()).horizontalAdvance(note_) - 10,
+                20, note_);
+            return;
+        }
+
         // The conservation check, ON SCREEN. A chart whose volume disagrees
         // with the tape says so rather than being quietly wrong.
         const bool ok = conservation_.agrees;
@@ -181,7 +198,7 @@ private:
 
         std::int64_t max_vol = 1;
         for (const Candle& c : candles_) {
-            if (c.volume > max_vol) max_vol = c.volume;
+            if (c.volume_known && c.volume > max_vol) max_vol = c.volume;
         }
         const int vol_top = bottom + 8;
 
@@ -221,12 +238,19 @@ private:
             // Volume, same x, its own scale. Extensive, so it sums; and it is
             // drawn under the price rather than over it, because overlaying
             // two different units on one axis is how a chart lies.
-            const int vh = static_cast<int>(
-                static_cast<double>(c.volume) / static_cast<double>(max_vol)
-                * (volume_h - 10));
-            p.setPen(Qt::NoPen);
-            p.setBrush(QColor(col.red(), col.green(), col.blue(), 110));
-            p.drawRect(cx - body / 2, vol_top + (volume_h - 10 - vh), body, vh);
+            // An UNKNOWN volume draws nothing at all. A zero-height bar says
+            // nothing traded; 1,408 daily NIFTY bars report 0 because the
+            // index published no turnover in those years, and the market was
+            // open on every one of them.
+            if (c.volume_known) {
+                const int vh = static_cast<int>(
+                    static_cast<double>(c.volume) / static_cast<double>(max_vol)
+                    * (volume_h - 10));
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(col.red(), col.green(), col.blue(), 110));
+                p.drawRect(cx - body / 2, vol_top + (volume_h - 10 - vh), body,
+                           vh);
+            }
         }
     }
 
@@ -278,6 +302,7 @@ private:
     }
 
     QString title_;
+    QString note_;
     std::vector<Candle> candles_;
     Conservation conservation_;
     Domain domain_;

@@ -125,15 +125,19 @@ int main(int argc, char** argv) {
         window.add_instrument(ins.token, QString::fromUtf8(ins.symbol));
     }
 
-    // --page N opens on a nav page, --prime N drains that many ticks first.
-    // Both exist so a screenshot or a manual check starts where the work is,
-    // rather than requiring a click that a capture script cannot make.
+    // --page N opens on a nav page, --prime N drains that many ticks first,
+    // --source N picks a chart data source. They exist so a screenshot or a
+    // manual check starts where the work is, rather than requiring a click a
+    // capture script cannot make -- and emphatically rather than synthesising
+    // keystrokes, which go to whatever window happens to have focus.
     const QStringList args = QApplication::arguments();
     for (int i = 1; i + 1 < args.size(); ++i) {
         if (args[i] == QStringLiteral("--page")) {
             window.show_page(args[i + 1].toInt());
         } else if (args[i] == QStringLiteral("--prime")) {
             window.prime(static_cast<std::size_t>(args[i + 1].toLongLong()));
+        } else if (args[i] == QStringLiteral("--source")) {
+            window.show_source(args[i + 1].toInt());
         }
     }
 
