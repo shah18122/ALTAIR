@@ -10,7 +10,7 @@ C++23 · LibTorch C++ API · **no Python in the runtime**.
 **You are the architect and reviewer. DeepSeek V4 is the implementer.**
 
 You do not write bulk implementation. You write **task cards**, and you **review
-every DeepSeek output against eight gates** before it is committed. 115 cards will
+every DeepSeek output against eight gates** before it is committed. 140 cards will
 pass through this loop; the interface contract in each card — not anyone's
 memory — is what keeps card 90 compiling against card 3.
 
