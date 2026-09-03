@@ -30,9 +30,23 @@ Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 > | 5 | 8 | 8 | | 11Q | 9 | 11 |
 > | 6 | 5 | 7 | | 12 | 0 | 7 |
 >
-> What is NOT done is not evenly spread, and most of it is not work: Phase 1
-> and 4's open cards are blocked on sample files and broker credentials, and
-> Phase 12 has not started. See the carried debt below.
+> What is NOT done is not evenly spread, and most of it is not work. Of the
+> twenty open rows, **two are cards anyone could sit down and write**:
+>
+> | | |
+> |---|---|
+> | **Actually open** | P11Q-03 depth ladder · P11Q-05 strategy builder, cost breakdown, audit trail, kill switch |
+> | Blocked on a sample file | P1-05, P2-03 (XTS schema — none held) |
+> | Blocked on credentials | P1-07 |
+> | Blocked on a build | P1-08b (needs the vcpkg `net` feature) |
+> | Withdrawn deliberately | P6-01, P6-02 |
+> | Deferred deliberately | P4-06 (XTS, Smit set it aside) · P2-09c (needs live order state) |
+> | Smit's decision | P4-01 |
+> | Not started — needs a live system | Phase 12, all seven |
+>
+> The count above treats WITHDRAWN and DEFERRED as not-done, which understates
+> completion. That is deliberate: "we decided not to" and "we finished it" are
+> different facts and collapsing them is how a progress bar starts lying.
 
 > Count corrected 2026-08-29: the header read 96 while the per-phase headings
 > summed to 110 — the per-phase numbers were right and matched the rows, only the

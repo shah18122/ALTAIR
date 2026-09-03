@@ -16,6 +16,24 @@ target_link_libraries(altair_risk INTERFACE
     altair_flags
 )
 
+# P3-09b. The charges.toml reader, in a SEPARATE compiled target for the same
+# reason core/config's TOML half is: risk/cost.hpp is included by strategies and
+# by ALTAIR_HOT code and must not drag tomlplusplus in. Built only when vcpkg
+# has provided the parser -- the default preset has no toml++, and the cost
+# calculator itself is unaffected either way.
+find_package(tomlplusplus CONFIG QUIET)
+if(tomlplusplus_FOUND)
+    add_library(altair_charges_toml STATIC charges_toml.cpp)
+    add_library(altair::charges_toml ALIAS altair_charges_toml)
+    target_link_libraries(altair_charges_toml
+        PUBLIC altair_risk
+        PRIVATE tomlplusplus::tomlplusplus altair_flags)
+    message(STATUS "altair: P3-09b charges.toml loader enabled")
+else()
+    message(STATUS "altair: P3-09b charges.toml loader SKIPPED "
+                   "(configure with the `vcpkg` preset to enable it)")
+endif()
+
 if(ALTAIR_BUILD_TESTS)
     add_executable(altair_cost_test tests/test_cost.cpp)
     target_link_libraries(altair_cost_test PRIVATE altair_risk altair_flags)
@@ -40,4 +58,16 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_portfolio_test tests/test_portfolio.cpp)
     target_link_libraries(altair_portfolio_test PRIVATE altair_risk altair_flags)
     add_test(NAME portfolio COMMAND altair_portfolio_test)
+
+    if(tomlplusplus_FOUND)
+        # Reads the REAL config/charges.toml, so the path is a build-time
+        # constant rather than something the test hunts for relative to a
+        # working directory that ctest is free to change.
+        add_executable(altair_charges_toml_test tests/test_charges_toml.cpp)
+        target_link_libraries(altair_charges_toml_test
+            PRIVATE altair_charges_toml altair_flags)
+        target_compile_definitions(altair_charges_toml_test PRIVATE
+            ALTAIR_CHARGES_TOML="${CMAKE_SOURCE_DIR}/config/charges.toml")
+        add_test(NAME charges_toml COMMAND altair_charges_toml_test)
+    endif()
 endif()
