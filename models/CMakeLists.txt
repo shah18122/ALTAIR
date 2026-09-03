@@ -69,4 +69,12 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_markov_eval_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_markov_eval COMMAND altair_markov_eval_test)
+
+    # P8-15. Horizon forecast net of cost, on the real 60-minute series.
+    add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
+    target_link_libraries(altair_horizon_test
+        PRIVATE altair_models altair_backtest altair_flags)
+    target_compile_definitions(altair_horizon_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME models_horizon COMMAND altair_horizon_test)
 endif()
