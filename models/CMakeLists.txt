@@ -59,4 +59,14 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_markov_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_markov COMMAND altair_markov_test)
+
+    # P8-14. Walk-forward evaluation of the same chain. Links altair_backtest
+    # for WalkForwardSpec -- the split discipline is defined once, in the
+    # directory that owns it, and is not reimplemented here.
+    add_executable(altair_markov_eval_test tests/test_markov_eval.cpp)
+    target_link_libraries(altair_markov_eval_test
+        PRIVATE altair_models altair_backtest altair_flags)
+    target_compile_definitions(altair_markov_eval_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME models_markov_eval COMMAND altair_markov_eval_test)
 endif()
