@@ -240,6 +240,14 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --train runs the Models page's walk-forward, for the same reason
+    // --page exists: a capture script cannot click a button, and synthesising
+    // a click sends it to whatever window has focus. Standalone, so it is
+    // handled outside the pair loop above.
+    if (args.contains(QStringLiteral("--train"))) {
+        window.train_selected();
+    }
+
     window.showFullScreen();
 
     return QApplication::exec();

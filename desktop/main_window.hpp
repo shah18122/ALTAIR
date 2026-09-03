@@ -181,6 +181,14 @@ public:
         }
     }
 
+    /// Run the Models page's walk-forward evaluation. For `--train`; the
+    /// button is the normal way in.
+    void train_selected() {
+        if (models_panel_ != nullptr) {
+            models_panel_->run_walk_forward();
+        }
+    }
+
     /// The same, by name. Returns false if nothing matched.
     ///
     /// THE INDEX FORM FAILS SILENTLY, WHICH IS WHY THIS EXISTS. `--page models`
@@ -358,6 +366,8 @@ private Q_SLOTS:
     }
 
 private:
+    ModelPanel* models_panel_ = nullptr;
+
     void build_nav() {
         nav_ = new QListWidget;
         nav_->setFixedWidth(190);
@@ -606,7 +616,8 @@ private:
 
     void build_pages() {
         pages_->addWidget(new WatchlistPanel(role_));
-        pages_->addWidget(new ModelPanel(role_));
+        models_panel_ = new ModelPanel(role_);
+        pages_->addWidget(models_panel_);
 
         {
             auto* page = new QWidget;

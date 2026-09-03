@@ -43,6 +43,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QApplication>
 #include <QPlainTextEdit>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -330,18 +331,132 @@ public:
             t->setCurrentCell(0, 0);
         }
 
-        connect(train_, &QPushButton::clicked, this, [this] {
-            // Deliberately does NOT start a run yet. The harness is P8-04 and
-            // is tested; wiring a button to it before the walk-forward split
-            // is chosen per model would train something on everything, which
-            // is the mistake CLAUDE.md's "markets are not ergodic" rule names.
+        connect(train_, &QPushButton::clicked, this,
+                [this] { run_walk_forward(); });
+    }
+
+public:
+    /// P11Q-08. What the Train button does.
+    ///
+    /// PUBLIC so `--train` can invoke it, for the same reason `--page` exists:
+    /// a capture script cannot click, and synthesising a click sends it to
+    /// whatever window has focus -- which in this session put three arrow keys
+    /// into the user's browser. A named entry point is the honest version of
+    /// that shortcut.
+    ///
+    /// IT DOES NOT FIT A MODEL. IT TRIES TO BREAK ONE.
+    ///
+    /// "Train" on a row that is already fitted would produce the same numbers
+    /// the pane already shows, and a button that reproduces the display is a
+    /// button that teaches nobody anything. The question a person clicking
+    /// Train actually has is "does this work", and P8-13's chi-square does not
+    /// answer it -- 298.07 against a critical 26.30 is an IN-SAMPLE statement
+    /// about serial dependence, and it reads like a working model.
+    ///
+    /// So this runs P8-14's walk-forward evaluation and prints the answer,
+    /// including the part that says no strategy may trade it.
+    void run_walk_forward() {
+        const auto rows = model_catalogue();
+        const int row = table_ != nullptr ? table_->currentRow() : -1;
+        if (row < 0 || row >= static_cast<int>(rows.size())) {
+            return;
+        }
+        const ModelRow& m = rows[static_cast<std::size_t>(row)];
+        if (!m.card.startsWith(QStringLiteral("P8-13"))) {
             status_->setText(QStringLiteral(
-                "<span style='color:#B9770B'>Not started.</span> Training is "
-                "wired to the harness in P11Q-08, which has to choose the "
-                "walk-forward split per model first — a run over the whole "
-                "history would be exactly the look-ahead P8-13 measured at "
-                "15.1% of state labels."));
-        });
+                "<span style='color:#B9770B'>Nothing to run for %1.</span> "
+                "Walk-forward needs a model that can be fitted from data that "
+                "is here, and only the Markov chain is. Every other row would "
+                "be evaluated on data it does not have \u2014 which produces a "
+                "number, and the number would be about nothing.").arg(m.name));
+            return;
+        }
+
+        status_->setText(QStringLiteral("Running 26 folds over the real "
+                                        "series\u2026"));
+        QApplication::processEvents();
+
+        const QString root = QStringLiteral(ALTAIR_DATASET_DIR);
+        const LoadResult d = load_bars_csv(
+            root + QStringLiteral("/spot/nifty/1d/all.csv"),
+            24LL * 3600 * 1'000'000'000LL, DailyStamp::SessionClose, true);
+        if (!d.ok()) {
+            status_->setText(d.error);
+            return;
+        }
+        // 2,000 bars of initial training and 500-bar test blocks, alpha 0.5.
+        // Every one is a modelling choice and every one is passed explicitly
+        // rather than defaulted inside the model -- see markov_eval.hpp.
+        const WalkForwardFit w = walk_forward_markov(d.bars, 5, 2000, 500, 0.5);
+        if (!w.ok) {
+            status_->setText(w.error);
+            return;
+        }
+
+        QString o;
+        o += QStringLiteral("WALK-FORWARD \u2014 the out-of-sample answer "
+                            "(P8-14), computed now\n\n");
+        o += QStringLiteral("  EXPANDING window, %1 folds, %2 scored "
+                            "transitions\n").arg(w.folds).arg(w.scored);
+        o += QStringLiteral("    distributional edge  %1 nats/obs, %2 of %3 "
+                            "folds positive\n")
+                 .arg(w.mean_edge, 0, 'f', 5).arg(w.folds_positive)
+                 .arg(w.folds);
+        o += QStringLiteral("    t                    %1  (OPTIMISTIC: "
+                            "expanding folds share training data)\n")
+                 .arg(w.t_stat, 0, 'f', 2);
+        o += QStringLiteral("    impossible           %1 transitions the chain "
+                            "ruled out, that happened\n").arg(w.impossible);
+        o += QStringLiteral("\n  AND THAT EDGE IS NOT A DECISION.\n");
+        o += QStringLiteral("    SIGN       chain %1  vs  %2 constant   %3\n")
+                 .arg(w.sign_chain, 0, 'f', 4).arg(w.sign_base, 0, 'f', 4)
+                 .arg(w.sign_chain - w.sign_base, 0, 'f', 4);
+        o += QStringLiteral("    MAGNITUDE  chain %1  vs  %2 constant   %3\n")
+                 .arg(w.mag_chain, 0, 'f', 4).arg(w.mag_base, 0, 'f', 4)
+                 .arg(w.mag_chain - w.mag_base, 0, 'f', 4);
+        o += QStringLiteral("\n  ROLLING window (old data falls out)\n");
+        o += QStringLiteral("    distributional edge  %1, %2 of %3 positive\n")
+                 .arg(w.roll_mean_edge, 0, 'f', 5).arg(w.roll_folds_positive)
+                 .arg(w.folds);
+        o += QStringLiteral("    SIGN       chain %1  vs  %2 constant   %3\n")
+                 .arg(w.roll_sign_chain, 0, 'f', 4)
+                 .arg(w.roll_sign_base, 0, 'f', 4)
+                 .arg(w.roll_sign_chain - w.roll_sign_base, 0, 'f', 4);
+        o += QStringLiteral("    MAGNITUDE  chain %1  vs  %2 constant   %3\n")
+                 .arg(w.roll_mag_chain, 0, 'f', 4)
+                 .arg(w.roll_mag_base, 0, 'f', 4)
+                 .arg(w.roll_mag_chain - w.roll_mag_base, 0, 'f', 4);
+        o += QStringLiteral(
+            "\n  A state here is a RETURN QUANTILE, so states 0 and 4 are both "
+            "large moves\n  differing in sign. Volatility clusters, so serial "
+            "dependence appears from\n  GARCH alone with nothing directional "
+            "in it \u2014 which is why the two lines\n  above exist and the "
+            "single log-score does not settle anything.\n");
+        o += QStringLiteral(
+            "\n  The expanding window's MAGNITUDE loss is an artefact: the "
+            "training median\n  |return| stays inflated by the volatile 1990s, "
+            "so \"never large\" is free. Let\n  the old data fall out and the "
+            "chain wins that comparison instead.\n");
+        detail_->setPlainText(o);
+
+        status_->setText(
+            w.no_directional_edge
+                ? QStringLiteral(
+                      "<b style='color:#C0392B'>No directional edge under "
+                      "either window.</b> The chain beats a constant on "
+                      "distributional fit and loses to it on sign (%1 vs %2 "
+                      "expanding, %3 vs %4 rolling). Usable as a REGIME "
+                      "CONDITIONER \u2014 report per regime, size differently "
+                      "within one. Not as a direction.")
+                      .arg(w.sign_chain, 0, 'f', 4).arg(w.sign_base, 0, 'f', 4)
+                      .arg(w.roll_sign_chain, 0, 'f', 4)
+                      .arg(w.roll_sign_base, 0, 'f', 4)
+                : QStringLiteral(
+                      "<b style='color:#B9770B'>Sign accuracy is above the "
+                      "constant baseline.</b> CLAUDE.md puts the ceiling at "
+                      "52\u201355%% and anything above it is overfit until "
+                      "proven otherwise \u2014 and this is still pre-cost, so "
+                      "rule 5 has not been applied."));
     }
 
 private:
@@ -418,11 +533,21 @@ private:
             for (double x : f.stationary_dist) {
                 out += QStringLiteral("%1 ").arg(x, 0, 'f', 3);
             }
+            // The pointer used to say "that is P11Q-08", which was true until
+            // P11Q-08 shipped. A forward reference to a card that has landed
+            // is a stale literal of the sort this panel already got wrong
+            // once, so it now names the button instead -- and states the
+            // answer, because a reader who never clicks would otherwise leave
+            // with the chi-square and nothing qualifying it.
             out += QStringLiteral(
                 "\n\nIN-SAMPLE. This says the chain can be estimated and what "
-                "it looks like.\nIt says nothing about out-of-sample behaviour, "
-                "nothing about magnitude,\nand nothing about survival after "
-                "costs. That is P11Q-08 and rule 5.");
+                "it looks like.\nIt says nothing about whether it predicts, "
+                "and 298 against a critical 26\nreads like it does.\n\n"
+                "PRESS \"Train selected model\" FOR THE OUT-OF-SAMPLE ANSWER. "
+                "Briefly: the\nchain beats a constant on distributional fit "
+                "and loses to one on sign,\nso there is no directional edge to "
+                "take a cost off and rule 5 never\nengages. Usable as a regime "
+                "conditioner, not as a direction.");
         } else if (m.card.startsWith(QStringLiteral("P10-07"))) {
             const LoadResult d = load_bars_csv(
                 root + QStringLiteral("/spot/indiavix/1d/all.csv"),

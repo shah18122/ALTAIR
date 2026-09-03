@@ -76,16 +76,47 @@ else()
 endif()
 
 # ── The gate 3 audit ─────────────────────────────────────────────────────────
+#
 # A human reading a diff can miss a line added to target_link_libraries. This
-# cannot: it fails configure if an order-placing library ever appears.
+# cannot: it fails configure if the UI links anything not on this list.
+#
+# IT IS AN ALLOW-LIST, AND IT USED TO BE A DENY-LIST.
+#
+# The first version failed on {altair_oms, altair_broker}. That catches the
+# mistake somebody makes today and nothing else: a library that can place an
+# order under a name nobody thought of -- a future altair_execution, a
+# convenience façade, a broker SDK pulled in transitively -- passes a deny-list
+# silently. A deny-list encodes the failures you have already imagined, which
+# is the wrong half of the space.
+#
+# The safety property is "the UI cannot trade", and it is the ONE thing kept by
+# construction after the in-process decision gave up blast radius. It deserves
+# the form where adding a dependency is what requires the argument. Adding a
+# line here is cheap and deliberate; that is the point.
+set(_altair_ui_permitted
+    altair_types      # strong units, read-side
+    altair_time       # timestamps
+    altair_feed       # replay + normalised ticks, read-side
+    Qt6::Core Qt6::Gui Qt6::Widgets
+)
 get_target_property(_altair_ui_links altair_desktop LINK_LIBRARIES)
-foreach(_forbidden altair_oms altair_broker altair::oms altair::broker)
-    if(_forbidden IN_LIST _altair_ui_links)
+foreach(_lib IN LISTS _altair_ui_links)
+    if(NOT _lib IN_LIST _altair_ui_permitted)
         message(FATAL_ERROR
-            "desktop/ links ${_forbidden}. The UI must not be able to place an "
-            "order — see CLAUDE.md 'The in-process decision'. This is gate 3.")
+            "desktop/ links '${_lib}', which is not on the UI's permitted "
+            "list. The UI must not be able to place an order — see CLAUDE.md "
+            "'The in-process decision'. This is gate 3.\n"
+            "If '${_lib}' is genuinely read-side and holds no order-placing "
+            "vocabulary, add it to _altair_ui_permitted in this file WITH A "
+            "COMMENT SAYING WHY. Do not widen this list to make a build pass.")
     endif()
 endforeach()
+
+# Header-only engine code the UI includes without linking -- models/markov.hpp,
+# models/markov_eval.hpp, backtest/validation.hpp -- is reached through the
+# include path above and so never appears in LINK_LIBRARIES. It is pure
+# computation with no order-placing vocabulary, which is the same test the list
+# applies; noted here because the audit cannot see it and a reader will wonder.
 
 # ── Tests ───────────────────────────────────────────────────────────────────
 # The UI's logic is testable without a window: a QCoreApplication is enough for

@@ -41,6 +41,7 @@
 #include "bar_csv.hpp"
 
 #include <models/markov.hpp>
+#include <models/markov_eval.hpp>
 #include <strategies/vix_forecast.hpp>
 
 #include <QString>
@@ -150,6 +151,116 @@ fit_markov(const std::vector<Candle>& bars, std::size_t states = 5,
 // ---------------------------------------------------------------------------
 // India VIX
 // ---------------------------------------------------------------------------
+
+/// What the Train button produces: the OUT-OF-SAMPLE answer.
+///
+/// THE FIT PANE'S CHI-SQUARE IS THE NUMBER THAT MISLEADS.
+///
+/// 298.07 against a critical 26.30 looks like a working model, and it is an
+/// IN-SAMPLE statement about whether the state sequence carries serial
+/// dependence. P8-14 asked the other question and the answer changes what
+/// anyone is allowed to do with this row, so the panel must not show one
+/// without the other.
+struct WalkForwardFit {
+    bool ok = false;
+    QString error;
+
+    std::size_t folds = 0;
+    std::size_t folds_positive = 0;
+    double mean_edge = 0.0;
+    double edge_sd = 0.0;
+    double t_stat = 0.0;
+    std::size_t scored = 0;
+    std::size_t impossible = 0;
+
+    /// The decomposition. `sign_*` is the only pair that could ever justify a
+    /// directional position, and on this data it does not.
+    double sign_chain = 0.0;
+    double sign_base = 0.0;
+    double mag_chain = 0.0;
+    double mag_base = 0.0;
+
+    /// The same run with a rolling window, which is what shows the expanding
+    /// window's magnitude "loss" to be an artefact of a stale training median.
+    double roll_mean_edge = 0.0;
+    std::size_t roll_folds_positive = 0;
+    double roll_sign_chain = 0.0;
+    double roll_sign_base = 0.0;
+    double roll_mag_chain = 0.0;
+    double roll_mag_base = 0.0;
+
+    /// True when NEITHER window gives the chain a directional edge over a
+    /// constant predictor. Computed, not asserted -- if the market ever
+    /// changes its mind, this flag changes with it and the panel text follows.
+    bool no_directional_edge = false;
+};
+
+/// Run P8-14's walk-forward evaluation on a loaded bar series.
+///
+/// Both windows, because reporting only the expanding one would repeat the
+/// misreading it produces. `alpha` is smoothing and has no default here for
+/// the same reason it has none in the model.
+[[nodiscard]] inline WalkForwardFit
+walk_forward_markov(const std::vector<Candle>& bars, std::size_t states,
+                    std::size_t initial_train, std::size_t test_len,
+                    double alpha) {
+    WalkForwardFit f;
+    if (bars.size() < initial_train + test_len * 2) {
+        f.error = QStringLiteral("need at least %1 bars, have %2")
+                      .arg(initial_train + test_len * 2)
+                      .arg(bars.size());
+        return f;
+    }
+    std::vector<double> closes;
+    closes.reserve(bars.size());
+    for (const Candle& c : bars) {
+        closes.push_back(static_cast<double>(c.close));
+    }
+    const std::vector<double> r = log_returns(closes);
+
+    WalkForwardSpec spec{};
+    spec.initial_train = initial_train;
+    spec.test_len = test_len;
+    spec.step = test_len;      // non-overlapping test blocks
+    spec.gap = 1;              // the label is the NEXT state
+    spec.expanding = true;
+
+    const auto exp_run = markov_walk_forward(r, states, spec, alpha);
+    if (!exp_run) {
+        f.error = QStringLiteral("walk-forward refused the series");
+        return f;
+    }
+    spec.expanding = false;
+    const auto roll_run = markov_walk_forward(r, states, spec, alpha);
+    if (!roll_run) {
+        f.error = QStringLiteral("rolling walk-forward refused the series");
+        return f;
+    }
+
+    f.folds = exp_run->folds.size();
+    f.folds_positive = exp_run->folds_positive;
+    f.mean_edge = exp_run->mean_edge;
+    f.edge_sd = exp_run->edge_sd;
+    f.t_stat = exp_run->t_stat;
+    f.scored = exp_run->total_scored;
+    f.impossible = exp_run->total_impossible;
+    f.sign_chain = exp_run->sign_chain_accuracy();
+    f.sign_base = exp_run->sign_base_accuracy();
+    f.mag_chain = exp_run->mag_chain_accuracy();
+    f.mag_base = exp_run->mag_base_accuracy();
+
+    f.roll_mean_edge = roll_run->mean_edge;
+    f.roll_folds_positive = roll_run->folds_positive;
+    f.roll_sign_chain = roll_run->sign_chain_accuracy();
+    f.roll_sign_base = roll_run->sign_base_accuracy();
+    f.roll_mag_chain = roll_run->mag_chain_accuracy();
+    f.roll_mag_base = roll_run->mag_base_accuracy();
+
+    f.no_directional_edge = (f.sign_chain <= f.sign_base)
+                         && (f.roll_sign_chain <= f.roll_sign_base);
+    f.ok = true;
+    return f;
+}
 
 struct VixFit {
     bool ok = false;
