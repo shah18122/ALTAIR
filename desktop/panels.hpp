@@ -254,11 +254,13 @@ public:
 
         auto* summary = new QLabel(
             QStringLiteral(
-                "<b>%1 of %2 models are trained on real data.</b> The binding "
+                "<b>%1 of %2 models are fitted on real data.</b> The binding "
                 "constraint is <i>data</i>, not compute: <code>dataset/</code> "
-                "holds 8,756 daily NIFTY bars, 3,153 sixty-minute and 1,207 "
-                "one-minute — and no tick data at all. LibTorch is also absent, "
-                "and that is the smaller problem.")
+                "holds 8,756 daily NIFTY bars, 3,153 sixty-minute, 1,207 "
+                "one-minute across four partial days, 527 daily India VIX — "
+                "and no tick data at all. LibTorch is also absent, and that is "
+                "the smaller problem. Every fit here is IN-SAMPLE: it shows the "
+                "model can be estimated, not that it works out of sample.")
                 .arg(trained)
                 .arg(rows.size()),
             this);

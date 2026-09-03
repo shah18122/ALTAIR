@@ -208,6 +208,41 @@ static void test_zero_volume_is_not_zero()
           " total, not a total that quietly counted the unknown as zero");
 }
 
+static void test_an_empty_volume_field_is_not_a_parse_error()
+{
+    std::printf("\n[5] an empty volume field is absent, not malformed\n");
+
+    // The India VIX file ends every row with a bare comma: an index has no
+    // turnover to report.
+    const LoadResult v = load_bars_csv(dataset("spot/indiavix/1d/all.csv"),
+                                       kDay, DailyStamp::SessionClose, true);
+    check(v.ok(), "the India VIX series loads");
+    if (!v.ok()) {
+        std::printf("    %s\n", v.error.toUtf8().constData());
+        return;
+    }
+    std::printf("    %zu bars, %zu with an EMPTY volume field, %zu skipped\n",
+                v.bars.size(), v.absent_volume_rows, v.skipped_rows);
+
+    check(v.bars.size() > 400,
+          "every row loads -- the first version of this loader treated the"
+          " empty field as unparseable and skipped all 528, so the series"
+          " arrived as zero bars and the fit reported having no data");
+    check(v.skipped_rows == 0,
+          "and nothing is skipped: a missing optional field is not a reason to"
+          " discard price data that is present and complete");
+    check(v.absent_volume_rows == v.bars.size(),
+          "every bar is marked as having no volume, which is true of an index"
+          " and is a different statement from a volume of zero");
+    for (const Candle& c : v.bars) {
+        if (c.volume_known) {
+            check(false, "no VIX bar claims a known volume");
+            return;
+        }
+    }
+    check(true, "no VIX bar claims a known volume");
+}
+
 static void test_daily_stamp_decides_the_session()
 {
     std::printf("\n[4] a daily bar has no time of day\n");
@@ -263,6 +298,7 @@ int main(int argc, char** argv)
     test_a_bar_is_not_a_tick();
     test_decimal_rupees_to_paise();
     test_zero_volume_is_not_zero();
+    test_an_empty_volume_field_is_not_a_parse_error();
     test_daily_stamp_decides_the_session();
 
     std::printf("\n%s\n", failures == 0 ? "all checks passed"

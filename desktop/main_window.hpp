@@ -542,11 +542,18 @@ private:
                                  / static_cast<double>(r.bars.size() * 4);
         chart_->set_note(
             QStringLiteral("%1 bars - %2 price fields rounded to the paisa"
-                           " (%3%) - %4 with no reported volume")
+                           " (%3%) - %4 zero volume, %5 no volume field%6")
                 .arg(r.bars.size())
                 .arg(r.rounded_fields)
                 .arg(rounded_pct, 0, 'f', 1)
-                .arg(r.zero_volume_rows));
+                .arg(r.zero_volume_rows)
+                .arg(r.absent_volume_rows)
+                // A skipped row is DATA LOSS and says so in the header rather
+                // than only in a struct field nobody reads.
+                .arg(r.skipped_rows > 0
+                         ? QStringLiteral(" - %1 ROWS SKIPPED")
+                               .arg(r.skipped_rows)
+                         : QString()));
         chart_->set_title(
             QStringLiteral("%1 - %2%3")
                 .arg(rel, drawn_bucket,

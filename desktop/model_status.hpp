@@ -171,11 +171,13 @@ struct ModelRow {
          QStringLiteral("one member exists (Markov) — n_eff needs more"),
          QStringLiteral("—")},
 
-        {QStringLiteral("India VIX forecast"), QStringLiteral("P10-07"),
+        {QStringLiteral("India VIX AR(1)"), QStringLiteral("P10-07 / P11Q-07"),
          QStringLiteral("strategies/vix_forecast.hpp"),
-         ModelState::ValidatedOnSyntheticOnly,
-         QStringLiteral("a VIX history and a realised-vol series"),
-         QStringLiteral("~3,000 India VIX bars present; not yet fitted"),
+         ModelState::TrainedOnRealData,
+         QStringLiteral("a VIX history; a realised-vol series for the premium"),
+         QStringLiteral("527 daily bars — level residual sd 2.97x higher when "
+                        "stressed; level band covers 88.1% there vs nominal "
+                        "95.4%"),
          QStringLiteral("India VIX")},
 
         {QStringLiteral("Cointegration / pairs"), QStringLiteral("P10-04"),

@@ -32,6 +32,15 @@
 // "14,469 of 74,000 fields were not exact" is a number on screen rather than a
 // property of the parser.
 //
+// A VOLUME FIELD CAN BE ABSENT IN TWO DIFFERENT WAYS, AND NEITHER IS ZERO.
+//
+// The daily NIFTY file reports `0` for 1,408 early rows. The India VIX file
+// leaves the field EMPTY on every row, because an index has no turnover at
+// all. The first version of this loader handled the first case and treated the
+// second as a parse failure, skipping every VIX row -- 528 bars of price data
+// discarded because an optional field was missing. `absent_volume_rows` counts
+// the empty ones separately from the zeros and from genuine skips.
+//
 // A VOLUME OF ZERO ON AN INDEX BAR IS NOT ZERO VOLUME.
 //
 // 1,408 daily NIFTY rows carry volume 0 -- the index did not report a turnover
@@ -91,8 +100,15 @@ struct LoadResult {
     /// Price fields that carried more than two decimals and had to be
     /// rounded. Carried out so it can be REPORTED, not hidden in the parser.
     std::size_t rounded_fields = 0;
-    /// Rows whose volume was zero.
+    /// Rows whose volume was the number zero.
     std::size_t zero_volume_rows = 0;
+    /// Rows whose volume field was EMPTY -- an index with no turnover to
+    /// report. Counted separately from a zero, because they are different
+    /// statements, and separately from a skip, because the price data in them
+    /// is complete and used.
+    std::size_t absent_volume_rows = 0;
+    /// Rows discarded entirely. Any non-zero value here is data loss and the
+    /// chart header shows it.
     std::size_t skipped_rows = 0;
     QString error;
 
@@ -251,18 +267,41 @@ load_bars_csv(const QString& path, std::int64_t bar_span_ns,
             continue;
         }
 
-        bool vol_ok = true;
-        const std::int64_t vol = cols[5].trimmed().toLongLong(&vol_ok);
-        if (!vol_ok) {
-            ++r.skipped_rows;
-            continue;
-        }
-        if (vol == 0) {
-            ++r.zero_volume_rows;
+        // AN EMPTY VOLUME FIELD IS ABSENT, NOT A PARSE ERROR.
+        //
+        // The India VIX file ends every row with a bare comma -- `14.51,` --
+        // because an index has no turnover to report. The first version of
+        // this loader treated that as unparseable and SKIPPED THE WHOLE ROW,
+        // which silently discarded all 528 bars: the series loaded as zero
+        // bars and the fit reported "need at least 200, have 0".
+        //
+        // Dropping a row because one optional field is missing is worse than
+        // the zero-versus-absent confusion this loader already handles. The
+        // price data was there and complete.
+        const QString vol_text = cols[5].trimmed();
+        std::int64_t vol = 0;
+        bool vol_present = true;
+        if (vol_text.isEmpty()) {
+            vol_present = false;
+            ++r.absent_volume_rows;
+        } else {
+            bool vol_ok = true;
+            vol = vol_text.toLongLong(&vol_ok);
+            if (!vol_ok) {
+                // Genuinely malformed, as distinct from absent. This one IS a
+                // skipped row, and the count says so.
+                ++r.skipped_rows;
+                continue;
+            }
+            if (vol == 0) {
+                ++r.zero_volume_rows;
+            }
         }
         c.volume = vol;
-        // A zero on a source that does not report volume is ABSENT, not zero.
-        c.volume_known = !(vol == 0 && zero_volume_is_absent);
+        // Absent for two different reasons, and both mean the same thing to a
+        // renderer: there is no number to draw.
+        c.volume_known =
+            vol_present && !(vol == 0 && zero_volume_is_absent);
 
         c.ticks = 1;          // one bar, not one trade
         c.complete = true;    // history; nothing here is still forming
@@ -308,6 +347,7 @@ load_bars_dir(const QString& dir, std::int64_t bar_span_ns, DailyStamp stamp,
         merged.bars.insert(merged.bars.end(), one.bars.begin(), one.bars.end());
         merged.rounded_fields += one.rounded_fields;
         merged.zero_volume_rows += one.zero_volume_rows;
+        merged.absent_volume_rows += one.absent_volume_rows;
         merged.skipped_rows += one.skipped_rows;
     }
     std::sort(merged.bars.begin(), merged.bars.end(),

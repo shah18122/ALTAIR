@@ -42,6 +42,7 @@ qt_add_executable(altair_desktop
     chart/chart_widget.hpp
     chart/candles.hpp
     data/bar_csv.hpp
+    data/fits.hpp
 )
 
 # READ-SIDE ONLY. See the header comment; this list is the safety property.
@@ -128,6 +129,22 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     set_target_properties(altair_bar_csv_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_bar_csv COMMAND altair_bar_csv_test)
+
+    # P11Q-07. Fits the two models the available data can fit, on that data.
+    qt_add_executable(altair_fits_test tests/test_fits.cpp)
+    target_link_libraries(altair_fits_test PRIVATE
+        altair_types altair_time altair_feed altair_models altair_strategies
+        Qt6::Core Qt6::Gui)
+    target_include_directories(altair_fits_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_fits_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    set_target_properties(altair_fits_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_fits COMMAND altair_fits_test)
+    if(WIN32)
+        set_tests_properties(desktop_fits PROPERTIES
+            ENVIRONMENT "PATH=${ALTAIR_QT_ROOT}/bin;$ENV{PATH}")
+    endif()
     if(WIN32)
         set_tests_properties(desktop_bar_csv PROPERTIES
             ENVIRONMENT "PATH=${ALTAIR_QT_ROOT}/bin;$ENV{PATH}")

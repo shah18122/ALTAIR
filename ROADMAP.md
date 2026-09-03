@@ -1121,9 +1121,55 @@ tolerance, then is re-run under the post-April-2026 STT rates.
 | P8-10 | ONNX / TorchScript serving, warm + pinned, hot-swap |
 | P8-11 | Aggregator: per-model × per-timeframe weights, horizon-match enforcement |
 | P8-12 | Confidence intervals + edge lower bound |
+| P8-13 | **Markov regime chain** — discrete states over daily returns |
 
 **Exit:** the 10-minute forecast beats a persistence baseline out-of-sample
 **after costs**. If it does not, that is a valid result — stop and say so.
+
+**Exit status, 2026-09-03: NOT MET, and it cannot be met with the data on
+disk.** `dataset/` holds 8,756 daily NIFTY bars, 3,153 sixty-minute, 1,207
+one-minute across four partial days, and **no tick data at all**. A 10-minute
+forecast needs intraday history measured in months. LibTorch is also absent,
+and that is the smaller problem — vendoring it would not create the data.
+
+Eleven of the thirteen models are therefore validated on synthetic data only.
+That was a deliberate choice made when the phase ran, not an oversight, and
+the desktop Models panel reports it per model rather than in a footnote.
+
+#### P8-13 — the Markov chain, and why it is the exception
+
+Added at Smit's request. It earns a card because it is the ONE model here the
+available data can actually train: a first-order chain over daily return
+states needs a few thousand daily bars, and there are 8,755 returns.
+
+Measured on the real series (`models/tests/test_markov.cpp`):
+
+| | |
+|---|---|
+| state labels that change when boundaries come from the past only | **15.1%** (1,245 of 8,255) |
+| transitions fitted | 8,254 over 25 cells, thinnest 162, none empty |
+| χ² vs the unconditional distribution | **298.07**, df 16, crit 26.30 → **rejects** |
+| the same on a shuffled control | **19.25** → does not reject |
+
+The shuffled control is the load-bearing half: identical marginal
+distribution, no temporal structure, so a statistic firing on both would be
+measuring sample size. It does not fire. **Daily NIFTY regimes carry serial
+dependence that shuffling destroys.**
+
+That is not a trading edge. Rejecting independence says nothing about
+magnitude, nothing about survival after costs, and nothing about out-of-sample
+stability. Rule 5 and walk-forward decide that, and neither has been applied.
+
+#### Model → instrument order
+
+Smit's stated priority, and the order later cards fit against:
+
+1. NIFTY spot · 2. NIFTY future · 3. India VIX · 4. BANKNIFTY spot ·
+5. BANKNIFTY future
+
+Only **NIFTY spot** and **India VIX** have any history on disk today. There is
+no future, no BANKNIFTY, and no option chain, so cards 2, 4 and 5 are blocked
+on data acquisition rather than on code.
 
 ### Phase 9 — Flagging, drift, auto-correction · 7 cards · ~2 weeks
 | Card | Deliverable |
@@ -1173,6 +1219,35 @@ back with no human action.
 
 **Exit:** the full dashboard drives a live paper session at 60 fps with the grid
 holding 1 M audit rows and every export byte-correct.
+
+**Exit status, 2026-09-03: NOT MET.** There is no live session to drive — see
+Phase 2's transport and Phase 1's credentials. The computational layer beneath
+the dashboard is built and tested (P11-01..14, TypeScript, now retired) and the
+Qt desktop client renders it (P11Q-01..06).
+
+### Phase 11Q — the Qt desktop client · 8 cards
+
+> Smit chose Qt over the web SPA on 2026-09-03 and chose to link the engine
+> **in-process**, against the recommendation. The tradeoff is recorded in
+> CLAUDE.md under "The in-process decision": blast radius was given up, and the
+> property that the UI cannot trade is kept by construction — `desktop/`
+> links no `oms/` or `broker/` target and CMake fails configure if it ever
+> does. `client/` is retired, not deleted; `client/README.md` tabulates which
+> Phase 11 findings survived the language change.
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P11Q-01 | Shell + live grid on an identity-addressed model | **DONE** |
+| P11Q-02 | Sorting + Excel-style column filters | **DONE** |
+| P11Q-03 | Full screen, nav, market clock, replay scrubber | **DONE** |
+| P11Q-04 | Chart core: candles, volume, crosshair, float32 rebasing | **DONE** |
+| P11Q-05 | Panels: login, watchlist, broker wiring, models, data flow | **DONE** |
+| P11Q-06 | Load the real NIFTY / India VIX series from `dataset/` | **DONE** |
+| P11Q-07 | Fit the models that CAN be fit on the data that exists | TODO |
+| P11Q-08 | Wire the training harness with a per-model walk-forward split | TODO |
+
+**Exit:** every panel renders a fact or names the card that would make it
+render one. No panel shows a number it cannot source.
 
 ### Phase 12 — Production · 6 cards · ~1.5 weeks
 | Card | Deliverable |
