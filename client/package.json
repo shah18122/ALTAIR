@@ -1,0 +1,20 @@
+{
+  "name": "altair-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FRONTEND ONLY. The SPA: grid, WebGL charts, panels. Speaks server/'s wire protocol and nothing else. It links no engine header and cannot place an order. dependencies is deliberately empty and stays that way: this is the program that displays a live book, and every runtime package added here is a supply-chain path into it. TypeScript is the only devDependency, and it never ships.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,34 @@
+// Gate 1 for client/: zero errors under the strictest settings TypeScript
+// has. The C++ side builds at /W4 with zero warnings; this is the same bar.
+//
+// This matters more here than in most projects. Node runs these files by
+// STRIPPING types, not by checking them -- so without `tsc --noEmit` in the
+// loop every annotation in src/ would be decoration, and `seq: bigint` would
+// be a comment rather than a guarantee.
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "useUnknownInCatchVariables": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    // Nothing is compiled to .js: Node runs the .ts directly. The browser
+    // bundle is a later card.
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

@@ -216,6 +216,26 @@ Command Prompt with cmake and ninja on `PATH`.
 
 Presets: `default` · `vcpkg` · `debug` · `asan` · `tsan` · `prod`.
 
+### Building `client/`
+
+```powershell
+cd client
+npm run check                   # tsc --noEmit (gate 1) + node --test (gate 4)
+```
+
+Node runs the TypeScript by **stripping** types, not checking them, so
+`tsc --noEmit` is not optional here — without it every annotation in `src/` is
+decoration and `seq: bigint` is a comment rather than a guarantee. Same bar as
+`/W4` on the C++ side: zero errors under `strict`,
+`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and
+`verbatimModuleSyntax`.
+
+`client/dependencies` is empty and stays empty — this is the program that
+displays a live book, and every runtime package is a supply-chain path into
+it. TypeScript and `@types/node` are the only devDependencies and neither
+ships. Note that TypeScript `enum` and `namespace` are not erasable syntax and
+therefore **do not run** under Node's type stripping; use `as const` objects.
+
 ### Seeing it run
 
 ```powershell

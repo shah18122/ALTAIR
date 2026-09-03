@@ -600,15 +600,31 @@ back with no human action.
 
 ## Phase 11 — UI (14)
 
-> **Split by the one-component-one-directory rule.** P11-01 is `server/` —
-> backend only, renders nothing. P11-02..P11-14 are `client/` — desktop only,
-> talks to the server over the wire protocol and links no engine header. No
-> card in this phase may span both.
+> **Split by the one-component-one-directory rule.** P11-01/01b are `server/` —
+> backend only, renders nothing. P11-02..P11-14 are `client/` — the frontend,
+> which talks to the server over the wire protocol and links no engine header.
+> The `desktop/` shell HOSTS `client/`'s built bundle rather than
+> reimplementing it, and is its own late card. No card in this phase may span
+> two of them.
+>
+> **The gates, translated for `client/`.** Gate 1 is `npx tsc --noEmit` under
+> `strict` plus `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and
+> `verbatimModuleSyntax` — zero errors, the same bar as `/W4`. Gate 4 is
+> `node --test`. Both run together as `npm run check` from `client/`. Node
+> runs the TypeScript by STRIPPING types rather than checking them, so without
+> gate 1 in the loop every annotation in `src/` would be decoration.
+>
+> **`client/dependencies` is empty and stays empty.** This is the program that
+> displays a live book; every runtime package added to it is a supply-chain
+> path into it. TypeScript and `@types/node` are the only devDependencies and
+> neither ships. Same discipline as `vcpkg.json`'s empty `dependencies[]`.
 
 | Card | Deliverable | Status |
 |---|---|---|
 | P11-01 | Binary delta-frame protocol (`server/`) — **DONE** · **a nanosecond timestamp does not survive a JavaScript number**: engine time is ~1.79e18 ns, between 2^60 and 2^61, where the double spacing is **256 ns** — a burst of 4096 ticks 40 ns apart keeps **641 distinct instants and collapses 3455** onto their predecessor · nothing is INVERTED (round-to-nearest is monotone) — the order is **erased**, distinct events become simultaneous and the client’s next sort key decides them · **money is not the field at risk** (a paise amount only breaks above Rs 90,07,199 crore), so a rule of “careful with big numbers” would have guarded the wrong field · therefore binary, fixed-width LE, BigInt on the client, and no 64-bit JSON number anywhere — including the conformance vectors, which write 64-bit values as decimal STRINGS · **coalescing is right for state and catastrophic for events**: 512 fills over 240 frames coalesce to 206, reporting **Rs 35,775 against a true Rs 87,178 (59% gone)** — and the error is **not conservative**, over 64 zero-mean tapes it OVERSTATES on 29, worst +Rs 16,681 vs −Rs 12,669 · two channels, and the reliable one disconnects rather than drops · **a gap is detectable** and a delta on a stale baseline is refused, not applied · heartbeats do not advance seq · **`ClientMsg` has no order-placing member to name**, and its one mutating message is the kill switch, which can only flatten · uWebSockets transport binding deferred (vcpkg `ui` feature) | **DONE** |
-| P11-02 | SPA shell: tabs, theming, PIN lock, layout persistence | TODO |
+| P11-01b | Protocol conformance vectors (`server/`) — **DONE** · the interface contract between `server/` and `client/`, as a checked-in data file rather than a shared header — reading a data file is not linking a library, so the client still cannot be made to trade · **every vector exists to catch a specific decoder bug**, not as a random sample: `js_number_loss` (a timestamp whose low digits a double discards), `negative_i64` (two’s complement — a loss shown as a gain), `high_bit_u32` (JS bitwise operators are 32-bit SIGNED, so `b[3] << 24` goes negative and a payload length comes back as −2), `seq_u64_max` and `seq_above_2_53` (gap detection stops working exactly where a stream is longest) · plus three frames that must be REFUSED · **the file format cannot use JSON numbers** — every 64-bit value is a decimal STRING, or the vectors would be corrupted by the bug they exist to catch and every decoder would then agree with the broken expectation · the emitter re-decodes its own output, so a broken encoder is caught here rather than looking like a client bug | **DONE** |
+| P11-02a | Client wire layer (`client/`) — **DONE** · a SECOND implementation of the protocol, in TypeScript, sharing no code with the C++ encoder · every 64-bit field is `bigint` and there is no accessor that hands back a `number` · **the hazard is asserted before the fix**: the decoder anyone would write by hand is run against the same vectors and is wrong on **5 of 5** — engine time `1788393600123456800` for `…789`, `18446744073709552000` for `−1`, topic `−2147483647`, payload_len `−2`, seq off by one past 2^53 · a LOSS rendered as an enormous gain and a NEGATIVE length, neither of which throws · so test 1 agreeing is a result, not a tautology · `SeqTracker` reimplemented and shown to still distinguish consecutive frames past 2^53 · `formatPaise` takes bigint and never converts, so the paisa P12-04 reconciles against is the paisa displayed · `npm run check` = tsc strict + `node --test`, 4/4 | **DONE** |
+| P11-02b | SPA shell: tabs, theming, PIN lock, layout persistence | TODO |
 | P11-03 | Grid core: virtual scroll, 1 M rows, incremental cell patch | TODO |
 | P11-04 | Grid filters: type-aware, per column, chips, URL state | TODO |
 | P11-05 | Grid sort, grouping, aggregation, pivot | TODO |

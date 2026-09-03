@@ -89,3 +89,6 @@ venv/
 # Exchange and broker master files — large, regenerable, refreshed daily.
 # Downloaded by broker/tools; the SCHEMAS they taught us live in the cards.
 data/masters/
+
+# client/ devDependencies. TypeScript only, and it never ships.
+node_modules/

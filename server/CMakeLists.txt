@@ -23,4 +23,14 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_protocol_test tests/test_protocol.cpp)
     target_link_libraries(altair_protocol_test PRIVATE altair_server)
     add_test(NAME protocol COMMAND altair_protocol_test)
+
+    # Regenerates server/tests/vectors/frames.txt, the ONLY thing client/ is
+    # allowed to read out of this directory. It is a data file, not a header:
+    # the client still links nothing here. Checked in, so client/ can be
+    # tested without a C++ build present.
+    add_executable(altair_emit_vectors tests/emit_vectors.cpp)
+    target_link_libraries(altair_emit_vectors PRIVATE altair_server)
+    target_compile_definitions(altair_emit_vectors PRIVATE
+        ALTAIR_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors")
+    add_test(NAME protocol_vectors COMMAND altair_emit_vectors)
 endif()
