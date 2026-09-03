@@ -127,14 +127,16 @@ oms/           THE TRADE HANDLER — router, broker adapters, state machine,
                reconciliation. Nothing else places or amends an order.
 flagging/      per-model scorecards, drift detection, auto-correction
 backtest/      tick replayer, walk-forward, purged CV
-server/        BACKEND ONLY — uWebSockets, the binary delta-frame protocol,
-               auth, session. Renders nothing and knows no pixels.
-client/        FRONTEND ONLY — the SPA: grid, WebGL charts, panels. Talks to
-               server/ over the wire protocol and NOTHING else. It never links
-               an engine header and never touches a broker.
-desktop/       DESKTOP SHELL ONLY — the native window that hosts client/'s
-               built bundle, plus PIN lock, window state and OS integration.
-               Ships no UI code of its own and links no engine header.
+server/        BACKEND ONLY — the binary delta-frame protocol, auth, session.
+               Renders nothing and knows no pixels. Serves a REMOTE client;
+               the desktop UI does not go through it.
+desktop/       THE UI — Qt 6 Widgets, C++23, IN THE SAME PROCESS as the
+               engine. Grid, charts, depth ladder, panels. Links read-side
+               engine headers only; holds no oms/ handle and has no
+               order-placing vocabulary. See "The in-process decision".
+client/        RETIRED — the TypeScript SPA from Phase 11. Kept as a record
+               of its findings and their tests; not built, not shipped.
+               See client/README.md.
 app/           main() — the `altair` binary
 dataset/       TRAINING AND RESEARCH DATA, partitioned by segment then symbol
 research/      papers/inbox/ — PDFs get dropped here
@@ -147,25 +149,52 @@ Quants/        SEPARATE PROJECT (QUANTLAB) — not part of Altair, own repo
 ### One component, one directory — this is a hard rule
 
 A directory is a **deployment and blast-radius boundary**, not a filing
-convenience. The trade handler, the backend server and the desktop client are
-three separate programs that fail, deploy and get audited separately, so they
-are three separate directories with no header crossing between them.
+convenience.
 
 - **`oms/` is the only thing that can place an order.** If order-placing code
   appears anywhere else, that is a review failure, not a refactor opportunity.
-- **`server/` and `client/` never share a header.** They share a wire protocol
-  and nothing more. A client that can `#include` an engine header is a client
-  that can be made to trade. They do not share the protocol's *code* either:
-  the server encodes in C++ and the client decodes in TypeScript, and the two
-  are kept honest by a file of conformance vectors both test against. Shared
-  test vectors, not shared code — if the implementations drift, the vectors
-  fail rather than the dashboard quietly showing a wrong number.
-- **`desktop/` hosts `client/`, it does not reimplement it.** One frontend,
-  rendered in a browser or in a native window. A desktop shell that grows its
-  own grid is two grids to keep in agreement, and they will not stay in
-  agreement.
+  This rule is unconditional and survives everything below.
+- **`server/` and a remote client never share a header.** They share a wire
+  protocol and nothing more, kept honest by conformance vectors both sides
+  test against (`server/tests/vectors/`). Shared test vectors, not shared
+  code — if the implementations drift, the vectors fail rather than the
+  dashboard quietly showing a wrong number.
 - A card's manifest **never spans two of these directories.** If a change
   needs both, it is two cards with an explicit interface between them.
+
+### The in-process decision — Smit, 2026-09-03
+
+`desktop/` links the engine and runs in the same process. **This was decided
+against the recommendation above, deliberately, and the tradeoff is recorded
+here rather than left to be rediscovered.**
+
+What was given up: **blast radius.** A paint bug, a bad cast in a chart, an
+out-of-range index in the grid — any of them now takes down the process that
+is holding live positions. Out of process, the engine would have survived and
+the window would have died alone. There is no way to mitigate this from inside
+one address space, and it is the reason the rule was written the other way.
+
+What was gained: no serialisation, no IPC, no second copy of every view
+struct, and one language and one build for the whole program. For a
+single-operator desktop tool that is a real and defensible saving.
+
+**What is preserved anyway, and is not optional:**
+
+1. `desktop/` includes **read-side headers only** — `core/types`, `book/`,
+   `analytics/`, `risk/` (for reading exposure), `flagging/`. It does not
+   include `oms/` or `broker/`, and CMake does not link them into the UI
+   target.
+2. The UI holds **no handle that can place an order**. Its only mutating
+   channel is a kill-switch request, which still goes through the same
+   confirmation as P11-14 and is still executed by `oms/`, never by the UI.
+3. Because the compiler will not stop a determined `#include`, **gate 3
+   (manifest) explicitly checks the UI target's link libraries.** A UI target
+   that links `altair_oms` fails review.
+
+The safety property that matters — *the UI cannot trade* — is therefore kept
+by construction. The one that was traded away — *the UI cannot crash the
+engine* — is gone, and this paragraph exists so nobody later reads the code
+and assumes it was an oversight.
 
 ### `dataset/` layout
 
@@ -216,25 +245,28 @@ Command Prompt with cmake and ninja on `PATH`.
 
 Presets: `default` · `vcpkg` · `debug` · `asan` · `tsan` · `prod`.
 
-### Building `client/`
+### Building `desktop/` (the Qt UI)
+
+Qt 6.8.3 LTS, MSVC 2022 x64, installed at `D:\Qt` — off C: deliberately, which
+had 7.8 GB free against a 230 GB disk. Fetched with `aqtinstall`, not the Qt
+online installer, so the version is reproducible from a command line:
 
 ```powershell
-cd client
-npm run check                   # tsc --noEmit (gate 1) + node --test (gate 4)
+python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O D:\Qt
 ```
 
-Node runs the TypeScript by **stripping** types, not checking them, so
-`tsc --noEmit` is not optional here — without it every annotation in `src/` is
-decoration and `seq: bigint` is a comment rather than a guarantee. Same bar as
-`/W4` on the C++ side: zero errors under `strict`,
-`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and
-`verbatimModuleSyntax`.
+CMake finds it through `ALTAIR_QT_ROOT` (see `CMakePresets.json`). The UI is
+part of the normal build; there is no separate frontend toolchain and no
+`npm`.
 
-`client/dependencies` is empty and stays empty — this is the program that
-displays a live book, and every runtime package is a supply-chain path into
-it. TypeScript and `@types/node` are the only devDependencies and neither
-ships. Note that TypeScript `enum` and `namespace` are not erasable syntax and
-therefore **do not run** under Node's type stripping; use `as const` objects.
+Qt is **LGPLv3** here. Dynamic linking only — do not static-link Qt into a
+distributed binary without reading the licence.
+
+### `client/` is retired
+
+The TypeScript SPA is kept as a record and is **not built**. Do not add it to
+a build, a CI step, or a card manifest. `client/README.md` says what survived
+into `desktop/` and what was language-specific and died with it.
 
 ### Seeing it run
 

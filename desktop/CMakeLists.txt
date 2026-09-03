@@ -1,0 +1,77 @@
+# desktop/ — THE UI. Qt 6 Widgets, C++23, in the same process as the engine.
+#
+# P11Q-01.
+#
+# GATE 3 IS ENFORCED HERE, IN THE LINK LINE.
+#
+# CLAUDE.md's "The in-process decision" gives up blast radius and keeps one
+# thing in exchange: the UI cannot trade. Out of process that was guaranteed by
+# the process boundary. In process it is guaranteed by THIS FILE and nothing
+# else — so the link libraries below are a review surface, not a convenience.
+#
+# altair_oms and altair_broker are ABSENT and must stay absent. A UI target
+# that links either of them fails gate 3, regardless of what the code does with
+# them. `altair_desktop_link_audit` below makes that a build error rather than
+# a thing a reviewer has to notice.
+
+find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Widgets)
+
+if(NOT Qt6_FOUND)
+    message(STATUS "desktop/: Qt6 not found — UI target skipped. "
+                   "Set ALTAIR_QT_ROOT or CMAKE_PREFIX_PATH to a Qt 6.8+ "
+                   "msvc2022_64 install.")
+    return()
+endif()
+
+message(STATUS "desktop/: Qt ${Qt6_VERSION} at ${Qt6_DIR}")
+
+qt_standard_project_setup()
+
+qt_add_executable(altair_desktop
+    main.cpp
+    main_window.hpp
+    tick_model.hpp
+)
+
+# READ-SIDE ONLY. See the header comment; this list is the safety property.
+target_link_libraries(altair_desktop PRIVATE
+    altair_types
+    altair_time
+    altair_feed
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+)
+
+target_include_directories(altair_desktop PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+# ── The gate 3 audit ─────────────────────────────────────────────────────────
+# A human reading a diff can miss a line added to target_link_libraries. This
+# cannot: it fails configure if an order-placing library ever appears.
+get_target_property(_altair_ui_links altair_desktop LINK_LIBRARIES)
+foreach(_forbidden altair_oms altair_broker altair::oms altair::broker)
+    if(_forbidden IN_LIST _altair_ui_links)
+        message(FATAL_ERROR
+            "desktop/ links ${_forbidden}. The UI must not be able to place an "
+            "order — see CLAUDE.md 'The in-process decision'. This is gate 3.")
+    endif()
+endforeach()
+
+set_target_properties(altair_desktop PROPERTIES
+    WIN32_EXECUTABLE ON      # no console window behind the UI
+    MACOSX_BUNDLE ON
+)
+
+# Copy the Qt DLLs next to the exe so it runs from the build tree without a
+# PATH dance. Debug and release Qt DLLs differ; windeployqt picks the right set.
+if(WIN32)
+    find_program(ALTAIR_WINDEPLOYQT windeployqt HINTS ${Qt6_DIR}/../../../bin)
+    if(ALTAIR_WINDEPLOYQT)
+        add_custom_command(TARGET altair_desktop POST_BUILD
+            COMMAND "${ALTAIR_WINDEPLOYQT}"
+                    --no-translations --no-system-d3d-compiler --no-opengl-sw
+                    "$<TARGET_FILE:altair_desktop>"
+            COMMENT "windeployqt: staging Qt runtime next to altair_desktop"
+            VERBATIM)
+    endif()
+endif()

@@ -643,6 +643,32 @@ in the grid and every export byte-correct.
 
 ---
 
+## Phase 11Q — the Qt UI (in-process)
+
+> **Supersedes `client/`.** Smit chose Qt over the web SPA on 2026-09-03, and
+> chose to link the engine IN-PROCESS against the recommendation. The tradeoff
+> is recorded in CLAUDE.md under "The in-process decision": blast radius was
+> given up, and the property that the UI cannot trade is kept by construction
+> — `desktop/CMakeLists.txt` fails configure if the UI target ever links
+> `altair_oms` or `altair_broker`, which is gate 3 as a build error rather
+> than a thing a reviewer has to notice.
+>
+> `client/` is retired, not deleted. `client/README.md` tabulates which
+> Phase 11 findings survive into Qt (most of them, and several are WORSE in
+> Qt) and which were JavaScript-specific and died with it.
+>
+> Qt 6.8.3 LTS, msvc2022_64, installed to `D:\Qt` via `aqtinstall` — off C:,
+> which had 7.8 GB free against a 230 GB disk. LGPLv3, dynamic linking only.
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P11Q-01 | Shell + live grid — **DONE** · a real window driven by a replayed synthetic session · **`QAbstractItemModel` is index-addressed, and that is the hazard** — P11-03 measured 511 of 512 patches landing on the wrong instrument after one re-sort, and Qt makes it EASIER: `QModelIndex::row()` is in every handler and `QSortFilterProxyModel` adds a second index space · so the model is keyed by token, `#order` is the only thing a row number touches, and there is deliberately no `apply_at(int row, …)` · **absence is not zero**: `data()` returns an INVALID `QVariant` for a value that has not arrived, so Qt draws an empty cell rather than `0.00`, which would be a claim the position is flat · money is int64 paise until the moment it is drawn, with the only `/100` inside the formatter · **the sign is in the text** (`+13.67` / `−35.63`) and colour is redundant with it, never a substitute · the unit is in the HEADER (`LTP (INR)`) · **the status bar shows the ENGINE clock beside the wall clock** — measured 09:35 vs 21:40, and that divergence is what makes a replay visibly a replay · read-only by construction: no `Qt::ItemIsEditable`, no order-placing vocabulary · `Replayer` already forbids look-ahead one layer down, by an absent `peek()` | **DONE** |
+| P11Q-02 | Sorting + filtering over the identity model | TODO |
+| P11Q-03 | Depth ladder widget on the tick grid | TODO |
+| P11Q-04 | Chart core: `QOpenGLWidget`, int64 rebasing before the float32 attribute | TODO |
+| P11Q-05 | Panels: strategy builder, cost breakdown, audit trail, kill switch | TODO |
+| P11Q-06 | Wire a real feed (live or `--replay <session>`) in place of the demo generator | TODO |
+
 ## Phase 12 — Production (6)
 
 | Card | Deliverable | Status |
