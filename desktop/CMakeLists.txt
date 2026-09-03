@@ -43,7 +43,24 @@ qt_add_executable(altair_desktop
     chart/candles.hpp
     data/bar_csv.hpp
     data/fits.hpp
+    cost_panel.hpp
 )
+
+# P11Q-05a. The cost panel reads config/charges.toml through P3-09b's loader,
+# which exists only where vcpkg has provided toml++. Where it does not, the
+# panel names the blocker instead of showing a plausible cost -- an invented
+# charge is worse than no charge, because rule 5 is what everything downstream
+# trusts.
+if(TARGET altair_charges_toml)
+    target_link_libraries(altair_desktop PRIVATE altair_charges_toml)
+    target_compile_definitions(altair_desktop PRIVATE
+        ALTAIR_HAVE_CHARGES_TOML=1
+        ALTAIR_CHARGES_TOML="${CMAKE_SOURCE_DIR}/config/charges.toml")
+    message(STATUS "desktop/: cost panel ENABLED (charges.toml loader present)")
+else()
+    message(STATUS "desktop/: cost panel will name its blocker "
+                   "(no charges.toml loader in this preset)")
+endif()
 
 # READ-SIDE ONLY. See the header comment; this list is the safety property.
 target_link_libraries(altair_desktop PRIVATE
@@ -97,6 +114,13 @@ set(_altair_ui_permitted
     altair_types      # strong units, read-side
     altair_time       # timestamps
     altair_feed       # replay + normalised ticks, read-side
+    # P11Q-05a. Parses config/charges.toml into ChargeSchedule and does nothing
+    # else -- no venue, no session, no order vocabulary anywhere in it. The
+    # cost panel needs the real rates and rule 1 says they come from the file,
+    # not from a literal, so the alternative to this line is a hard-coded
+    # schedule in the UI, which is worse. Added deliberately, per the error
+    # message below.
+    altair_charges_toml
     Qt6::Core Qt6::Gui Qt6::Widgets
 )
 get_target_property(_altair_ui_links altair_desktop LINK_LIBRARIES)

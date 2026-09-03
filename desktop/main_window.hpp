@@ -33,6 +33,7 @@
 #include <feed/replay.hpp>
 
 #include "chart/chart_widget.hpp"
+#include "cost_panel.hpp"
 #include "data/bar_csv.hpp"
 #include "feed_status.hpp"
 #include "panels.hpp"
@@ -76,6 +77,7 @@ namespace altair::ui {
     return {QStringLiteral("Live Grid"),   QStringLiteral("Chart"),
             QStringLiteral("Watchlist"),   QStringLiteral("Models"),
             QStringLiteral("Data Flow"),   QStringLiteral("Broker Wiring"),
+            QStringLiteral("Cost"),
             QStringLiteral("Ratio Spread"), QStringLiteral("Value — DCF"),
             QStringLiteral("Aggregator"),  QStringLiteral("Trade Handler"),
             QStringLiteral("Audit Trail")};
@@ -636,6 +638,7 @@ private:
         }
 
         pages_->addWidget(new WiringPanel);
+        pages_->addWidget(new CostPanel);
 
         pages_->addWidget(blocked_page(
             QStringLiteral("Ratio Spread"), QStringLiteral("P11Q-05"),
