@@ -32,6 +32,7 @@
 #include <core/time/timestamp.hpp>
 #include <feed/replay.hpp>
 
+#include "chart/chart_widget.hpp"
 #include "filter.hpp"
 #include "market_clock.hpp"
 #include "tick_model.hpp"
@@ -112,6 +113,7 @@ public:
 
         build_nav();
         build_watchlist();
+        build_chart();
         build_pages();
         build_toolbar();
         build_status();
@@ -131,8 +133,23 @@ public:
 
     TickModel* model() const noexcept { return model_; }
 
+    /// Open on a given nav page. For screenshots and for launching straight
+    /// into the panel you are working on; the nav is still the normal way in.
+    void show_page(int index) {
+        if (index >= 0 && index < nav_->count()) {
+            nav_->setCurrentRow(index);
+        }
+    }
+
+    /// Drain `n` ticks immediately, so a screenshot or a test starts with a
+    /// populated chart instead of an empty one.
+    void prime(std::size_t n) {
+        seek(static_cast<int>(n));
+    }
+
     void add_instrument(std::uint32_t token, const QString& symbol) {
         model_->add_instrument(token, symbol);
+        instrument_->addItem(symbol, token);
     }
 
 private Q_SLOTS:
@@ -277,6 +294,7 @@ private:
             "QListWidget::item{padding:11px 14px;}"
             "QListWidget::item:selected{background:#2C3E50;color:#FFFFFF;}"));
         for (const auto& name : {QStringLiteral("  Watchlist"),
+                                 QStringLiteral("  Chart"),
                                  QStringLiteral("  Ratio Spread"),
                                  QStringLiteral("  Value — DCF"),
                                  QStringLiteral("  Models"),
@@ -288,8 +306,12 @@ private:
         nav_->setCurrentRow(0);
 
         pages_ = new QStackedWidget;
-        connect(nav_, &QListWidget::currentRowChanged,
-                pages_, &QStackedWidget::setCurrentIndex);
+        connect(nav_, &QListWidget::currentRowChanged, this, [this](int row) {
+            pages_->setCurrentIndex(row);
+            if (row == 1) {
+                rebuild_chart();   // draw at once rather than on the next tick
+            }
+        });
 
         auto* split = new QWidget;
         auto* h = new QHBoxLayout(split);
@@ -335,6 +357,59 @@ private:
         v->addWidget(hint);
         v->addWidget(view_, 1);
         pages_->addWidget(page);
+    }
+
+    void build_chart() {
+        chart_ = new ChartWidget;
+
+        instrument_ = new QComboBox;
+        connect(instrument_, &QComboBox::currentIndexChanged, this,
+                [this](int) { rebuild_chart(); });
+
+        bucket_ = new QComboBox;
+        bucket_->addItem(QStringLiteral("1 second"),  1'000'000'000LL);
+        bucket_->addItem(QStringLiteral("5 seconds"), 5'000'000'000LL);
+        bucket_->addItem(QStringLiteral("15 seconds"), 15'000'000'000LL);
+        bucket_->addItem(QStringLiteral("1 minute"),  60'000'000'000LL);
+        bucket_->setCurrentIndex(3);   // 1 minute
+        connect(bucket_, &QComboBox::currentIndexChanged, this,
+                [this](int) { rebuild_chart(); });
+
+        auto* controls = new QHBoxLayout;
+        controls->addWidget(new QLabel(QStringLiteral("Instrument")));
+        controls->addWidget(instrument_);
+        controls->addSpacing(16);
+        controls->addWidget(new QLabel(QStringLiteral("Bucket")));
+        controls->addWidget(bucket_);
+        controls->addStretch();
+
+        auto* page = new QWidget;
+        auto* v = new QVBoxLayout(page);
+        v->addLayout(controls);
+        v->addWidget(chart_, 1);
+        pages_->addWidget(page);
+    }
+
+    /// Rebuild from the ticks DELIVERED SO FAR -- never the whole array.
+    ///
+    /// `applied_` is the count the replayer has handed over. Passing
+    /// `count_` here instead would let the chart draw the afternoon while the
+    /// scrubber sits at 10:15, which is precisely the look-ahead P11-13
+    /// measured. The bound is the argument, not a filter applied afterwards.
+    void rebuild_chart() {
+        if (chart_ == nullptr || instrument_ == nullptr || applied_ == 0) {
+            return;
+        }
+        const auto token = instrument_->currentData().toUInt();
+        const auto bucket = bucket_->currentData().toLongLong();
+        auto built = build_candles(ticks_, applied_, token, bucket,
+                                   last_ts_ns_);
+        const auto k =
+            check_conservation(ticks_, applied_, token, built);
+        chart_->set_title(QStringLiteral("%1 — %2")
+                              .arg(instrument_->currentText(),
+                                   bucket_->currentText()));
+        chart_->set_candles(std::move(built), k);
     }
 
     void build_pages() {
@@ -458,6 +533,12 @@ private:
     }
 
     void refresh_status() {
+        if (++since_chart_ >= 15) {
+            since_chart_ = 0;
+            if (pages_->currentIndex() == 1) {
+                rebuild_chart();
+            }
+        }
         scrub_->blockSignals(true);
         scrub_->setValue(static_cast<int>(applied_));
         scrub_->blockSignals(false);
@@ -481,11 +562,18 @@ private:
                 .arg(phase_colour(p).name()));
 
         // THE ENGINE CLOCK: read off the tick, never QDateTime::currentDateTime().
+        //
+        // Displayed in IST, because that is the market's clock and the session
+        // window is expressed in it. Showing UTC next to a phase derived from
+        // IST is how a screen reads "CLOSED" at what looks like mid-session --
+        // which is exactly what the first version of this window did.
         if (clock_.has_engine_time()) {
-            const auto engine = QDateTime::fromMSecsSinceEpoch(
-                last_ts_ns_ / 1'000'000, QTimeZone::utc());
+            static const QTimeZone kIst =
+                QTimeZone::fromSecondsAheadOfUtc(5 * 3600 + 30 * 60);
+            const auto engine =
+                QDateTime::fromMSecsSinceEpoch(last_ts_ns_ / 1'000'000, kIst);
             engine_clock_->setText(
-                QStringLiteral(" engine %1Z ")
+                QStringLiteral(" engine %1 IST ")
                     .arg(engine.toString(QStringLiteral("HH:mm:ss.zzz"))));
         } else {
             // No tick yet, so there is no engine time. Blank, not 00:00:00 --
@@ -508,6 +596,11 @@ private:
     QTableView* view_ = nullptr;
     QListWidget* nav_ = nullptr;
     QStackedWidget* pages_ = nullptr;
+
+    ChartWidget* chart_ = nullptr;
+    QComboBox* instrument_ = nullptr;
+    QComboBox* bucket_ = nullptr;
+    int since_chart_ = 0;
 
     QPushButton* play_ = nullptr;
     QComboBox* speed_ = nullptr;

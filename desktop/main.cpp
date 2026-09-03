@@ -84,7 +84,11 @@ std::vector<altair::ReplayTick> demo_session(std::size_t count,
         }
 
         altair::ReplayTick t{};
-        t.ts = start + altair::duration::millis(static_cast<std::int64_t>(i));
+        // 100 ms apart, so 40,000 ticks span 67 minutes of session rather than
+        // 40 seconds. A chart of 40 seconds is four candles and tells you
+        // nothing about whether the bucketing is right.
+        t.ts = start
+             + altair::duration::millis(static_cast<std::int64_t>(i) * 100);
         t.seqno = static_cast<std::uint64_t>(i) + 1;
         t.token = kInstruments[which].token;
         t.reserved = 0;
@@ -102,15 +106,37 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName(QStringLiteral("Altair"));
     QApplication::setOrganizationName(QStringLiteral("Altair"));
 
-    // 2026-09-03T09:15:00Z -- a plausible session open, so the engine clock in
-    // the status bar reads like a trading session rather than like 1970.
-    const altair::Timestamp open{1'788'428'100'000'000'000LL};
+    // 2026-09-03 09:15 IST == 03:45 UTC.
+    //
+    // THE FIRST VERSION OF THIS LINE SAID 09:15 *UTC* and was wrong by five and
+    // a half hours: the session window in market_clock.hpp is IST-ns-since-
+    // midnight, so the tape opened at 14:45 IST and the status bar correctly
+    // reported CLOSED an hour later. The clock was right and the fixture was
+    // wrong, which is the more common direction.
+    //
+    // Timestamps are UTC everywhere in the engine (core/time/timestamp.hpp);
+    // only the SESSION WINDOW is expressed in IST, and that asymmetry is worth
+    // knowing about before writing a literal.
+    const altair::Timestamp open{1'788'407'100'000'000'000LL};
     const auto ticks = demo_session(40'000, open, 42);
 
     altair::ui::MainWindow window(ticks.data(), ticks.size());
     for (const auto& ins : kInstruments) {
         window.add_instrument(ins.token, QString::fromUtf8(ins.symbol));
     }
+
+    // --page N opens on a nav page, --prime N drains that many ticks first.
+    // Both exist so a screenshot or a manual check starts where the work is,
+    // rather than requiring a click that a capture script cannot make.
+    const QStringList args = QApplication::arguments();
+    for (int i = 1; i + 1 < args.size(); ++i) {
+        if (args[i] == QStringLiteral("--page")) {
+            window.show_page(args[i + 1].toInt());
+        } else if (args[i] == QStringLiteral("--prime")) {
+            window.prime(static_cast<std::size_t>(args[i + 1].toLongLong()));
+        }
+    }
+
     window.showFullScreen();
 
     return QApplication::exec();

@@ -33,6 +33,8 @@ qt_add_executable(altair_desktop
     tick_model.hpp
     filter.hpp
     market_clock.hpp
+    chart/chart_widget.hpp
+    chart/candles.hpp
 )
 
 # READ-SIDE ONLY. See the header comment; this list is the safety property.
@@ -77,6 +79,15 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(altair_desktop_filter_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_filter COMMAND altair_desktop_filter_test)
+
+    # candles.hpp has no Q_OBJECT, so this one needs no moc and no Qt at all
+    # beyond the engine types it already uses.
+    add_executable(altair_desktop_chart_test tests/test_chart.cpp)
+    target_link_libraries(altair_desktop_chart_test PRIVATE
+        altair_types altair_time altair_feed)
+    target_include_directories(altair_desktop_chart_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME desktop_chart COMMAND altair_desktop_chart_test)
     if(WIN32)
         # The test needs the Qt DLLs on PATH; point ctest at the Qt bin dir
         # rather than copying a second set next to the test binary.
