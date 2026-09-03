@@ -34,6 +34,11 @@ qt_add_executable(altair_desktop
     filter.hpp
     market_clock.hpp
     format.hpp
+    auth.hpp
+    feed_status.hpp
+    model_status.hpp
+    watchlist.hpp
+    panels.hpp
     chart/chart_widget.hpp
     chart/candles.hpp
     data/bar_csv.hpp
@@ -55,6 +60,19 @@ target_include_directories(altair_desktop PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..
 # constant rather than something the UI hunts for at runtime.
 target_compile_definitions(altair_desktop PRIVATE
     ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+
+# THE DEFAULT ACCOUNTS EXIST ONLY HERE, AND ONLY OUTSIDE A RELEASE BUILD.
+#
+# admin/admin and staff/staff are compiled in when this is defined. The `prod`
+# preset builds Release, so a shipped binary has no default account to forget
+# to remove -- seed_default_users() compiles to an empty function and the login
+# screen reports that nothing is provisioned.
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_definitions(altair_desktop PRIVATE ALTAIR_DEV_CREDENTIALS)
+    message(STATUS "desktop/: DEV CREDENTIALS COMPILED IN (admin/admin, staff/staff)")
+else()
+    message(STATUS "desktop/: release build -- no default accounts")
+endif()
 
 # ── The gate 3 audit ─────────────────────────────────────────────────────────
 # A human reading a diff can miss a line added to target_link_libraries. This

@@ -29,7 +29,9 @@
 #include <core/types/units.hpp>
 #include <feed/replay.hpp>
 
+#include "auth.hpp"
 #include "main_window.hpp"
+#include "panels.hpp"
 
 #include <QApplication>
 #include <QString>
@@ -138,7 +140,48 @@ int main(int argc, char** argv) {
     const altair::Timestamp open{1'788'407'100'000'000'000LL};
     const auto ticks = demo_session(40'000, open, 42);
 
-    altair::ui::MainWindow window(ticks.data(), ticks.size());
+    const QStringList args = QApplication::arguments();
+
+    // THE GATE. A build with no accounts provisioned lets nobody in; the
+    // dialog says so rather than falling back to a default.
+    altair::ui::UserStore users;
+    altair::ui::seed_default_users(users);
+
+    // --as admin|staff skips the dialog. DEV BUILDS ONLY, and the guard is
+    // the same compile definition that supplies the accounts: a build with no
+    // default users has nothing for this to bypass to. It exists so a
+    // screenshot or a manual check can reach a panel without synthesising
+    // keystrokes, and it is deliberately NOT a --password flag -- a credential
+    // on a command line is a credential in the shell history and the process
+    // list.
+    altair::ui::Role role = altair::ui::Role::None;
+    QString who;
+#ifdef ALTAIR_DEV_CREDENTIALS
+    for (int i = 1; i + 1 < args.size(); ++i) {
+        if (args[i] != QStringLiteral("--as")) {
+            continue;
+        }
+        if (args[i + 1] == QStringLiteral("admin")) {
+            role = altair::ui::Role::Admin;
+            who = QStringLiteral("admin");
+        } else if (args[i + 1] == QStringLiteral("staff")) {
+            role = altair::ui::Role::Staff;
+            who = QStringLiteral("staff");
+        }
+    }
+#endif
+
+    if (role == altair::ui::Role::None) {
+        altair::ui::LoginDialog login(users);
+        if (login.exec() != QDialog::Accepted
+            || login.role() == altair::ui::Role::None) {
+            return 0;
+        }
+        role = login.role();
+        who = login.user();
+    }
+
+    altair::ui::MainWindow window(ticks.data(), ticks.size(), role, who);
     for (const auto& ins : kInstruments) {
         window.add_instrument(ins.token, QString::fromUtf8(ins.symbol));
     }
@@ -148,7 +191,6 @@ int main(int argc, char** argv) {
     // manual check starts where the work is, rather than requiring a click a
     // capture script cannot make -- and emphatically rather than synthesising
     // keystrokes, which go to whatever window happens to have focus.
-    const QStringList args = QApplication::arguments();
     for (int i = 1; i + 1 < args.size(); ++i) {
         if (args[i] == QStringLiteral("--page")) {
             window.show_page(args[i + 1].toInt());

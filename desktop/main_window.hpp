@@ -34,6 +34,8 @@
 
 #include "chart/chart_widget.hpp"
 #include "data/bar_csv.hpp"
+#include "feed_status.hpp"
+#include "panels.hpp"
 #include "filter.hpp"
 #include "market_clock.hpp"
 #include "tick_model.hpp"
@@ -103,13 +105,19 @@ class MainWindow final : public QMainWindow {
 public:
     /// Borrows `ticks`; the caller owns the storage and must outlive the
     /// window. Same contract as `Replayer`, for the same reason.
-    MainWindow(const ReplayTick* ticks, std::size_t count,
-               QWidget* parent = nullptr)
+    MainWindow(const ReplayTick* ticks, std::size_t count, Role role,
+               const QString& user, QWidget* parent = nullptr)
         : QMainWindow(parent),
           ticks_(ticks),
           count_(count),
           replayer_(ticks, count),
-          clock_(DemoSessionTimes::trading(), DemoSessionTimes::pre_open()) {
+          clock_(DemoSessionTimes::trading(), DemoSessionTimes::pre_open()),
+          role_(role),
+          user_(user) {
+        // The UI is attached to a replay. Saying so in the source of truth
+        // means the pill cannot claim otherwise.
+        feed_.set_source(FeedSource::Replay);
+        feed_.set_transport_up(true);
         setWindowTitle(QStringLiteral("Altair"));
 
         build_nav();
@@ -235,6 +243,12 @@ private Q_SLOTS:
             model_->apply_tick(*t);
             last_ts_ns_ = t->ts.ns_since_epoch();
             clock_.observe(t->ts);
+            // THE RECEIVE CLOCK, not the tick's exchange timestamp. Staleness
+            // is a question about us, and a replay of an old session emits old
+            // timestamps forever -- it would look permanently fresh by its own
+            // clock. feed/tick.hpp carries recv_ts for exactly this.
+            feed_.observe_arrival(QDateTime::currentMSecsSinceEpoch()
+                                  * 1'000'000LL);
             ++applied_;
             ++drained;
         }
@@ -302,11 +316,14 @@ private:
             "QListWidget{background:#20262B;color:#D6DBDF;border:none;}"
             "QListWidget::item{padding:11px 14px;}"
             "QListWidget::item:selected{background:#2C3E50;color:#FFFFFF;}"));
-        for (const auto& name : {QStringLiteral("  Watchlist"),
+        for (const auto& name : {QStringLiteral("  Live Grid"),
                                  QStringLiteral("  Chart"),
+                                 QStringLiteral("  Watchlist"),
+                                 QStringLiteral("  Models"),
+                                 QStringLiteral("  Data Flow"),
+                                 QStringLiteral("  Broker Wiring"),
                                  QStringLiteral("  Ratio Spread"),
                                  QStringLiteral("  Value — DCF"),
-                                 QStringLiteral("  Models"),
                                  QStringLiteral("  Aggregator"),
                                  QStringLiteral("  Trade Handler"),
                                  QStringLiteral("  Audit Trail")}) {
@@ -539,6 +556,27 @@ private:
     }
 
     void build_pages() {
+        pages_->addWidget(new WatchlistPanel(role_));
+        pages_->addWidget(new ModelPanel(role_));
+
+        {
+            auto* page = new QWidget;
+            auto* v = new QVBoxLayout(page);
+            v->addWidget(new QLabel(QStringLiteral(
+                "<h3>Data flow — feed to broker</h3>")));
+            auto* note = new QLabel(QStringLiteral(
+                "Drawn from the same table the Broker Wiring page reads, so "
+                "the picture and the facts cannot drift apart. A stage past "
+                "the wall is hollow: a tick cannot reach it today."));
+            note->setWordWrap(true);
+            note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+            v->addWidget(note);
+            v->addWidget(new DataflowWidget(feed_.source()), 1);
+            pages_->addWidget(page);
+        }
+
+        pages_->addWidget(new WiringPanel);
+
         pages_->addWidget(blocked_page(
             QStringLiteral("Ratio Spread"), QStringLiteral("P11Q-05"),
             QStringLiteral(
@@ -557,15 +595,6 @@ private:
                 "fundamentals from strategies/fundamentals.hpp, which returns "
                 "nothing before a statement's FILING date — and no filings have "
                 "been ingested.")));
-
-        pages_->addWidget(blocked_page(
-            QStringLiteral("Models"), QStringLiteral("P11Q-05"),
-            QStringLiteral(
-                "models/registry.hpp and models/serving.hpp exist and are "
-                "tested. Nothing is trained: Phase 8's exit needs real tick "
-                "data and LibTorch, and neither is present. Showing a scorecard "
-                "for a model that has never seen a market would be a panel of "
-                "invented numbers.")));
 
         pages_->addWidget(blocked_page(
             QStringLiteral("Aggregator"), QStringLiteral("P11Q-05"),
@@ -633,14 +662,18 @@ private:
     }
 
     void build_status() {
+        pill_ = new QLabel;
+        who_ = new QLabel;
         phase_ = new QLabel;
         engine_clock_ = new QLabel;
         wall_clock_ = new QLabel;
         progress_ = new QLabel;
         filters_ = new QLabel;
 
+        statusBar()->addWidget(pill_);
         statusBar()->addWidget(progress_);
         statusBar()->addWidget(filters_);
+        statusBar()->addPermanentWidget(who_);
         statusBar()->addPermanentWidget(phase_);
         statusBar()->addPermanentWidget(engine_clock_);
         statusBar()->addPermanentWidget(wall_clock_);
@@ -659,6 +692,22 @@ private:
     }
 
     void refresh_status() {
+        const std::int64_t now_ns =
+            QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
+        const Liveness live = feed_.liveness(now_ns);
+        const std::int64_t age = feed_.age_ns(now_ns);
+        pill_->setText(
+            QStringLiteral("  %1 · %2%3  ")
+                .arg(liveness_label(live), feed_name(feed_.source()),
+                     age < 0 ? QString()
+                             : QStringLiteral(" · last tick %1 ms ago")
+                                   .arg(age / 1'000'000)));
+        pill_->setStyleSheet(
+            QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;")
+                .arg(liveness_colour(live).name()));
+        who_->setText(QStringLiteral(" %1 (%2) ")
+                          .arg(user_, role_name(role_)));
+
         if (++since_chart_ >= 15) {
             since_chart_ = 0;
             // Only the live replay needs redrawing. A series loaded from
@@ -738,6 +787,8 @@ private:
     QComboBox* speed_ = nullptr;
     QSlider* scrub_ = nullptr;
 
+    QLabel* pill_ = nullptr;
+    QLabel* who_ = nullptr;
     QLabel* phase_ = nullptr;
     QLabel* engine_clock_ = nullptr;
     QLabel* wall_clock_ = nullptr;
@@ -747,6 +798,10 @@ private:
     QTimer* timer_ = nullptr;
     std::size_t applied_ = 0;
     std::int64_t last_ts_ns_ = 0;
+
+    FeedStatus feed_;
+    Role role_ = Role::None;
+    QString user_;
 };
 
 } // namespace altair::ui
