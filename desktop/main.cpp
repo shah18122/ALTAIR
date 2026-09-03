@@ -8,6 +8,12 @@
 //
 // WHAT THE DATA IS: SYNTHETIC, GENERATED HERE, AND NOT THE ENGINE'S.
 //
+// AND THE INSTRUMENTS ARE NAMED SO. An earlier version of this file put real
+// tickers -- RELIANCE among them -- on a random walk. There is no Reliance
+// data in this repository. Every synthetic instrument below now says SYNTH in
+// its name, because a fabricated series wearing a real ticker is the one thing
+// a trading window must never show.
+//
 // `app/session_file.hpp` has the engine's own `generate_session`, and this file
 // deliberately does NOT include it. `app/` is the `altair` binary, not a
 // library, and reaching into it from the UI would be exactly the kind of
@@ -40,14 +46,26 @@ struct DemoInstrument {
     std::int64_t open_paise;
 };
 
-/// Four instruments so the grid has rows to sort and compare, at prices that
-/// span two orders of magnitude -- which is also what makes the formatter's
-/// Indian digit grouping visible.
+/// Four SYNTHETIC instruments, named so they cannot be mistaken for real ones.
+///
+/// THE FIRST VERSION OF THIS LIST USED REAL TICKERS -- "NIFTY 50",
+/// "BANKNIFTY", "RELIANCE", "NIFTY26SEP24500CE" -- against a random walk.
+/// There is no Reliance data in this repository and there never was;
+/// `dataset/spot/` holds nifty and indiavix and nothing else. A real ticker on
+/// a fabricated price, in a window that also displays real data, is
+/// indistinguishable from the real thing at a glance. That is the exact
+/// failure CLAUDE.md's rule 9 exists to prevent, and it was on screen.
+///
+/// So the names carry the word SYNTH and the prices are round numbers no
+/// instrument trades at. The four still span two orders of magnitude, which is
+/// what makes the formatter's Indian digit grouping visible, and they still
+/// exercise every sort, filter and chart path -- which was the only thing the
+/// real names were ever buying.
 constexpr std::array<DemoInstrument, 4> kInstruments{{
-    {256265, "NIFTY 50",       2'450'000},   // Rs 24,500.00
-    {260105, "BANKNIFTY",      5'210'000},   // Rs 52,100.00
-    {738561, "RELIANCE",         291'500},   // Rs  2,915.00
-    {2953217, "NIFTY26SEP24500CE",  12'000}, // Rs    120.00
+    {900001, "SYNTH-A (index-scale)",   2'000'000},  // Rs 20,000.00
+    {900002, "SYNTH-B (index-scale)",   5'000'000},  // Rs 50,000.00
+    {900003, "SYNTH-C (stock-scale)",     300'000},  // Rs  3,000.00
+    {900004, "SYNTH-D (option-scale)",     10'000},  // Rs    100.00
 }};
 
 /// A deterministic interleaved session. One global sequence and a strictly

@@ -54,12 +54,15 @@ struct Seed {
 /// A far-OTM option at Rs 9.50 breaks it, because "9.50" sorts AFTER
 /// "52,089.54" as text while being the smallest number in the column. That is
 /// not a contrived value; it is what a cheap weekly option costs.
+/// Named SYNTH for the same reason as desktop/main.cpp: a fabricated price
+/// wearing a real ticker is indistinguishable from the real thing, and a test
+/// fixture is where a reader goes to learn what a name means.
 constexpr Seed kSeeds[] = {
-    {1, "NIFTY 50",           2'450'754},   // Rs 24,507.54
-    {2, "BANKNIFTY",          5'208'954},   // Rs 52,089.54
-    {3, "RELIANCE",             290'605},   // Rs  2,906.05
-    {4, "NIFTY26SEP24500CE",     11'998},   // Rs    119.98
-    {5, "NIFTY26SEP26000CE",        950},   // Rs      9.50
+    {1, "SYNTH-A", 2'450'754},   // Rs 24,507.54
+    {2, "SYNTH-B", 5'208'954},   // Rs 52,089.54
+    {3, "SYNTH-C",   290'605},   // Rs  2,906.05
+    {4, "SYNTH-D",    11'998},   // Rs    119.98
+    {5, "SYNTH-E",       950},   // Rs      9.50
 };
 
 void seed_model(TickModel& m, bool leave_last_blank = false)
