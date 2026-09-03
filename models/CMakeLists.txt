@@ -49,4 +49,14 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_serving_test tests/test_serving.cpp)
     target_link_libraries(altair_serving_test PRIVATE altair_models altair_strategies altair_flags)
     add_test(NAME models_serving COMMAND altair_serving_test)
+
+    # P8-13. The ONLY model test that runs against real market data, because a
+    # Markov chain over daily return states is the only model in this tree the
+    # available data can actually train. dataset/ is gitignored; the test says
+    # so and returns non-zero rather than passing vacuously if it is absent.
+    add_executable(altair_markov_test tests/test_markov.cpp)
+    target_link_libraries(altair_markov_test PRIVATE altair_models altair_flags)
+    target_compile_definitions(altair_markov_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME models_markov COMMAND altair_markov_test)
 endif()
