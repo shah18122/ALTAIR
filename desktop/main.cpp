@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
     for (const auto& ins : kInstruments) {
         window.add_instrument(ins.token, QString::fromUtf8(ins.symbol));
     }
-    window.show();
+    window.showFullScreen();
 
     return QApplication::exec();
 }

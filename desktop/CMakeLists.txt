@@ -31,6 +31,8 @@ qt_add_executable(altair_desktop
     main.cpp
     main_window.hpp
     tick_model.hpp
+    filter.hpp
+    market_clock.hpp
 )
 
 # READ-SIDE ONLY. See the header comment; this list is the safety property.
@@ -56,6 +58,32 @@ foreach(_forbidden altair_oms altair_broker altair::oms altair::broker)
             "order — see CLAUDE.md 'The in-process decision'. This is gate 3.")
     endif()
 endforeach()
+
+# ── Tests ───────────────────────────────────────────────────────────────────
+# The UI's logic is testable without a window: a QCoreApplication is enough for
+# a model and a proxy, so gate 4 applies here exactly as it does to the engine.
+if(ALTAIR_BUILD_TESTS)
+    # The Q_OBJECT headers must be listed HERE too. AUTOMOC only processes
+    # files in the target's own source list, so leaving them out links against
+    # a moc that was generated for a different target and fails with seven
+    # unresolved vtable symbols rather than anything that names the cause.
+    qt_add_executable(altair_desktop_filter_test
+        tests/test_filter.cpp
+        tick_model.hpp
+        filter.hpp)
+    target_link_libraries(altair_desktop_filter_test PRIVATE
+        altair_types altair_time altair_feed Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_desktop_filter_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_desktop_filter_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_filter COMMAND altair_desktop_filter_test)
+    if(WIN32)
+        # The test needs the Qt DLLs on PATH; point ctest at the Qt bin dir
+        # rather than copying a second set next to the test binary.
+        set_tests_properties(desktop_filter PROPERTIES
+            ENVIRONMENT "PATH=${ALTAIR_QT_ROOT}/bin;$ENV{PATH}")
+    endif()
+endif()
 
 set_target_properties(altair_desktop PROPERTIES
     WIN32_EXECUTABLE ON      # no console window behind the UI

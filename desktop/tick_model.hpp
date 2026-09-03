@@ -136,6 +136,30 @@ public:
         ColumnCount
     };
 
+    /// Roles beyond Qt's own.
+    ///
+    /// SORTING ON THE DISPLAY STRING IS WRONG, AND WRONG QUIETLY.
+    ///
+    /// `Qt::DisplayRole` for the LTP column is "1,23,456.78". Sort a column of
+    /// those and you get a LEXICOGRAPHIC order: "1,23,456.78" sorts before
+    /// "9.50", because '1' < '9'. Every grouping comma and every sign makes it
+    /// worse, and the result is a plausible-looking descending list with the
+    /// largest position somewhere in the middle.
+    ///
+    /// So the proxy sorts on `SortRole`, which returns the RAW int64 paise --
+    /// the same value the ledger holds -- and never the string a human reads.
+    /// `FilterRole` does the same for filter predicates, for the same reason.
+    enum Role {
+        SortRole = Qt::UserRole + 1,
+        FilterRole,
+        /// The token. What identity-addressed code asks for after a proxy has
+        /// permuted the rows out from under it.
+        TokenRole,
+        /// True when this cell has no value. A filter needs to distinguish
+        /// "blank" from "zero" and cannot do it from the display string.
+        BlankRole
+    };
+
     explicit TickModel(QObject* parent = nullptr)
         : QAbstractTableModel(parent) {}
 
@@ -189,6 +213,54 @@ public:
         return unknown_ticks_;
     }
 
+    /// Clear every value back to "no tick yet", keeping the instruments.
+    ///
+    /// What a backward scrub needs. `Replayer` has no rewind -- deliberately,
+    /// it is forward-only for the same reason it has no `peek()` -- so seeking
+    /// backwards means replaying forward from the start through the SAME code
+    /// path. That is slower and it is the only version that cannot show a
+    /// number the replay has not reached yet.
+    ///
+    /// Note what this does NOT do: set values to zero. A reset row is a row
+    /// with no data, and `has_last` going false is the difference between an
+    /// empty cell and a claim that the price is 0.00.
+    void reset_values() {
+        if (rows_.isEmpty()) {
+            return;
+        }
+        beginResetModel();
+        for (Row& r : rows_) {
+            const std::uint32_t token = r.token;
+            const QString symbol = r.symbol;
+            r = Row{};
+            r.token = token;
+            r.symbol = symbol;
+        }
+        unknown_ticks_ = 0;
+        endResetModel();
+    }
+
+    /// Distinct display values in a column, and how many rows are blank.
+    /// Feeds the Excel-style filter menu, which needs both.
+    void column_values(int column, QStringList& out, int& blanks) const {
+        out.clear();
+        blanks = 0;
+        QSet<QString> seen;
+        for (int r = 0; r < rows_.size(); ++r) {
+            const QModelIndex idx = index(r, column);
+            if (idx.data(BlankRole).toBool()) {
+                ++blanks;
+                continue;
+            }
+            const QString v = idx.data(Qt::DisplayRole).toString();
+            if (!seen.contains(v)) {
+                seen.insert(v);
+                out.push_back(v);
+            }
+        }
+        out.sort();
+    }
+
     [[nodiscard]] const Row* row_at(int i) const {
         return (i >= 0 && i < rows_.size()) ? &rows_[i] : nullptr;
     }
@@ -227,6 +299,43 @@ public:
                 return r.ticks > 0 ? QString::number(r.volume) : QVariant();
             case ColSeqno:
                 return r.ticks > 0 ? QString::number(r.last_seqno) : QVariant();
+            default:
+                return {};
+            }
+
+        case TokenRole:
+            return QVariant::fromValue(r.token);
+
+        case BlankRole:
+            // A filter must tell "no tick yet" from "zero", and cannot do it
+            // from the display string, which is empty for both if you are
+            // careless. This is P11-04's IsAbsent operator, as a role.
+            switch (idx.column()) {
+            case ColSymbol: return false;
+            case ColLast:   return !r.has_last;
+            case ColChange: return !r.has_change();
+            case ColVolume:
+            case ColSeqno:  return r.ticks == 0;
+            default:        return true;
+            }
+
+        case SortRole:
+        case FilterRole:
+            // RAW values. int64 paise for money, never the formatted string.
+            switch (idx.column()) {
+            case ColSymbol:
+                return r.symbol;
+            case ColLast:
+                return r.has_last ? QVariant(qlonglong(r.last_paise))
+                                  : QVariant();
+            case ColChange:
+                return r.has_change() ? QVariant(qlonglong(r.change_paise()))
+                                      : QVariant();
+            case ColVolume:
+                return r.ticks > 0 ? QVariant(qlonglong(r.volume)) : QVariant();
+            case ColSeqno:
+                return r.ticks > 0 ? QVariant(qulonglong(r.last_seqno))
+                                   : QVariant();
             default:
                 return {};
             }
