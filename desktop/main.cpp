@@ -34,6 +34,8 @@
 #include "panels.hpp"
 
 #include <QApplication>
+#include <QDebug>
+#include <QMessageBox>
 #include <QString>
 
 #include <array>
@@ -142,6 +144,43 @@ int main(int argc, char** argv) {
 
     const QStringList args = QApplication::arguments();
 
+    // --page IS VALIDATED HERE, BEFORE THE LOGIN DIALOG.
+    //
+    // It used to go through `QString::toInt()` after login, and toInt() returns
+    // 0 for anything it cannot parse -- so `--page models` opened page 0, the
+    // Live Grid, and looked like it had worked. A screenshot taken that way
+    // shows the wrong panel and announces nothing, which is how a wrong image
+    // reaches a review. Rule 9 again: refuse, do not guess.
+    //
+    // Before login, because a typo that costs you a password entry and THEN
+    // refuses has spent the one thing the dialog was protecting.
+    int requested_page = 0;
+    for (int i = 1; i + 1 < args.size(); ++i) {
+        if (args[i] != QStringLiteral("--page")) {
+            continue;
+        }
+        bool numeric = false;
+        const int n = args[i + 1].toInt(&numeric);
+        requested_page = numeric ? n : altair::ui::nav_page_index(args[i + 1]);
+        if (requested_page < 0
+            || requested_page >= altair::ui::nav_page_names().size()) {
+            // BOTH, and not for symmetry. This is a GUI-subsystem binary, so
+            // qCritical has no console attached when launched from Explorer or
+            // from Start-Process -- the first version of this refusal exited 2
+            // and printed nothing anywhere a person would look, which is a
+            // silent failure wearing the costume of a loud one. The dialog is
+            // what the user actually sees; the qCritical is for a launch that
+            // does have a console, and for the debugger.
+            const QString msg =
+                QStringLiteral("--page \"%1\" matches no page.\n\nPages are:\n%2")
+                    .arg(args[i + 1],
+                         altair::ui::nav_page_names().join(QStringLiteral("\n")));
+            qCritical().noquote() << msg;
+            QMessageBox::critical(nullptr, QStringLiteral("Altair"), msg);
+            return 2;
+        }
+    }
+
     // THE GATE. A build with no accounts provisioned lets nobody in; the
     // dialog says so rather than falling back to a default.
     altair::ui::UserStore users;
@@ -193,7 +232,7 @@ int main(int argc, char** argv) {
     // keystrokes, which go to whatever window happens to have focus.
     for (int i = 1; i + 1 < args.size(); ++i) {
         if (args[i] == QStringLiteral("--page")) {
-            window.show_page(args[i + 1].toInt());
+            window.show_page(requested_page);   // validated before login
         } else if (args[i] == QStringLiteral("--prime")) {
             window.prime(static_cast<std::size_t>(args[i + 1].toLongLong()));
         } else if (args[i] == QStringLiteral("--source")) {

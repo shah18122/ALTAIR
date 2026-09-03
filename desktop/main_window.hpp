@@ -66,6 +66,37 @@
 
 namespace altair::ui {
 
+/// The nav labels, in order. THE ONE PLACE THEY ARE WRITTEN.
+///
+/// `build_nav()` fills the list widget from here and `--page` validates
+/// against here, so the two cannot drift into disagreeing about what a page is
+/// called -- which is the failure that makes a validated flag worse than an
+/// unvalidated one, because it refuses a name that is genuinely on screen.
+[[nodiscard]] inline QStringList nav_page_names() {
+    return {QStringLiteral("Live Grid"),   QStringLiteral("Chart"),
+            QStringLiteral("Watchlist"),   QStringLiteral("Models"),
+            QStringLiteral("Data Flow"),   QStringLiteral("Broker Wiring"),
+            QStringLiteral("Ratio Spread"), QStringLiteral("Value — DCF"),
+            QStringLiteral("Aggregator"),  QStringLiteral("Trade Handler"),
+            QStringLiteral("Audit Trail")};
+}
+
+/// Index of a nav page by name, case- and space-insensitively; -1 if no match.
+///
+/// Callable BEFORE the window exists, which is the point: `--page` is checked
+/// before the login dialog opens, so a typo costs a message rather than a
+/// password entry that is then thrown away.
+[[nodiscard]] inline int nav_page_index(const QString& name) {
+    const QString want = name.simplified().toLower();
+    const QStringList names = nav_page_names();
+    for (int i = 0; i < names.size(); ++i) {
+        if (names[i].simplified().toLower() == want) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 inline constexpr int kFrameIntervalMs = 16;
 
 /// A page with nothing behind it yet, saying which card wires it.
@@ -148,6 +179,25 @@ public:
         if (index >= 0 && index < nav_->count()) {
             nav_->setCurrentRow(index);
         }
+    }
+
+    /// The same, by name. Returns false if nothing matched.
+    ///
+    /// THE INDEX FORM FAILS SILENTLY, WHICH IS WHY THIS EXISTS. `--page models`
+    /// went through `QString::toInt()`, which returns 0 for anything
+    /// unparseable, so a mistyped page name opened page 0 and looked like it
+    /// had worked. A capture taken that way shows the wrong panel and says
+    /// nothing about it -- and one was, in this session. Rule 9 (an ambiguous
+    /// input blocks and raises rather than guessing) applies to the tooling as
+    /// much as to the engine, because tooling that guesses is how a wrong
+    /// screenshot reaches a review.
+    bool show_page(const QString& name) {
+        const int i = nav_page_index(name);
+        if (i < 0 || i >= nav_->count()) {
+            return false;
+        }
+        nav_->setCurrentRow(i);
+        return true;
     }
 
     /// Drain `n` ticks immediately, so a screenshot or a test starts with a
@@ -316,18 +366,10 @@ private:
             "QListWidget{background:#20262B;color:#D6DBDF;border:none;}"
             "QListWidget::item{padding:11px 14px;}"
             "QListWidget::item:selected{background:#2C3E50;color:#FFFFFF;}"));
-        for (const auto& name : {QStringLiteral("  Live Grid"),
-                                 QStringLiteral("  Chart"),
-                                 QStringLiteral("  Watchlist"),
-                                 QStringLiteral("  Models"),
-                                 QStringLiteral("  Data Flow"),
-                                 QStringLiteral("  Broker Wiring"),
-                                 QStringLiteral("  Ratio Spread"),
-                                 QStringLiteral("  Value — DCF"),
-                                 QStringLiteral("  Aggregator"),
-                                 QStringLiteral("  Trade Handler"),
-                                 QStringLiteral("  Audit Trail")}) {
-            nav_->addItem(name);
+        // Indented for the left gutter; the names themselves come from
+        // nav_page_names() so --page and the nav agree by construction.
+        for (const QString& name : nav_page_names()) {
+            nav_->addItem(QStringLiteral("  ") + name);
         }
         nav_->setCurrentRow(0);
 

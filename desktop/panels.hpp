@@ -27,6 +27,7 @@
 #include "auth.hpp"
 #include "feed_status.hpp"
 #include "format.hpp"
+#include "data/fits.hpp"
 #include "model_status.hpp"
 #include "watchlist.hpp"
 
@@ -42,6 +43,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QPlainTextEdit>
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -287,6 +289,23 @@ public:
         t->resizeColumnsToContents();
         v->addWidget(t, 1);
 
+        // THE FIT PANE. Selecting a row runs the model, if it has data.
+        //
+        // The alternative -- a static string per row -- is what the catalogue
+        // already is, and a dashboard that only ever shows strings somebody
+        // typed cannot tell you when a fit stops working. These numbers come
+        // out of the model on the click.
+        connect(t, &QTableWidget::currentCellChanged, this,
+                [this](int row, int, int, int) { show_fit(row); });
+        table_ = t;
+
+        detail_ = new QPlainTextEdit(this);
+        detail_->setReadOnly(true);
+        detail_->setMinimumHeight(190);
+        detail_->setStyleSheet(QStringLiteral(
+            "background:#12161A;color:#D6DBDF;font-family:Consolas,monospace;"));
+        v->addWidget(detail_);
+
         auto* controls = new QHBoxLayout;
         train_ = new QPushButton(QStringLiteral("Train selected model"), this);
         // A capability, not a role check written out at the call site.
@@ -304,6 +323,13 @@ public:
         controls->addWidget(status_, 1);
         v->addLayout(controls);
 
+        // Select the first row so the fit pane shows something on open. An
+        // empty black box reads as "broken", and the first row is the one
+        // model with a fit to show.
+        if (t->rowCount() > 0) {
+            t->setCurrentCell(0, 0);
+        }
+
         connect(train_, &QPushButton::clicked, this, [this] {
             // Deliberately does NOT start a run yet. The harness is P8-04 and
             // is tested; wiring a button to it before the walk-forward split
@@ -319,6 +345,136 @@ public:
     }
 
 private:
+    /// Run the selected model on the real series, or say why not.
+    ///
+    /// EVERY NUMBER BELOW IS COMPUTED HERE, NOW. Nothing is cached from a
+    /// previous run and nothing is a literal, so a fit that stops converging
+    /// shows up as a changed number rather than as a stale string that still
+    /// says what it said in September.
+    void show_fit(int row) {
+        const auto rows = model_catalogue();
+        if (row < 0 || row >= static_cast<int>(rows.size())) {
+            return;
+        }
+        const ModelRow& m = rows[static_cast<std::size_t>(row)];
+        QString out;
+        out += QStringLiteral("%1   (%2, %3)\n")
+                   .arg(m.name, m.card, m.header);
+        out += QStringLiteral("state : %1\n").arg(model_state_label(m.state));
+        out += QStringLiteral("needs : %1\n").arg(m.needs);
+        out += QStringLiteral("has   : %1\n\n").arg(m.has);
+
+        if (m.state != ModelState::TrainedOnRealData) {
+            out += QStringLiteral(
+                "No fit is run for this model, because the data it needs is "
+                "not here. A panel that showed a number anyway would be "
+                "showing a number about nothing.");
+            detail_->setPlainText(out);
+            return;
+        }
+
+        const QString root = QStringLiteral(ALTAIR_DATASET_DIR);
+        if (m.card.startsWith(QStringLiteral("P8-13"))) {
+            const LoadResult d = load_bars_csv(
+                root + QStringLiteral("/spot/nifty/1d/all.csv"),
+                24LL * 3600 * 1'000'000'000LL, DailyStamp::SessionClose, true);
+            if (!d.ok()) {
+                detail_->setPlainText(out + d.error);
+                return;
+            }
+            const MarkovFit f = fit_markov(d.bars);
+            if (!f.ok) {
+                detail_->setPlainText(out + f.error);
+                return;
+            }
+            out += QStringLiteral("FITTED NOW on %1 daily returns\n\n")
+                       .arg(f.returns);
+            out += QStringLiteral("  transitions        %1 over %2 states\n")
+                       .arg(f.transitions).arg(f.states);
+            out += QStringLiteral("  thinnest cell      %1   empty cells %2\n")
+                       .arg(f.thinnest_cell).arg(f.empty_cells);
+            out += QStringLiteral("  look-ahead         %1 labels change under "
+                                  "an expanding boundary (%2%)\n")
+                       .arg(f.relabelled)
+                       .arg(f.relabelled_pct, 0, 'f', 1);
+            out += QStringLiteral("\n  chi2 real          %1\n")
+                       .arg(f.chi_square, 0, 'f', 2);
+            // "one draw" is not a hedge, it is the reading instruction. The
+            // engine test shuffles differently and gets 19.25; this gets 13.08.
+            // Both are far under the 26.30 critical value, so both say the same
+            // thing -- but a reader who sees the two numbers without being told
+            // they are separate permutations will think one of them is stale.
+            out += QStringLiteral(
+                       "  chi2 shuffled      %1   <- the control, one draw\n")
+                       .arg(f.chi_square_shuffled, 0, 'f', 2);
+            out += QStringLiteral("  critical (5%)      %1\n")
+                       .arg(f.critical_5pct, 0, 'f', 2);
+            out += QStringLiteral("  verdict            %1\n")
+                       .arg(f.rejects && !f.shuffled_rejects
+                                ? QStringLiteral("real rejects, shuffled does "
+                                                 "not -> serial dependence")
+                                : QStringLiteral("inconclusive"));
+            out += QStringLiteral("\n  stationary         ");
+            for (double x : f.stationary_dist) {
+                out += QStringLiteral("%1 ").arg(x, 0, 'f', 3);
+            }
+            out += QStringLiteral(
+                "\n\nIN-SAMPLE. This says the chain can be estimated and what "
+                "it looks like.\nIt says nothing about out-of-sample behaviour, "
+                "nothing about magnitude,\nand nothing about survival after "
+                "costs. That is P11Q-08 and rule 5.");
+        } else if (m.card.startsWith(QStringLiteral("P10-07"))) {
+            const LoadResult d = load_bars_csv(
+                root + QStringLiteral("/spot/indiavix/1d/all.csv"),
+                24LL * 3600 * 1'000'000'000LL, DailyStamp::SessionClose, true);
+            if (!d.ok()) {
+                detail_->setPlainText(out + d.error);
+                return;
+            }
+            const VixFit f = fit_vix_both_spaces(d.bars);
+            if (!f.ok) {
+                detail_->setPlainText(out + f.error);
+                return;
+            }
+            out += QStringLiteral("FITTED NOW on %1 daily India VIX bars\n\n")
+                       .arg(f.observations);
+            out += QStringLiteral("  level  b %1  half-life %2 obs  sd %3\n")
+                       .arg(f.level_b, 0, 'f', 4)
+                       .arg(f.level_half_life, 0, 'f', 1)
+                       .arg(f.level_sd, 0, 'f', 4);
+            out += QStringLiteral("  log    b %1  half-life %2 obs  sd %3\n")
+                       .arg(f.log_b, 0, 'f', 4)
+                       .arg(f.log_half_life, 0, 'f', 1)
+                       .arg(f.log_sd, 0, 'f', 4);
+            out += QStringLiteral("\n  regimes split at VIX %1 / %2 (series "
+                                  "quartiles, not hard-coded levels)\n")
+                       .arg(f.quiet_threshold, 0, 'f', 2)
+                       .arg(f.stressed_threshold, 0, 'f', 2);
+            out += QStringLiteral("  LEVEL residual sd  %1 quiet (%2 obs)  vs  "
+                                  "%3 stressed (%4 obs)  = %5x\n")
+                       .arg(f.level_sd_quiet, 0, 'f', 4).arg(f.quiet_n)
+                       .arg(f.level_sd_stressed, 0, 'f', 4).arg(f.stressed_n)
+                       .arg(f.level_sd_quiet > 0.0
+                                ? f.level_sd_stressed / f.level_sd_quiet
+                                : 0.0, 0, 'f', 2);
+            out += QStringLiteral("\n  coverage of a nominal 95.4% band\n");
+            out += QStringLiteral("    level   %1% quiet   %2% stressed\n")
+                       .arg(f.level_cover_quiet, 0, 'f', 1)
+                       .arg(f.level_cover_stressed, 0, 'f', 1);
+            out += QStringLiteral("    log     %1% quiet   %2% stressed\n")
+                       .arg(f.log_cover_quiet, 0, 'f', 1)
+                       .arg(f.log_cover_stressed, 0, 'f', 1);
+            out += QStringLiteral(
+                "\nThe level band UNDER-covers when stressed -- too narrow "
+                "exactly where the\nnumber is needed, which is the dangerous "
+                "direction. P10-07 measured this on\nsynthetic data at 2.0x; "
+                "on the real series it is larger.\n\nIN-SAMPLE.");
+        }
+        detail_->setPlainText(out);
+    }
+
+    QTableWidget* table_ = nullptr;
+    QPlainTextEdit* detail_ = nullptr;
     QPushButton* train_ = nullptr;
     QLabel* status_ = nullptr;
 };

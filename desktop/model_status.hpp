@@ -112,7 +112,21 @@ struct ModelRow {
          QStringLiteral("models/markov.hpp"),
          ModelState::TrainedOnRealData,
          QStringLiteral("a few thousand daily bars"),
-         QStringLiteral("8,755 daily NIFTY returns — chi2 298 vs 19 shuffled"),
+         // THE "HAS" COLUMN DESCRIBES DATA HELD, NEVER A FITTED NUMBER.
+         //
+         // This string used to read "chi2 298 vs 19 shuffled". The fit pane
+         // three inches below it computed 13.08 for the same quantity, and
+         // both were on screen at once. Neither was wrong -- the shuffled
+         // control is ONE permutation, and a different draw gives a different
+         // chi-square (19.25 in the engine test, 13.08 here; both far under
+         // the 26.30 critical value, so the conclusion is unchanged) -- but a
+         // dashboard showing two numbers for one label has already lost the
+         // reader, who has no way to know which is stale.
+         //
+         // A literal cannot track a fit. So the literals describe the data,
+         // which does not change on a rerun, and every fitted number in this
+         // window comes from the pane that computes it.
+         QStringLiteral("8,755 daily NIFTY returns, 1990-07-03 to 2026-08-31"),
          QStringLiteral("NIFTY spot")},
 
         {QStringLiteral("DCF (FCFF / FCFE)"), QStringLiteral("P10-02"),
@@ -175,9 +189,8 @@ struct ModelRow {
          QStringLiteral("strategies/vix_forecast.hpp"),
          ModelState::TrainedOnRealData,
          QStringLiteral("a VIX history; a realised-vol series for the premium"),
-         QStringLiteral("527 daily bars — level residual sd 2.97x higher when "
-                        "stressed; level band covers 88.1% there vs nominal "
-                        "95.4%"),
+         // Data held, not fit output -- same reason as the Markov row above.
+         QStringLiteral("527 daily bars, 2024-07-18 to 2026-08-31"),
          QStringLiteral("India VIX")},
 
         {QStringLiteral("Cointegration / pairs"), QStringLiteral("P10-04"),
