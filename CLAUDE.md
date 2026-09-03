@@ -129,9 +129,12 @@ flagging/      per-model scorecards, drift detection, auto-correction
 backtest/      tick replayer, walk-forward, purged CV
 server/        BACKEND ONLY — uWebSockets, the binary delta-frame protocol,
                auth, session. Renders nothing and knows no pixels.
-client/        DESKTOP CLIENT ONLY — the grid, WebGL charts, panels. Talks to
+client/        FRONTEND ONLY — the SPA: grid, WebGL charts, panels. Talks to
                server/ over the wire protocol and NOTHING else. It never links
                an engine header and never touches a broker.
+desktop/       DESKTOP SHELL ONLY — the native window that hosts client/'s
+               built bundle, plus PIN lock, window state and OS integration.
+               Ships no UI code of its own and links no engine header.
 app/           main() — the `altair` binary
 dataset/       TRAINING AND RESEARCH DATA, partitioned by segment then symbol
 research/      papers/inbox/ — PDFs get dropped here
@@ -152,7 +155,15 @@ are three separate directories with no header crossing between them.
   appears anywhere else, that is a review failure, not a refactor opportunity.
 - **`server/` and `client/` never share a header.** They share a wire protocol
   and nothing more. A client that can `#include` an engine header is a client
-  that can be made to trade.
+  that can be made to trade. They do not share the protocol's *code* either:
+  the server encodes in C++ and the client decodes in TypeScript, and the two
+  are kept honest by a file of conformance vectors both test against. Shared
+  test vectors, not shared code — if the implementations drift, the vectors
+  fail rather than the dashboard quietly showing a wrong number.
+- **`desktop/` hosts `client/`, it does not reimplement it.** One frontend,
+  rendered in a browser or in a native window. A desktop shell that grows its
+  own grid is two grids to keep in agreement, and they will not stay in
+  agreement.
 - A card's manifest **never spans two of these directories.** If a change
   needs both, it is two cards with an explicit interface between them.
 
