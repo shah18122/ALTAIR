@@ -55,4 +55,13 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_kite_api_test
         PRIVATE altair_broker altair_instruments altair_flags)
     add_test(NAME kite_api COMMAND altair_kite_api_test)
+
+    # P2-12. Historical candles: URI, chunking and the response parser. Links
+    # altair_broker (the non-net half) only -- there is no transport and no
+    # credential in it, so it builds and runs in EVERY preset rather than only
+    # where OpenSSL is present.
+    add_executable(altair_kite_historical_test tests/test_kite_historical.cpp)
+    target_link_libraries(altair_kite_historical_test
+        PRIVATE altair_broker altair_flags)
+    add_test(NAME kite_historical COMMAND altair_kite_historical_test)
 endif()
