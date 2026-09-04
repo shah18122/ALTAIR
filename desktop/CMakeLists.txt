@@ -49,6 +49,7 @@ qt_add_executable(altair_desktop
     depth_ladder.hpp
     kill_switch.hpp
     chain_panel.hpp
+    analytics_panel.hpp
 )
 
 # P11Q-05a. The cost panel reads config/charges.toml through P3-09b's loader,

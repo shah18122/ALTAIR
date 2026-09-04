@@ -33,6 +33,7 @@
 #include <feed/replay.hpp>
 
 #include "chart/chart_widget.hpp"
+#include "analytics_panel.hpp"
 #include "audit_panel.hpp"
 #include "cost_panel.hpp"
 #include "depth_ladder.hpp"
@@ -82,6 +83,7 @@ namespace altair::ui {
             QStringLiteral("Watchlist"),   QStringLiteral("Models"),
             QStringLiteral("Data Flow"),   QStringLiteral("Broker Wiring"),
             QStringLiteral("Cost"),
+            QStringLiteral("Analytics"),
             QStringLiteral("Ratio Spread"), QStringLiteral("Value — DCF"),
             QStringLiteral("Aggregator"),  QStringLiteral("Trade Handler"),
             QStringLiteral("Audit Trail")};
@@ -678,6 +680,7 @@ private:
 
         pages_->addWidget(new WiringPanel);
         pages_->addWidget(new CostPanel);
+        pages_->addWidget(new AnalyticsPanel);
 
         pages_->addWidget(new ChainPanel);
 
