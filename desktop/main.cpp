@@ -30,6 +30,7 @@
 #include <feed/replay.hpp>
 
 #include "auth.hpp"
+#include "data/real_tape.hpp"
 #include "main_window.hpp"
 #include "panels.hpp"
 
@@ -139,8 +140,20 @@ int main(int argc, char** argv) {
     // Timestamps are UTC everywhere in the engine (core/time/timestamp.hpp);
     // only the SESSION WINDOW is expressed in IST, and that asymmetry is worth
     // knowing about before writing a literal.
+    // ---- REAL INSTRUMENTS FIRST, SYNTHETIC ONLY AS A FALLBACK ------------
+    //
+    // P11Q-09. The grid showed SYNTH-A..D because there was nothing else;
+    // dataset/ now holds 2.8 million real bars. So it replays NIFTY 50, the
+    // near NIFTY future and India VIX under their own names, and the
+    // synthetic walk survives only for a tree with no dataset/ -- where it is
+    // labelled "(syn)" so it can never be mistaken for the real thing.
+    const altair::ui::RealTape real =
+        altair::ui::load_real_tape(QStringLiteral(ALTAIR_DATASET_DIR), 5);
+
     const altair::Timestamp open{1'788'407'100'000'000'000LL};
-    const auto ticks = demo_session(40'000, open, 42);
+    const auto synth = demo_session(40'000, open, 42);
+    const std::vector<altair::ReplayTick>& ticks =
+        real.ok() ? real.ticks : synth;
 
     const QStringList args = QApplication::arguments();
 
@@ -221,9 +234,24 @@ int main(int argc, char** argv) {
     }
 
     altair::ui::MainWindow window(ticks.data(), ticks.size(), role, who);
-    for (const auto& ins : kInstruments) {
-        window.add_instrument(ins.token, QString::fromUtf8(ins.symbol));
+    if (real.ok()) {
+        for (const auto& ins : real.instruments) {
+            // `trades` is false for an index: no turnover to report, so the
+            // grid must leave the cell EMPTY rather than draw a zero.
+            window.add_instrument(ins.token, ins.symbol, ins.trades);
+        }
+    } else {
+        // "(syn)" on every name, so a fabricated price can never be read as a
+        // real one. The prices are round numbers nothing trades at for the
+        // same reason.
+        for (const auto& ins : kInstruments) {
+            window.add_instrument(
+                ins.token,
+                QString::fromUtf8(ins.symbol) + QStringLiteral(" (syn)"));
+        }
     }
+    window.set_tape_is_real(real.ok(), real.sessions,
+                            real.ok() ? QString() : real.error);
 
     // --page N opens on a nav page, --prime N drains that many ticks first,
     // --source N picks a chart data source. They exist so a screenshot or a

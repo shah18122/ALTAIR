@@ -78,6 +78,20 @@ struct Row {
     /// Ticks seen. A count, so "no data yet" is distinguishable from "zero".
     std::uint64_t ticks = 0;
 
+    /// Does this instrument's feed report a traded quantity AT ALL?
+    ///
+    /// FALSE FOR AN INDEX, which does not trade. NIFTY 50 and India VIX have
+    /// no turnover to publish, so their bars carry an empty volume field and
+    /// the grid must draw NOTHING -- rendering 0 would claim no trading in a
+    /// minute the market was open. That is the same absence-versus-zero
+    /// confusion P11Q-06 unpicked in the loader and P2-12d refused to write
+    /// into a CSV, and it reappeared here the moment real instruments reached
+    /// the grid: the first version of P11Q-09 showed "0" against NIFTY 50.
+    ///
+    /// A property of the INSTRUMENT, set once when it is added, exactly like
+    /// `zero_volume_is_absent` is a property of the SOURCE in bar_csv.hpp.
+    bool reports_volume = true;
+
     /// Change against the session open, in paise. Only meaningful once both
     /// are present -- which is why both carry a `has_` flag rather than
     /// relying on a sentinel value.
@@ -132,7 +146,8 @@ public:
     /// Register an instrument. Rows are created here and never by a tick --
     /// a tick for an unknown instrument is a spec-store disagreement, and
     /// inventing a row for it would hide exactly the thing rule 9 wants loud.
-    void add_instrument(std::uint32_t token, const QString& symbol) {
+    void add_instrument(std::uint32_t token, const QString& symbol,
+                        bool reports_volume = true) {
         if (index_of_.contains(token)) {
             return;
         }
@@ -140,6 +155,7 @@ public:
         Row r;
         r.token = token;
         r.symbol = symbol;
+        r.reports_volume = reports_volume;
         index_of_.insert(token, rows_.size());
         rows_.push_back(r);
         endInsertRows();
@@ -262,7 +278,9 @@ public:
                          ? format_paise(r.change_paise(), /*explicit_sign=*/true)
                          : QVariant();
             case ColVolume:
-                return r.ticks > 0 ? QString::number(r.volume) : QVariant();
+                return (r.ticks > 0 && r.reports_volume)
+                           ? QString::number(r.volume)
+                           : QVariant();
             case ColSeqno:
                 return r.ticks > 0 ? QString::number(r.last_seqno) : QVariant();
             default:
@@ -298,7 +316,9 @@ public:
                 return r.has_change() ? QVariant(qlonglong(r.change_paise()))
                                       : QVariant();
             case ColVolume:
-                return r.ticks > 0 ? QVariant(qlonglong(r.volume)) : QVariant();
+                return (r.ticks > 0 && r.reports_volume)
+                           ? QVariant(qlonglong(r.volume))
+                           : QVariant();
             case ColSeqno:
                 return r.ticks > 0 ? QVariant(qulonglong(r.last_seqno))
                                    : QVariant();

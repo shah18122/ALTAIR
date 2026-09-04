@@ -187,6 +187,20 @@ public:
         }
     }
 
+    /// Say whether the tape is real instruments or the synthetic fallback.
+    ///
+    /// THE STATUS BAR MUST NAME THIS. A grid of real prices and a grid of
+    /// fabricated ones look identical, and P11Q-01's first version put real
+    /// tickers on a random walk -- so the one thing that cannot be left
+    /// implicit is which of the two is on screen.
+    void set_tape_is_real(bool real, std::size_t sessions,
+                          const QString& why_not) {
+        tape_real_ = real;
+        tape_sessions_ = sessions;
+        tape_error_ = why_not;
+        refresh_status();
+    }
+
     /// Run the Models page's walk-forward evaluation. For `--train`; the
     /// button is the normal way in.
     void train_selected() {
@@ -228,8 +242,9 @@ public:
         }
     }
 
-    void add_instrument(std::uint32_t token, const QString& symbol) {
-        model_->add_instrument(token, symbol);
+    void add_instrument(std::uint32_t token, const QString& symbol,
+                        bool reports_volume = true) {
+        model_->add_instrument(token, symbol, reports_volume);
         instrument_->addItem(symbol, token);
     }
 
@@ -374,6 +389,9 @@ private Q_SLOTS:
 private:
     ModelPanel* models_panel_ = nullptr;
     AuditPanel* audit_panel_ = nullptr;
+    bool tape_real_ = false;
+    std::size_t tape_sessions_ = 0;
+    QString tape_error_;
     DepthLadder* ladder_ = nullptr;
 
     void build_nav() {
@@ -792,9 +810,25 @@ private:
         scrub_->setValue(static_cast<int>(applied_));
         scrub_->blockSignals(false);
 
+        // WHICH TAPE, named before anything else on the line. A grid of real
+        // prices and one of fabricated prices are indistinguishable, and
+        // P11Q-01's first version put real tickers on a random walk.
+        const QString src =
+            tape_real_
+                ? QStringLiteral(" REAL · 1-min closes, last %1 sessions ")
+                      .arg(tape_sessions_)
+                : QStringLiteral(" SYNTHETIC · random walk, not market data ");
         progress_->setText(
-            QStringLiteral(" tick %1 / %2   ·   unknown-instrument ticks: %3 ")
-                .arg(applied_).arg(count_).arg(model_->unknown_ticks()));
+            src + QStringLiteral("·  tick %1 / %2   ·   unknown-instrument "
+                                 "ticks: %3 ")
+                      .arg(applied_).arg(count_).arg(model_->unknown_ticks()));
+        progress_->setStyleSheet(
+            tape_real_ ? QStringLiteral("color:#1B8A4B;")
+                       : QStringLiteral("color:#B9770B;font-weight:bold;"));
+        if (!tape_real_ && !tape_error_.isEmpty()) {
+            progress_->setToolTip(
+                QStringLiteral("No real tape: %1").arg(tape_error_));
+        }
 
         const int shown = proxy_->rowCount();
         const int total = model_->rowCount();
