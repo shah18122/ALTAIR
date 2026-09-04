@@ -46,6 +46,7 @@ qt_add_executable(altair_desktop
     cost_panel.hpp
     audit_panel.hpp
     depth_ladder.hpp
+    kill_switch.hpp
 )
 
 # P11Q-05a. The cost panel reads config/charges.toml through P3-09b's loader,
@@ -88,7 +89,8 @@ target_compile_definitions(altair_desktop PRIVATE
 # screen explaining the difference.
 target_compile_definitions(altair_desktop PRIVATE
     ALTAIR_SESSION_FILE="${CMAKE_SOURCE_DIR}/data/kite_session.json"
-    ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    ALTAIR_KILL_REQUEST_FILE="${CMAKE_SOURCE_DIR}/data/kill_request.json")
 
 # Whether the networked half exists is a property of the BUILD, and the panel
 # reads it rather than being told. broker/CMakeLists.txt sets this when

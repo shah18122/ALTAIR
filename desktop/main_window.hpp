@@ -36,6 +36,7 @@
 #include "audit_panel.hpp"
 #include "cost_panel.hpp"
 #include "depth_ladder.hpp"
+#include "kill_switch.hpp"
 #include "data/bar_csv.hpp"
 #include "feed_status.hpp"
 #include "panels.hpp"
@@ -686,15 +687,7 @@ private:
                 "correlated members. It has no members to combine until the "
                 "Models page above has something in it.")));
 
-        pages_->addWidget(blocked_page(
-            QStringLiteral("Trade Handler"), QStringLiteral("P11Q-05 / Phase 12"),
-            QStringLiteral(
-                "The order path stops at translation, by design. "
-                "oms/kite_adapter.hpp builds the form body for POST /orders and "
-                "does NOT send it; the transport needs the vcpkg net feature, "
-                "which is not built; there is no data/kite_session.json and so "
-                "no access token; and P1-07 is blocked on credentials. Four "
-                "independent blockers, none of them code I can write here.")));
+        pages_->addWidget(new KillSwitchPanel(role_, user_));
 
         audit_panel_ = new AuditPanel;
         pages_->addWidget(audit_panel_);
