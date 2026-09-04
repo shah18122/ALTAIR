@@ -166,26 +166,90 @@ int main(int argc, char** argv) {
             std::printf("  HTTP %d\n    %s\n", r->status, r->body.c_str());
             return 1;
         }
-        // A CSV, not JSON. The first line must be the header the parser
-        // expects, or something other than the instrument master came back --
-        // an HTML error page also arrives with status 200 from a proxy.
+        // ---- PARSE-VERIFY, THEN ATOMIC REPLACE (P1-08b) -----------------
+        //
+        // The first version wrote straight over the target after checking only
+        // that the body started with "instrument_token". That is the same
+        // defect the candle fetcher was built to avoid and I did not apply
+        // here: a truncated download, a proxy's HTML error page, or a half
+        // response replaces a good master with a broken one, and the next
+        // reader has no way to tell.
+        //
+        // So: verify FIRST, write to a sibling temp, then rename. The rename
+        // is atomic on NTFS and on POSIX, so the target is either the old file
+        // or the whole new one and never a partial write.
         if (r->body.rfind("instrument_token", 0) != 0) {
             std::printf("  REFUSED: the body does not start with "
                         "\"instrument_token\", so it is not the instrument "
                         "master.\n  Nothing written.\n");
             return 1;
         }
-        std::ofstream out(dump, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            std::printf("  cannot write %s\n", dump);
+        // Header field count, then every row against it. A truncated CSV ends
+        // mid-row, which shows up as a short final line rather than as
+        // anything the header check could catch.
+        const std::size_t hdr_end = r->body.find('\n');
+        if (hdr_end == std::string::npos) {
+            std::printf("  REFUSED: one line only, so no rows.\n");
             return 1;
         }
-        out << r->body;
-        out.close();
-        std::size_t lines = 0;
-        for (char ch : r->body) { if (ch == '\n') { ++lines; } }
-        std::printf("  wrote %s -- %zu bytes, %zu rows\n", dump,
-                    r->body.size(), lines);
+        std::size_t want_fields = 1;
+        for (std::size_t i = 0; i < hdr_end; ++i) {
+            if (r->body[i] == ',') { ++want_fields; }
+        }
+        std::size_t rows = 0, bad = 0;
+        std::size_t line_start = hdr_end + 1;
+        while (line_start < r->body.size()) {
+            std::size_t e = r->body.find('\n', line_start);
+            if (e == std::string::npos) { e = r->body.size(); }
+            std::size_t len = e - line_start;
+            if (len > 0 && r->body[line_start + len - 1] == '\r') { --len; }
+            if (len > 0) {
+                std::size_t f = 1;
+                for (std::size_t i = 0; i < len; ++i) {
+                    if (r->body[line_start + i] == ',') { ++f; }
+                }
+                if (f != want_fields) { ++bad; }
+                ++rows;
+            }
+            line_start = e + 1;
+        }
+        if (rows == 0 || bad > 0) {
+            std::printf("  REFUSED: %zu rows, %zu with a field count other "
+                        "than the header's %zu.\n  The existing %s is "
+                        "UNTOUCHED.\n", rows, bad, want_fields, dump);
+            return 1;
+        }
+
+        const std::string tmp = std::string(dump) + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) {
+                std::printf("  cannot write %s\n", tmp.c_str());
+                return 1;
+            }
+            out << r->body;
+            if (!out) {
+                std::printf("  write to %s failed; %s is UNTOUCHED\n",
+                            tmp.c_str(), dump);
+                return 1;
+            }
+        }
+        std::error_code rn;
+        std::filesystem::rename(tmp, dump, rn);
+        if (rn) {
+            // Windows refuses rename onto an existing file on some paths;
+            // remove and retry rather than leaving the temp behind.
+            std::filesystem::remove(dump, rn);
+            std::filesystem::rename(tmp, dump, rn);
+        }
+        if (rn) {
+            std::printf("  could not replace %s (%s); the download is in %s\n",
+                        dump, rn.message().c_str(), tmp.c_str());
+            return 1;
+        }
+        std::printf("  wrote %s -- %zu bytes, %zu rows, %zu fields each, "
+                    "verified then renamed\n",
+                    dump, r->body.size(), rows, want_fields);
         return 0;
     }
 
