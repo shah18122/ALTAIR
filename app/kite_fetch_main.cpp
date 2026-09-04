@@ -117,7 +117,11 @@ void usage(const char* exe) {
         "    --oi             ask for open interest (derivatives only)\n"
         "    --volume-absent  this instrument reports no volume (an INDEX).\n"
         "                     Writes an empty field rather than a zero.\n"
-        "    --volume-zero    0 really is a measurement here.\n\n"
+        "    --volume-zero    0 really is a measurement here.\n"
+        "    --continuous     DERIVATIVES only: stitch the near-month series\n"
+        "                     back across contract rolls. A different series,\n"
+        "                     not a longer one — the step at each roll is a\n"
+        "                     contract change, not a market move.\n\n"
         "    --dump-instruments PATH   download the whole instrument master\n"
         "                     (a CSV) and stop. Needed to look up a token.\n"
         "    --go             ACTUALLY CALL THE API. Without it this prints\n"
@@ -264,6 +268,19 @@ int main(int argc, char** argv) {
     const bool go = has_flag(argc, argv, "--go");
     const bool force = has_flag(argc, argv, "--force");
     const bool want_oi = has_flag(argc, argv, "--oi");
+    // CONTINUOUS: for a DERIVATIVE only, and it changes what the series means.
+    //
+    // A futures contract lives about three months and then expires. Asked
+    // without this, Kite returns that one contract's own life and nothing
+    // before it -- so a "10-year NIFTY futures history" fetched flat is
+    // actually one quarter, and it looks like a full answer.
+    //
+    // With it, Kite stitches the near-month series back across rolls. That is
+    // a DIFFERENT SERIES, not a longer one: it splices contracts at each roll,
+    // so the price step across a roll is a contract change and not a market
+    // move. Anything measuring returns across that boundary is measuring the
+    // basis. The flag is explicit for that reason and is meaningless on cash.
+    const bool continuous = has_flag(argc, argv, "--continuous");
     // See the all-zero-volume refusal below for why these exist and why
     // neither has a default.
     const bool vol_absent = has_flag(argc, argv, "--volume-absent");
@@ -295,6 +312,28 @@ int main(int argc, char** argv) {
         if (from.empty()) { from = altair::date_string(days - 730); }
     }
 
+    // CONTINUOUS IS DAY-ONLY, AND KITE SAYS SO WITH A 400.
+    //
+    // Measured: `--continuous` on 60minute returns HTTP 400 "invalid interval
+    // for continuous data". Catching it here costs nothing and saves a round
+    // trip; more to the point it names the CONSEQUENCE, which the API's
+    // message does not -- without continuous, an intraday futures request
+    // returns only the life of that one contract, about three months, and a
+    // "ten-year history" fetched that way is one quarter that looks like a
+    // full answer.
+    if (continuous && interval != "day") {
+        std::printf(
+            "  REFUSED: --continuous works only with --interval day.\n"
+            "  Kite answers anything else with 400 \"invalid interval for "
+            "continuous data\".\n\n"
+            "  Without it an intraday request returns ONLY the life of this\n"
+            "  one contract -- about three months -- which is a real answer\n"
+            "  and not the one you asked for. For a longer intraday futures\n"
+            "  history you need each expired contract's own token, and the\n"
+            "  current master does not carry them.\n");
+        return 2;
+    }
+
     const auto chunks = altair::chunk_requests(from, to, interval);
     if (!chunks) {
         std::printf("  refused: bad range or interval\n");
@@ -307,7 +346,8 @@ int main(int argc, char** argv) {
 
     if (!go) {
         for (const auto& c : *chunks) {
-            const auto u = altair::historical_uri(token, interval, c, false,
+            const auto u = altair::historical_uri(token, interval, c,
+                                                  continuous,
                                                   want_oi);
             std::printf("    GET https://api.kite.trade%s\n",
                         u ? u->c_str() : "<refused>");
@@ -342,7 +382,8 @@ int main(int argc, char** argv) {
     std::vector<altair::RawCandle> all;
     for (std::size_t i = 0; i < chunks->size(); ++i) {
         const auto& c = (*chunks)[i];
-        const auto u = altair::historical_uri(token, interval, c, false,
+        const auto u = altair::historical_uri(token, interval, c,
+                                              continuous,
                                               want_oi);
         if (!u) {
             std::printf("  refused building URI for %s..%s\n", c.from.c_str(),
