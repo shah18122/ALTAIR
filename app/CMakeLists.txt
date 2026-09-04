@@ -51,3 +51,14 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME warm_restart COMMAND altair_warm_restart_test)
 endif()
+
+# P12-03. Monitoring and alerting. Header-only; the test is what carries the
+# card, because the failure it prevents (a dead feed passing every threshold)
+# is invisible in the code and obvious in the assertions.
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_monitor_test tests/test_monitor.cpp)
+    target_link_libraries(altair_monitor_test PRIVATE altair_types altair_flags)
+    target_include_directories(altair_monitor_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME monitor COMMAND altair_monitor_test)
+endif()
