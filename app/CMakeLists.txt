@@ -31,4 +31,12 @@ if(ALTAIR_HAVE_NET)
     add_executable(altair_kite_login kite_login_main.cpp)
     target_link_libraries(altair_kite_login PRIVATE
         altair_broker_net altair_flags)
+
+    # P2-12c. Fills dataset/ from the historical candle API. Separate binary
+    # from `altair` for the same reason altair_kite_login is: a tool that reads
+    # a live trading credential should not be inside the process that places
+    # orders, and it runs once by hand rather than in the engine's lifetime.
+    add_executable(altair_kite_fetch kite_fetch_main.cpp)
+    target_link_libraries(altair_kite_fetch PRIVATE
+        altair_broker_net altair_flags)
 endif()

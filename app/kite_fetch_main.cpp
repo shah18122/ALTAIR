@@ -1,0 +1,317 @@
+// app/kite_fetch_main.cpp -- fill dataset/ from Kite's historical API.
+//
+// P2-12c. The command Smit asked for: two years of 1-minute NIFTY.
+//
+// IT DRY-RUNS BY DEFAULT AND THAT IS NOT TIMIDITY.
+//
+// This program has never made a real call. `https_get_auth` was written for it
+// and has never been exercised against the live API either, because there are
+// no credentials on the test path. Untested network code, carrying a live
+// trading credential, in a loop, against an API with rate limits, is exactly
+// the shape of thing that should not run the first time by accident.
+//
+// So the default prints every request it WOULD make and exits. `--go` is
+// required to send anything. The first real run should be one instrument and
+// one month, checked by eye, before anyone asks it for two years.
+//
+// WHAT IT REFUSES TO DO.
+//
+//   * It never writes a partial file. Chunks are fetched, joined, and
+//     coverage-checked FIRST; a window that came back short is reported and
+//     nothing is written. A CSV that is quietly missing three weeks is worse
+//     than no CSV, because the next reader has no way to tell.
+//   * It never overwrites without --force. dataset/ is regenerable but it is
+//     not cheap to regenerate, and a fetch that silently replaced a good file
+//     with a truncated one would be the same failure as above with an extra
+//     step.
+//   * It never prints the access token. Not in a URL, not in an error, not in
+//     a "here is what I sent" diagnostic.
+//
+// RATE LIMIT. Kite's historical endpoint is documented around 3 requests a
+// second. This sleeps 400 ms between calls -- deliberately slower than the
+// cap, because the cost of being slightly slow is seconds and the cost of
+// being slightly fast is a ban.
+
+#include <broker/https_client.hpp>
+#include <broker/kite_historical.hpp>
+
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace {
+
+/// Read `access_token` out of data/kite_session.json.
+///
+/// A hand-rolled field scan rather than a JSON parser: the file is written by
+/// altair_kite_login and has a fixed shape, and pulling in a parser for one
+/// string would widen what touches a credential for no benefit.
+[[nodiscard]] bool read_access_token(const char* path, std::string& out) {
+    std::ifstream f(path);
+    if (!f) { return false; }
+    std::string all((std::istreambuf_iterator<char>(f)),
+                    std::istreambuf_iterator<char>());
+    const std::string key = "\"access_token\"";
+    const std::size_t k = all.find(key);
+    if (k == std::string::npos) { return false; }
+    std::size_t i = all.find(':', k + key.size());
+    if (i == std::string::npos) { return false; }
+    ++i;
+    while (i < all.size() && (all[i] == ' ' || all[i] == '\t')) { ++i; }
+    if (i >= all.size() || all[i] != '"') { return false; }
+    ++i;
+    const std::size_t start = i;
+    while (i < all.size() && all[i] != '"') { ++i; }
+    if (i >= all.size() || i == start) { return false; }
+    out = all.substr(start, i - start);
+    return true;
+}
+
+/// Same shape as kite_login_main.cpp's. MSVC deprecates getenv and gate 1 is
+/// zero warnings, so the platform split is explicit rather than suppressed
+/// with _CRT_SECURE_NO_WARNINGS -- which would silence every other instance of
+/// the check too.
+[[nodiscard]] std::string env_or_empty(const char* name) {
+#if defined(_MSC_VER)
+    char* buf = nullptr;
+    std::size_t len = 0;
+    if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) { return {}; }
+    std::string out{buf};
+    std::free(buf);
+    return out;
+#else
+    const char* v = std::getenv(name);
+    return v != nullptr ? std::string{v} : std::string{};
+#endif
+}
+
+[[nodiscard]] const char* arg_value(int argc, char** argv, const char* name) {
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::strcmp(argv[i], name) == 0) { return argv[i + 1]; }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] bool has_flag(int argc, char** argv, const char* name) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], name) == 0) { return true; }
+    }
+    return false;
+}
+
+void usage(const char* exe) {
+    std::printf(
+        "  Fill dataset/ from Kite's historical candle API.\n\n"
+        "    %s --token <instrument_token> --out <dir> [options]\n\n"
+        "    --token N        Kite instrument_token (NIFTY 50 spot is 256265)\n"
+        "    --out DIR        e.g. dataset/spot/nifty/1m\n"
+        "    --interval S     minute | 3minute | 5minute | 15minute |\n"
+        "                     30minute | 60minute | day     (default minute)\n"
+        "    --from D --to D  YYYY-MM-DD (default: the last 2 years to --to)\n"
+        "    --oi             ask for open interest (derivatives only)\n"
+        "    --go             ACTUALLY CALL THE API. Without it this prints\n"
+        "                     the requests it would make and exits.\n"
+        "    --force          overwrite existing files\n\n"
+        "  Needs data/kite_session.json, which altair_kite_login writes.\n"
+        "  The access token is read from there and never printed.\n", exe);
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    const char* token_s = arg_value(argc, argv, "--token");
+    const char* out_dir = arg_value(argc, argv, "--out");
+    if (token_s == nullptr || out_dir == nullptr) {
+        usage(argv[0]);
+        return 2;
+    }
+    const char* iv = arg_value(argc, argv, "--interval");
+    const std::string interval = iv != nullptr ? iv : "minute";
+    const bool go = has_flag(argc, argv, "--go");
+    const bool force = has_flag(argc, argv, "--force");
+    const bool want_oi = has_flag(argc, argv, "--oi");
+
+    const std::int64_t token = std::atoll(token_s);
+    if (token <= 0) {
+        std::printf("  --token must be a positive instrument_token\n");
+        return 2;
+    }
+    if (altair::interval_by_name(interval) == nullptr) {
+        std::printf("  --interval \"%s\" is not one Kite serves\n",
+                    interval.c_str());
+        return 2;
+    }
+
+    const char* to_s = arg_value(argc, argv, "--to");
+    const char* from_s = arg_value(argc, argv, "--from");
+    std::string to = to_s != nullptr ? to_s : "";
+    std::string from = from_s != nullptr ? from_s : "";
+    if (to.empty() || from.empty()) {
+        // Default: two years ending today. Computed from the system clock,
+        // which is the ONE place a wall clock is legitimate -- this is an
+        // operator tool choosing a fetch window, not a strategy reading time.
+        const auto now = std::chrono::system_clock::now();
+        const auto days = std::chrono::duration_cast<std::chrono::hours>(
+                              now.time_since_epoch()).count() / 24;
+        if (to.empty()) { to = altair::date_string(days); }
+        if (from.empty()) { from = altair::date_string(days - 730); }
+    }
+
+    const auto chunks = altair::chunk_requests(from, to, interval);
+    if (!chunks) {
+        std::printf("  refused: bad range or interval\n");
+        return 2;
+    }
+
+    std::printf("  instrument %lld, %s, %s .. %s\n", static_cast<long long>(token),
+                interval.c_str(), from.c_str(), to.c_str());
+    std::printf("  %zu requests, 400 ms apart\n\n", chunks->size());
+
+    if (!go) {
+        for (const auto& c : *chunks) {
+            const auto u = altair::historical_uri(token, interval, c, false,
+                                                  want_oi);
+            std::printf("    GET https://api.kite.trade%s\n",
+                        u ? u->c_str() : "<refused>");
+        }
+        std::printf(
+            "\n  DRY RUN. Nothing was sent and nothing was written.\n"
+            "  Add --go to make these calls for real.\n\n"
+            "  This program and the GET beneath it have never made a live\n"
+            "  call. Run ONE month first and look at the file before asking\n"
+            "  for two years.\n");
+        return 0;
+    }
+
+    std::string access;
+    if (!read_access_token("data/kite_session.json", access)) {
+        std::printf("  no usable data/kite_session.json.\n"
+                    "  Run altair_kite_login first -- the browser step is "
+                    "yours, not this program's.\n");
+        return 1;
+    }
+    const std::string api_key = env_or_empty("ALTAIR_KITE_API_KEY");
+    if (api_key.empty()) {
+        std::printf("  ALTAIR_KITE_API_KEY is not set.\n");
+        return 1;
+    }
+    // "token <api_key>:<access_token>". Built once, passed by reference, and
+    // never printed -- not even redacted, because a redacted credential in a
+    // log is still a credential-shaped thing somebody screenshots.
+    const std::string auth =
+        std::string("token ") + api_key + ":" + access;
+
+    std::vector<altair::RawCandle> all;
+    for (std::size_t i = 0; i < chunks->size(); ++i) {
+        const auto& c = (*chunks)[i];
+        const auto u = altair::historical_uri(token, interval, c, false,
+                                              want_oi);
+        if (!u) {
+            std::printf("  refused building URI for %s..%s\n", c.from.c_str(),
+                        c.to.c_str());
+            return 1;
+        }
+        std::printf("  [%zu/%zu] %s .. %s ", i + 1, chunks->size(),
+                    c.from.c_str(), c.to.c_str());
+        std::fflush(stdout);
+
+        const auto r = altair::https_get_auth("api.kite.trade", *u, auth);
+        if (!r) {
+            std::printf("TRANSPORT FAILED\n");
+            return 1;
+        }
+        if (r->status != 200) {
+            // The body carries Kite's machine-readable reason. Printed
+            // because it is the only way to tell "token expired" from "no
+            // historical subscription" -- and it contains no credential.
+            std::printf("HTTP %d\n    %s\n", r->status, r->body.c_str());
+            return 1;
+        }
+        const auto candles = altair::parse_candles(r->body);
+        if (!candles) {
+            std::printf("UNPARSEABLE\n");
+            return 1;
+        }
+        std::printf("%zu candles\n", candles->size());
+        all.insert(all.end(), candles->begin(), candles->end());
+
+        if (i + 1 < chunks->size()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{400});
+        }
+    }
+
+    // COVERAGE BEFORE WRITING. A short answer is Kite's way of saying the
+    // window was too long, and it is not an error -- so it has to be caught
+    // here or it becomes a file with a hole in it.
+    //
+    // 5 days: a weekend plus a holiday is normal, a working week missing is
+    // not.
+    const auto gap = altair::verify_coverage(all, from, to, 5);
+    if (!gap) {
+        std::printf("\n  INCOMPLETE COVERAGE. %zu candles came back for "
+                    "%s..%s, with a gap\n  longer than 5 days or a window "
+                    "that does not reach the ends.\n"
+                    "  NOTHING WAS WRITTEN. Narrow the range and look at what "
+                    "comes back.\n",
+                    all.size(), from.c_str(), to.c_str());
+        return 1;
+    }
+    std::printf("\n  %zu candles, largest gap %lld days\n", all.size(),
+                static_cast<long long>(*gap));
+
+    // One file per month, matching what dataset/ already holds.
+    std::error_code ec;
+    std::filesystem::create_directories(out_dir, ec);
+    std::size_t written = 0, skipped = 0;
+    std::string cur_month;
+    std::ofstream f;
+    for (const altair::RawCandle& c : all) {
+        const std::string stamp = altair::format_ist(c.ts_ns);
+        const std::string month = stamp.substr(0, 7);      // YYYY-MM
+        if (month != cur_month) {
+            if (f.is_open()) { f.close(); }
+            const std::string path =
+                std::string(out_dir) + "/" + month + ".csv";
+            if (!force && std::filesystem::exists(path)) {
+                cur_month = month;
+                ++skipped;
+                continue;
+            }
+            f.open(path, std::ios::trunc);
+            if (!f) {
+                std::printf("  cannot write %s\n", path.c_str());
+                return 1;
+            }
+            f << "time,open,high,low,close,volume";
+            if (want_oi) { f << ",oi"; }
+            f << "\n";
+            cur_month = month;
+            ++written;
+        }
+        if (!f.is_open()) { continue; }              // skipped month
+        f << stamp << ',' << c.open << ',' << c.high << ',' << c.low << ','
+          << c.close << ',' << static_cast<long long>(c.volume);
+        if (want_oi) {
+            // Absent OI writes an EMPTY field, not a zero. bar_csv.hpp already
+            // distinguishes those for volume and the same rule applies here.
+            f << ',';
+            if (c.oi_known) { f << static_cast<long long>(c.oi); }
+        }
+        f << "\n";
+    }
+    if (f.is_open()) { f.close(); }
+
+    std::printf("  wrote %zu month files to %s", written, out_dir);
+    if (skipped > 0) {
+        std::printf(", SKIPPED %zu that already existed (use --force)",
+                    skipped);
+    }
+    std::printf("\n");
+    return 0;
+}

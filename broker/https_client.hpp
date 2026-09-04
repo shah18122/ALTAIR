@@ -255,4 +255,101 @@ https_post_form(std::string_view host, std::string_view target,
     }
 }
 
+/// GET over TLS with a Kite `Authorization` header.
+///
+/// P2-12b. Added because the historical candle API is a GET and this file had
+/// only a form POST -- it was written for the session exchange, which is the
+/// one call Altair made until now.
+///
+/// THE AUTHORIZATION HEADER CARRIES A LIVE TRADING CREDENTIAL.
+///
+/// Kite's scheme is `Authorization: token <api_key>:<access_token>`, and the
+/// access_token in it is valid until the next morning and can place orders.
+/// So it is taken as a parameter and NEVER logged, never put in the target,
+/// never in a query string. The caller builds it from
+/// `data/kite_session.json`; nothing here reads a file or an environment
+/// variable, which keeps the set of code that touches a credential small
+/// enough to audit.
+///
+/// Same success contract as the POST: a completed exchange is a success
+/// whatever the status, because Kite puts the machine-readable reason in the
+/// body of a 400 and folding that into an error code would turn "your token
+/// expired" into "it did not work".
+///
+/// NOT EXERCISED AGAINST THE LIVE API. There are no credentials on this
+/// machine's test path, so this compiles and has never made a real call. That
+/// is stated here rather than discovered later.
+[[nodiscard]] inline std::expected<HttpResponse, HttpError>
+https_get_auth(std::string_view host, std::string_view target,
+               std::string_view authorization,
+               std::string_view api_version = "3",
+               std::chrono::seconds timeout = std::chrono::seconds{20})
+{
+    namespace beast = boost::beast;
+    namespace http = beast::http;
+    namespace net = boost::asio;
+    namespace ssl = net::ssl;
+    using tcp = net::ip::tcp;
+
+    try {
+        net::io_context ioc;
+        ssl::context ctx{ssl::context::tls_client};
+        ctx.set_verify_mode(ssl::verify_peer);
+        ctx.set_default_verify_paths();
+        if (detail::load_platform_roots(ctx.native_handle()) == 0) {
+            return std::unexpected(HttpError::TlsFailed);
+        }
+
+        tcp::resolver resolver{ioc};
+        beast::ssl_stream<beast::tcp_stream> stream{ioc, ctx};
+
+        const std::string host_s{host};
+        if (!SSL_set_tlsext_host_name(stream.native_handle(), host_s.c_str())) {
+            return std::unexpected(HttpError::TlsFailed);
+        }
+        stream.set_verify_callback(ssl::host_name_verification(host_s));
+
+        boost::system::error_code ec;
+        const auto results = resolver.resolve(host_s, "443", ec);
+        if (ec) { return std::unexpected(HttpError::ResolveFailed); }
+
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        beast::get_lowest_layer(stream).connect(results, ec);
+        if (ec) { return std::unexpected(HttpError::ConnectFailed); }
+
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        stream.handshake(ssl::stream_base::client, ec);
+        if (ec) { return std::unexpected(HttpError::TlsFailed); }
+
+        http::request<http::string_body> req{http::verb::get,
+                                             std::string{target}, 11};
+        req.set(http::field::host, host_s);
+        req.set(http::field::user_agent, "altair/0.1");
+        req.set(http::field::authorization, std::string{authorization});
+        req.set("X-Kite-Version", std::string{api_version});
+        req.prepare_payload();
+
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        http::write(stream, req, ec);
+        if (ec) { return std::unexpected(HttpError::TransportFailed); }
+
+        beast::flat_buffer buffer;
+        http::response<http::string_body> res;
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        http::read(stream, buffer, res, ec);
+        if (ec) { return std::unexpected(HttpError::TransportFailed); }
+
+        HttpResponse out{};
+        out.status = res.result_int();
+        out.body = res.body();
+
+        beast::get_lowest_layer(stream).expires_after(std::chrono::seconds{5});
+        boost::system::error_code shut;
+        stream.shutdown(shut);
+        return out;
+    } catch (const std::exception&) {
+        return std::unexpected(HttpError::Unknown);
+    }
+}
+
 } // namespace altair
