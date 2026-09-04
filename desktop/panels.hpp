@@ -28,10 +28,13 @@
 #include "feed_status.hpp"
 #include "format.hpp"
 #include "data/fits.hpp"
+#include "data/master_lookup.hpp"
 #include "model_status.hpp"
 #include "watchlist.hpp"
 
 #include <QComboBox>
+#include <QDateTime>
+#include <QTimeZone>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFontMetrics>
@@ -761,20 +764,54 @@ public:
         message_->setWordWrap(true);
         v->addWidget(message_);
 
+        // P11Q-11. The profile columns come from the Kite master; the QUOTE
+        // columns cannot, and are here so their absence is visible rather
+        // than implied. A watchlist with no bid column looks complete; one
+        // with an empty bid column says what is missing.
         table_ = fact_table({QStringLiteral("Token"), QStringLiteral("Name"),
-                             QStringLiteral("Spec"), QStringLiteral("Lot"),
-                             QStringLiteral("Tick"), QStringLiteral("Note")},
+                             QStringLiteral("Seg"), QStringLiteral("Expiry"),
+                             QStringLiteral("Strike"), QStringLiteral("Type"),
+                             QStringLiteral("Lot"), QStringLiteral("Tick"),
+                             QStringLiteral("Bid"), QStringLiteral("Ask"),
+                             QStringLiteral("Spec"), QStringLiteral("Note")},
                             this);
         v->addWidget(table_, 1);
 
         summary_ = new QLabel(this);
+        summary_->setWordWrap(true);
+        
         v->addWidget(summary_);
+
+        master_.load(QStringLiteral(ALTAIR_SOURCE_DIR
+                                    "/data/instruments.csv"));
+
+        // SEEDED WITH FOUR REAL INSTRUMENTS, in Smit's stated priority order
+        // plus one option, so the profile columns show something rather than
+        // an empty table that looks like a broken panel.
+        //
+        // The names here are placeholders: `refresh()` prefers the MASTER's
+        // symbol, which is authoritative, so what appears is what Kite calls
+        // the contract and not what this line guessed. The option is included
+        // because it is the only one of the four that exercises strike,
+        // expiry and CE/PE at once.
+        struct Seed { std::uint32_t token; const char* name; };
+        for (const Seed& sd : {Seed{256265,   "NIFTY 50"},
+                               Seed{17512194, "NIFTY near future"},
+                               Seed{264969,   "INDIA VIX"},
+                               Seed{10915586, "NIFTY 24000 CE"}}) {
+            (void)list_.add(sd.token, QString::fromUtf8(sd.name));
+        }
 
         connect(add_, &QPushButton::clicked, this, &WatchlistPanel::on_add);
         connect(remove_, &QPushButton::clicked, this,
                 &WatchlistPanel::on_remove);
         refresh();
     }
+
+    /// The Kite master, loaded ONCE. 108,411 rows and 8.8 MB -- scanning it
+    /// per row is a freeze that arrives at about the tenth instrument, late
+    /// enough to read as a different bug.
+    MasterIndex master_;
 
     [[nodiscard]] const Watchlist& list() const noexcept { return list_; }
 
@@ -809,29 +846,100 @@ private:
         table_->setRowCount(static_cast<int>(rows.size()));
         for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
             const WatchRow& r = rows[static_cast<std::size_t>(i)];
+            const InstrumentProfile p = master_.find(r.token);
+            const QColor grey(0x7F, 0x8C, 0x8D);
+
             put(table_, i, 0, QString::number(r.token));
-            put(table_, i, 1, r.symbol);
+            // The master's own symbol when it has one -- it is authoritative
+            // and the typed name is not.
+            put(table_, i, 1, p.found ? p.symbol : r.symbol);
+            put(table_, i, 2, p.found ? p.segment : QString(), grey);
+            // EXPIRY IS AN IST DATE AND MUST BE RENDERED IN IST.
+            //
+            // The parser stores it as an instant, and formatting that instant
+            // in UTC showed NIFTY26SEPFUT expiring 2026-09-28 when the master
+            // says the 29th -- IST is UTC+5:30, so an IST-dated contract read
+            // in UTC lands on the previous evening and prints the day before.
+            //
+            // An expiry displayed a day early is not cosmetic: it is the date
+            // a roll is planned around, and it would put the roll on the last
+            // trading day rather than before it.
+            put(table_, i, 3,
+                p.expiry_ns > 0
+                    ? QDateTime::fromMSecsSinceEpoch(
+                          p.expiry_ns / 1'000'000,
+                          QTimeZone(5 * 3600 + 30 * 60))
+                          .toString(QStringLiteral("yyyy-MM-dd"))
+                    : QString(),
+                grey);
+            // Strike blank for anything that is not an option, rather than
+            // "0.00" -- a strike of zero is a price, and no strike is not.
+            put(table_, i, 4,
+                p.strike > 0 ? format_paise(p.strike) : QString());
+            put(table_, i, 5, p.opt_type,
+                p.opt_type == QStringLiteral("CE") ? QColor(0x1B, 0x8A, 0x4B)
+                : p.opt_type == QStringLiteral("PE") ? QColor(0xC0, 0x39, 0x2B)
+                                                     : QColor());
+            // A zero lot renders BLANK, not "0". A zero lot size is the bug
+            // that silently scaled every P&L number in the predecessor, and
+            // showing it as a number is how it gets used as one. Same for the
+            // master's value.
+            const std::int64_t lot = r.lot_size > 0 ? r.lot_size : p.lot_size;
+            const std::int64_t tick =
+                r.tick_size_paise > 0 ? r.tick_size_paise : p.tick_paise;
+            put(table_, i, 6, lot > 0 ? QString::number(lot) : QString());
+            put(table_, i, 7, tick > 0 ? format_paise(tick) : QString());
+
+            // BID AND ASK ARE EMPTY, AND THAT IS THE HONEST STATE.
+            //
+            // The master is reference data: it carries no quote. A live
+            // subscription is what fills these -- P2-02's decoder is built and
+            // tested against vectors and nothing subscribes yet. Rendering
+            // 0.00 would be a price; an empty cell is the absence of one, the
+            // same rule the tick grid follows for a bar that has not arrived.
+            auto* bid = new QTableWidgetItem(QString());
+            bid->setToolTip(QStringLiteral(
+                "No quote. The instrument master is reference data and "
+                "carries no bid or ask; a live Kite subscription (P2-02) is "
+                "what fills this."));
+            table_->setItem(i, 8, bid);
+            auto* ask = new QTableWidgetItem(QString());
+            ask->setToolTip(bid->toolTip());
+            table_->setItem(i, 9, ask);
+
             const QColor c = r.spec == SpecState::Resolved
                                ? QColor(0x1B, 0x8A, 0x4B)
                              : r.spec == SpecState::Blocked
                                ? QColor(0xC0, 0x39, 0x2B)
                                : QColor(0xB9, 0x77, 0x0B);
-            put(table_, i, 2, spec_state_label(r.spec), c);
-            // A zero lot renders BLANK, not "0". A zero lot size is the bug
-            // that silently scaled every P&L number in the predecessor, and
-            // showing it as a number is how it gets used as one.
-            put(table_, i, 3,
-                r.lot_size > 0 ? QString::number(r.lot_size) : QString());
-            put(table_, i, 4,
-                r.tick_size_paise > 0 ? format_paise(r.tick_size_paise)
-                                      : QString());
-            put(table_, i, 5, r.note);
+            put(table_, i, 10, spec_state_label(r.spec), c);
+            put(table_, i, 11,
+                p.found ? r.note
+                        : (r.note.isEmpty()
+                               ? QStringLiteral("not in the instrument master")
+                               : r.note));
         }
         table_->resizeColumnsToContents();
+        // THE MASTER'S STATE IS ON SCREEN, NOT INFERRED FROM BLANK CELLS.
+        //
+        // If it did not load, every profile column is empty -- and an empty
+        // Expiry cell is indistinguishable from "this contract has no
+        // expiry". A panel that renders the same thing for "no data" and "no
+        // value" is the failure this project keeps finding, so the load says
+        // so itself.
         summary_->setText(
-            QStringLiteral("%1 instruments watched · %2 tradeable")
+            QStringLiteral("%1 instruments watched · %2 tradeable · %3")
                 .arg(list_.size())
-                .arg(list_.tradeable_count()));
+                .arg(list_.tradeable_count())
+                .arg(master_.loaded()
+                         ? QStringLiteral("instrument master: %1 contracts")
+                               .arg(master_.size())
+                         : QStringLiteral("<b style='color:#C0392B'>instrument "
+                                          "master NOT loaded — every profile "
+                                          "column below is blank for that "
+                                          "reason, not because the field is "
+                                          "empty</b>: %1")
+                               .arg(master_.error())));
     }
 
     Role role_ = Role::None;

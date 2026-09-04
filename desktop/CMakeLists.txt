@@ -44,6 +44,7 @@ qt_add_executable(altair_desktop
     data/bar_csv.hpp
     data/fits.hpp
     data/real_tape.hpp
+    data/master_lookup.hpp
     cost_panel.hpp
     audit_panel.hpp
     depth_ladder.hpp
