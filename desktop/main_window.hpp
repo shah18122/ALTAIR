@@ -36,6 +36,7 @@
 #include "audit_panel.hpp"
 #include "cost_panel.hpp"
 #include "depth_ladder.hpp"
+#include "chain_panel.hpp"
 #include "kill_switch.hpp"
 #include "data/bar_csv.hpp"
 #include "feed_status.hpp"
@@ -660,14 +661,7 @@ private:
         pages_->addWidget(new WiringPanel);
         pages_->addWidget(new CostPanel);
 
-        pages_->addWidget(blocked_page(
-            QStringLiteral("Ratio Spread"), QStringLiteral("P11Q-05"),
-            QStringLiteral(
-                "strategies/parity.hpp already prices the spacing-weighted "
-                "butterfly and refuses an unknown hedge leg. Wiring it needs a "
-                "live option chain — an instrument set, a spot, and quotes for "
-                "each strike. The demo generator emits four instruments and one "
-                "strike, so there is no chain to price yet.")));
+        pages_->addWidget(new ChainPanel);
 
         pages_->addWidget(blocked_page(
             QStringLiteral("Value — DCF"), QStringLiteral("P11Q-05"),
