@@ -117,7 +117,9 @@ void usage(const char* exe) {
         "    --oi             ask for open interest (derivatives only)\n"
         "    --volume-absent  this instrument reports no volume (an INDEX).\n"
         "                     Writes an empty field rather than a zero.\n"
-        "    --volume-zero    0 really is a measurement here.\n"
+        "    --volume-zero    0 really is a measurement here.\n\n"
+        "    --dump-instruments PATH   download the whole instrument master\n"
+        "                     (a CSV) and stop. Needed to look up a token.\n"
         "    --go             ACTUALLY CALL THE API. Without it this prints\n"
         "                     the requests it would make and exits.\n"
         "    --force          overwrite existing files\n\n"
@@ -128,6 +130,65 @@ void usage(const char* exe) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // ---- --dump-instruments: the whole master, as Kite serves it ---------
+    //
+    // P2-12e. Needed before anything else can be fetched: a historical request
+    // takes an instrument_token, and rule 1 says a token is not something you
+    // write as a literal. `instruments/kite_dump.hpp` already PARSES this file
+    // (P1-04); nothing could download it.
+    //
+    // Written to disk untouched so the existing parser and the three-way
+    // reconciliation see exactly what Kite sent, rather than something this
+    // program decided to keep.
+    if (const char* dump = arg_value(argc, argv, "--dump-instruments")) {
+        std::string access;
+        if (!read_access_token("data/kite_session.json", access)) {
+            std::printf("  no usable data/kite_session.json -- run "
+                        "altair_kite_login first\n");
+            return 1;
+        }
+        const std::string api_key = env_or_empty("ALTAIR_KITE_API_KEY");
+        if (api_key.empty()) {
+            std::printf("  ALTAIR_KITE_API_KEY is not set\n");
+            return 1;
+        }
+        const std::string auth =
+            std::string("token ") + api_key + ":" + access;
+        std::printf("  GET https://api.kite.trade/instruments\n");
+        const auto r = altair::https_get_auth("api.kite.trade", "/instruments",
+                                              auth, "3",
+                                              std::chrono::seconds{60});
+        if (!r) {
+            std::printf("  TRANSPORT FAILED\n");
+            return 1;
+        }
+        if (r->status != 200) {
+            std::printf("  HTTP %d\n    %s\n", r->status, r->body.c_str());
+            return 1;
+        }
+        // A CSV, not JSON. The first line must be the header the parser
+        // expects, or something other than the instrument master came back --
+        // an HTML error page also arrives with status 200 from a proxy.
+        if (r->body.rfind("instrument_token", 0) != 0) {
+            std::printf("  REFUSED: the body does not start with "
+                        "\"instrument_token\", so it is not the instrument "
+                        "master.\n  Nothing written.\n");
+            return 1;
+        }
+        std::ofstream out(dump, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            std::printf("  cannot write %s\n", dump);
+            return 1;
+        }
+        out << r->body;
+        out.close();
+        std::size_t lines = 0;
+        for (char ch : r->body) { if (ch == '\n') { ++lines; } }
+        std::printf("  wrote %s -- %zu bytes, %zu rows\n", dump,
+                    r->body.size(), lines);
+        return 0;
+    }
+
     const char* token_s = arg_value(argc, argv, "--token");
     const char* out_dir = arg_value(argc, argv, "--out");
     if (token_s == nullptr || out_dir == nullptr) {

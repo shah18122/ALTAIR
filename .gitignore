@@ -92,3 +92,6 @@ data/masters/
 
 # client/ devDependencies. TypeScript only, and it never ships.
 node_modules/
+
+# P2-12e: the Kite instrument master, 8.8 MB and regenerable in one call.
+data/instruments.csv

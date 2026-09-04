@@ -283,7 +283,8 @@ https_post_form(std::string_view host, std::string_view target,
 https_get_auth(std::string_view host, std::string_view target,
                std::string_view authorization,
                std::string_view api_version = "3",
-               std::chrono::seconds timeout = std::chrono::seconds{20})
+               std::chrono::seconds timeout = std::chrono::seconds{20},
+               std::uint64_t max_body_bytes = 64ull * 1024 * 1024)
 {
     namespace beast = boost::beast;
     namespace http = beast::http;
@@ -334,10 +335,24 @@ https_get_auth(std::string_view host, std::string_view target,
         if (ec) { return std::unexpected(HttpError::TransportFailed); }
 
         beast::flat_buffer buffer;
-        http::response<http::string_body> res;
+        // A PARSER, NOT A BARE RESPONSE, BECAUSE OF THE BODY LIMIT.
+        //
+        // `http::read` into a `response<string_body>` builds a parser with
+        // Beast's DEFAULT body limit of 8 MB, and exceeding it fails as a
+        // generic transport error -- no status, no body, nothing naming the
+        // size. Kite's full instrument master is larger than that (every
+        // option strike on every expiry), so the first attempt to download it
+        // returned "TRANSPORT FAILED" and looked like a network fault.
+        //
+        // The limit is raised, not removed. An unbounded body is a memory
+        // exhaustion waiting for a server that misbehaves, and this function
+        // is reachable from an engine process.
+        http::response_parser<http::string_body> parser;
+        parser.body_limit(max_body_bytes);
         beast::get_lowest_layer(stream).expires_after(timeout);
-        http::read(stream, buffer, res, ec);
+        http::read(stream, buffer, parser, ec);
         if (ec) { return std::unexpected(HttpError::TransportFailed); }
+        auto res = parser.release();
 
         HttpResponse out{};
         out.status = res.result_int();
