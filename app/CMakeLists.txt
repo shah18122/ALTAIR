@@ -62,3 +62,17 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME monitor COMMAND altair_monitor_test)
 endif()
+
+# P12-04. Daily reconciliation against the contract note. Links the REAL cost
+# model: a reconciler tested only against hand-typed charge figures proves that
+# subtraction works.
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_note_reconcile_test tests/test_note_reconcile.cpp)
+    target_link_libraries(altair_note_reconcile_test PRIVATE
+        altair_types altair_risk altair_flags)
+    target_include_directories(altair_note_reconcile_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    # Named `note_reconcile`: instruments/ already owns `reconcile`, which is the
+    # three-way instrument-master check. Different question, different data.
+    add_test(NAME note_reconcile COMMAND altair_note_reconcile_test)
+endif()
