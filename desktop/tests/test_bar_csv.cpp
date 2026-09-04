@@ -61,11 +61,25 @@ static void test_a_bar_is_not_a_tick()
 {
     std::printf("\n[1] a bar is not a tick\n");
 
-    // A real, full NIFTY session.
-    const LoadResult r = load_bars_csv(dataset("spot/nifty/1m/2026-08-27.csv"),
+    // Real NIFTY 1-minute bars.
+    //
+    // WAS `1m/2026-08-27.csv`, one of four per-day files that are now
+    // superseded. P2-12 fetched the series from Kite properly: 185,909 bars
+    // over 498 sessions, and the old per-day files held 362 bars a day
+    // against the 375 a full NSE session has -- they were missing 15:16 to
+    // 15:27, which is the P7-00 carried debt and is exactly the window the
+    // ten-minute strategy is graded in. They were moved to
+    // `_superseded_1m_perday/` rather than deleted, and this now reads the
+    // month file, which is complete.
+    //
+    // A month rather than a session changes nothing this test measures: the
+    // 5-minute buckets that would straddle an overnight gap simply have no
+    // ticks in them and produce no candle, so the aggregation comparison
+    // below is the same comparison over more data.
+    const LoadResult r = load_bars_csv(dataset("spot/nifty/1m/2026-08.csv"),
                                        kMinute, DailyStamp::SessionClose,
                                        /*zero_volume_is_absent=*/true);
-    check(r.ok(), "the real 1-minute session loads");
+    check(r.ok(), "the real 1-minute series loads");
     if (!r.ok()) {
         std::printf("    %s\n", r.error.toUtf8().constData());
         return;

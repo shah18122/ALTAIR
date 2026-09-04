@@ -186,31 +186,87 @@ int main() {
                     rr->trades > 0 ? rr->net_bps_per_trade : 0.0, rr->trades);
     }
 
-    // ---- 15 minute, reported and NOT relied on ---------------------------
-    const Bars h15 = load_dir(root + "/spot/nifty/15m");
-    std::printf("\n  15m: %zu files, %zu bars\n", h15.files, h15.close.size());
-    if (h15.close.size() > 600) {
-        altair::HorizonSpec s15 = spec;
-        s15.initial_train = 400;
-        s15.test_len = 150;
-        s15.step = 150;
-        const auto r15 = altair::evaluate_horizon(h15.close, h15.session, s15);
-        if (r15) {
-            report("15 MINUTE  (2026-06 -> 2026-08, THREE MONTHS)", *r15,
-                   kRoundTripBps);
-            std::printf("\n    ^ THREE MONTHS IS ONE REGIME. CLAUDE.md: "
-                        "markets are not ergodic,\n      report per regime, "
-                        "never only in aggregate. A number measured\n      "
-                        "inside a single regime does not generalise out of it, "
-                        "so the 15-minute\n      row above is a description of "
-                        "one summer and not a forecast.\n");
+    // ---- 5 and 15 MINUTE, FROM THE REAL 1-MINUTE SERIES ------------------
+    //
+    // P2-12 fetched 185,909 one-minute bars over 498 sessions. The earlier
+    // version of this file reported that 5-minute did not exist and that
+    // 15-minute was three months of a single regime. Both are now answerable,
+    // and they are the two horizons that were actually asked for.
+    //
+    // Downsampled from 1-minute rather than fetched separately: a 5-minute
+    // bar built from five 1-minute closes is the same series Kite would
+    // return, and deriving it here keeps the session boundaries aligned with
+    // the ones already being excluded.
+    const Bars h1 = load_dir(root + "/spot/nifty/1m");
+    std::printf("\n  1m: %zu files, %zu bars\n", h1.files, h1.close.size());
+    check(h1.close.size() > 100000, "the 1-minute series loaded");
+
+    for (const std::size_t step : {std::size_t{5}, std::size_t{15}}) {
+        // Bucket from the START of each session, so a boundary never
+        // straddles two days and the last bar of a bucket is its close.
+        Bars d;
+        std::size_t within = 0;
+        for (std::size_t i = 0; i < h1.close.size(); ++i) {
+            if (i == 0 || h1.session[i] != h1.session[i - 1]) { within = 0; }
+            if (within % step == step - 1) {
+                d.close.push_back(h1.close[i]);
+                d.session.push_back(h1.session[i]);
+            }
+            ++within;
+        }
+        altair::HorizonSpec sN = spec;
+        sN.initial_train = 4000;
+        sN.test_len = 1000;
+        sN.step = 1000;
+        const auto rN = altair::evaluate_horizon(d.close, d.session, sN);
+        if (!rN) {
+            std::printf("\n  %zu MINUTE: refused -- too few samples\n", step);
+            continue;
+        }
+        char label[72];
+        std::snprintf(label, sizeof label,
+                      "%zu MINUTE  (2024-09 -> 2026-09, from 1m)", step);
+        report(label, *rN, kRoundTripBps);
+
+        // THE HURDLE DECIDES THESE, NOT THE FORECAST. A shorter horizon moves
+        // less and the round trip does not shrink with it, so the oracle line
+        // is the ceiling: if a PERFECT forecast cannot clear the cost, no
+        // model can.
+        std::printf("\n    ceiling: a perfect oracle nets %+.2f bps/trade.\n",
+                    rN->oracle_selective_net_bps);
+        if (rN->oracle_selective_net_bps <= 0.0) {
+            std::printf("    UNTRADEABLE AT THIS COST, whatever the model.\n");
+        } else {
+            const double edgeN = rN->dir_model - rN->dir_const;
+            const double seN =
+                std::sqrt(0.25 / static_cast<double>(rN->scored));
+            std::printf("    model: RMSE ratio %.4f vs a constant, %zu trades,"
+                        " net %+.2f bps/trade\n",
+                        rN->rmse_mean_bps > 0.0
+                            ? rN->rmse_model_bps / rN->rmse_mean_bps : 0.0,
+                        rN->trades,
+                        rN->trades > 0 ? rN->net_bps_per_trade : 0.0);
+            std::printf("           direction %+.4f = %.2f sigma on %zu "
+                        "observations\n", edgeN,
+                        seN > 0.0 ? edgeN / seN : 0.0, rN->scored);
+            // A directional edge past two sigma is worth saying out loud even
+            // when nothing can be traded on it -- and worth qualifying in the
+            // same breath, because expanding folds share training data, so the
+            // effective sample is smaller than `scored` and the sigma above is
+            // optimistic. Same caveat as P8-14's t-statistic.
+            if (seN > 0.0 && edgeN / seN > 2.0) {
+                std::printf("           ^ past two sigma. It still produced "
+                            "%zu trades, because the\n             forecast's "
+                            "MAGNITUDE never cleared the hurdle: knowing the "
+                            "sign\n             slightly better than a "
+                            "constant is not the same as knowing\n             "
+                            "the move is bigger than the spread. And the folds "
+                            "overlap, so\n             the sigma is "
+                            "optimistic.\n", rN->trades);
+            }
         }
     }
 
-    // ---- 5 minute --------------------------------------------------------
-    std::printf("\n  5m: no such directory -- there is no 5-minute data.\n");
-    std::printf("  1m: 4 partial sessions. Nothing at that horizon is "
-                "answerable.\n");
 
     // ---- the protocol ----------------------------------------------------
     check(r60->scored > 500, "enough scored 60-minute forecasts");

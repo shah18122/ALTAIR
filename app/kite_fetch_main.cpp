@@ -115,6 +115,9 @@ void usage(const char* exe) {
         "                     30minute | 60minute | day     (default minute)\n"
         "    --from D --to D  YYYY-MM-DD (default: the last 2 years to --to)\n"
         "    --oi             ask for open interest (derivatives only)\n"
+        "    --volume-absent  this instrument reports no volume (an INDEX).\n"
+        "                     Writes an empty field rather than a zero.\n"
+        "    --volume-zero    0 really is a measurement here.\n"
         "    --go             ACTUALLY CALL THE API. Without it this prints\n"
         "                     the requests it would make and exits.\n"
         "    --force          overwrite existing files\n\n"
@@ -136,6 +139,10 @@ int main(int argc, char** argv) {
     const bool go = has_flag(argc, argv, "--go");
     const bool force = has_flag(argc, argv, "--force");
     const bool want_oi = has_flag(argc, argv, "--oi");
+    // See the all-zero-volume refusal below for why these exist and why
+    // neither has a default.
+    const bool vol_absent = has_flag(argc, argv, "--volume-absent");
+    const bool vol_zero = has_flag(argc, argv, "--volume-zero");
 
     const std::int64_t token = std::atoll(token_s);
     if (token <= 0) {
@@ -265,6 +272,51 @@ int main(int argc, char** argv) {
     std::printf("\n  %zu candles, largest gap %lld days\n", all.size(),
                 static_cast<long long>(*gap));
 
+    // ---- AN INDEX HAS NO VOLUME, AND 0 IS NOT HOW YOU SAY THAT ----------
+    //
+    // NIFTY 50 is an index. It does not trade, so Kite reports volume 0 on
+    // every candle -- measured: 7,875 of 7,875 for August 2026. Writing a
+    // literal 0 asserts "no trading happened in this minute", which is a claim
+    // about the MARKET. The truth is "this instrument does not report volume",
+    // which is a claim about the FEED.
+    //
+    // desktop/data/bar_csv.hpp already separates those -- zero_volume_rows
+    // against absent_volume_rows -- and P11Q-06 had to unpick exactly this
+    // confusion once, when 528 India VIX rows loaded as ZERO bars because an
+    // empty volume field read as a parse error. An empty field is how the rest
+    // of dataset/ says "not reported".
+    //
+    // Kite returns 0 for both cases and cannot distinguish them, so this
+    // REFUSES rather than guessing (rule 9). The operator knows whether the
+    // token is an index; the program does not.
+    bool any_volume = false;
+    for (const altair::RawCandle& c : all) {
+        if (c.volume != 0.0) { any_volume = true; break; }
+    }
+    if (vol_absent && vol_zero) {
+        std::printf("  --volume-absent and --volume-zero contradict each other.\n");
+        return 2;
+    }
+    if (!any_volume && !vol_absent && !vol_zero) {
+        std::printf(
+            "\n  ALL %zu CANDLES HAVE VOLUME 0. NOTHING WAS WRITTEN.\n\n"
+            "  That is what Kite returns for an INDEX -- an index does not\n"
+            "  trade, so it has no volume to report. It is also what a\n"
+            "  genuinely untraded contract looks like, and the API cannot tell\n"
+            "  you which this is.\n\n"
+            "  Writing 0 would assert \"no trading in this minute\", a claim\n"
+            "  about the market. \"Not reported\" is a claim about the feed.\n"
+            "  dataset/ says the second with an EMPTY field, and bar_csv.hpp\n"
+            "  counts the two separately.\n\n"
+            "  Pick one:\n"
+            "    --volume-absent   an index, or a feed reporting none. Writes\n"
+            "                      an empty field. This is what token 256265\n"
+            "                      (NIFTY 50) needs.\n"
+            "    --volume-zero     you know 0 is a real measurement here.\n",
+            all.size());
+        return 1;
+    }
+
     // One file per month, matching what dataset/ already holds.
     std::error_code ec;
     std::filesystem::create_directories(out_dir, ec);
@@ -296,7 +348,9 @@ int main(int argc, char** argv) {
         }
         if (!f.is_open()) { continue; }              // skipped month
         f << stamp << ',' << c.open << ',' << c.high << ',' << c.low << ','
-          << c.close << ',' << static_cast<long long>(c.volume);
+          << c.close << ',';
+        // Empty field, not 0, when the instrument reports no volume.
+        if (!vol_absent) { f << static_cast<long long>(c.volume); }
         if (want_oi) {
             // Absent OI writes an EMPTY field, not a zero. bar_csv.hpp already
             // distinguishes those for volume and the same rule applies here.
