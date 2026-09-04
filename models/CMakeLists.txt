@@ -77,4 +77,13 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_horizon_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_horizon COMMAND altair_horizon_test)
+
+    # P8-16. Trains the neural tier on the real 5-minute series. Links
+    # altair_backtest for the walk-forward split, like P8-14 and P8-15.
+    add_executable(altair_neural_5m_test tests/test_neural_5m.cpp)
+    target_link_libraries(altair_neural_5m_test
+        PRIVATE altair_models altair_backtest altair_flags)
+    target_compile_definitions(altair_neural_5m_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME models_neural_5m COMMAND altair_neural_5m_test)
 endif()
