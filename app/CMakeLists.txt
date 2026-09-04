@@ -40,3 +40,14 @@ if(ALTAIR_HAVE_NET)
     target_link_libraries(altair_kite_fetch PRIVATE
         altair_broker_net altair_flags)
 endif()
+
+# P12-02. Warm restart from state. Header-only and testable without a broker:
+# the four ways a restart resumes into a wrong state all produce a file that
+# PARSES, which is why the test exists.
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_warm_restart_test tests/test_warm_restart.cpp)
+    target_link_libraries(altair_warm_restart_test PRIVATE altair_types altair_flags)
+    target_include_directories(altair_warm_restart_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME warm_restart COMMAND altair_warm_restart_test)
+endif()
