@@ -190,12 +190,26 @@ public:
             this);
         v->addWidget(head);
 
+        // THE PROSE HAS TO TRACK THE TABLE, OR IT IS THE STALE HALF.
+        //
+        // This paragraph said "it has no transport and no session" while the
+        // rows beneath it — which now detect both — said "built". The rows
+        // were fixed and the summary above them was not, which is the worst
+        // arrangement of the two: a reader takes the sentence and skims the
+        // table. So the changing clause is built from the same detected state
+        // the rows use, and only the parts that cannot change are literal.
         auto* note = new QLabel(
             QStringLiteral(
                 "This is not a toggle between two equal options. Kite has a "
-                "parser, a decoder and order <i>translation</i>; it has no "
-                "transport and no session. XTS has nothing — P1-05, P2-03 and "
-                "P4-06 are all deferred. Neither can carry an order today."),
+                "parser, a decoder, order <i>translation</i>, an HTTPS "
+                "transport and %1. XTS has nothing — P1-05, P2-03 and P4-06 "
+                "are all deferred. <b>Neither can carry an order today</b>: "
+                "<code>oms/kite_adapter.hpp</code> builds the POST body and "
+                "nothing in <code>oms/</code> sends it, which is P4-05's "
+                "design rather than an omission.")
+                .arg(session_present()
+                         ? QStringLiteral("a session on disk")
+                         : QStringLiteral("no session")),
             this);
         note->setWordWrap(true);
         note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));

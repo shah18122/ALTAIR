@@ -79,6 +79,22 @@ target_include_directories(altair_desktop PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..
 target_compile_definitions(altair_desktop PRIVATE
     ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
 
+# The session file, by ABSOLUTE path. The Broker Wiring panel reports whether
+# it exists, and a relative path would make that answer depend on the working
+# directory the window happened to be launched from -- so the panel would say
+# "no session" from one shortcut and "session" from another, with nothing on
+# screen explaining the difference.
+target_compile_definitions(altair_desktop PRIVATE
+    ALTAIR_SESSION_FILE="${CMAKE_SOURCE_DIR}/data/kite_session.json")
+
+# Whether the networked half exists is a property of the BUILD, and the panel
+# reads it rather than being told. broker/CMakeLists.txt sets this when
+# OpenSSL is found.
+if(ALTAIR_HAVE_NET)
+    target_compile_definitions(altair_desktop PRIVATE ALTAIR_HAVE_NET=1)
+    message(STATUS "desktop/: broker net half present — wiring panel will say so")
+endif()
+
 # THE DEFAULT ACCOUNTS EXIST ONLY HERE, AND ONLY OUTSIDE A RELEASE BUILD.
 #
 # admin/admin and staff/staff are compiled in when this is defined. The `prod`

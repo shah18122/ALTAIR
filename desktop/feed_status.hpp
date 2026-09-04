@@ -46,10 +46,16 @@
 #include <core/time/timestamp.hpp>
 
 #include <QColor>
+#include <QFileInfo>
 #include <QString>
 
 #include <cstdint>
 #include <vector>
+
+// Defined by the build when the vcpkg `net` feature is present.
+#ifndef ALTAIR_HAVE_NET
+#define ALTAIR_HAVE_NET 0
+#endif
 
 namespace altair::ui {
 
@@ -205,6 +211,22 @@ struct WiringRow {
 /// a different question -- "does this link" rather than "can this trade" --
 /// and the second is what the panel is for. When a row changes, the card that
 /// changed it changes this line, and the diff shows it.
+/// Is there a Kite session file on disk?
+///
+/// PRESENCE ONLY. It deliberately does not read the token, does not check the
+/// expiry and does not call Kite. An access token is valid until the next
+/// morning, so a file that exists may well be dead -- and the panel says
+/// exactly that rather than implying a live connection it has not tested.
+/// Claiming "connected" from a file's existence is how a dashboard tells you
+/// the feed is up while nothing is arriving.
+[[nodiscard]] inline bool session_present() {
+#ifdef ALTAIR_SESSION_FILE
+    return QFileInfo::exists(QStringLiteral(ALTAIR_SESSION_FILE));
+#else
+    return QFileInfo::exists(QStringLiteral("data/kite_session.json"));
+#endif
+}
+
 [[nodiscard]] inline std::vector<WiringRow> wiring() {
     return {
         {QStringLiteral("Kite"), QStringLiteral("Instrument master (P1-04)"),
@@ -216,12 +238,46 @@ struct WiringRow {
         {QStringLiteral("Kite"), QStringLiteral("Order translation (P4-05)"),
          WiringState::Built,
          QStringLiteral("builds the POST body; deliberately does NOT send it")},
+        // ---- THESE THREE ARE DETECTED, NOT ASSERTED ---------------------
+        //
+        // They were hard-coded "NotBuilt" and "no session", and both became
+        // FALSE the moment the net preset built and Smit logged in -- so the
+        // panel spent a morning stating the opposite of the truth. That is
+        // the same stale-literal failure P11Q-07b fixed on the Markov row and
+        // P11Q-08 fixed on a card reference, and a wiring panel is a worse
+        // place for it than either: it is the screen you check BEFORE
+        // believing anything else on the window.
+        //
+        // ALTAIR_HAVE_NET is a compile-time fact and the session file is a
+        // runtime one, so each is read where it lives rather than typed here.
         {QStringLiteral("Kite"), QStringLiteral("HTTPS transport (P2-10c)"),
+#if ALTAIR_HAVE_NET
+         WiringState::Built,
+         QStringLiteral("boost-beast + OpenSSL, verified peer + hostname; "
+                        "GET and form POST")},
+#else
          WiringState::NotBuilt,
-         QStringLiteral("needs the vcpkg `net` feature; ALTAIR_HAVE_NET is off")},
+         QStringLiteral("this build has no `net` feature; configure with "
+                        "--preset net")},
+#endif
         {QStringLiteral("Kite"), QStringLiteral("Session / access token"),
-         WiringState::BlockedOnInput,
-         QStringLiteral("no data/kite_session.json; login is Smit's step")},
+         session_present() ? WiringState::Built : WiringState::BlockedOnInput,
+         session_present()
+             ? QStringLiteral("data/kite_session.json present. The token "
+                              "expires next morning; this says it EXISTS, not "
+                              "that it is still valid")
+             : QStringLiteral("no data/kite_session.json; the browser login "
+                              "is Smit's step")},
+        {QStringLiteral("Kite"), QStringLiteral("Historical candles (P2-12)"),
+#if ALTAIR_HAVE_NET
+         WiringState::Built,
+         QStringLiteral("chunked, coverage-checked, dry-run by default; "
+                        "filled dataset/ with 2.7M bars")},
+#else
+         WiringState::NotBuilt,
+         QStringLiteral("parser and chunker are built and tested; the fetch "
+                        "needs the `net` feature")},
+#endif
         {QStringLiteral("Kite"), QStringLiteral("Margin fetch (P1-07)"),
          WiringState::BlockedOnInput,
          QStringLiteral("blocked on credentials")},
