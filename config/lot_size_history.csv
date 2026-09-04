@@ -1,0 +1,92 @@
+# config/lot_size_history.csv -- NIFTY and BANKNIFTY contract sizes over time.
+#
+# P1-01b. THIS FILE IS MOSTLY EMPTY ON PURPOSE, AND THAT IS THE POINT.
+#
+# CLAUDE.md hard rule 1: "No lot size, tick size, strike step, or expiry as a
+# literal. All from the point-in-time spec store (instruments/). This is the
+# bug that silently scaled the predecessor's every P&L number."
+#
+# A lot size is a MULTIPLIER on every quantity in a backtest. Get one wrong for
+# a period and every trade in that period is scaled, every P&L figure is scaled
+# with it, and nothing anywhere reports a problem -- the numbers stay
+# plausible, the equity curve stays smooth, and the error is invisible until
+# somebody reconciles against a contract note. That is the exact failure the
+# rule was written about.
+#
+# So the rows below are only the ones that can be VERIFIED, and the years that
+# cannot are left blank rather than filled in from memory. A wrong number here
+# is worse than a missing one, because a missing one stops a backtest and a
+# wrong one lets it run.
+#
+# ── WHAT IS VERIFIED ────────────────────────────────────────────────────────
+#
+# Read from data/instruments.csv, the Kite instrument master downloaded
+# 2026-09-04, through instruments/kite_dump.hpp -- the same parser the engine
+# loads specs with. Futures and options agree on both symbols, which is the
+# cross-check: they are separate rows in the master.
+#
+# ── WHAT IS NOT, AND WHY IT IS NOT GUESSED ──────────────────────────────────
+#
+# The master is a SNAPSHOT. It carries today's contracts and nothing about
+# what a lot size was in 2018. Nothing else in this tree encodes it either:
+# dataset/ holds OHLCV and open interest, and none of those is a function of
+# contract size that could be inverted.
+#
+# NSE has revised both of these several times in the last decade -- ROADMAP §6
+# says so, which is why rule 1 exists at all -- but "several" is the honest
+# extent of what can be asserted here. The dates and the values come from NSE's
+# published F&O lot-size circulars and nowhere else.
+#
+# ── HOW TO FILL IT ──────────────────────────────────────────────────────────
+#
+# 1. NSE publishes the F&O market-lot file and revises it by circular. Each
+#    revision names the symbol, the new lot, and the expiry from which it
+#    applies -- lot changes take effect on a CONTRACT, not on a date, so a
+#    revision announced in March can apply to the June series while March and
+#    April keep the old size. Rows below use effective_from = the first
+#    EXPIRY the new size applied to, not the circular date.
+#
+# 2. Set `verified` to the date you checked it and `source` to the circular.
+#    A row with verified=NO must not be used to size anything.
+#
+# ── AND THE PERMANENT FIX, WHICH IS NOT THIS FILE ───────────────────────────
+#
+# `instruments/contract_spec.hpp` already carries valid_from / valid_to per
+# spec, so the spec store is point-in-time BY DESIGN and this history is only
+# needed because nothing has been snapshotting the master. From today that is
+# one command:
+#
+#     altair_kite_fetch --dump-instruments data/masters/YYYY-MM-DD.csv
+#
+# run daily. A year of those and the history builds itself, verifiably, and
+# this file becomes the record of what happened BEFORE anyone was looking
+# rather than a thing to maintain by hand.
+#
+# ── COLUMNS ─────────────────────────────────────────────────────────────────
+#
+#   effective_from  first expiry the size applied to (YYYY-MM-DD), or UNKNOWN
+#   effective_to    last expiry it applied to, or OPEN if it is current
+#   lot_size        contracts per lot, in units of the underlying
+#   tick_paise      minimum price increment, in PAISE (0.10 = 10)
+#   source          where the value came from
+#   verified        the date it was checked, or NO
+#
+symbol,effective_from,effective_to,lot_size,tick_paise,source,verified
+NIFTY,UNKNOWN,2026-09-29,,,NSE F&O lot-size circulars — NOT YET TRANSCRIBED,NO
+NIFTY,2026-09-29,OPEN,65,10,data/instruments.csv via instruments/kite_dump.hpp,2026-09-04
+BANKNIFTY,UNKNOWN,2026-09-29,,,NSE F&O lot-size circulars — NOT YET TRANSCRIBED,NO
+BANKNIFTY,2026-09-29,OPEN,30,20,data/instruments.csv via instruments/kite_dump.hpp,2026-09-04
+#
+# The two UNKNOWN rows are deliberately unusable: no lot size, no tick, and
+# verified=NO. Anything that reads this file and finds an UNKNOWN row covering
+# the date it needs must BLOCK and say so (rule 9), never fall back to the
+# current size — falling back is precisely how the predecessor's P&L got
+# scaled.
+#
+# ── A NOTE THE TICK COLUMN EARNS ────────────────────────────────────────────
+#
+# NIFTY's future ticks in 10 paise and BANKNIFTY's in 20, while their OPTIONS
+# both tick in 5. That is the P1-02a carried debt -- "NSE F&O tick sizes are
+# NOT uniformly 5 paise" -- confirmed here in live reference data rather than
+# only in a reconciliation note. A cost model assuming a uniform tick is wrong
+# on both symbols, in the direction that understates slippage.

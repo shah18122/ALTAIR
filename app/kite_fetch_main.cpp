@@ -486,7 +486,7 @@ int main(int argc, char** argv) {
     // One file per month, matching what dataset/ already holds.
     std::error_code ec;
     std::filesystem::create_directories(out_dir, ec);
-    std::size_t written = 0, skipped = 0;
+    std::size_t written = 0, skipped = 0, skipped_candles = 0;
     std::string cur_month;
     std::ofstream f;
     for (const altair::RawCandle& c : all) {
@@ -497,6 +497,31 @@ int main(int argc, char** argv) {
             const std::string path =
                 std::string(out_dir) + "/" + month + ".csv";
             if (!force && std::filesystem::exists(path)) {
+                // SKIPPING A MONTH IS NOT FREE, AND THE FIRST VERSION HID IT.
+                //
+                // The skip protects an existing file from being replaced, and
+                // it is per-MONTH while a fetch covers an arbitrary RANGE. So
+                // a second fetch that reaches further back into a month
+                // already on disk drops its extra days and says only
+                // "SKIPPED 1".
+                //
+                // That is not hypothetical: it put a two-day hole in
+                // dataset/spot/nifty/1m/2024-09.csv at the seam between a
+                // two-year fetch (which started 2024-09-04) and a year-by-year
+                // one, and the hole was found later by cross-checking NIFTY
+                // against India VIX in the trading calendar -- not by anything
+                // this program said.
+                //
+                // It still skips, because overwriting good data on a whim is
+                // worse. But it now counts what it dropped and prints it, so
+                // the loss is on screen at the moment it happens.
+                std::size_t lost = 0;
+                for (const altair::RawCandle& c2 : all) {
+                    if (altair::format_ist(c2.ts_ns).substr(0, 7) == month) {
+                        ++lost;
+                    }
+                }
+                skipped_candles += lost;
                 cur_month = month;
                 ++skipped;
                 continue;
@@ -529,8 +554,12 @@ int main(int argc, char** argv) {
 
     std::printf("  wrote %zu month files to %s", written, out_dir);
     if (skipped > 0) {
-        std::printf(", SKIPPED %zu that already existed (use --force)",
-                    skipped);
+        std::printf(",\n  SKIPPED %zu month file(s) that already existed AND "
+                    "DROPPED %zu CANDLES with them.\n  If this fetch reaches "
+                    "outside what those files hold, that data is now lost -- "
+                    "re-run\n  with --force, or narrow the range to the months "
+                    "you actually want.",
+                    skipped, skipped_candles);
     }
     std::printf("\n");
     return 0;
