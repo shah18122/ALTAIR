@@ -51,6 +51,47 @@ std::string env_or_empty(const char* name)
 #endif
 }
 
+/// What to DO about a refusal, chosen from what Kite actually said.
+///
+/// THE OLD MESSAGE SENT YOU TO DO THE ONE THING THAT CANNOT HELP.
+///
+/// `LoginError::Refused` printed "a request_token is SINGLE USE and expires in
+/// minutes -- log in again for a fresh one" for every 4xx. That is right for a
+/// spent token and WRONG for a bad checksum, and Kite returns both as 403
+/// TokenException. `kite_login.hpp` carries `message` and `error_type` out
+/// precisely so they can be told apart -- its own header says these are "the
+/// same status code and completely different bugs" -- and this function threw
+/// that away and guessed.
+///
+/// Measured cost: three login round trips in one session, each one burning a
+/// fresh token, against an api_secret that was never going to work. A wrong
+/// instruction is worse than no instruction, because the user follows it.
+const char* explain_refusal(const altair::LoginFailure& f)
+{
+    // Kite's message is the authority. Matching on its text is fragile if
+    // Zerodha rewords it, so the fallback below says nothing rather than
+    // guessing -- an unrecognised refusal prints Kite's own words and stops.
+    if (f.message.find("checksum") != std::string::npos) {
+        return "the CHECKSUM did not match, which means your API SECRET does "
+               "not go with your API KEY.\n"
+               "    The request_token was fine. Logging in again will fail "
+               "identically.\n"
+               "    Re-copy the API secret from the Kite developer console "
+               "(Apps -> your app),\n"
+               "    set ALTAIR_KITE_API_SECRET, and open a NEW terminal so it "
+               "is inherited.\n"
+               "    A Kite secret is 32 characters of a-z and 0-9.";
+    }
+    if (f.message.find("expired") != std::string::npos
+        || f.message.find("invalid") != std::string::npos
+        || f.message.find("Invalid") != std::string::npos) {
+        return "the request_token is spent or expired. It is SINGLE USE and "
+               "lasts minutes --\n    log in again for a fresh one. Retrying "
+               "with this one cannot work.";
+    }
+    return "see Kite's message above -- it names the cause.";
+}
+
 const char* explain(altair::LoginError e)
 {
     using altair::LoginError;
@@ -70,9 +111,10 @@ const char* explain(altair::LoginError e)
         return "the request or response could not be moved -- RETRYABLE with "
                "the same token, if it has not expired yet";
     case LoginError::Refused:
-        return "Kite refused the exchange. A request_token is SINGLE USE and "
-               "expires in minutes -- log in again for a fresh one. Retrying "
-               "with this one cannot work";
+        // Deliberately GENERIC. `explain_refusal` below is what a refusal
+        // should actually print, because the cause is in Kite's message and
+        // not in the error code -- see the note there.
+        return "Kite refused the exchange";
     case LoginError::MalformedResponse:
         return "Kite answered 200 with a body that did not carry an "
                "access_token";
@@ -137,6 +179,11 @@ int main(int argc, char** argv)
         }
         if (!f.error_type.empty()) {
             std::printf("  error_type    : %s\n", f.error_type.c_str());
+        }
+        // WHAT TO FIX, chosen from Kite's message rather than from the
+        // status code. Printed LAST so it is the line still on screen.
+        if (f.code == altair::LoginError::Refused) {
+            std::printf("\n  WHAT TO FIX: %s\n", explain_refusal(f));
         }
         return 1;
     }
