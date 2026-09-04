@@ -33,6 +33,7 @@
 #include <feed/replay.hpp>
 
 #include "chart/chart_widget.hpp"
+#include "audit_panel.hpp"
 #include "cost_panel.hpp"
 #include "data/bar_csv.hpp"
 #include "feed_status.hpp"
@@ -369,6 +370,7 @@ private Q_SLOTS:
 
 private:
     ModelPanel* models_panel_ = nullptr;
+    AuditPanel* audit_panel_ = nullptr;
 
     void build_nav() {
         nav_ = new QListWidget;
@@ -677,15 +679,8 @@ private:
                 "no access token; and P1-07 is blocked on credentials. Four "
                 "independent blockers, none of them code I can write here.")));
 
-        pages_->addWidget(blocked_page(
-            QStringLiteral("Audit Trail"), QStringLiteral("P11Q-05"),
-            QStringLiteral(
-                "Every row must carry all five of rule 10's stamps — model "
-                "hash, feature version, config hash, spec version, tick seqno — "
-                "and a row missing one is rendered AS not reproducible rather "
-                "than with a blank column. The engine emits the seqno today; "
-                "the other four arrive with a trained model and a loaded "
-                "config.")));
+        audit_panel_ = new AuditPanel;
+        pages_->addWidget(audit_panel_);
     }
 
     void build_toolbar() {
@@ -755,6 +750,13 @@ private:
     }
 
     void refresh_status() {
+        // Rule 10's one live field. Pushed IN rather than the panel reaching
+        // for the replayer: the audit page reports what the engine did, and a
+        // page that could pull its own position could report a different one
+        // from the grid beside it.
+        if (audit_panel_ != nullptr) {
+            audit_panel_->set_tick_seqno(static_cast<std::uint64_t>(applied_));
+        }
         const std::int64_t now_ns =
             QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
         const Liveness live = feed_.liveness(now_ns);
