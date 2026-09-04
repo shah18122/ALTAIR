@@ -202,8 +202,7 @@ public:
             QStringLiteral(
                 "This is not a toggle between two equal options. Kite has a "
                 "parser, a decoder, order <i>translation</i>, an HTTPS "
-                "transport and %1. XTS has nothing — P1-05, P2-03 and P4-06 "
-                "are all deferred. <b>Neither can carry an order today</b>: "
+                "transport and %1. <b>XTS is WITHDRAWN</b> — Smit removed it from the plan on 2026-09-04 and Kite is the only venue. <b>Kite still cannot carry an order today</b>: "
                 "<code>oms/kite_adapter.hpp</code> builds the POST body and "
                 "nothing in <code>oms/</code> sends it, which is P4-05's "
                 "design rather than an omission.")
@@ -232,17 +231,19 @@ public:
 
         auto* verdict = new QLabel(this);
         verdict->setWordWrap(true);
+        // ONE VENUE NOW. XTS was withdrawn 2026-09-04, so asking whether it
+        // can trade is asking about something that is not coming -- and a
+        // second "NO" on this line reads as a second gap to close.
         const bool kite = can_trade(QStringLiteral("Kite"));
-        const bool xts = can_trade(QStringLiteral("XTS"));
         verdict->setText(
-            QStringLiteral("<b>Can place an order today — Kite: %1 · XTS: %2"
-                           "</b>")
-                .arg(kite ? QStringLiteral("yes") : QStringLiteral("NO"),
-                     xts ? QStringLiteral("yes") : QStringLiteral("NO")));
+            QStringLiteral("<b>Can place an order today — Kite: %1</b>"
+                           "  <span style='color:#7F8C8D'>(Kite is the only "
+                           "venue; XTS withdrawn)</span>")
+                .arg(kite ? QStringLiteral("yes") : QStringLiteral("NO")));
         verdict->setStyleSheet(
             QStringLiteral("color:%1;padding:6px;")
-                .arg((kite || xts) ? QStringLiteral("#1B8A4B")
-                                   : QStringLiteral("#C0392B")));
+                .arg(kite ? QStringLiteral("#1B8A4B")
+                          : QStringLiteral("#C0392B")));
         v->addWidget(verdict);
     }
 };

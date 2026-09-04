@@ -464,7 +464,7 @@ synthetic session; a captured one is still needed (blocker #6).
 | P1-02c | NSE `EQUITY_L.csv` → cash `ContractSpec` — **DONE** · series filter, quote-safe splitter · 32 checks | **DONE** |
 | P1-03a | BSE derivatives master — **DONE**, and it is the SAME parser: BSE publishes the identical UDiFF layout. Only the stamped `Exchange` differs. (BSE **cash** scrip master remains a separate artefact.) | **DONE** |
 | P1-04 | Kite instruments dump parser + token map — **DONE** · 1✓ᵐ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 94 checks | **DONE** |
-| P1-05 | XTS instruments master parser + token map | TODO |
+| P1-05 | XTS instruments master parser + token map — **WITHDRAWN 2026-09-04** — Smit removed XTS from the plan. Kite is the only venue. The FeedSource/Venue ENUMERATORS stay: `kFeedSourceCount` sizes arrays in `feed/failover.hpp`, `ContractSpec::token[]` and the plausibility gate, and P2-05's failover card exists to switch BETWEEN sources — removing the value is a refactor across three directories that buys nothing. What matters is already true: `oms/throttle.hpp` REFUSES `Venue::Xts` rather than falling back to Kite, so nothing can route there by accident | **WITHDRAWN** |
 | P1-06 | Three-way reconciler + disagreement flags + symbol blocking — **DONE** · 1✓ᵐ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 77 checks | **DONE** |
 | **P1-09** | Universe filter — **DONE** · runs at `Reconciler::add`, the single gate · 40 checks | **DONE** |
 | P1-07 | Margin fetch (SPAN + ELM) + change detection → retrain trigger | BLOCKED — creds |
@@ -482,7 +482,7 @@ sizes; a deliberately corrupted source is caught and blocks only its symbol.
 |---|---|---|
 | P2-01 | `Tick` / `DepthUpdate` normalised structs + wire schema — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 51 checks | **DONE** |
 | P2-02 | Kite binary decoder — **DONE** · 1✓ 2✓ᶜᶜ 3✓ 4✓ 5✓ **6✓ 70 ns/packet** 7✓ 8✓ · 71 checks | **DONE** |
-| P2-03 | XTS Socket.IO 1501/1502/1505 decoder | TODO |
+| P2-03 | XTS Socket.IO 1501/1502/1505 decoder — **WITHDRAWN 2026-09-04** — Smit removed XTS from the plan. Kite is the only venue. The FeedSource/Venue ENUMERATORS stay: `kFeedSourceCount` sizes arrays in `feed/failover.hpp`, `ContractSpec::token[]` and the plausibility gate, and P2-05's failover card exists to switch BETWEEN sources — removing the value is a refactor across three directories that buys nothing. What matters is already true: `oms/throttle.hpp` REFUSES `Venue::Xts` rather than falling back to Kite, so nothing can route there by accident | **WITHDRAWN** |
 | P2-04 | Normaliser: gating, per-instrument ordering, source routing — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ **6✓ 11.4 ns/submit** 7✓ 8✓ · 47 checks. (The token→`InstrumentId` binding is in P2-02 — a decoder that cannot resolve a token cannot make a `Tick` at all.) | **DONE** |
 | P2-05 | Failover watchdog + seamless primary switch — **DONE** · keys on `recv_ts` · 38 checks | **DONE** |
 | P2-06 | Session tick store — writer — **DONE** · 65 B/tick, byte-exact round trip | **DONE** |
@@ -544,7 +544,7 @@ to the paisa on 50 historical trades.
 | P4-03 | Portfolio greeks + sector + margin — **DONE** · aggregates in MONEY, not raw greeks · predicts a real reprice to 0.08% while the raw delta sum has the OPPOSITE SIGN · vega bucketed by expiry · 35 checks | **DONE** |
 | P4-04 | Order state machine — **DONE** · `oms/` opened · duplicates are traffic, stale fills never walk the position back, a fill AFTER cancel-ack is accepted · 56 checks | **DONE** |
 | P4-05 | Kite execution adapter — **DONE** · translation only, no transport, so it tests with no network · an UNKNOWN STATUS IS REFUSED (no default arm) · partial fill derived from quantities, Kite has no status for it · 51 checks | **DONE** |
-| P4-06 | XTS execution adapter | **DEFERRED** — Smit set XTS aside ("avoid xts master sample for now"). No XTS spec sample, no credentials, and `oms/throttle.hpp` REFUSES `Venue::Xts` rather than falling back to Kite, so nothing routes there by accident until this lands |
+| P4-06 | XTS execution adapter — **WITHDRAWN 2026-09-04** — Smit removed XTS from the plan. Kite is the only venue. The FeedSource/Venue ENUMERATORS stay: `kFeedSourceCount` sizes arrays in `feed/failover.hpp`, `ContractSpec::token[]` and the plausibility gate, and P2-05's failover card exists to switch BETWEEN sources — removing the value is a refactor across three directories that buys nothing. What matters is already true: `oms/throttle.hpp` REFUSES `Venue::Xts` rather than falling back to Kite, so nothing can route there by accident | **WITHDRAWN** |
 | P4-07 | Router + per-broker throttle — **DONE** · three windows, tightest binds and SAYS WHICH · 2 orders/sec exhausts the DAILY budget in 25 min while the fast limits never bind · unavailable venue REFUSED, never a silent fallback · 31 checks | **DONE** |
 | P4-08 | Reconciliation + orphan sweeper — **DONE** · an ORPHAN trips the kill switch, a ghost does not · quantity exact, price toleranced · unsorted input REFUSED (would fake orphans) · 37 checks | **DONE** |
 | P4-09 | Exit ladder + auto square-off — **DONE** · RULE 8 enforced and MEASURED: tighter-stop-first is worth Rs 1,50,000 on one gap · stops can only tighten · clock beats target · 38 checks | **DONE** |

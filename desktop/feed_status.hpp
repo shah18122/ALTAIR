@@ -174,11 +174,16 @@ enum class WiringState : std::uint8_t {
     /// The code exists and is tested, but something it needs is absent.
     BlockedOnInput,
     /// Deliberately not built yet.
-    NotBuilt
+    NotBuilt,
+    /// Removed from the plan. Distinct from NotBuilt, which is work still
+    /// queued -- a reader planning around this table would leave room for a
+    /// venue that is never coming.
+    Withdrawn
 };
 
 [[nodiscard]] inline QString wiring_label(WiringState w) {
     switch (w) {
+    case WiringState::Withdrawn:      return QStringLiteral("withdrawn");
     case WiringState::Built:          return QStringLiteral("built");
     case WiringState::BlockedOnInput: return QStringLiteral("blocked");
     case WiringState::NotBuilt:       return QStringLiteral("not built");
@@ -192,6 +197,10 @@ enum class WiringState : std::uint8_t {
     case WiringState::Built:          return QColor(0x1B, 0x8A, 0x4B);
     case WiringState::BlockedOnInput: return QColor(0xB9, 0x77, 0x0B);
     case WiringState::NotBuilt:       return QColor(0xC0, 0x39, 0x2B);
+    // GREY, not red. Red says "missing and needed"; withdrawn is
+    // neither, and colouring it like a gap keeps it on somebody's
+    // list forever.
+    case WiringState::Withdrawn:      return QColor(0x7F, 0x8C, 0x8D);
     case WiringState::Unspecified:
     default:                          return QColor(0x7F, 0x8C, 0x8D);
     }
@@ -281,13 +290,30 @@ struct WiringRow {
         {QStringLiteral("Kite"), QStringLiteral("Margin fetch (P1-07)"),
          WiringState::BlockedOnInput,
          QStringLiteral("blocked on credentials")},
+        // XTS IS WITHDRAWN, NOT PENDING, AND THE DIFFERENCE MATTERS ON A
+        // WIRING PAGE.
+        //
+        // "Deferred" reads as work still queued, and a reader planning around
+        // this table would leave room for a second venue. Smit removed XTS
+        // from the plan on 2026-09-04: Kite is the only venue.
+        //
+        // The rows stay rather than vanishing, because the ENUMERATORS stay --
+        // `kFeedSourceCount` sizes arrays in feed/failover.hpp, in
+        // ContractSpec::token[] and in the plausibility gate, so `FeedSource`
+        // still has an Xts value and someone reading the code will find it. A
+        // page that showed no XTS at all would leave that unexplained.
         {QStringLiteral("XTS"), QStringLiteral("Instrument master (P1-05)"),
-         WiringState::NotBuilt, QStringLiteral("deferred")},
+         WiringState::Withdrawn,
+         QStringLiteral("withdrawn 2026-09-04 — Kite is the only venue")},
         {QStringLiteral("XTS"), QStringLiteral("Socket.IO decoder (P2-03)"),
-         WiringState::NotBuilt, QStringLiteral("deferred")},
+         WiringState::Withdrawn,
+         QStringLiteral("withdrawn 2026-09-04")},
         {QStringLiteral("XTS"), QStringLiteral("Execution adapter (P4-06)"),
-         WiringState::NotBuilt,
-         QStringLiteral("deferred — Smit set XTS aside")},
+         WiringState::Withdrawn,
+         QStringLiteral("withdrawn 2026-09-04. `oms/throttle.hpp` REFUSES "
+                        "Venue::Xts rather than falling back to Kite, so "
+                        "nothing routes there by accident — that is the "
+                        "property that mattered and it is unchanged")},
         {QStringLiteral("Replay"), QStringLiteral("Session replayer (P0-09)"),
          WiringState::Built,
          QStringLiteral("forward-only, no peek(); drives this window")},
