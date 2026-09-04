@@ -85,6 +85,25 @@ Bars load_dir(const std::string& dir) {
     return b;
 }
 
+/// Every `step`-th bar, bucketed from the START of each session.
+///
+/// From the session start, not from the file start, so a bucket boundary never
+/// straddles an overnight gap -- and the bar kept is the LAST of each bucket,
+/// which is that bucket's close.
+Bars downsample(const Bars& b, std::size_t step) {
+    Bars d;
+    std::size_t within = 0;
+    for (std::size_t i = 0; i < b.close.size(); ++i) {
+        if (i == 0 || b.session[i] != b.session[i - 1]) { within = 0; }
+        if (within % step == step - 1) {
+            d.close.push_back(b.close[i]);
+            d.session.push_back(b.session[i]);
+        }
+        ++within;
+    }
+    return d;
+}
+
 void report(const char* label, const altair::HorizonReport& h, double cost) {
     std::printf("\n  %s\n", label);
     std::printf("    bars %zu, returns %zu, overnight steps EXCLUDED %zu\n",
@@ -202,18 +221,7 @@ int main() {
     check(h1.close.size() > 100000, "the 1-minute series loaded");
 
     for (const std::size_t step : {std::size_t{5}, std::size_t{15}}) {
-        // Bucket from the START of each session, so a boundary never
-        // straddles two days and the last bar of a bucket is its close.
-        Bars d;
-        std::size_t within = 0;
-        for (std::size_t i = 0; i < h1.close.size(); ++i) {
-            if (i == 0 || h1.session[i] != h1.session[i - 1]) { within = 0; }
-            if (within % step == step - 1) {
-                d.close.push_back(h1.close[i]);
-                d.session.push_back(h1.session[i]);
-            }
-            ++within;
-        }
+        const Bars d = downsample(h1, step);
         altair::HorizonSpec sN = spec;
         sN.initial_train = 4000;
         sN.test_len = 1000;
@@ -267,6 +275,128 @@ int main() {
         }
     }
 
+
+    // ---- FUTURES: the instrument you would actually trade -----------------
+    //
+    // Everything above is NIFTY SPOT, which is an index. You cannot trade it.
+    // The 5.5 bps round trip used throughout was derived for the FUTURE, on
+    // notional turnover, so applying it to spot was a proxy and applying it
+    // here is exact.
+    //
+    // Two futures series, and they are usable for different reasons.
+    //
+    // INTRADAY is one contract's own life -- 48 sessions, no rolls inside it
+    // at all -- so returns across it are clean by construction and short.
+    //
+    // DAILY is Kite's CONTINUOUS series, which splices contracts at each roll.
+    // A splice would put a basis jump where a market move belongs, so it was
+    // checked before being used: over 2,867 days paired against spot, the
+    // futures-minus-spot daily return has mean +0.00 bps and sd 15.4, ZERO
+    // days differ by more than 200 bps, and the largest futures moves are the
+    // COVID crash and election day, tracking spot within a percent. Kite
+    // back-adjusts. Roll-week dispersion is elevated (sd 20.6 against 13.1
+    // elsewhere), which is the basis moving and not a splice.
+    std::printf("\n  ============ FUTURES (NIFTY26SEPFUT / continuous) "
+                "============\n");
+
+    const Bars f1 = load_dir(root + "/fut/nifty/1m");
+    std::printf("\n  fut 1m: %zu files, %zu bars\n", f1.files, f1.close.size());
+    if (f1.close.size() > 5000) {
+        for (const std::size_t step : {std::size_t{5}, std::size_t{15}}) {
+            const Bars d = downsample(f1, step);
+            altair::HorizonSpec sf = spec;
+            // Folds sized for 48 sessions, not for eleven years. Reusing the
+            // spot spec here would return TooFewSamples and read as a bug.
+            sf.initial_train = step == 5 ? 1200 : 400;
+            sf.test_len = step == 5 ? 400 : 150;
+            sf.step = sf.test_len;
+            const auto rf = altair::evaluate_horizon(d.close, d.session, sf);
+            if (!rf) {
+                std::printf("\n  FUT %zu MINUTE: refused — too few samples "
+                            "(%zu bars)\n", step, d.close.size());
+                continue;
+            }
+            char lab[80];
+            std::snprintf(lab, sizeof lab,
+                          "FUT %zu MINUTE  (2026-07 -> 2026-09, ONE contract)",
+                          step);
+            report(lab, *rf, kRoundTripBps);
+            const double e = rf->dir_model - rf->dir_const;
+            const double se = std::sqrt(0.25
+                                        / static_cast<double>(rf->scored));
+            std::printf("    direction %+.4f = %.2f sigma on %zu obs  ·  "
+                        "RMSE ratio %.4f\n", e, se > 0.0 ? e / se : 0.0,
+                        rf->scored,
+                        rf->rmse_mean_bps > 0.0
+                            ? rf->rmse_model_bps / rf->rmse_mean_bps : 0.0);
+            // THE SAME-WINDOW CONTROL, because without it the futures
+            // numbers read as a statement about the INSTRUMENT.
+            //
+            // Futures show a smaller mean move than the spot rows above, and
+            // the obvious reading -- "futures move less" -- is wrong and
+            // backwards. The spot figures cover 11.6 years including COVID;
+            // these cover two quiet months of 2026. Restricting spot to the
+            // SAME 48 sessions is the only comparison that means anything.
+            Bars sp_same;
+            {
+                std::vector<std::int64_t> want(d.session);
+                std::sort(want.begin(), want.end());
+                want.erase(std::unique(want.begin(), want.end()), want.end());
+                Bars filt;
+                for (std::size_t i = 0; i < h1.close.size(); ++i) {
+                    if (std::binary_search(want.begin(), want.end(),
+                                           h1.session[i])) {
+                        filt.close.push_back(h1.close[i]);
+                        filt.session.push_back(h1.session[i]);
+                    }
+                }
+                sp_same = downsample(filt, step);
+            }
+            const auto rs = altair::evaluate_horizon(sp_same.close,
+                                                     sp_same.session, sf);
+            if (rs) {
+                std::printf("    same-window SPOT: mean |r| %.2f bps against "
+                            "futures %.2f — the gap to the\n      %s-minute "
+                            "spot row far above is the WINDOW, not the "
+                            "instrument.\n",
+                            rs->mean_abs_bps, rf->mean_abs_bps,
+                            step == 5 ? "5" : "15");
+            }
+            std::printf("    ^ 48 SESSIONS. Whatever this says, it says it "
+                        "about two months of one\n      contract, which is "
+                        "not a sample anyone should generalise from.\n");
+        }
+    }
+
+    // Daily, on the continuous series -- the long one.
+    const Bars fd = load_dir(root + "/fut/nifty/1d");
+    std::printf("\n  fut 1d: %zu files, %zu bars\n", fd.files, fd.close.size());
+    if (fd.close.size() > 1000) {
+        altair::HorizonSpec sd = spec;
+        sd.initial_train = 1000;
+        sd.test_len = 250;
+        sd.step = 250;
+        // EVERY bar is its own session in a daily file, so the overnight
+        // exclusion would drop all of them. A daily close-to-close return IS
+        // the overnight move; there is no intraday step to protect here.
+        Bars one = fd;
+        for (auto& x : one.session) { x = 0; }
+        const auto rd = altair::evaluate_horizon(one.close, one.session, sd);
+        if (rd) {
+            report("FUT DAILY  (2015-02 -> 2026-09, continuous)", *rd,
+                   kRoundTripBps);
+            const double e = rd->dir_model - rd->dir_const;
+            const double se = std::sqrt(0.25
+                                        / static_cast<double>(rd->scored));
+            std::printf("    direction %+.4f = %.2f sigma on %zu obs  ·  "
+                        "RMSE ratio %.4f\n", e, se > 0.0 ? e / se : 0.0,
+                        rd->scored,
+                        rd->rmse_mean_bps > 0.0
+                            ? rd->rmse_model_bps / rd->rmse_mean_bps : 0.0);
+        } else {
+            std::printf("    refused — too few samples\n");
+        }
+    }
 
     // ---- the protocol ----------------------------------------------------
     check(r60->scored > 500, "enough scored 60-minute forecasts");
