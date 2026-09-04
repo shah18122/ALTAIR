@@ -35,6 +35,7 @@
 #include "chart/chart_widget.hpp"
 #include "audit_panel.hpp"
 #include "cost_panel.hpp"
+#include "depth_ladder.hpp"
 #include "data/bar_csv.hpp"
 #include "feed_status.hpp"
 #include "panels.hpp"
@@ -371,6 +372,7 @@ private Q_SLOTS:
 private:
     ModelPanel* models_panel_ = nullptr;
     AuditPanel* audit_panel_ = nullptr;
+    DepthLadder* ladder_ = nullptr;
 
     void build_nav() {
         nav_ = new QListWidget;
@@ -437,7 +439,22 @@ private:
             "filter · F11 toggles full screen"));
         hint->setStyleSheet(QStringLiteral("color:#7F8C8D;padding:2px 4px;"));
         v->addWidget(hint);
-        v->addWidget(view_, 1);
+
+        // P11Q-03. The ladder sits BESIDE the grid, in a splitter, because
+        // the card puts it "on the tick grid" and depth is read against the
+        // trade that just printed. It is given nullptr today: `ReplayTick`
+        // carries a last price and a quantity and no depth at all, and the
+        // ladder says exactly that rather than drawing an empty book — which
+        // would be indistinguishable from an instrument with nothing resting.
+        auto* split = new QSplitter(Qt::Horizontal, page);
+        split->addWidget(view_);
+        ladder_ = new DepthLadder;
+        split->addWidget(ladder_);
+        split->setStretchFactor(0, 3);
+        split->setStretchFactor(1, 1);
+        v->addWidget(split, 1);
+        ladder_->show_book(nullptr);
+
         pages_->addWidget(page);
     }
 

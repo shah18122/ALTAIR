@@ -45,6 +45,7 @@ qt_add_executable(altair_desktop
     data/fits.hpp
     cost_panel.hpp
     audit_panel.hpp
+    depth_ladder.hpp
 )
 
 # P11Q-05a. The cost panel reads config/charges.toml through P3-09b's loader,
@@ -188,6 +189,20 @@ if(ALTAIR_BUILD_TESTS)
     target_include_directories(altair_desktop_chart_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME desktop_chart COMMAND altair_desktop_chart_test)
+
+    # P11Q-03. ladder_view() is pure, so the four ways a ladder renders a
+    # plausible WRONG book are testable without a window: zeroed slots drawn as
+    # liquidity, a crossed book refused instead of marked, never-updated shown
+    # as empty, and an imbalance of +/-1 conjured from an absent side.
+    qt_add_executable(altair_depth_ladder_test
+        tests/test_depth_ladder.cpp
+        depth_ladder.hpp)
+    target_link_libraries(altair_depth_ladder_test PRIVATE
+        altair_types altair_time altair_feed Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_depth_ladder_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_depth_ladder_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_depth_ladder COMMAND altair_depth_ladder_test)
 
     # Runs against the REAL series in dataset/, not a fixture. dataset/ is
     # gitignored and regenerable, so the test skips loudly rather than failing
