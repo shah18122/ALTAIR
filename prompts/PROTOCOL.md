@@ -1,6 +1,6 @@
 # Build Protocol — Claude ⇄ DeepSeek V4
 
-The operating system of this project. 159 task cards will pass through it.
+The operating system of this project. 154 task cards will pass through it.
 
 ---
 
@@ -12,7 +12,7 @@ The operating system of this project. 159 task cards will pass through it.
 | **Claude** | Architecture, task cards, interface contracts, review of every output, phase gates, financial and physics correctness | Write bulk implementation |
 | **DeepSeek V4** | Implementation of exactly one card per prompt, plus its tests | Invent interfaces, add dependencies, touch files outside its manifest |
 
-**Why this split:** 159 prompts across ~6 months will drift unless something
+**Why this split:** 154 prompts across ~6 months will drift unless something
 external carries continuity. That something is the **interface contract** in each
 card — not DeepSeek's memory, not a growing context window. Every card is
 self-contained and every header signature is given verbatim, so card 87 still

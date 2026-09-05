@@ -1,52 +1,65 @@
 # Task Card Ledger
 
-159 cards. One card = one DeepSeek prompt = one review = one commit.
+154 cards. One card = one DeepSeek prompt = one review = one commit.
 Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 
-**Progress: 142 / 159 · 89%**
+**Progress: 147 / 154 · 95%**
 
-> Recounted 2026-09-04 BY SCRIPT, not by hand. The line read `14 / 115` and
-> had since the second week — Phase 0 done bar one, Phase 1 started — while
-> nine phases had closed underneath it. A progress number nobody recomputes
-> is the same failure as a dashboard literal that cannot track a fit
-> (P11Q-07b): it keeps saying what it said, and it is the number people quote.
+> Recounted 2026-09-05 BY SCRIPT. Phase 12 closed; the total moved 159 -> 154,
+> and the rows that vanished were never cards.
 >
-> The rule: a row is DONE if its status cell says **DONE** or holds a commit
-> hash (Phase 0's older form). Counting only `**DONE**` reported Phase 0 as
-> 0 / 14, which is how the two formats were noticed at all.
+> The rule, unchanged: a row is DONE if any cell says **DONE** or holds a commit
+> hash (Phase 0's older six-column form, where the LAST cell is the hash and the
+> status is column four -- reading "the last cell" reports Phase 0 as 0 / 14,
+> which is how the two formats were noticed at all).
 >
-> The total moved 115 → 156 because the tree grew: Phase 8 took two more cards
-> (P8-13 the Markov chain, P8-14 its walk-forward), Phase 11 ran to 16, and
-> Phase 11Q — the Qt client — is 11 cards that did not exist when 115 was
-> written.
+> **Two defects in this file that the recount found, both now fixed:**
+>
+> 1. The CARRIED-DEBT table at the top has rows beginning `| P0-01 |`. They are
+>    notes, not cards, and a script that starts at the first row of the file
+>    counts four phantom Phase 0 cards. The recount now ignores anything above
+>    the first `## Phase` heading, and anything whose card number does not match
+>    the phase it sits under.
+> 2. A follow-on note about P4-01 sat inside the Phase 4 card table with a
+>    card-shaped first cell, so it counted as an eleventh Phase 4 card that was
+>    permanently not-done. Relabelled `P4-01·note`.
+>
+> Neither changed a single fact about the work. Both changed the number, which is
+> the point: **a progress figure is only as good as the parse behind it**, and
+> this file has now been wrong three separate ways -- stale (`14 / 115`),
+> internally inconsistent (header 96 against per-phase 110), and mis-parsed
+> (159 against 154).
 >
 > | Phase | Done | Cards | | Phase | Done | Cards |
 > |---|---|---|---|---|---|---|
-> | 0 | 13 | 14 | | 7 | 5 | 5 |
-> | 1 | 7 | 10 | | 8 | 15 | 15 |
-> | 2 | 9 | 11 | | 9 | 7 | 7 |
+> | 0 | 14 | 14 | | 7 | 5 | 5 |
+> | 1 | 8 | 10 | | 8 | 16 | 16 |
+> | 2 | 15 | 17 | | 9 | 7 | 7 |
 > | 3 | 14 | 14 | | 10 | 8 | 8 |
-> | 4 | 8 | 10 | | 11 | 16 | 16 |
-> | 5 | 8 | 8 | | 11Q | 10 | 12 |
-> | 6 | 5 | 7 | | 12 | 0 | 7 |
+> | 4 | 8 | 9 | | 11 | 16 | 16 |
+> | 5 | 8 | 8 | | 11Q | 17 | 17 |
+> | 6 | 5 | 7 | | 12 | 6 | 6 |
 >
-> What is NOT done is not evenly spread, and most of it is not work. Of the
-> twenty open rows, **two are cards anyone could sit down and write**:
+> **There is no card left that anyone could sit down and write.** All seven open
+> rows are decisions or external dependencies:
 >
 > | | |
 > |---|---|
-> | **Actually open** | *(none)* — P11Q-03 and P11Q-05a–d closed 2026-09-04. Everything below is blocked, deferred or withdrawn |
-> | Blocked on a sample file | P1-05, P2-03 (XTS schema — none held) |
-> | Blocked on credentials | P1-07 |
-> | Blocked on a build | P1-08b (needs the vcpkg `net` feature) |
-> | Withdrawn deliberately | P6-01, P6-02 |
-> | Deferred deliberately | P4-06 (XTS, Smit set it aside) · P2-09c (needs live order state) |
-> | Smit's decision | P4-01 |
-> | Not started — needs a live system | Phase 12, all seven |
+> | Withdrawn deliberately | P1-05, P2-03 (XTS schema -- none held) · P4-06 (XTS, Smit set it aside) · P6-01, P6-02 |
+> | Blocked on credentials | P1-07 (margin fetch) |
+> | Deferred deliberately | P2-09c (needs live order state) |
 >
-> The count above treats WITHDRAWN and DEFERRED as not-done, which understates
+> The count treats WITHDRAWN and DEFERRED as not-done, which understates
 > completion. That is deliberate: "we decided not to" and "we finished it" are
 > different facts and collapsing them is how a progress bar starts lying.
+>
+> **95% is not "nearly live."** Phase 12 shipped the machinery -- warm restart,
+> monitoring, contract-note reconciliation -- and its own checklist
+> ([`../ops/go-live.md`](../ops/go-live.md)) has blocking items OPEN: three
+> exposed API secrets unrotated, `charges.toml` still `UNVERIFIED`, the Phase 0
+> clang gate, no live subscription, and no contract note ever reconciled. The
+> cards are done; the system is not cleared to trade. Those are different claims
+> and this line exists so the 95% cannot be quoted as the second one.
 >
 > The per-phase HEADINGS were stale too, and by more than one: Phase 2 claimed
 > 14 cards over 11 rows, Phase 3 claimed 10 over 14, Phase 4 claimed 9 over 10,
@@ -490,7 +503,7 @@ sizes; a deliberately corrupted source is caught and blocks only its symbol.
 | P2-08 | L2 order book, O(1) update, crossed-book handling — **DONE** · 1✓ 2✓ᶜ 3✓ 4✓ 5✓ **6✓ 29.4 ns/apply** 7✓ 8✓ · 48 checks | **DONE** |
 | **P2-09a** | OBI, weighted OBI, microprice — **DONE** · 1✓ 2✓ 3✓ 4✓ 5✓ 6✓ 7✓ 8✓ · 43 checks | **DONE** |
 | P2-09b | VPIN + Kyle λ — **DONE** · volume-bucketed, through-the-origin, both report sample size · 45 checks | **DONE** |
-| P2-09c | Queue position — needs live order state; really Phase 4 | TODO — deferred to P4 |
+| P2-09c | Queue position — needs live order state; really Phase 4 | DEFERRED — needs live order state |
 | **P2-10a** | `broker/sha256.hpp` — FIPS 180-4, NIST-verified, cross-checked against `hashlib` — **DONE** · 24 checks | **DONE** |
 | **P2-10b** | `broker/kite_session.hpp` — login URL + session checksum — **DONE** | **DONE** |
 | P2-10c | `/session/token` POST + `data/kite_session.json` persistence — **DONE** · vcpkg `net` built (62 pkgs, 15 min) · `broker/https_client.hpp` + `broker/kite_login.hpp` + `altair_kite_login` · TLS verified end-to-end against api.kite.trade (HTTP 400 on a bogus token) · Python stopgap DELETED | **DONE** |
@@ -538,7 +551,7 @@ to the paisa on 50 historical trades.
 
 | Card | Deliverable | Status |
 |---|---|---|
-| P4-01 | **Policy numbers are Smit's, not the engine's.** `SizingInputs` now defaults every policy field to ZERO and `size_position` refuses zero, so the sizer cannot run until risk_fraction, kelly_divisor, target_vol, max_leverage and edge_sigmas are supplied. They belong in `config/` and are the trade handler's to set. | Smit |
+| P4-01·note | **Policy numbers are Smit's, not the engine's.** `SizingInputs` now defaults every policy field to ZERO and `size_position` refuses zero, so the sizer cannot run until risk_fraction, kelly_divisor, target_vol, max_leverage and edge_sigmas are supplied. They belong in `config/` and are the trade handler's to set. | Smit |
 | P4-01 | Sizing: fixed-fractional + ¼-Kelly + vol targeting — **DONE** · the MINIMUM binds and is named · rounds DOWN to whole lots · edge inside its error bar sizes to zero · 56 checks | **DONE** |
 | P4-02 | Pre-trade limits + kill switch — **DONE** · every check runs, full violation mask · sticky switch needing an explicit token · conservation in exact paise (double misses a 1-paisa breach) · 49 checks | **DONE** |
 | P4-03 | Portfolio greeks + sector + margin — **DONE** · aggregates in MONEY, not raw greeks · predicts a real reprice to 0.08% while the raw delta sum has the OPPOSITE SIGN · vega bucketed by expiry · 35 checks | **DONE** |
@@ -731,6 +744,8 @@ in the grid and every export byte-correct.
 | P11Q-01 | Shell + live grid — **DONE** · a real window driven by a replayed synthetic session · **`QAbstractItemModel` is index-addressed, and that is the hazard** — P11-03 measured 511 of 512 patches landing on the wrong instrument after one re-sort, and Qt makes it EASIER: `QModelIndex::row()` is in every handler and `QSortFilterProxyModel` adds a second index space · so the model is keyed by token, `#order` is the only thing a row number touches, and there is deliberately no `apply_at(int row, …)` · **absence is not zero**: `data()` returns an INVALID `QVariant` for a value that has not arrived, so Qt draws an empty cell rather than `0.00`, which would be a claim the position is flat · money is int64 paise until the moment it is drawn, with the only `/100` inside the formatter · **the sign is in the text** (`+13.67` / `−35.63`) and colour is redundant with it, never a substitute · the unit is in the HEADER (`LTP (INR)`) · **the status bar shows the ENGINE clock beside the wall clock** — measured 09:35 vs 21:40, and that divergence is what makes a replay visibly a replay · read-only by construction: no `Qt::ItemIsEditable`, no order-placing vocabulary · `Replayer` already forbids look-ahead one layer down, by an absent `peek()` | **DONE** |
 | P11Q-02 | Sorting + Excel-style filters — **DONE** · **sorting the DISPLAY STRING is lexicographic**, measured: `119.98  2,906.05  24,507.54  52,089.54  9.50` — the SMALLEST number in the column sorts LAST, because `9` beats every leading digit · the first fixture had four instruments and text-order happened to equal numeric order, so the test measured no difference; a Rs 9.50 far-OTM option (what a cheap weekly actually costs) is what breaks it · `lessThan` reads `SortRole` = raw int64 paise · absent sorts LAST in both directions rather than filing itself among the flat rows · **a money filter is typed in rupees and compared in paise**: “LTP > 10000” means **2 rows**, taken literally as paise it means **4** — everything over a hundred rupees · sub-paisa precision REFUSED not rounded, and an unparseable bound says so instead of applying no filter while the header claims one · **a blank matches no comparison — and the first version got this wrong**: `allow_blanks` waved blanks past an active condition, so `>= 0` returned 5 of 5 including the instrument that never traded · fixed to Excel’s actual semantics (the “(Blanks)” checkbox belongs to the VALUE LIST, not the condition) — now **4 + 1 = 5**, the same partition check P11-04 made · blank COUNT shown in the menu, so a 40%-blank column is not mistaken for a 40%-zero one · **a proxy is a second index space**: proxy row 0 holds token 5 ascending and token 2 descending, so `token_at` maps proxy→source→token in one step and no accessor returns a row · 4 tests, `ctest` 81/81 | **DONE** |
 | P11Q-03 | Shell: full screen, nav, market clock, replay scrubber — **DONE** · full screen with F11/Esc · nav bar: Watchlist · Ratio Spread · Value—DCF · Models · Aggregator · Trade Handler · Audit Trail · **the market clock reads the TICK, not the wall** — measured OPEN at engine 09:35:08 against wall 21:54:50, and the DIVERGENCE is what makes a replay visibly a replay · phase `Unknown` before the first tick, because “closed” is a claim about the market and “no data” is a claim about us · **no session time is baked in** (rule 1) — `SessionWindow` is passed in, and the demo values live in one struct named so a grep for “demo” finds it · **a backward scrub REPLAYS FORWARD**: `Replayer` has no rewind, deliberately, for the same reason it has no `peek()`, so seeking back rebuilds it and resets the model to NO DATA rather than to zero · **the unwired pages name their blocker** rather than drawing plausible nothing — a panel of invented numbers is indistinguishable from a real one | **DONE** |
+> **`P11Q-03` was issued twice** — once for the shell (nav, market clock, replay scrubber) and once for the depth ladder. Both shipped and both are DONE, so the count is right, but the NUMBER is ambiguous: `main_window.hpp`, `market_clock.hpp` and `depth_ladder.hpp` all carry `P11Q-03`, as does commit `fb6b07c`. Recorded rather than renumbered — changing the row alone would desynchronise it from four source headers, which is the drift this ledger exists to catch.
+
 | P11Q-03 | Depth ladder widget on the tick grid — **DONE** · **five slots are not five levels** and the zeroed ones are the hazard: `feed/tick.hpp` D6 says “an unpopulated level is zeroed — a strategy reading a zeroed bid as real would see a price of 0 and infinite edge”, and a ladder is the most literal renderer of that array, so the obvious loop over `kDepthLevels` draws three ₹0.00 rows under a two-level book that look exactly like liquidity · `bid_levels`/`ask_levels` are the BOUND, passed as the loop's argument rather than filtered afterwards — measured: 2 bid + 3 ask gives 5 rows, none at price 0 · **a crossed book is not an error and must still draw** (P2-08: “rejecting one breaks every pre-open”) — bid above ask is legitimate in the auction and a fault otherwise, the ladder cannot tell which, so it RENDERS and marks; not-drawable and not-tradable are different statements and both are asserted · **never updated is not empty**: `BookError::NotFound` is “never updated — NOT the same as empty (D1)”, and an instrument the feed never delivered renders identically to one with nothing resting — one of those is OUR fault, so the view carries the flag and the test builds both to show they differ only in it · **imbalance with one side empty is UNSET, not ±1** — (bid−ask)/(bid+ask) reads +1.000 as maximum buying pressure when it is the absence of a measurement, the same discipline as an invalid QVariant for a tick that has not arrived · cumulative counts from the TOUCH while asks print worst-first, so row order and sweep order disagree deliberately · a level count past the array is clamped rather than read out of bounds · `ladder_view()` is pure, 15 checks without a window · shows nothing today and says so: `ReplayTick` carries a last price and a quantity and no depth at all | **DONE** |
 | P11Q-04 | Chart core: candles, volume, crosshair — **DONE** · **a nanosecond timestamp in a float32 is not a timestamp**, re-measured in C++: at 1.79e18 ns one float32 step is **137.4 SECONDS**, and 72,000 ticks over two hours collapse to **53 distinct x positions** · rebasing the origin in INT64 *before* the conversion keeps all 72,000, and inside the window float32 resolves to 0.524 ms · **price is fine, notional is not**: 0.25 paise at NIFTY 24,000 against a 5-paise tick, but **Rs 41** at a Rs 50 crore book — so the axis is rebased PER SERIES, and the reason is not “prices are big” · **built as a QWidget with QPainter, not QOpenGLWidget** — a few hundred candles draw in well under a frame, and a shader plus a VBO buys headroom nobody measured a need for while adding a driver-dependent crash path · the float32 boundary is kept EXPLICIT in the data path (`Vertex` holds floats, exactly what a VBO would) so moving to a GPU later cannot silently drop the rebasing · **a bucket boundary belongs to one candle**: half-open [start,end) reconciles 60,000 ticks exactly, while a closed interval double-counts **1,200 boundary ticks — +2.0%** · `check_conservation` is drawn ON SCREEN, so a chart whose volume disagrees with the tape says so · **the forming candle is hollow and dashed** (rule 7 — its close is the latest trade, not a close) · a dead minute produces NO candle · the crosshair reports that candle’s OWN OHLC, never an interpolation, and says when it is past the end · the chart is built from `applied_` ticks only — the bound is the ARGUMENT, not a filter afterwards · **an IST/UTC bug the screen caught**: the demo tape opened at 09:15 UTC against an IST session window, so the status bar correctly read CLOSED at what looked like mid-session — timestamps are UTC everywhere, only `SessionWindow` is IST, and the engine clock now displays IST · 4 tests, `ctest` 82/82 | **DONE** |
 | P11Q-05 | Panels: strategy builder, cost breakdown, audit trail, kill switch — **DONE**, split into **P11Q-05a** (cost breakdown), **05b** (audit trail), **05c** (kill switch) and **05d** (the chain). Each has its own row; this one is closed by them | **DONE** |
@@ -747,16 +762,16 @@ in the grid and every export byte-correct.
 | P11Q-10 | Analytics page — **DONE** · Monte Carlo and z-score were built and tested since P6-07/P3-06a and had no page, which is why Smit could not find them · run live on 8,755 daily bars: excess kurtosis **11.34**, and **136 of 8,755 days beyond 3σ (1.55%) against a normal's 0.27%** — five and a half times the tail, measured rather than asserted · **the Monte Carlo result is better than P6-07's argument**: block bootstrap mean max drawdown **59.85%** against an ACTUAL realised **59.86%** (out by 0.01 points), IID **54.25%** (out by 5.60, and it UNDERSTATES — the dangerous direction, since a risk model claiming a smaller worst drawdown sizes you bigger than the market allows) · the draft said the block figure was “in the right neighbourhood”; it landed on the number, so the page prints both distances instead · display bug worth the note: **`%%` is not an escape in QString** — printf has it, `QStringLiteral`+`.arg()` does not, and the two are indistinguishable in source | **DONE** |
 | P11Q-11 | Watchlist profile — **DONE** · segment, expiry, strike, CE/PE, lot and tick read from the Kite master through the real parser; the NAME comes from the master too, which is authoritative · **bid and ask are EMPTY and the columns exist so that is visible** — the master is reference data and a live subscription (P2-02) is what fills them; a watchlist with no bid column looks complete, one with an empty bid column says what is missing · **and it indexed 3 contracts of 108,411 by reading past an array**: there are TWO enums called `FeedSource`, `altair::` is {Kite=0, Xts=1} and sizes `token[2]`, `altair::ui::` is {Unspecified, Replay, Kite, Xts} with Kite=2 — this file is in `altair::ui`, so the unqualified name indexed `token[2]`, one past the end. It compiled and did not crash · found by putting the master's contract COUNT on screen rather than trusting blank cells, and now guarded by a `static_assert` that fails the build · **and the expiry was a day early**: stored as an instant, formatted in UTC, so an IST-dated contract printed 2026-09-28 for the 29th — not cosmetic, that is the date a roll is planned around | **DONE** |
 
-## Phase 12 — Production (7)
+## Phase 12 — Production (6)
 
 | Card | Deliverable | Status |
 |---|---|---|
-| P12-01 | Linux deployment: CPU isolation, hugepages, io_uring, NIC tuning | TODO |
-| P12-02 | Process supervision, crash recovery, warm restart from state | TODO |
-| P12-03 | Monitoring + alerting (latency, drops, drift, PnL, invariants) | TODO |
-| P12-04 | Daily reconciliation vs broker contract notes | TODO |
-| P12-05 | Disaster recovery + position-flattening runbook | TODO |
-| P12-06 | Go-live checklist + staged capital ramp | TODO |
+| P12-01 | Linux deployment notes — **DONE (a PLAN, and it says so)** · `ops/linux-deployment.md` · **nothing in it is measured, because Altair has never compiled on Linux** and the Phase 0 clang gate is still blocked on this box · leads with the part an ops document usually buries: against Kite's 10–50 ms round trips **none of this tuning buys a microsecond you can trade on**, so the honest case is throughput (every model on every tick, which is why the engine is event-driven at all) and JITTER, not latency · the hazard specific to this codebase is the TSC: `tsc_clock` MEASURES its frequency, and without `constant_tsc`/`nonstop_tsc`, on one socket, calibrated off a quiet machine, every duration P12-03 reports carries an unknown scale factor — so the calibration's confidence interval is a startup gate, per ROADMAP §3 · `isolcpus`+`nohz_full`+`rcu_nocbs` together or not at all; THP `madvise` never `always` (khugepaged compaction IS the stall being removed); SQPOLL pinned to a housekeeping core, never an isolated one; **and the kill-switch read stays a plain synchronous `read()`** — one queued behind 400 log writes is not a kill switch · in-process `desktop/` is a live constraint here: Qt must never repaint on an isolated core | **DONE** |
+| P12-02 | Warm restart from state — **DONE** · four ways a restart resumes into a lie, each producing a file that PARSES: torn by the crash it exists to survive (checksum + temp-and-rename, so the file is the old snapshot or the whole new one, never a splice) · arithmetically broken but internally consistent — **a checksum proves the bytes survived and says nothing about whether the numbers were right when they were written**, so the conservation invariant travels with the snapshot and the restore recomputes it in integer paise · from yesterday (resuming stale positions is worse than starting flat, because the engine hedges against something it does not hold; the bypass is a parameter at the call site, not an inherited default) · and a latched breach, checked FIRST, because **the one thing a restart must never be is a way to clear a kill switch** · `save_snapshot` also refuses to WRITE a state that already fails conservation: persisting it makes the next restart's failure look like a storage fault rather than the engine fault it is, and catching it at the write names the tick that produced it | **DONE** |
+| P12-03 | Monitoring + alerting — **DONE** · **a threshold alarm cannot see a metric that stopped arriving** — drops 0, latency 0 ns, residual 0 paise, every limit satisfied, and no tick for forty minutes; the monitor is not merely useless there, it is ACTIVELY REASSURING · so every gauge carries a heartbeat and **staleness is checked BEFORE the threshold** (checking the value first judges a dead signal on its last-known number, which was fine), and `Stale` outranks `Critical` because a breach is the system telling you something bad while a stale gauge is it having stopped telling you anything · a gauge that never reported is `Unobserved`, not `Ok`: a monitor that boots green passes every check it was given and fails the one it needed — did anyone connect · **the documented exception to rule 7**: this is the one component that must not read time off the tick, because the event it detects is ticks STOPPING and a tick-derived clock freezes at exactly that moment, so the one alarm that mattered could not fire · latency is a percentile — 985 ticks at 40 us and 15 at 3 ms gives mean 84.4 us and median 41 us, **both clearing a 200 us budget**, against a p99 of 3146 us; buckets report their UPPER edge because one that rounds down clears a budget it did not · and the first two octaves cannot be quartered ({1} and {2,3} have no four parts), so the test asserts the property that HOLDS over reachable buckets rather than one the integers do not permit | **DONE** |
+| P12-04 | Contract-note reconciliation — **DONE** · the cost model is a prediction and the note is the fact; this is the only place the two ever meet, and it matters more here than in a reporting tool because rule 5 prices every signal net of cost BEFORE the signal exists — a wrong rate produces wrong TRADES, not a wrong report · **a reconciler that matches on a total matches nothing**: the test's case 3 over-charges one trade by ₹5 and under-charges another by ₹5, the day's net difference is EXACTLY ZERO, and a total-matching check passes it · **and it reconciles head by head, not trade by trade** — driven through the real `compute_cost` against the two real schedules, an engine still on pre-April rates on 2026-04-01 yields ONE finding, `STT` on `O2`, **−47,093 paise**: 65 NIFTY futures at 24,150 is ₹15,69,750 of turnover and 0.05% − 0.02% of that is ₹470.93 to the paisa, on the SELL only because futures STT is sell-side, while the buy leg still agrees · the sign is kept, not the magnitude — negative means the engine UNDER-charged, the direction that makes an unprofitable strategy look profitable · four outcomes, and **`BrokerOnly` is the dangerous one**: a fill the engine never booked, so position, margin and conservation are all wrong while nothing in the engine reports a problem, and a reconciler that diffs only MATCHED rows cannot see it · a quantity difference reports `FillMismatch` not `ChargeMismatch` — of course the STT differs, it is a percentage of a different trade, and blaming the cost model sends the fix to the wrong module · **an empty note is not a clean day**: zero rows from an expired session makes “0 mismatches” a true answer to the wrong question, while a genuinely flat day still reconciles | **DONE** |
+| P12-05 | DR + position-flattening runbook — **DONE (WRITTEN, NEVER REHEARSED)** · `ops/disaster-recovery.md` · the rule that outranks the document: **you cannot flatten what you do not know you hold** — flattening acts on the ENGINE's position, so a P12-04 `BrokerOnly` fill leaves the real one open and can leave it DOUBLED, the flatten order being a new position against a holding the engine cannot see · so stop, then look, then act; the stop is a `touch` on one file and works when the UI is frozen, the process is deaf to signals, and you are on a phone · **flattening is a trade, and usually the worst-priced one of the day** — legging out a butterfly at market breaks the hedge before it removes it (P11Q-05d: a Touch is a bid AND an ask, so the round trip is not the mid), and a charge mismatch is money-wrong, position-right, which is not an emergency · the restart WILL refuse and that is correct: `BreachLatched` is checked first, and working around it would make rebooting the way every operator under pressure discovers the alarm stops · names what has no procedure — cross-machine failover, rejection storms, and the rehearsal itself | **DONE** |
+| P12-06 | Go-live checklist + capital ramp — **DONE, AND ITS OWN BLOCKING ITEMS ARE OPEN** · `ops/go-live.md` · the card is the checklist, not permission to trade, and this row says so because “P12-06 DONE” must not read as “cleared to go live” · **an item that cannot fail is not a check**, so every line names its evidence — a command, a file, a number · blocking and OPEN: three API secrets exposed in a development transcript and unrotated · `charges.toml` still reads `UNVERIFIED`, which is load-bearing for the same reason as P12-04 · the Phase 0 clang gate · no live subscription · no contract note has ever been reconciled · **the neural tier does not go live**: no `.pt` or `.onnx` artefact exists and `ALTAIR_ENABLE_TORCH` is OFF · ramp is paper → shadow → 1% → 5% → 10%, measured in SESSIONS not days, and **a conservation breach resets to stage 0, not to the previous stage** — “we fixed it” is not the same as knowing what it was · carries the −7.19σ finding as a sizing rule: a 15-minute edge measured at +2.75σ on one window inverted on 9× the data, so nothing is sized on a result that has not survived more data · closes by naming what 20 sessions does NOT prove — one expiry, probably one regime; passing the ramp is evidence the plumbing works, not that the edge is real | **DONE** |
 
 **Exit:** live with 10% of intended capital.
 

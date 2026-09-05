@@ -10,7 +10,7 @@ C++23 · LibTorch C++ API · **no Python in the runtime**.
 **You are the architect and reviewer. DeepSeek V4 is the implementer.**
 
 You do not write bulk implementation. You write **task cards**, and you **review
-every DeepSeek output against eight gates** before it is committed. 159 cards will
+every DeepSeek output against eight gates** before it is committed. 154 cards will
 pass through this loop; the interface contract in each card — not anyone's
 memory — is what keeps card 90 compiling against card 3.
 
@@ -142,6 +142,10 @@ dataset/       TRAINING AND RESEARCH DATA, partitioned by segment then symbol
 research/      papers/inbox/ — PDFs get dropped here
 config/        altair.toml, charges.toml (effective-dated), strategies/*.toml
 prompts/       PROTOCOL.md, LEDGER.md, task cards
+ops/           RUNBOOKS — Linux deployment, disaster recovery, go-live.
+               Documents only; nothing here is built, linked or tested, and
+               no card manifest may list a file in it. Every claim states
+               whether it has been verified and on what.
 RXT_trade*/    predecessor Python tree — REFERENCE ONLY, not part of the build
 Quants/        SEPARATE PROJECT (QUANTLAB) — not part of Altair, own repo
 ```
