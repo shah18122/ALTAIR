@@ -984,7 +984,7 @@ requires beating a co-located HFT to a quote.
 
 ## 12. Phased plan — task cards
 
-96 cards as planned here; the tree grew to **154** as phases split (Phase 11Q, the
+96 cards as planned here; the tree grew to **156** as phases split (Phase 11Q, the
 Qt client, did not exist when this was written). `prompts/LEDGER.md` is the count
 that is recomputed; this one is the original plan.
 Durations assume you run ~3–5 cards per working day.
@@ -1264,7 +1264,7 @@ render one. No panel shows a number it cannot source.
 **Exit:** live with 10% of intended capital.
 
 **Total as planned: 96 cards, ~26 weeks sequential, ~22 with Phase 7 overlapped.**
-**Actual: 154 cards.** See `prompts/LEDGER.md`.
+**Actual: 156 cards.** See `prompts/LEDGER.md`.
 
 ---
 
