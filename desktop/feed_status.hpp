@@ -43,6 +43,8 @@
 
 #pragma once
 
+#include "broker_status.hpp"
+
 #include <core/time/timestamp.hpp>
 
 #include <QColor>
@@ -236,6 +238,37 @@ struct WiringRow {
 #endif
 }
 
+/// The wiring row's state, DERIVED. Only a session that is present, well
+/// formed and issued today can reach `Built`; anything else is amber or red,
+/// which is the point -- the row is read to decide whether to trust the rest
+/// of the window.
+[[nodiscard]] inline WiringState broker_wiring_state() {
+#ifdef ALTAIR_SESSION_FILE
+    const BrokerState b = probe_broker(QStringLiteral(ALTAIR_SESSION_FILE),
+                                       true);
+#else
+    const BrokerState b = probe_broker(QStringLiteral("data/kite_session.json"),
+                                       true);
+#endif
+    switch (b.link) {
+    case BrokerLink::Authenticated: return WiringState::Built;
+    case BrokerLink::Malformed:
+    case BrokerLink::Rejected:      return WiringState::NotBuilt;
+    default:                        return WiringState::BlockedOnInput;
+    }
+}
+
+[[nodiscard]] inline QString broker_wiring_note() {
+#ifdef ALTAIR_SESSION_FILE
+    const BrokerState b = probe_broker(QStringLiteral(ALTAIR_SESSION_FILE),
+                                       true);
+#else
+    const BrokerState b = probe_broker(QStringLiteral("data/kite_session.json"),
+                                       true);
+#endif
+    return broker_label(b.link) + QStringLiteral(" \u2014 ") + b.detail;
+}
+
 [[nodiscard]] inline std::vector<WiringRow> wiring() {
     return {
         {QStringLiteral("Kite"), QStringLiteral("Instrument master (P1-04)"),
@@ -269,14 +302,19 @@ struct WiringRow {
          QStringLiteral("this build has no `net` feature; configure with "
                         "--preset net")},
 #endif
+        // ---- PRESENCE WAS NEVER THE QUESTION ----------------------------
+        //
+        // This row used to say "present / not present" and explain in prose
+        // that presence is not validity. That is an honest caption on a
+        // misleading state: a reader scanning a column of green sees green.
+        //
+        // `probe_broker` (P11Q-12) answers the question the row is actually
+        // asking, from the file's METADATA and never its token -- and on this
+        // machine it turns the row AMBER, because the session parses, says
+        // `success`, and was issued on an earlier IST day. Kite tokens are
+        // daily. The old check called that "Built".
         {QStringLiteral("Kite"), QStringLiteral("Session / access token"),
-         session_present() ? WiringState::Built : WiringState::BlockedOnInput,
-         session_present()
-             ? QStringLiteral("data/kite_session.json present. The token "
-                              "expires next morning; this says it EXISTS, not "
-                              "that it is still valid")
-             : QStringLiteral("no data/kite_session.json; the browser login "
-                              "is Smit's step")},
+         broker_wiring_state(), broker_wiring_note()},
         {QStringLiteral("Kite"), QStringLiteral("Historical candles (P2-12)"),
 #if ALTAIR_HAVE_NET
          WiringState::Built,

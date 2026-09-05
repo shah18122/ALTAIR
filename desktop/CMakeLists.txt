@@ -213,6 +213,30 @@ if(ALTAIR_BUILD_TESTS)
     # Runs against the REAL series in dataset/, not a fixture. dataset/ is
     # gitignored and regenerable, so the test skips loudly rather than failing
     # if it is absent -- see the guard in the test's own output.
+    # P11Q-12. The Kite connection pill. The card is that presence is not
+    # validity: the session file on this machine parses, reports success, and
+    # is a day old, and Kite access tokens are daily.
+    qt_add_executable(altair_broker_status_test
+        tests/test_broker_status.cpp
+        broker_status.hpp)
+    target_link_libraries(altair_broker_status_test PRIVATE
+        altair_types altair_time Qt6::Core Qt6::Gui)
+    target_include_directories(altair_broker_status_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_broker_status_test PROPERTIES WIN32_EXECUTABLE OFF)
+    # THE TEST NEEDS THE SAME DEFINE AS THE UI, and it has to be set HERE.
+    #
+    # The first attempt put it beside the altair_desktop define higher up in
+    # this file, guarded by if(TARGET ...). That guard is evaluated before this
+    # block runs, so the target did not exist yet and the define was silently
+    # skipped -- the test then asserted the NO-TRANSPORT branch inside the net
+    # preset and passed, checking the opposite of what ships. Found by reading
+    # the test output rather than its exit code, which was green either way.
+    if(ALTAIR_HAVE_NET)
+        target_compile_definitions(altair_broker_status_test PRIVATE ALTAIR_HAVE_NET=1)
+    endif()
+    add_test(NAME desktop_broker_status COMMAND altair_broker_status_test)
+
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
     # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.
     target_link_libraries(altair_bar_csv_test PRIVATE

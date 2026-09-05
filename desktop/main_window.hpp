@@ -40,6 +40,7 @@
 #include "chain_panel.hpp"
 #include "kill_switch.hpp"
 #include "data/bar_csv.hpp"
+#include "broker_status.hpp"
 #include "feed_status.hpp"
 #include "panels.hpp"
 #include "filter.hpp"
@@ -746,6 +747,7 @@ private:
 
     void build_status() {
         pill_ = new QLabel;
+        broker_pill_ = new QLabel;
         who_ = new QLabel;
         phase_ = new QLabel;
         engine_clock_ = new QLabel;
@@ -754,6 +756,14 @@ private:
         filters_ = new QLabel;
 
         statusBar()->addWidget(pill_);
+        // TWO PILLS, BECAUSE THEY ANSWER TWO QUESTIONS.
+        //
+        // The first is "is data arriving" and the second is "can we talk to
+        // the broker". They are independent: a replay shows LIVE with the
+        // broker untouched, and a good Kite session shows NO DATA until
+        // something subscribes. One pill covering both would have to pick a
+        // colour for a state that is half green.
+        statusBar()->addWidget(broker_pill_);
         statusBar()->addWidget(progress_);
         statusBar()->addWidget(filters_);
         statusBar()->addPermanentWidget(who_);
@@ -774,6 +784,35 @@ private:
         }
     }
 
+    /// Re-read the session file and repaint the Kite pill.
+    ///
+    /// `verified` is 0 here and stays 0 until something actually calls the
+    /// API, so this build can reach `Unverified` and never `Authenticated`.
+    /// That is correct rather than a limitation: nothing in this process has
+    /// made a call, so nothing in this process has grounds to claim the token
+    /// works.
+    void refresh_broker_pill() {
+#ifdef ALTAIR_SESSION_FILE
+        const QString path = QStringLiteral(ALTAIR_SESSION_FILE);
+#else
+        const QString path = QStringLiteral("data/kite_session.json");
+#endif
+        const BrokerState b = probe_broker(path, true);
+        QString text = QStringLiteral("  %1").arg(broker_label(b.link));
+        if (!b.user_id.isEmpty()) {
+            text += QStringLiteral(" · %1").arg(b.user_id);
+        }
+        text += QStringLiteral("  ");
+        broker_pill_->setText(text);
+        broker_pill_->setStyleSheet(
+            QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;")
+                .arg(broker_colour(b.link).name()));
+        // The label is the state; the tooltip is what to DO about it. A pill
+        // that only shows a colour makes the operator go looking for the
+        // reason, which is the moment they stop trusting the pill.
+        broker_pill_->setToolTip(b.detail);
+    }
+
     void refresh_status() {
         // Rule 10's one live field. Pushed IN rather than the panel reaching
         // for the replayer: the audit page reports what the engine did, and a
@@ -781,6 +820,14 @@ private:
         // from the grid beside it.
         if (audit_panel_ != nullptr) {
             audit_panel_->set_tick_seqno(static_cast<std::uint64_t>(applied_));
+        }
+        // The broker probe opens a file, so it runs every ~5 s rather than
+        // every frame. A session's state changes on the scale of a login, not
+        // a repaint, and re-reading it 60 times a second would be a syscall
+        // storm to answer a question whose answer is hours old.
+        if (since_broker_-- <= 0) {
+            since_broker_ = 300;
+            refresh_broker_pill();
         }
         const std::int64_t now_ns =
             QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
@@ -894,6 +941,8 @@ private:
     QSlider* scrub_ = nullptr;
 
     QLabel* pill_ = nullptr;
+    QLabel* broker_pill_ = nullptr;
+    int since_broker_ = 0;
     QLabel* who_ = nullptr;
     QLabel* phase_ = nullptr;
     QLabel* engine_clock_ = nullptr;
