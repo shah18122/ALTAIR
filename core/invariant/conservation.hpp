@@ -1,5 +1,33 @@
 #pragma once
 
+// ---------------------------------------------------------------------------
+// AN OPTIMISED BUILD MAY NOT COMPILE THE LEDGER OUT.
+//
+// `ALTAIR_STRICT_INVARIANTS` is an option named "Check conservation laws every
+// tick", and it was OFF in the `prod` preset -- the one build that would ever
+// hold real money. It changed nothing at the time, because no code reads it,
+// and that is what made it dangerous rather than harmless: the obvious way to
+// honour a flag with that name is to wrap THIS class in `#if`, and the day
+// somebody does, the production binary silently loses the check that CLAUDE.md
+// says trips the kill switch.
+//
+// So the flag is now ON everywhere and this guard stops it drifting back. The
+// check is an integer comparison on a value already in a register; there is no
+// performance argument for removing the thing that stops the engine trading on
+// books it knows are wrong (rule 9).
+//
+// A genuinely unchecked build is still possible -- for a benchmark measuring
+// the ledger's own cost -- but it has to be asked for by name, and a binary
+// built that way is not `prod`.
+// ---------------------------------------------------------------------------
+#if defined(NDEBUG) && defined(ALTAIR_STRICT_INVARIANTS) \
+    && (ALTAIR_STRICT_INVARIANTS == 0) \
+    && !defined(ALTAIR_ALLOW_UNCHECKED_LEDGER)
+#  error "Optimised build with ALTAIR_STRICT_INVARIANTS=0. The conservation \
+ledger is a safety property, not a debug aid. Define \
+ALTAIR_ALLOW_UNCHECKED_LEDGER if you really mean it -- and do not ship it."
+#endif
+
 // P0-09a — the conservation ledger.
 //
 // CLAUDE.md's physics discipline: conservation laws become runtime invariants.

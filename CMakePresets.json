@@ -67,14 +67,14 @@
     },
     {
       "name": "prod",
-      "displayName": "Production \u2014 Release, no tests, native arch",
+      "displayName": "Production \u2014 Release, native arch, invariants ON, no test binaries",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "ALTAIR_BUILD_TESTS": "OFF",
         "ALTAIR_BUILD_BENCH": "OFF",
         "ALTAIR_NATIVE_ARCH": "ON",
-        "ALTAIR_STRICT_INVARIANTS": "OFF"
+        "ALTAIR_STRICT_INVARIANTS": "ON"
       }
     },
     {
@@ -148,6 +148,26 @@
     {
       "name": "net",
       "configurePreset": "net",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": false
+      }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": false
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
       "output": {
         "outputOnFailure": true
       },

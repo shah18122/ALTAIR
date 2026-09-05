@@ -59,9 +59,25 @@ cmake --build --preset %PRESET%
 if %ERRORLEVEL% NEQ 0 exit /b 1
 
 echo.
+REM A preset that deliberately builds NO test binaries -- `prod` sets
+REM ALTAIR_BUILD_TESTS=OFF so a shipped tree carries no test executables -- has
+REM nothing for ctest to run, and ctest calls that an error. Reporting a clean
+REM Release build as a failure trains you to ignore the exit code, so the
+REM no-tests case is named and passed, and every other ctest failure still
+REM fails. It says WHERE the tests were run instead, because "no tests" must
+REM never read as "tests passed".
 echo === test [%PRESET%] ===
 ctest --preset %PRESET% --output-on-failure
-exit /b %ERRORLEVEL%
+set CTEST_RC=%ERRORLEVEL%
+if %CTEST_RC% NEQ 0 (
+    if /I "%PRESET%"=="prod" (
+        echo.
+        echo NOTE: `prod` builds no test binaries by design ^(ALTAIR_BUILD_TESTS=OFF^).
+        echo       This is NOT a passing test run. Verify with: build.bat default
+        exit /b 0
+    )
+)
+exit /b %CTEST_RC%
 
 :no_vcvars
 echo ERROR: vcvars64.bat not found. Edit VSROOT at the top of this script.

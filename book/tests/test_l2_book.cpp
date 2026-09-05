@@ -3,6 +3,7 @@
 // No check description here may contain the substring FAIL.
 
 #include <book/l2_book.hpp>
+#include <core/testing/latency_gate.hpp>
 
 #include <cstdio>
 #include <cstddef>
@@ -334,9 +335,17 @@ void benchmark()
                 kIters, secs, per_ns);
     check(sink == static_cast<std::size_t>(kIters) * 512,
           "every apply succeeded -- the loop was not optimised away");
-    check(per_ns < 200.0,
-          "an apply costs well under 200 ns, so the book is not the "
-          "bottleneck beside a 70 ns decode and an 11 ns normalise");
+    // Gate 6, only where the optimiser ran. See latency_gate.hpp.
+    if (::altair::testing::latency_gate_active()) {
+        check(per_ns < 200.0,
+              "an apply costs well under 200 ns, so the book is not the "
+              "bottleneck beside a 70 ns decode and an 11 ns normalise");
+    } else {
+        ::altair::testing::latency_not_measured(
+            "an apply costs well under 200 ns, so the book is not the "
+            "bottleneck beside a 70 ns decode and an 11 ns normalise",
+            per_ns, 200.0);
+    }
 }
 
 } // namespace

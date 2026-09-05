@@ -7,6 +7,7 @@
 // No check description here may contain the substring FAIL.
 
 #include <feed/kite_decoder.hpp>
+#include <core/testing/latency_gate.hpp>
 
 #include <cstdio>
 #include <cstddef>
@@ -531,8 +532,18 @@ void benchmark()
                 per_frame_ns, per_packet_ns);
     check(sink == static_cast<std::size_t>(kIters) * 10,
           "every iteration decoded ten ticks -- the loop was not optimised away");
-    check(per_frame_ns < 3000.0,
-          "a full 10-packet frame decodes well inside the 3 us budget");
+    // GATE 6 IS A CLAIM ABOUT THE SHIPPED BINARY. The measurement above
+    // runs in every build because the number is useful in all of them; only
+    // the COMPARISON is gated, and the unmeasured case prints loudly rather
+    // than passing in silence. See core/testing/latency_gate.hpp.
+    if (::altair::testing::latency_gate_active()) {
+        check(per_frame_ns < 3000.0,
+              "a full 10-packet frame decodes well inside the 3 us budget");
+    } else {
+        ::altair::testing::latency_not_measured(
+            "a full 10-packet frame decodes well inside the 3 us budget",
+            per_frame_ns, 3000.0);
+    }
 }
 
 } // namespace

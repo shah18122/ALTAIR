@@ -3,6 +3,7 @@
 // No check description here may contain the substring FAIL.
 
 #include <feed/normaliser.hpp>
+#include <core/testing/latency_gate.hpp>
 
 #include <cstdio>
 #include <cstddef>
@@ -346,9 +347,17 @@ void benchmark()
                 kIters, secs, per_ns);
     check(sink == static_cast<std::size_t>(kIters) * 256,
           "every submit published -- the loop was not optimised away");
-    check(per_ns < 100.0,
-          "a submit costs well under 100 ns, so the normaliser is not the "
-          "bottleneck beside a 70 ns decode");
+    // Gate 6, only where the optimiser ran. See latency_gate.hpp.
+    if (::altair::testing::latency_gate_active()) {
+        check(per_ns < 100.0,
+              "a submit costs well under 100 ns, so the normaliser is not the "
+              "bottleneck beside a 70 ns decode");
+    } else {
+        ::altair::testing::latency_not_measured(
+            "a submit costs well under 100 ns, so the normaliser is not the "
+            "bottleneck beside a 70 ns decode",
+            per_ns, 100.0);
+    }
 }
 
 } // namespace
