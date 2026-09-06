@@ -246,4 +246,144 @@ terminal_growth_sensitivity(double base_cf, const GrowthProfile& g,
     return (up->total - base->total) / base->total;
 }
 
+// ---------------------------------------------------------------------------
+// P10-02b — the two things that make a DCF falsifiable
+// ---------------------------------------------------------------------------
+
+/// A two-way sensitivity table over WACC and terminal growth.
+///
+/// A DCF QUOTED AS ONE NUMBER IS DISHONEST, and not by a little. The two
+/// inputs that move it most are the two nobody can observe: a discount rate
+/// assembled from a beta and an equity risk premium that are themselves
+/// estimates, and a growth rate that runs to forever. Moving each by half a
+/// percent -- well inside any analyst's uncertainty -- routinely swings the
+/// answer by more than the discount to market price that the whole exercise
+/// was meant to establish.
+///
+/// So the deliverable is the GRID, and `spread()` below is the number to read
+/// first: if the range is wider than the mispricing being claimed, the
+/// valuation has not answered the question it was asked.
+struct SensitivityGrid {
+    static constexpr std::size_t kMax = 9;
+    std::size_t n_rate = 0;      ///< rows: discount rate
+    std::size_t n_growth = 0;    ///< cols: terminal growth
+    double rate[kMax] = {};
+    double growth[kMax] = {};
+    /// value[i * n_growth + j]. Zero where the cell was refused (g >= r).
+    double value[kMax * kMax] = {};
+    bool priced[kMax * kMax] = {};
+
+    /// Largest finite value divided by the smallest. A ratio, not a
+    /// difference, so it is readable without knowing the currency scale.
+    [[nodiscard]] double spread() const noexcept {
+        double lo = 0.0, hi = 0.0;
+        bool any = false;
+        for (std::size_t k = 0; k < n_rate * n_growth; ++k) {
+            if (!priced[k]) { continue; }
+            if (!any) { lo = hi = value[k]; any = true; continue; }
+            if (value[k] < lo) { lo = value[k]; }
+            if (value[k] > hi) { hi = value[k]; }
+        }
+        return (any && lo > 0.0) ? hi / lo : 0.0;
+    }
+
+    /// How many cells could not be priced. NOT zero-filled silently: a cell
+    /// where terminal growth meets the discount rate is not a low valuation,
+    /// it is an undefined one, and averaging a zero into a range would drag
+    /// the answer down while looking like arithmetic.
+    [[nodiscard]] std::size_t refused() const noexcept {
+        std::size_t r = 0;
+        for (std::size_t k = 0; k < n_rate * n_growth; ++k) {
+            if (!priced[k]) { ++r; }
+        }
+        return r;
+    }
+};
+
+[[nodiscard]] inline std::expected<SensitivityGrid, DcfError>
+sensitivity_grid(double base_cf, const GrowthProfile& g, double centre_rate,
+                 double rate_step, double growth_step,
+                 std::size_t half = 2) noexcept {
+    if (!(base_cf > 0.0) || !(centre_rate > 0.0) || !(rate_step > 0.0)
+        || !(growth_step > 0.0) || half == 0
+        || 2 * half + 1 > SensitivityGrid::kMax) {
+        return std::unexpected(DcfError::BadParameter);
+    }
+    SensitivityGrid out;
+    out.n_rate = 2 * half + 1;
+    out.n_growth = 2 * half + 1;
+    for (std::size_t i = 0; i < out.n_rate; ++i) {
+        out.rate[i] = centre_rate
+                    + (static_cast<double>(i) - static_cast<double>(half))
+                          * rate_step;
+    }
+    for (std::size_t j = 0; j < out.n_growth; ++j) {
+        out.growth[j] = g.terminal_growth
+                      + (static_cast<double>(j) - static_cast<double>(half))
+                            * growth_step;
+    }
+    for (std::size_t i = 0; i < out.n_rate; ++i) {
+        for (std::size_t j = 0; j < out.n_growth; ++j) {
+            GrowthProfile p = g;
+            p.terminal_growth = out.growth[j];
+            const auto d = detail::discount(base_cf, p, out.rate[i]);
+            const std::size_t k = i * out.n_growth + j;
+            if (d) {
+                out.value[k] = d->total;
+                out.priced[k] = true;
+            }
+        }
+    }
+    return out;
+}
+
+/// REVERSE DCF: the terminal growth the market's own price implies.
+///
+/// This is the more useful direction and it is the one that is almost never
+/// run. A forward DCF asks "what is it worth", answers with a number built on
+/// two unobservables, and cannot be wrong in any way that shows up before the
+/// position is closed. A reverse DCF asks "what would have to be true for
+/// today's price to be right" -- and THAT is a claim about the world, which
+/// can be compared against the company's actual history, its industry, and
+/// arithmetic. India's nominal GDP growth bounds it from above: a perpetual
+/// growth rate above the economy's means the firm eventually becomes the
+/// economy.
+///
+/// Bisection rather than Newton: value is monotone in terminal growth over the
+/// admissible range and bisection cannot leave it, where a Newton step near
+/// g -> r can jump across the singularity and converge to a root on the wrong
+/// side of it.
+[[nodiscard]] inline std::expected<double, DcfError>
+implied_terminal_growth(double base_cf, const GrowthProfile& g, double rate,
+                        double target_value) noexcept {
+    if (!(base_cf > 0.0) || !(rate > 0.0) || !(target_value > 0.0)) {
+        return std::unexpected(DcfError::BadParameter);
+    }
+    // The upper bound stops strictly short of the discount rate: AT g == rate
+    // the perpetuity is infinite, so any target is reachable and the answer
+    // would be meaningless rather than large.
+    double lo = -0.10;
+    double hi = rate - 1e-6;
+    GrowthProfile p = g;
+
+    p.terminal_growth = lo;
+    const auto v_lo = detail::discount(base_cf, p, rate);
+    if (!v_lo) { return std::unexpected(v_lo.error()); }
+    if (v_lo->total > target_value) {
+        // Even at -10% perpetual decline the model is worth more than the
+        // market pays. Refused rather than clamped: the honest reading is
+        // that the cash-flow input or the discount rate is wrong, and
+        // returning -0.10 would present a bound as a measurement.
+        return std::unexpected(DcfError::BadParameter);
+    }
+    for (int it = 0; it < 200; ++it) {
+        const double mid = 0.5 * (lo + hi);
+        p.terminal_growth = mid;
+        const auto v = detail::discount(base_cf, p, rate);
+        if (!v) { hi = mid; continue; }
+        if (v->total < target_value) { lo = mid; } else { hi = mid; }
+    }
+    return 0.5 * (lo + hi);
+}
+
 } // namespace altair

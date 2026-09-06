@@ -70,6 +70,13 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_markov_eval COMMAND altair_markov_eval_test)
 
+    # P10-02b. DCF sensitivity grid + the reverse DCF. Finishes the part of
+    # the DCF that never needed filings: the forward direction is blocked on
+    # point-in-time fundamentals, the inversion only needs a price.
+    add_executable(altair_dcf_sensitivity_test tests/test_dcf_sensitivity.cpp)
+    target_link_libraries(altair_dcf_sensitivity_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_dcf_sensitivity COMMAND altair_dcf_sensitivity_test)
+
     # P8-15. Horizon forecast net of cost, on the real 60-minute series.
     add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
     target_link_libraries(altair_horizon_test
