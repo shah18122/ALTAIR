@@ -55,7 +55,16 @@ enum class ModelState : std::uint8_t {
     /// Implemented and tested, but only against synthetic data.
     ValidatedOnSyntheticOnly,
     /// Cannot be trained here at all: the data it needs does not exist.
-    BlockedOnData
+    BlockedOnData,
+    /// FITTED ON REAL DATA, AND THE ANSWER WAS NO.
+    ///
+    /// A settled negative is not a gap and not a success, and the table had no
+    /// way to say it: `TrainedOnRealData` paints green and reads as a working
+    /// signal, `ValidatedOnSyntheticOnly` paints amber and reads as unfinished
+    /// work. Both misreport a model that was trained on everything available
+    /// and found nothing -- which is a RESULT, and one that stops anybody
+    /// spending another week on it.
+    TrainedNoEdge
 };
 
 [[nodiscard]] inline QString model_state_label(ModelState s) {
@@ -66,6 +75,8 @@ enum class ModelState : std::uint8_t {
         return QStringLiteral("synthetic only");
     case ModelState::BlockedOnData:
         return QStringLiteral("blocked on data");
+    case ModelState::TrainedNoEdge:
+        return QStringLiteral("trained \u2014 NO EDGE FOUND");
     case ModelState::NeverTrained:
     default:
         return QStringLiteral("never trained");
@@ -76,6 +87,11 @@ enum class ModelState : std::uint8_t {
     switch (s) {
     case ModelState::TrainedOnRealData:
         return QColor(0x1B, 0x8A, 0x4B);
+    case ModelState::TrainedNoEdge:
+        // Slate. Not green -- it is not a usable signal. Not amber -- there is
+        // nothing outstanding. Not red -- nothing is broken. A closed
+        // question deserves its own colour or it gets reopened.
+        return QColor(0x54, 0x6E, 0x7A);
     case ModelState::ValidatedOnSyntheticOnly:
         return QColor(0xB9, 0x77, 0x0B);
     case ModelState::BlockedOnData:
@@ -136,26 +152,39 @@ struct ModelRow {
          QStringLiteral("none — no filings ingested"),
          QStringLiteral("equities")},
 
-        {QStringLiteral("MLP"), QStringLiteral("P8-08"),
+        // THESE TWO ROWS WERE STALE, and stale in the direction that costs
+        // work: they said "synthetic only; 4 partial days" while P8-16 had
+        // already trained both on 170,000 real 5-minute observations. Somebody
+        // reading this page would have gone and done it again.
+        {QStringLiteral("MLP"), QStringLiteral("P8-08 / P8-16"),
          QStringLiteral("models/mlp.hpp"),
-         ModelState::ValidatedOnSyntheticOnly,
+         ModelState::TrainedNoEdge,
          QStringLiteral("labelled intraday features"),
-         QStringLiteral("synthetic only; 4 partial days of 1-minute bars"),
+         QStringLiteral("170,000 scored 5-min predictions, real NIFTY spot"),
          QStringLiteral("NIFTY spot")},
 
-        {QStringLiteral("GRU / LSTM"), QStringLiteral("P8-06"),
+        {QStringLiteral("GRU / LSTM"), QStringLiteral("P8-06 / P8-16"),
          QStringLiteral("models/recurrent.hpp"),
-         ModelState::ValidatedOnSyntheticOnly,
+         ModelState::TrainedNoEdge,
          QStringLiteral("long intraday sequences"),
-         QStringLiteral("synthetic only"),
-         QStringLiteral("NIFTY future")},
+         QStringLiteral("170,000 scored 5-min predictions, real NIFTY spot"),
+         QStringLiteral("NIFTY spot")},
 
-        {QStringLiteral("Attention encoder"), QStringLiteral("P8-07"),
+        // NOT `TrainedNoEdge`, and the distinction is the row's whole point:
+        // it was RUN on real data and never TRAINED. P8-16 put it over
+        // 211,632 real 5-minute rows and found the softmax weights identical
+        // on real and shuffled features -- necessarily so, because untrained
+        // logits make the weights a constant the data cannot move. That is a
+        // fact about the mechanism, not a measurement of the market, so
+        // calling it a settled negative would overclaim.
+        {QStringLiteral("Attention encoder"), QStringLiteral("P8-07 / P8-16"),
          QStringLiteral("models/attention.hpp"),
-         ModelState::ValidatedOnSyntheticOnly,
-         QStringLiteral("long intraday sequences + causal masking"),
-         QStringLiteral("synthetic only"),
-         QStringLiteral("NIFTY future")},
+         ModelState::NeverTrained,
+         QStringLiteral("TRAINED logits — needs the gradient tier "
+                        "(ALTAIR_ENABLE_TORCH is OFF)"),
+         QStringLiteral("run on 211,632 real 5-min rows; untrained logits "
+                        "select nothing"),
+         QStringLiteral("NIFTY spot")},
 
         {QStringLiteral("Training harness"), QStringLiteral("P8-04"),
          QStringLiteral("models/training.hpp"),
@@ -178,11 +207,27 @@ struct ModelRow {
          QStringLiteral("neither present"),
          QStringLiteral("—")},
 
+        // THE BLOCKER WAS MIS-STATED, and the correction matters because the
+        // old wording ("n_eff needs more") reads as a counting problem that
+        // more models would solve. Three models are now fitted on real data --
+        // Markov regimes, the VIX AR(1), and the trend detector -- and the
+        // aggregator still cannot run, because they forecast DIFFERENT
+        // QUANTITIES. Averaging a VIX level, a regime transition probability
+        // and a Hurst label is not an ensemble; `aggregate` refuses mismatched
+        // horizons for exactly this reason (P8-12), and it would be right to.
+        //
+        // What is actually needed is two members forecasting THE SAME thing at
+        // THE SAME horizon, each with an edge worth combining. P8-15 and P8-16
+        // between them found no edge at 5 or 60 minutes, so there is currently
+        // nothing to aggregate -- which is a result about the market, not a
+        // gap in the ensemble code.
         {QStringLiteral("Signal aggregator"), QStringLiteral("P8-12"),
          QStringLiteral("models/aggregator.hpp"),
          ModelState::NeverTrained,
-         QStringLiteral("two or more member models producing signals"),
-         QStringLiteral("one member exists (Markov) — n_eff needs more"),
+         QStringLiteral("two members forecasting the SAME quantity at the "
+                        "SAME horizon, each with an edge"),
+         QStringLiteral("3 models fitted on real data, but on 3 different "
+                        "quantities — nothing to combine"),
          QStringLiteral("—")},
 
         {QStringLiteral("India VIX AR(1)"), QStringLiteral("P10-07 / P11Q-07"),
@@ -200,11 +245,11 @@ struct ModelRow {
          QStringLiteral("only NIFTY and India VIX — no equity universe"),
          QStringLiteral("equities")},
 
-        {QStringLiteral("Regime detector"), QStringLiteral("P6-03"),
+        {QStringLiteral("Regime detector"), QStringLiteral("P6-03 / P6-03b"),
          QStringLiteral("strategies/regime.hpp"),
-         ModelState::ValidatedOnSyntheticOnly,
+         ModelState::TrainedNoEdge,
          QStringLiteral("a return series with a dwell requirement"),
-         QStringLiteral("daily NIFTY is sufficient; not yet fitted"),
+         QStringLiteral("8,756 daily NIFTY closes, 1990-07-03 to 2026-08-31"),
          QStringLiteral("NIFTY spot")},
     };
 }

@@ -53,4 +53,13 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_cointegration_test tests/test_cointegration.cpp)
     target_link_libraries(altair_cointegration_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_cointegration COMMAND altair_cointegration_test)
+
+    # P6-03b. The regime detector on 36 years of REAL daily NIFTY rather than
+    # on a synthetic series with a regime built into it. The Models page has
+    # said "daily NIFTY is sufficient; not yet fitted" since P6-03 shipped.
+    add_executable(altair_regime_real_test tests/test_regime_real.cpp)
+    target_link_libraries(altair_regime_real_test PRIVATE altair_strategies altair_flags)
+    target_compile_definitions(altair_regime_real_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME strategies_regime_real COMMAND altair_regime_real_test)
 endif()

@@ -44,6 +44,7 @@
 // the warning as universal would be as wrong as ignoring it.
 
 #include <models/dataset.hpp>
+#include <models/attention.hpp>
 #include <models/mlp.hpp>
 #include <models/recurrent.hpp>
 #include <backtest/validation.hpp>
@@ -295,6 +296,105 @@ int main() {
     const double best = std::min(s_mlp.rmse, s_gru.rmse) / s_const.rmse;
     const double best_sig =
         std::max(s_mlp.dir - s_const.dir, s_gru.dir - s_const.dir) / se;
+    // ---- ATTENTION, THE THIRD ARCHITECTURE ------------------------------
+    //
+    // P8-07 was the last of the neural tier still marked "synthetic only".
+    // `variable_selection` is not a predictor and cannot be dropped into the
+    // walk-forward above -- it is a softmax over features plus the magnitude
+    // of the gated output -- so it is asked the question it can actually
+    // answer, on the same 170,000 real rows: DOES IT SELECT ANYTHING?
+    //
+    // AND THE CONTROL IS THE POINT.
+    //
+    // A softmax always produces a winner. `concentration()` near 1.0 means an
+    // even split and above 1.0 means one lag dominates, but on eight noisy
+    // features some lag wins every single row by chance, so a raw
+    // concentration number is uninterpretable on its own. So the identical
+    // procedure runs on SHUFFLED features -- same values, same logits, order
+    // destroyed -- and the two are compared. attention.hpp says the same thing
+    // in its own words: the weights tell you which feature won a contest, not
+    // whether the contest was about anything.
+    {
+        std::printf("\n  ATTENTION (P8-07) on the same %zu rows\n", rows);
+
+        // Fixed random logits, in the same spirit as the reservoir above: no
+        // training, so nothing here can overfit its way to a result.
+        std::uint64_t st = 0xA77E27101u;
+        auto rnd = [&st]() noexcept {
+            st ^= st << 13; st ^= st >> 7; st ^= st << 17;
+            return static_cast<double>(st >> 11) * (1.0 / 9007199254740992.0);
+        };
+        double logits[kLags];
+        for (std::size_t j = 0; j < kLags; ++j) { logits[j] = rnd() * 2.0 - 1.0; }
+
+        double conc_real = 0.0, mag_real = 0.0;
+        double conc_shuf = 0.0, mag_shuf = 0.0;
+        std::size_t n_sel = 0;
+        double feats[kLags], shuf[kLags];
+
+        for (std::size_t i = 0; i < rows; ++i) {
+            for (std::size_t j = 0; j < kLags; ++j) {
+                feats[j] = xs[i * kLags + j];
+                shuf[j] = feats[j];
+            }
+            // Fisher-Yates on the row itself: the SAME eight numbers, so any
+            // difference between the two lines below is about ORDER -- which
+            // is the only thing a lag structure could be.
+            for (std::size_t j = kLags; j > 1; --j) {
+                const auto k = static_cast<std::size_t>(rnd()
+                                   * static_cast<double>(j));
+                const double t = shuf[j - 1];
+                shuf[j - 1] = shuf[k < j ? k : j - 1];
+                shuf[k < j ? k : j - 1] = t;
+            }
+            const auto a = altair::variable_selection(feats, logits, kLags);
+            const auto b = altair::variable_selection(shuf, logits, kLags);
+            if (!a || !b) { continue; }
+            conc_real += a->concentration();
+            mag_real += a->output_magnitude;
+            conc_shuf += b->concentration();
+            mag_shuf += b->output_magnitude;
+            ++n_sel;
+        }
+
+        if (n_sel > 0) {
+            const double nn = static_cast<double>(n_sel);
+            conc_real /= nn; mag_real /= nn;
+            conc_shuf /= nn; mag_shuf /= nn;
+            std::printf("    %-22s %14s %16s\n", "", "concentration",
+                        "output |magnitude|");
+            std::printf("    %-22s %14.4f %16.4f\n", "real lag order",
+                        conc_real, mag_real);
+            std::printf("    %-22s %14.4f %16.4f\n", "shuffled lag order",
+                        conc_shuf, mag_shuf);
+            std::printf("    (concentration 1.0 = an even split over %zu"
+                        " features)\n", kLags);
+
+            check(n_sel > 100000,
+                  "attention ran on a real number of rows, not a sample");
+            // The softmax is a function of the LOGITS, which are fixed, so the
+            // weights cannot depend on the data at all -- and the measured
+            // equality is the demonstration of that, not an accident.
+            check(std::fabs(conc_real - conc_shuf) < 1e-9,
+                  "concentration is IDENTICAL on real and shuffled features, "
+                  "because these weights are a function of the fixed logits "
+                  "alone -- a softmax over learned-nothing logits selects "
+                  "nothing, whatever the data says");
+            std::printf("\n    So the weights are not evidence, and reading"
+                        " them as feature importance\n    would be reading a"
+                        " constant. What DOES move with the data is the\n"
+                        "    output magnitude: %.4f real against %.4f"
+                        " shuffled, a %.1f%% difference.\n",
+                        mag_real, mag_shuf,
+                        100.0 * (mag_real - mag_shuf)
+                            / (mag_shuf > 0.0 ? mag_shuf : 1.0));
+            std::printf("    Attention here needs TRAINED logits to say"
+                        " anything, and training them\n    needs the"
+                        " gradient tier that is not built. Marked accordingly"
+                        " rather\n    than reported as a result.\n");
+        }
+    }
+
     std::printf("\n  VERDICT\n");
     if (best < 1.0 && best_sig > 2.0) {
         std::printf("    BOTH tests pass: a nonlinear model beats a constant "
