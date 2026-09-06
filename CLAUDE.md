@@ -10,7 +10,7 @@ C++23 · LibTorch C++ API · **no Python in the runtime**.
 **You are the architect and reviewer. DeepSeek V4 is the implementer.**
 
 You do not write bulk implementation. You write **task cards**, and you **review
-every DeepSeek output against eight gates** before it is committed. 156 cards will
+every DeepSeek output against eight gates** before it is committed. 194 cards will
 pass through this loop; the interface contract in each card — not anyone's
 memory — is what keeps card 90 compiling against card 3.
 
@@ -147,7 +147,13 @@ ops/           RUNBOOKS — Linux deployment, disaster recovery, go-live.
                no card manifest may list a file in it. Every claim states
                whether it has been verified and on what.
 RXT_trade*/    predecessor Python tree — REFERENCE ONLY, not part of the build
-Quants/        SEPARATE PROJECT (QUANTLAB) — not part of Altair, own repo
+Quants/        REFERENCE ONLY — the QUANTLAB Python tree. Its MODELS were
+               reimplemented here in Phases 13–19 (Smit, 2026-09-06); its
+               FINDINGS are the valuable import and are recorded in
+               prompts/PHASE13_PLAN.md §2. Not built, not linked, and no
+               card manifest may list a file in it. Kept because four of its
+               results are negative ones this project would otherwise pay to
+               rediscover.
 ```
 
 ### One component, one directory — this is a hard rule

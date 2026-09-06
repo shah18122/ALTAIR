@@ -1,9 +1,10 @@
 # Task Card Ledger
 
-156 cards. One card = one DeepSeek prompt = one review = one commit.
+171 rows, 194 cards. One card = one DeepSeek prompt = one review;
+Phases 13–19 group several per row — see the note below.
 Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 
-**Progress: 149 / 156 · 96%**
+**Progress: 163 / 171 rows · 95%**
 
 > Recounted 2026-09-05 BY SCRIPT. Phase 12 closed; the total moved 159 -> 154,
 > and the rows that vanished were never cards.
@@ -778,6 +779,67 @@ in the grid and every export byte-correct.
 **Exit:** live with 10% of intended capital.
 
 ---
+
+
+> **Phases 13–19 ship GROUPED, and the headings say so.** The plan in
+> [`PHASE13_PLAN.md`](PHASE13_PLAN.md) breaks them into 38 cards; they landed
+> in 14 rows because several are one header and one test that only make sense
+> together — TWAP, VWAP and POV share a conservation invariant, and splitting
+> them would produce three rows asserting a third of it each.
+>
+> The progress number counts ROWS, consistently with every other phase, so
+> "163 / 171" is rows and not cards. Both numbers are in each heading rather
+> than one of them living somewhere else, because a heading and a row count
+> that disagree silently is exactly how this file has been wrong three times.
+
+## Phase 13 — Execution algorithms (2 rows / 7 cards)
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P13-01..06 | TWAP / VWAP / POV / Almgren-Chriss / shortfall — **DONE** · in `oms/` because they decide quantity AND timing, which is placing an order · **children sum to the parent exactly**: 1000 over 7 is 142.857, seven lots of 142 is 994, and every child reports success — the remainder is spread one unit at a time from the front, not dumped on the last slice, because that child is both the most market-moving and the most likely to hit a POV cap · VWAP uses largest-remainder apportionment; **a VWAP for NIFTY 50 is REFUSED, not degraded to TWAP** — an index does not trade · POV reports being CAPPED rather than silently catching up, and sends nothing when the rate rounds below one lot · **Almgren-Chriss caught a dimensional error of mine**: I set lambda by reading kappa = 6.3 and called it risk-averse, but kappa has units of 1/time and over a one-day horizon kappa*T was 0.017 — still linear, still TWAP. `kappa_t()` is now the exposed quantity; at kappa*T = 1.73 it front-loads 170 of 1000 into the first step, and the risk-neutral limit comes out as exactly TWAP, which is the check that proves the sinh was solved rather than typed · risk aversion has NO default · shortfall attribution sums to an independently computed total: delay 80,000 + execution 120,000 + fees 12,000 + opportunity 100,000 | **DONE** |
+| P13-07 | Capacity ceiling — **DONE** · QUANTLAB Q7: a linear cost model charges the same per share at a thousand and at a million, so profit is unbounded and an optimiser allocates infinite capital — the wrong functional form, not a calibration error · square-root impact gives cost ~ Q^1.5 against revenue ~ Q, so they cross: on NIFTY futures at a 15 bps edge, break-even 13,776 contracts and **optimal 6,122** — 4/9 of break-even, because sizing at break-even earns exactly zero · eta is SWEPT not fitted (QUANTLAB rejected calibrating it from an order-book simulator as circular), and across the literature range capacity spans **14.1x**, so it is reported as an interval | **DONE** |
+
+## Phase 14 — Volatility & filtering (3 rows / 6 cards)
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P14-01/02/03 | GARCH, GJR, and the horse race — **DONE** · out of sample on 4,378 held-back days, **EWMA WINS on QLIKE** (−8.27278) over GARCH (−8.21906) and GJR (−8.22145), replicating QUANTLAB Q2 on Indian data: three fitted parameters beaten by one fixed constant · **and the two losses DISAGREE**, which is the better finding — GARCH wins on proxy MSE, because MSE scores against the squared return, an unbiased but violently noisy proxy that rewards tracking noise, while QLIKE punishes UNDER-predicted variance hardest, the asymmetry a position size actually faces · leverage effect is real: gamma 0.0562, se 0.0041, **t = 13.56** · **stationarity is REFUSED, not clamped** — most implementations clamp to 0.999 and return numbers from a model that does not exist, looking exactly like a volatility forecast; the fit searches by grid because a quasi-Newton walks straight in and reports “converged” | **DONE** |
+| P14-04/05 | Kalman filter — **DONE** · **the Joseph form is not an optimisation**: the textbook (I−KH)P is not symmetric in its own arithmetic, so rounding walks P off the manifold and the filter starts claiming NEGATIVE VARIANCE, silently, thousands of updates later — 20,000 updates at r = 1e-10 and P is still 9.5e-12 · beats the raw observation 3.4x on a hidden drifting level; NIFTY spot-vs-futures hedge ratio comes out at 0.97, near the 1.0 it must be, paired BY DATE because the series start eighteen years apart · **and the NIS caught my own parameter**: 0.023 against the 1.0 a correct model gives, so the filter had been told the observations were 45x noisier than they are and was reporting its prior back — the mean hedge ratio looked sensible either way and nothing else on screen would have shown it. Re-estimating r from the residuals gives **NIS 1.009** | **DONE** |
+| P14-06 | Hidden Markov model — **DONE** · distinct from the OBSERVABLE chain in `models/markov.hpp`: there the states ARE the observations, here they are latent, so a calm day and a stressed day producing the same return can still be told apart · **an HMM invents two states on anything**, so the noise baseline comes first: 1.22x separation on white noise against **2.70x on real NIFTY** — state 0 at 14.2%/yr with a 63-day dwell, state 1 at 38.4%/yr with 27 days, 8 of 8 restarts agreeing · states are returned SORTED BY VARIANCE because nothing in the likelihood distinguishes them and an unsorted label is not comparable between runs · **and the degenerate guard had a floating-point hole**: 500 identical values do not have zero sample sd once the mean is accumulated — every deviation lands near 9e-18 and `sd > 0.0` passes, after which the model fits two states to a constant | **DONE** |
+
+## Phase 15 — Risk & portfolio (3 rows / 7 cards)
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P15-01/02 | VaR three ways + Expected Shortfall — **DONE** · **VaR is not subadditive, demonstrated not cited**: two independent defaultable positions each show NO risk alone at 97.5% and a real loss combined — VaR(A)+VaR(B) = −2.00 against VaR(A+B) = 49.50, the model saying diversification INCREASED risk, which is why Basel moved the trading book to ES · **the normal is wrong in a SHAPE, not uniformly**: at 95% it overstates (0.92x) and at 99% it understates by 22% (4.286% against 3.503%), with the ES gap worse at 52% — too fat in the shoulders, far too thin where it matters, and understating is the direction that sizes you bigger than the market allows · MC resamples the EMPIRICAL tail rather than a fitted normal, which would make it a slow parametric VaR in a costume · 99% VaR on 250 days rests on TWO observations and reads 2.638% against 4.286% on the full history | **DONE** |
+| P15-03/05/06 | Covariance shrinkage and optimisers — **DONE** · **1/N WINS out of sample** (6.3231e-05) over min-variance (7.0231e-05), replicating QUANTLAB Q3 and DeMiguel-Garlappi-Uppal · read the effective N: min-variance collapsed 20 assets into **5.97 bets** chasing a covariance estimate and got HIGHER realised variance for it — mean-variance is error-maximising, it puts weight where covariance looks low, which is where the estimate is most wrong · the sample covariance degrades **218x** as p/n goes 0.01 → 1.33, and my first draft did not even reach the singular regime (p=30, n=32 has n > p, so it is full rank and merely ill-conditioned — different failure) · shrinkage is CLOSER TO THE TRUTH, 5.514e-04 against 6.772e-04 in Frobenius against the generating covariance · projected gradient rather than an inverse, so a near-singular input degrades gently instead of manufacturing −350% weights | **DONE** |
+| P15-04/07 | Stress windows + Black-Litterman — **DONE** · dated periods, not a number somebody chose: GFC 2008 −50.79% with a **59.86% max drawdown** — which P11Q-10's block bootstrap predicted at 59.85%, two independent routes to the same figure · COVID 2020 −17.57% / 37.63% · no probability is attached to any window, because a stress test answers “what would this book have done” and blending in a likelihood produces an unfalsifiable, reassuringly small number · correlation is measured INSIDE the window: NIFTY/VIX is −0.5698 full-sample and −0.4197 on the worst decile · **Black-Litterman's Omega has NO default** and a zero is refused as infinite certainty — the same view at sd 0.01 / 0.10 / 1.00 gives mu[0] of 14.643% / 8.750% / 7.515%, so the parameter IS the tilt, and at low confidence BL returns the market, which is correct and also means it adds nothing unless you are sure | **DONE** |
+
+## Phase 16 — Gradient-boosted trees (1 row / 5 cards)
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P16-01..05 | GBDT, importance, meta-labeling — **DONE** · the one family `models/` lacked and the one that wins on tabular financial data · histogram binning fitted ONCE on training rows and stored — re-binning at predict time lets the test set choose its own bin boundaries, which is look-ahead wearing a preprocessing costume · recovers a pure INTERACTION (y = x0*x1) at R2 0.949, where a linear model scores zero by construction · **gain importance lies absolutely**: with x1 an EXACT copy of x0, gain reads x0 98,215 and **x1 exactly 0.0000** — and a model fitted on x1 ALONE scores **R2 0.989**, so a zero there means “this model did not use it” and never “this feature is uninformative” · my first check compared permutation importance against gain NUMERICALLY, in different units, so it passed for arithmetic reasons · **meta-labeling did NOT replicate**: filtering a 20-day momentum rule moved the hit rate 0.5177 → 0.5309 over 4,367 out-of-sample days, **+1.58 sigma**, against QUANTLAB Q6's 0.41 → 0.56 on its own primary signal | **DONE** |
+
+## Phase 17 — Derivatives completion (3 rows / 4 cards)
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P17-01 | Monte Carlo option pricing — **DONE** · **an MC price without its standard error is a number pretending to be exact**, so there is no accessor returning the price alone · validated against the real `black76` rather than a reimplementation: 46,328.94 ± 94.89 against an analytic 46,262.52, inside its own error bar · convergence measured, 4x the paths gives an error ratio of **2.01** against the 2.00 that 1/sqrt(n) predicts · the antithetic PAIR counts as one observation — counting them independently reports an error sqrt(2) too small, claiming the reduction twice · control variate uses the regression beta, not 1.0, and buys 1.8x on the Asian, which is 3x fewer paths | **DONE** |
+| P17-02/03 | SABR + Dupire local vol — **DONE** · **Hagan breaks earlier than I guessed**: my first version picked nu = 3.5 by eye, asserted it would fail the butterfly check, and it PASSED — so the test now SWEEPS nu and prints the margin, finding the first negative density at **nu = 1.5** at a two-year expiry · the check is on the second difference of PRICE, not of vol: a convex vol smile does not imply a convex price surface · ATM is its own branch because z/x(z) is 0/0 at K = F and a naive evaluation returns NaN for the most traded strike on the board · **two sentinel bugs of mine**: `sabr_min_density` returned −1.0 for “could not compute”, indistinguishable from a genuine density of −1.0 in a function whose job is reporting negative densities — now NaN, and `sabr_density_positive` requires isfinite because returning true on NaN lets an uncomputable smile pass a safety check · Dupire validated where the answer is known: a flat 18.00% implied surface gives 18.00% local vol, and a surface whose total variance FALLS with maturity is refused as calendar arbitrage | **DONE** |
+| P17-04 | VRP sleeve | **BLOCKED** — QUANTLAB's best result (Sharpe 1.02, the only DSR > 0.95 edge) and the one card here that cannot be written. Needs a bid AND an ask per strike, live: a historical candle carries a CLOSE, one trade at one instant on whichever side lifted, and P11Q-06 measured that **37.8% of the range vanishes** when bar closes go through a tick pipeline. Not a sample-size problem — a million historical closes contain zero bid-ask pairs. See `prompts/PHASE13_PLAN.md` §6 |
+
+## Phase 18 — Regime & RL (1 row / 3 cards)
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P18-01/02/03 | Regimes, a Q-learner, and its control — **DONE** · **the control IS the card**: an RL result reported without the heuristic it must beat is not a result, so the ten-line policy is written first and every agent is scored against it on identical episodes with identical seeds · heuristic 34.206 bps beats the learner's 36.868, replicating QUANTLAB Q1's PPO rejection on a different algorithm and market — **and that is not the headline** · **NEITHER BEATS TWAP at 28.978 bps.** Doing nothing, with no policy and no training, is cheapest by five and eight bps; both timing policies are actively harmful and the ranking between them is a detail inside a comparison they both lost. My first verdict printed the heuristic's win and buried that · the mechanism is legible: “buy more when price is below the running average” is a MEAN-REVERSION BET WEARING AN EXECUTION COSTUME, and on a series with drift it buys more of a decline — the learner was handed the same reward and learned a stronger version of the same wrong thing, which is what a learner should do, making this a REWARD-DESIGN finding rather than a broken agent · regimes ranked by a pre-registered RETURN-BLIND rule (separation × persistence), k = 5 winning at 4.5672 | **DONE** |
+
+## Phase 19 — GUI for every model (1 row / 6 cards)
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P19-01..06 | Six pages, and the eagle on launch — **DONE** · Execution, Volatility, Risk—VaR, Portfolio, ML—Trees, Regimes, appended to the nav rather than interleaved so no existing `--page` index moves · **every page calls the SAME function its acceptance test calls** — the rule the phase hangs on, and this UI has broken it twice (a dashboard literal that could not track a fit, and a Models table reading chi-square 19 beside a pane computing 13.08) · everything computes ON DEMAND behind a button, because P11Q learned that a fit at construction froze the window for seven seconds before anything drew · **the UI still cannot trade**: the pages link `analytics`, `models`, `risk` and `backtest`, all read-side and all added to the gate-3 allow-list deliberately, while `oms/` and `broker/` stay absent — P19-01 renders schedule SHAPE from arithmetic the UI owns · **a nav/page count guard**, because row N opens page N and a name added without a widget shifts every page after it with no error anywhere; 19 names, 19 pages, aborting at startup otherwise · the eagle goes up immediately on launch and comes down via `finish(&window)` — tied to the widget replacing it, not a timer, since a timed splash expiring mid-load just moves the blank gap later | **DONE** |
 
 ## Reference findings — `gokiteconnect`, read 2026-08-31
 
