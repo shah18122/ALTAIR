@@ -59,4 +59,13 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME american COMMAND altair_american_test)
 
 
+
+    # P14-01/02/03. GARCH, GJR, and the volatility horse race against the EWMA
+    # already in this directory. QUANTLAB found EWMA wins on QLIKE; whether
+    # that holds on 36 years of NIFTY is the experiment.
+    add_executable(altair_garch_test tests/test_garch.cpp)
+    target_link_libraries(altair_garch_test PRIVATE altair_analytics altair_flags)
+    target_compile_definitions(altair_garch_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME analytics_garch COMMAND altair_garch_test)
 endif()
