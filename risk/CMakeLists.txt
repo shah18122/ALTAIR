@@ -85,4 +85,12 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_optimise_test tests/test_optimise.cpp)
     target_link_libraries(altair_optimise_test PRIVATE altair_risk altair_flags)
     add_test(NAME risk_optimise COMMAND altair_optimise_test)
+
+    # P15-04/07. Stress windows on real dated periods, and Black-Litterman
+    # with the view-uncertainty parameter made visible rather than defaulted.
+    add_executable(altair_stress_test tests/test_stress.cpp)
+    target_link_libraries(altair_stress_test PRIVATE altair_risk altair_flags)
+    target_compile_definitions(altair_stress_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME risk_stress COMMAND altair_stress_test)
 endif()

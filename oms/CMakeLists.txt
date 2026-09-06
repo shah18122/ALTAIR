@@ -51,4 +51,10 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_execution_test tests/test_execution.cpp)
     target_link_libraries(altair_execution_test PRIVATE altair_oms altair_flags)
     add_test(NAME oms_execution COMMAND altair_execution_test)
+
+    # P13-07. Market impact and the capacity ceiling. QUANTLAB Q7: a linear,
+    # size-blind cost model cannot express a bound at all.
+    add_executable(altair_capacity_test tests/test_capacity.cpp)
+    target_link_libraries(altair_capacity_test PRIVATE altair_oms altair_flags)
+    add_test(NAME oms_capacity COMMAND altair_capacity_test)
 endif()
