@@ -71,6 +71,9 @@ struct RealTape {
     std::vector<TapeInstrument> instruments;
     /// Sessions the tape covers, and bars per instrument, for the status line.
     std::size_t sessions = 0;
+    /// First and last bar in the tape, ns since epoch. Zero when empty.
+    std::int64_t first_ns = 0;
+    std::int64_t last_ns = 0;
     QString error;
     [[nodiscard]] bool ok() const noexcept { return !ticks.empty(); }
 };
@@ -109,13 +112,20 @@ struct RealTape {
 
     for (std::size_t i = 0; i < out.instruments.size(); ++i) {
         const TapeInstrument& ins = out.instruments[i];
+        // Roughly 20 trading days a month, plus one file of slack because a
+        // request landing early in a month would otherwise straddle the
+        // boundary and come up short. Deliberately generous: the cost of one
+        // extra monthly file is milliseconds, and the cost of being one file
+        // short is a grid that silently shows fewer sessions than the status
+        // bar claims.
+        const std::size_t want_files = sessions / 20 + 2;
         const LoadResult r = load_bars_dir(
             dataset_root + QStringLiteral("/") + ins.dir, kMinuteNs,
             DailyStamp::SessionClose,
             // An index reports no volume, so a zero from that source means
             // "not reported". For the future a zero would be a real zero --
             // but the fetched files carry real turnover, so it never arises.
-            !ins.trades);
+            !ins.trades, want_files);
         if (!r.ok()) {
             out.error = r.error;
             continue;
@@ -150,6 +160,15 @@ struct RealTape {
               [](const Row& a, const Row& b) { return a.ts < b.ts; });
 
     out.sessions = std::min(sessions, days.size());
+    // THE RANGE, NOT JUST THE COUNT.
+    //
+    // "last 5 sessions" is true of a tape ending today and of one ending three
+    // weeks ago, and they look identical on screen. The dataset is filled by a
+    // manual fetch that needs a daily Kite login, so a stale tape is the
+    // NORMAL state rather than an edge case, and the first and last bar dates
+    // are the only thing that distinguishes them.
+    out.first_ns = rows.empty() ? 0 : rows.front().ts;
+    out.last_ns = rows.empty() ? 0 : rows.back().ts;
     out.ticks.reserve(rows.size());
     std::uint64_t seq = 0;
     for (const Row& r : rows) {

@@ -26,6 +26,8 @@
 // there is no captured tick data yet, not because it is a substitute for it.
 
 #include <core/time/timestamp.hpp>
+#include <QIcon>
+#include <cstdio>
 #include <core/types/units.hpp>
 #include <feed/replay.hpp>
 
@@ -126,6 +128,16 @@ std::vector<altair::ReplayTick> demo_session(std::size_t count,
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+
+    // THE MARK. Altair is the brightest star in Aquila, the Eagle, so the icon
+    // is an eagle climbing with the star at its apex -- the name and the
+    // constellation, not a decoration.
+    //
+    // Set on the APPLICATION, not on one window, so every dialog, the taskbar
+    // button and the alt-tab entry all get it. An SVG rather than a set of
+    // PNGs because the OS asks for sizes from 16 to 256 and five bitmaps drift
+    // apart the first time one of them is edited.
+    app.setWindowIcon(QIcon(QStringLiteral(":/altair_eagle.svg")));
     QApplication::setApplicationName(QStringLiteral("Altair"));
     QApplication::setOrganizationName(QStringLiteral("Altair"));
 
@@ -147,8 +159,41 @@ int main(int argc, char** argv) {
     // near NIFTY future and India VIX under their own names, and the
     // synthetic walk survives only for a tree with no dataset/ -- where it is
     // labelled "(syn)" so it can never be mistaken for the real thing.
-    const altair::ui::RealTape real =
-        altair::ui::load_real_tape(QStringLiteral(ALTAIR_DATASET_DIR), 5);
+    // HOW MANY SESSIONS, AND WHY IT IS NO LONGER FIVE.
+    //
+    // It was 5, and the grid looked nearly empty -- about 1,875 one-minute
+    // bars across three instruments, most of one screen. The number was set
+    // when loading MORE meant reading every monthly file in dataset/ and
+    // discarding all but the last week: 2.2 million rows parsed to keep under
+    // two thousand. `load_bars_dir` now takes only the newest files it needs,
+    // so the cost that justified 5 is gone and the default rises to a month.
+    //
+    // Still bounded, and the reason in `real_tape.hpp` still holds: the grid
+    // is a live view, not an archive, and the chart is where history belongs.
+    // `--sessions N` exists because "how much tape do I want on screen" is a
+    // preference, not a fact, and 0 means every session held.
+    std::size_t want_sessions = 20;
+    {
+        const QStringList early = QApplication::arguments();
+        for (int i = 1; i + 1 < early.size(); ++i) {
+            if (early[i] != QStringLiteral("--sessions")) { continue; }
+            bool okv = false;
+            const int v = early[i + 1].toInt(&okv);
+            // Validated, not coerced. `toInt` returns 0 on failure and 0 is a
+            // MEANINGFUL value here ("all sessions"), so a typo would silently
+            // load 36 years instead of being refused -- the same trap that
+            // made `--page models` open page 0.
+            if (okv && v >= 0) {
+                want_sessions = static_cast<std::size_t>(v);
+            } else {
+                std::fprintf(stderr,
+                             "--sessions \"%s\" is not a count; using %zu\n",
+                             early[i + 1].toUtf8().constData(), want_sessions);
+            }
+        }
+    }
+    const altair::ui::RealTape real = altair::ui::load_real_tape(
+        QStringLiteral(ALTAIR_DATASET_DIR), want_sessions);
 
     const altair::Timestamp open{1'788'407'100'000'000'000LL};
     const auto synth = demo_session(40'000, open, 42);
@@ -251,7 +296,8 @@ int main(int argc, char** argv) {
         }
     }
     window.set_tape_is_real(real.ok(), real.sessions,
-                            real.ok() ? QString() : real.error);
+                            real.ok() ? QString() : real.error,
+                            real.first_ns, real.last_ns);
 
     // --page N opens on a nav page, --prime N drains that many ticks first,
     // --source N picks a chart data source. They exist so a screenshot or a

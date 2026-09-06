@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>Altair</title>
+  <!-- Altair is the brightest star in AQUILA, the Eagle. The mark is that
+       rather than a decoration picked for looks: an eagle climbing, with the
+       star itself at the apex.
+
+       Built to survive 16x16. Filled silhouettes only, no strokes, no detail
+       finer than about 8 units at this viewBox: a tab icon renders at a
+       sixteenth of this size, where hairlines vanish and only mass reads. The
+       first draft had thin swept wings and looked like a stick figure at any
+       size; wings need span and area, not elegance. -->
+
+  <defs>
+    <linearGradient id="wing" x1="0.1" y1="1" x2="0.9" y2="0">
+      <stop offset="0" stop-color="#1F618D"/>
+      <stop offset="1" stop-color="#5DADE2"/>
+    </linearGradient>
+    <linearGradient id="wingR" x1="0.9" y1="1" x2="0.1" y2="0">
+      <stop offset="0" stop-color="#1F618D"/>
+      <stop offset="1" stop-color="#5DADE2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- A dark disc so the bird reads on a light tab strip and a dark one alike.
+       A transparent icon inverts with the theme and disappears on one of
+       them. -->
+  <circle cx="128" cy="128" r="122" fill="#16212B"/>
+
+  <!-- LEFT WING. Leading edge sweeps from the shoulder out to the tip; the
+       trailing edge returns with three primary feathers cut into it. -->
+  <path fill="url(#wing)" d="
+    M 120 88
+    C 100 68, 68 44, 26 28
+    C 32 52, 42 74, 56 92
+    L 30 80
+    C 44 104, 64 124, 88 138
+    L 62 134
+    C 80 152, 100 164, 118 170
+    C 122 148, 122 116, 120 88
+    Z"/>
+
+  <!-- RIGHT WING, mirrored about x = 128. -->
+  <path fill="url(#wingR)" d="
+    M 136 88
+    C 156 68, 188 44, 230 28
+    C 224 52, 214 74, 200 92
+    L 226 80
+    C 212 104, 192 124, 168 138
+    L 194 134
+    C 176 152, 156 164, 138 170
+    C 134 148, 134 116, 136 88
+    Z"/>
+
+  <!-- BODY and forked tail, one shape. The fork is what stops the whole
+       silhouette collapsing into an arrowhead when it is scaled down. -->
+  <path fill="#85C1E9" d="
+    M 128 76
+    C 139 92, 144 112, 144 134
+    L 142 176
+    L 156 216
+    L 128 196
+    L 100 216
+    L 114 176
+    L 112 134
+    C 112 112, 117 92, 128 76
+    Z"/>
+
+  <!-- HEAD and beak. The beak gives the bird a direction; without it the
+       head is a dot and the mark reads as a rocket. -->
+  <circle cx="128" cy="76" r="17" fill="#AED6F1"/>
+  <path fill="#F5B041" d="M 142 70 L 164 77 L 142 84 Z"/>
+
+  <!-- ALTAIR, at the apex. The project is named for the star, not the bird,
+       so the mark carries both. -->
+  <path fill="#F7DC6F" d="
+    M 128 4
+    L 135 30
+    L 161 37
+    L 135 44
+    L 128 70
+    L 121 44
+    L 95 37
+    L 121 30
+    Z"/>
+</svg>

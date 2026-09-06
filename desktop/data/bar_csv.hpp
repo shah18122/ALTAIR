@@ -324,18 +324,35 @@ load_bars_csv(const QString& path, std::int64_t bar_span_ns,
 /// backwards step the moment a file is renamed.
 [[nodiscard]] inline LoadResult
 load_bars_dir(const QString& dir, std::int64_t bar_span_ns, DailyStamp stamp,
-              bool zero_volume_is_absent) {
+              bool zero_volume_is_absent, std::size_t newest_files = 0) {
     LoadResult merged;
     QDir d(dir);
     if (!d.exists()) {
         merged.error = QStringLiteral("no such directory: %1").arg(dir);
         return merged;
     }
-    const QStringList files =
+    QStringList files =
         d.entryList(QStringList{QStringLiteral("*.csv")}, QDir::Files);
     if (files.isEmpty()) {
         merged.error = QStringLiteral("no .csv in %1").arg(dir);
         return merged;
+    }
+    // READ ONLY WHAT IS WANTED.
+    //
+    // The caller that needs a handful of recent sessions was reading all 140
+    // monthly files -- about 2.2 million rows across three instruments -- and
+    // then discarding everything but the last five days. The sort was already
+    // ordered to avoid that waste ("sorting 2.2 million rows to throw most
+    // away is the expensive order"); the READ was not.
+    //
+    // `entryList` returns names sorted, and the names are `YYYY-MM.csv`, so
+    // lexical order IS chronological order and the newest files are the last
+    // ones. Zero means "all of them", which is what every existing caller
+    // wants and what the chart still asks for.
+    if (newest_files > 0
+        && static_cast<std::size_t>(files.size()) > newest_files) {
+        files = files.mid(files.size()
+                          - static_cast<qsizetype>(newest_files));
     }
     for (const QString& name : files) {
         LoadResult one = load_bars_csv(d.filePath(name), bar_span_ns, stamp,

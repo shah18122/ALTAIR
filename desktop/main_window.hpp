@@ -108,6 +108,16 @@ namespace altair::ui {
 
 inline constexpr int kFrameIntervalMs = 16;
 
+/// IST, +05:30 with no DST -- the market's clock, and the one this window
+/// displays. ONE definition: there were briefly two, and a second local
+/// shadowed the first at /W4. A timezone constant is exactly the thing that
+/// drifts when it is written twice.
+[[nodiscard]] inline const QTimeZone& ist_tz() {
+    static const QTimeZone tz =
+        QTimeZone::fromSecondsAheadOfUtc(5 * 3600 + 30 * 60);
+    return tz;
+}
+
 /// A page with nothing behind it yet, saying which card wires it.
 ///
 /// Deliberately not a chart of placeholder data. A panel of invented numbers
@@ -197,9 +207,13 @@ public:
     /// tickers on a random walk -- so the one thing that cannot be left
     /// implicit is which of the two is on screen.
     void set_tape_is_real(bool real, std::size_t sessions,
-                          const QString& why_not) {
+                          const QString& why_not,
+                          std::int64_t first_ns = 0,
+                          std::int64_t last_ns = 0) {
         tape_real_ = real;
         tape_sessions_ = sessions;
+        tape_first_ns_ = first_ns;
+        tape_last_ns_ = last_ns;
         tape_error_ = why_not;
         refresh_status();
     }
@@ -394,6 +408,8 @@ private:
     AuditPanel* audit_panel_ = nullptr;
     bool tape_real_ = false;
     std::size_t tape_sessions_ = 0;
+    std::int64_t tape_first_ns_ = 0;
+    std::int64_t tape_last_ns_ = 0;
     QString tape_error_;
     DepthLadder* ladder_ = nullptr;
 
@@ -865,8 +881,25 @@ private:
         // P11Q-01's first version put real tickers on a random walk.
         const QString src =
             tape_real_
-                ? QStringLiteral(" REAL · 1-min closes, last %1 sessions ")
+                // THE DATES, NOT JUST THE COUNT. "last 20 sessions" is
+                // equally true of a tape ending today and one ending three
+                // weeks ago, and the dataset is filled by a manual fetch
+                // behind a daily Kite login -- so a stale tape is the normal
+                // state, not an edge case, and only the end date shows it.
+                ? QStringLiteral(" REAL · 1-min closes · %1 sessions, "
+                                 "%2 → %3 ")
                       .arg(tape_sessions_)
+                      // IST as a real QTimeZone, which is the idiom already
+                      // used in panels.hpp -- not a UTC instant with 19800
+                      // seconds bolted on. Qt::UTC as a time-spec is
+                      // deprecated in 6.8 and the offset trick reads as a
+                      // magic number wherever it appears.
+                      .arg(QDateTime::fromMSecsSinceEpoch(
+                               tape_first_ns_ / 1'000'000, ist_tz())
+                               .toString(QStringLiteral("dd MMM")))
+                      .arg(QDateTime::fromMSecsSinceEpoch(
+                               tape_last_ns_ / 1'000'000, ist_tz())
+                               .toString(QStringLiteral("dd MMM yyyy")))
                 : QStringLiteral(" SYNTHETIC · random walk, not market data ");
         progress_->setText(
             src + QStringLiteral("·  tick %1 / %2   ·   unknown-instrument "
@@ -901,10 +934,8 @@ private:
         // IST is how a screen reads "CLOSED" at what looks like mid-session --
         // which is exactly what the first version of this window did.
         if (clock_.has_engine_time()) {
-            static const QTimeZone kIst =
-                QTimeZone::fromSecondsAheadOfUtc(5 * 3600 + 30 * 60);
-            const auto engine =
-                QDateTime::fromMSecsSinceEpoch(last_ts_ns_ / 1'000'000, kIst);
+            const auto engine = QDateTime::fromMSecsSinceEpoch(
+                last_ts_ns_ / 1'000'000, ist_tz());
             engine_clock_->setText(
                 QStringLiteral(" engine %1 IST ")
                     .arg(engine.toString(QStringLiteral("HH:mm:ss.zzz"))));

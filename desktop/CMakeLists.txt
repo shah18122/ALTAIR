@@ -14,7 +14,7 @@
 # them. `altair_desktop_link_audit` below makes that a build error rather than
 # a thing a reviewer has to notice.
 
-find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Widgets)
+find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Svg Widgets)
 
 if(NOT Qt6_FOUND)
     message(STATUS "desktop/: Qt6 not found — UI target skipped. "
@@ -29,6 +29,7 @@ qt_standard_project_setup()
 
 qt_add_executable(altair_desktop
     main.cpp
+    assets/altair.qrc
     main_window.hpp
     tick_model.hpp
     filter.hpp
@@ -70,12 +71,18 @@ else()
 endif()
 
 # READ-SIDE ONLY. See the header comment; this list is the safety property.
+# Qt6::Svg is here for ONE reason: the window/taskbar icon is an SVG, so it
+# stays sharp at every size the OS asks for instead of shipping five PNGs that
+# drift apart. It is a read-side rendering module and does not widen the UI
+# allow-list below in any way that matters -- but it IS a new link, so it is
+# named here rather than appearing silently in a diff.
 target_link_libraries(altair_desktop PRIVATE
     altair_types
     altair_time
     altair_feed
     Qt6::Core
     Qt6::Gui
+    Qt6::Svg
     Qt6::Widgets
 )
 
@@ -147,6 +154,12 @@ set(_altair_ui_permitted
     # message below.
     altair_charges_toml
     Qt6::Core Qt6::Gui Qt6::Widgets
+    # The application icon is an SVG (Aquila, the eagle Altair sits in), so
+    # the renderer has to be linked. Qt6::Svg rasterises vector graphics and
+    # has no network, no process, and no vocabulary of any kind that could
+    # reach an order path. Added deliberately, per the error below, rather
+    # than by widening the check.
+    Qt6::Svg
 )
 get_target_property(_altair_ui_links altair_desktop LINK_LIBRARIES)
 foreach(_lib IN LISTS _altair_ui_links)
