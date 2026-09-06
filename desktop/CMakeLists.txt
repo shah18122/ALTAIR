@@ -48,6 +48,7 @@ qt_add_executable(altair_desktop
     data/master_lookup.hpp
     cost_panel.hpp
     audit_panel.hpp
+    quant_pages.hpp
     depth_ladder.hpp
     kill_switch.hpp
     chain_panel.hpp
@@ -80,6 +81,10 @@ target_link_libraries(altair_desktop PRIVATE
     altair_types
     altair_time
     altair_feed
+    altair_analytics
+    altair_models
+    altair_risk
+    altair_backtest
     Qt6::Core
     Qt6::Gui
     Qt6::Svg
@@ -160,6 +165,14 @@ set(_altair_ui_permitted
     # reach an order path. Added deliberately, per the error below, rather
     # than by widening the check.
     Qt6::Svg
+    # P19. The quant pages read analytics/, models/, risk/ and backtest/ --
+    # ALL READ-SIDE. oms/ and broker/ remain absent and the check below still
+    # refuses them, which is the property that matters: the UI can now show
+    # every model in the tree and still cannot place an order.
+    altair_analytics
+    altair_models
+    altair_risk
+    altair_backtest
 )
 get_target_property(_altair_ui_links altair_desktop LINK_LIBRARIES)
 foreach(_lib IN LISTS _altair_ui_links)

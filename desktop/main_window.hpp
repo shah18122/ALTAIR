@@ -41,6 +41,12 @@
 #include "kill_switch.hpp"
 #include "data/bar_csv.hpp"
 #include "broker_status.hpp"
+#include "quant_pages.hpp"
+
+#include <QApplication>
+#include <QMessageBox>
+
+#include <cstdlib>
 #include "feed_status.hpp"
 #include "panels.hpp"
 #include "filter.hpp"
@@ -87,7 +93,14 @@ namespace altair::ui {
             QStringLiteral("Analytics"),
             QStringLiteral("Ratio Spread"), QStringLiteral("Value — DCF"),
             QStringLiteral("Aggregator"),  QStringLiteral("Trade Handler"),
-            QStringLiteral("Audit Trail")};
+            QStringLiteral("Audit Trail"),
+            // P19-01..06. Phases 13-18 each get a page, per Smit's standing
+            // rule that every model is visible in the UI. Appended rather
+            // than interleaved so no existing --page index moves: a script or
+            // a shortcut pinned to "page 7" must keep meaning what it meant.
+            QStringLiteral("Execution"),   QStringLiteral("Volatility"),
+            QStringLiteral("Risk — VaR"),  QStringLiteral("Portfolio"),
+            QStringLiteral("ML — Trees"),  QStringLiteral("Regimes")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -723,6 +736,110 @@ private:
 
         audit_panel_ = new AuditPanel;
         pages_->addWidget(audit_panel_);
+
+        // ---- P19-01..06 ------------------------------------------------
+        //
+        // Six pages for Phases 13-18. Each one computes ON DEMAND, behind a
+        // button, and each calls the same function its acceptance test calls.
+        //
+        // On demand because P11Q learned it the expensive way: a model fit run
+        // at construction froze the window for seven seconds before anything
+        // was drawn, and the freeze arrived late enough to read as a different
+        // bug. And the SAME function because a number that exists in two
+        // places has already contradicted itself twice in this UI.
+        const QString ds = QStringLiteral(ALTAIR_DATASET_DIR);
+
+        auto* exec_page = new ComputePage(
+            QStringLiteral("EXECUTION — P13"),
+            QStringLiteral("Show schedules and the Almgren-Chriss limits"),
+            this);
+        connect(exec_page->button(), &QPushButton::clicked, this,
+                [exec_page] { exec_page->set_text(execution_report()); });
+        pages_->addWidget(exec_page);
+
+        auto* vol_page = new ComputePage(
+            QStringLiteral("VOLATILITY — P14"),
+            QStringLiteral("Fit GARCH and race it against EWMA "
+                           "(a few seconds)"),
+            this);
+        connect(vol_page->button(), &QPushButton::clicked, this,
+                [vol_page, ds] {
+                    vol_page->set_text(QStringLiteral("Fitting..."));
+                    QApplication::processEvents();
+                    vol_page->set_text(volatility_report(ds));
+                });
+        pages_->addWidget(vol_page);
+
+        auto* var_page = new ComputePage(
+            QStringLiteral("RISK — P15"),
+            QStringLiteral("Compute VaR and Expected Shortfall three ways"),
+            this);
+        connect(var_page->button(), &QPushButton::clicked, this,
+                [var_page, ds] { var_page->set_text(risk_report(ds)); });
+        pages_->addWidget(var_page);
+
+        auto* port_page = new ComputePage(
+            QStringLiteral("PORTFOLIO — P15"),
+            QStringLiteral("Run the optimisers against the 1/N control"),
+            this);
+        connect(port_page->button(), &QPushButton::clicked, this,
+                [port_page] {
+                    port_page->set_text(QStringLiteral("Optimising..."));
+                    QApplication::processEvents();
+                    port_page->set_text(portfolio_report());
+                });
+        pages_->addWidget(port_page);
+
+        auto* ml_page = new ComputePage(
+            QStringLiteral("ML — P16"),
+            QStringLiteral("Fit gradient-boosted trees "
+                           "(a few seconds)"),
+            this);
+        connect(ml_page->button(), &QPushButton::clicked, this,
+                [ml_page] {
+                    ml_page->set_text(QStringLiteral("Boosting..."));
+                    QApplication::processEvents();
+                    ml_page->set_text(ml_report());
+                });
+        pages_->addWidget(ml_page);
+
+        auto* reg_page = new ComputePage(
+            QStringLiteral("REGIMES — P14-06 / P18"),
+            QStringLiteral("Fit the HMM, against its noise baseline "
+                           "(a few seconds)"),
+            this);
+        connect(reg_page->button(), &QPushButton::clicked, this,
+                [reg_page, ds] {
+                    reg_page->set_text(QStringLiteral("Fitting..."));
+                    QApplication::processEvents();
+                    reg_page->set_text(regime_report(ds));
+                });
+        pages_->addWidget(reg_page);
+
+        // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
+        // rather than trusted.
+        //
+        // Row N opens page N. If a name is added without a widget -- or a
+        // widget without a name -- every page after the gap shifts by one and
+        // the window opens the wrong panel with no error anywhere. `--page
+        // models` opening the Live Grid was that failure once already, from a
+        // different cause, and it cost an afternoon because nothing looked
+        // broken.
+        //
+        // A hard failure at startup rather than a log line: a UI whose nav is
+        // off by one is not a UI to trade from, and it should not be possible
+        // to run it.
+        if (pages_->count() != nav_page_names().size()) {
+            QMessageBox::critical(
+                nullptr, QStringLiteral("Altair — nav mismatch"),
+                QStringLiteral(
+                    "%1 nav entries but %2 pages.\n\n"
+                    "Row N opens page N, so every page after the gap is "
+                    "showing the wrong panel. Fix nav_page_names() or the "
+                    "page construction below it.")
+                    .arg(nav_page_names().size()).arg(pages_->count()));
+            std::abort();
+        }
     }
 
     void build_toolbar() {

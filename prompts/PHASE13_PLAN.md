@@ -222,3 +222,41 @@ delay-dominated shortfall is a cost being paid today on every fill.
 - **QUANTLAB's Python tree** — stays where it is, read-only, as the record of
   the findings in §2. Nothing in `Quants/` is built, linked, or listed in any
   card manifest.
+
+---
+
+## 6. P17-04 — the VRP sleeve, and why it stays blocked
+
+**Status: BLOCKED, and the blocker is not code.**
+
+QUANTLAB's single best result was the volatility risk premium: Sharpe 1.02,
+the first and only strategy that survived deflation at DSR > 0.95. It is the
+most valuable thing in that project and it is the one card here that cannot
+be written.
+
+**What it needs:** an options chain with a BID AND AN ASK per strike, live.
+
+**Why history cannot supply it.** P11Q-05d established this on the ratio
+spread and the same argument applies unchanged: `butterfly_margin` takes three
+`Touch`es, a `Touch` is a bid and an ask, and you buy the wings at the ask and
+sell the body at the bid. A historical candle carries a CLOSE — one trade, at
+one instant, on whichever side happened to lift. Pricing a spread from closes
+is the error P11Q-06 measured when bar closes went through a tick pipeline and
+**37.8% of the range vanished**. The number would come out plausible and mean
+nothing.
+
+**Why more history does not help.** This is not a sample-size problem. A
+million historical closes still contain zero bid-ask pairs.
+
+**What unblocks it:** a live full-mode Kite subscription (P2-02's decoder is
+built and tested; nothing subscribes yet), which needs a session issued the
+same day — the same blocker as the BANKNIFTY fetch.
+
+**And when it is unblocked, the strategy is still conditional.** QUANTLAB
+signed it off as CONDITIONAL pending defined-risk wings: a naked short-vol
+position has an unbounded tail, and this is a book with a kill switch and a
+conservation invariant precisely because unbounded tails are the thing being
+engineered against.
+
+This card exists so the blocker is tracked rather than forgotten, which is the
+only useful thing a blocked card does.

@@ -27,6 +27,8 @@
 
 #include <core/time/timestamp.hpp>
 #include <QIcon>
+#include <QPixmap>
+#include <QSplashScreen>
 #include <cstdio>
 #include <core/types/units.hpp>
 #include <feed/replay.hpp>
@@ -138,6 +140,27 @@ int main(int argc, char** argv) {
     // PNGs because the OS asks for sizes from 16 to 256 and five bitmaps drift
     // apart the first time one of them is edited.
     app.setWindowIcon(QIcon(QStringLiteral(":/altair_eagle.svg")));
+
+    // THE SPLASH, and why it is not decoration.
+    //
+    // The window takes a moment to appear: the instrument master is 108,411
+    // rows and the tape is twenty sessions across three instruments. Before
+    // this there was a gap where nothing was on screen, which reads as a
+    // failed launch -- the same class of problem as a blank cell that might
+    // be a zero.
+    //
+    // So the mark goes up immediately with a line of text underneath saying
+    // what is loading. It is closed by the login dialog, not by a timer: a
+    // splash that vanishes on a timer while the app is still loading has
+    // simply moved the blank gap later.
+    QSplashScreen splash(QPixmap(QStringLiteral(":/altair_eagle.svg"))
+                             .scaled(220, 220, Qt::KeepAspectRatio,
+                                     Qt::SmoothTransformation));
+    splash.showMessage(
+        QStringLiteral("  Altair — loading instruments and tape..."),
+        Qt::AlignBottom | Qt::AlignHCenter, QColor(0xD6, 0xDB, 0xDF));
+    splash.show();
+    app.processEvents();
     QApplication::setApplicationName(QStringLiteral("Altair"));
     QApplication::setOrganizationName(QStringLiteral("Altair"));
 
@@ -269,6 +292,10 @@ int main(int argc, char** argv) {
 #endif
 
     if (role == altair::ui::Role::None) {
+        // The splash comes down HERE, when there is something to replace it,
+        // rather than on a timer -- a timed splash that expires mid-load just
+        // moves the blank gap later.
+        splash.close();
         altair::ui::LoginDialog login(users);
         if (login.exec() != QDialog::Accepted
             || login.role() == altair::ui::Role::None) {
@@ -322,6 +349,11 @@ int main(int argc, char** argv) {
         window.train_selected();
     }
 
+    // Belt and braces: the login path closes it, but a run with --user set
+    // skips login entirely and would otherwise leave the splash on top of the
+    // window. finish() ties it to the widget that replaces it, which is the
+    // one thing a splash should be tied to.
+    splash.finish(&window);
     window.showFullScreen();
 
     return QApplication::exec();
