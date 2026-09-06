@@ -87,6 +87,15 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_gbdt COMMAND altair_gbdt_test)
 
+    # P18-01/02/03. Regime clustering ranked return-blind, a tabular
+    # Q-learner on execution timing only, and the ten-line heuristic control
+    # QUANTLAB rejected PPO against. The control IS the card.
+    add_executable(altair_regime_rl_test tests/test_regime_rl.cpp)
+    target_link_libraries(altair_regime_rl_test PRIVATE altair_models altair_flags)
+    target_compile_definitions(altair_regime_rl_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME models_regime_rl COMMAND altair_regime_rl_test)
+
     # P8-15. Horizon forecast net of cost, on the real 60-minute series.
     add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
     target_link_libraries(altair_horizon_test
