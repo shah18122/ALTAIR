@@ -79,4 +79,10 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_var_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME risk_var COMMAND altair_var_test)
+
+    # P15-03/05/06. Covariance estimation and portfolio optimisers, every one
+    # of them shipped against the 1/N control QUANTLAB found beats them.
+    add_executable(altair_optimise_test tests/test_optimise.cpp)
+    target_link_libraries(altair_optimise_test PRIVATE altair_risk altair_flags)
+    add_test(NAME risk_optimise COMMAND altair_optimise_test)
 endif()
