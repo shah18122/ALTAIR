@@ -43,4 +43,12 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_throttle_test tests/test_throttle.cpp)
     target_link_libraries(altair_throttle_test PRIVATE altair_oms altair_flags)
     add_test(NAME throttle COMMAND altair_throttle_test)
+
+    # P13-01..06. Execution algorithms and implementation shortfall. They live
+    # in oms/ because they decide the quantity and timing of orders, which is
+    # placing an order in every sense that matters -- a scheduler in
+    # strategies/ would be exactly the violation CLAUDE.md calls unconditional.
+    add_executable(altair_execution_test tests/test_execution.cpp)
+    target_link_libraries(altair_execution_test PRIVATE altair_oms altair_flags)
+    add_test(NAME oms_execution COMMAND altair_execution_test)
 endif()
