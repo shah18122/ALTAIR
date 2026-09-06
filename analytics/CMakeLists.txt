@@ -68,4 +68,12 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_garch_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME analytics_garch COMMAND altair_garch_test)
+
+    # P14-04/05. Kalman filter, Joseph form, validated on the NIFTY
+    # spot-versus-futures pair where the hedge ratio is known to be 1.
+    add_executable(altair_kalman_test tests/test_kalman.cpp)
+    target_link_libraries(altair_kalman_test PRIVATE altair_analytics altair_flags)
+    target_compile_definitions(altair_kalman_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME analytics_kalman COMMAND altair_kalman_test)
 endif()
