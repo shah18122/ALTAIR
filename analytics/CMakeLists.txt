@@ -76,4 +76,13 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_kalman_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME analytics_kalman COMMAND altair_kalman_test)
+
+    # P17-02/03 + P14-06. SABR with its arbitrage check, Dupire local vol, and
+    # a hidden Markov model read against the separation the same fitter finds
+    # in pure noise.
+    add_executable(altair_surface_hmm_test tests/test_surface_hmm.cpp)
+    target_link_libraries(altair_surface_hmm_test PRIVATE altair_analytics altair_flags)
+    target_compile_definitions(altair_surface_hmm_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME analytics_surface_hmm COMMAND altair_surface_hmm_test)
 endif()
