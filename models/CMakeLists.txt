@@ -77,6 +77,16 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_dcf_sensitivity_test PRIVATE altair_models altair_flags)
     add_test(NAME models_dcf_sensitivity COMMAND altair_dcf_sensitivity_test)
 
+    # P16-01..05. Gradient-boosted trees -- the one model family models/ did
+    # not have and the one that actually wins on tabular financial data. Aimed
+    # at META-LABELING per QUANTLAB Q6, not direction: P8-15 and P8-16 already
+    # established there is nothing to predict at these horizons.
+    add_executable(altair_gbdt_test tests/test_gbdt.cpp)
+    target_link_libraries(altair_gbdt_test PRIVATE altair_models altair_flags)
+    target_compile_definitions(altair_gbdt_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME models_gbdt COMMAND altair_gbdt_test)
+
     # P8-15. Horizon forecast net of cost, on the real 60-minute series.
     add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
     target_link_libraries(altair_horizon_test
