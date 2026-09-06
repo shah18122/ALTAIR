@@ -70,4 +70,13 @@ if(ALTAIR_BUILD_TESTS)
             ALTAIR_CHARGES_TOML="${CMAKE_SOURCE_DIR}/config/charges.toml")
         add_test(NAME charges_toml COMMAND altair_charges_toml_test)
     endif()
+
+    # P15-01/02. VaR three ways and Expected Shortfall. The card is the
+    # DISAGREEMENT between the three, plus the subadditivity counterexample
+    # that explains why Basel moved the trading book to ES.
+    add_executable(altair_var_test tests/test_var.cpp)
+    target_link_libraries(altair_var_test PRIVATE altair_risk altair_flags)
+    target_compile_definitions(altair_var_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME risk_var COMMAND altair_var_test)
 endif()
