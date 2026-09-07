@@ -124,8 +124,10 @@ struct KiteEndpoint {
          "altair_kite_fetch — filled dataset/ with 2.8M bars"},
         {"Market", "/instruments/{ex}/{sym}/trigger_range", false,
          "not built"},
-        {"Market", "/quote", false, "NOT BUILT — this is what the watchlist "
-                                    "bid/ask columns are waiting for"},
+        {"Market", "/quote", false,
+         "broker/kite_quote.hpp — PARSER BUILT (P20-03), 22 checks green. "
+         "Fetching needs a session; parsing does not, and the parser is "
+         "where the bugs are. This is what fills the watchlist bid/ask."},
         {"Market", "/quote/ltp", false, "not built"},
         {"Market", "/quote/ohlc", false, "not built"},
         // ---- GTT ---------------------------------------------------------

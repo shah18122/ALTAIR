@@ -64,4 +64,14 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_kite_historical_test
         PRIVATE altair_broker altair_flags)
     add_test(NAME kite_historical COMMAND altair_kite_historical_test)
+
+    # P20-03. The /quote parser. Links altair_broker (the non-net half) only,
+    # for the same reason kite_historical does: it is a PARSER, with no
+    # transport and no credential in it, so it builds and runs in every preset
+    # rather than only where OpenSSL is present. Fetching a quote needs a
+    # session; parsing one does not, and the parser is where the bugs are.
+    add_executable(altair_kite_quote_test tests/test_kite_quote.cpp)
+    target_link_libraries(altair_kite_quote_test
+        PRIVATE altair_broker altair_flags)
+    add_test(NAME kite_quote COMMAND altair_kite_quote_test)
 endif()
