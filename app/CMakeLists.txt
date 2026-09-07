@@ -39,6 +39,15 @@ if(ALTAIR_HAVE_NET)
     add_executable(altair_kite_fetch kite_fetch_main.cpp)
     target_link_libraries(altair_kite_fetch PRIVATE
         altair_broker_net altair_flags)
+
+    # P20-01. Snapshots the READ-ONLY account state for the UI to render.
+    # Separate binary for the same reason as the other two: desktop/ may not
+    # link broker/, so the network half lives out here and the window reads a
+    # file. Every endpoint it calls is read-only; place/modify/cancel are
+    # deliberately absent and belong to oms/.
+    add_executable(altair_kite_account kite_account_main.cpp)
+    target_link_libraries(altair_kite_account PRIVATE
+        altair_broker_net altair_flags)
 endif()
 
 # P12-02. Warm restart from state. Header-only and testable without a broker:

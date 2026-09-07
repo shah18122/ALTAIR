@@ -49,6 +49,7 @@ qt_add_executable(altair_desktop
     cost_panel.hpp
     audit_panel.hpp
     quant_pages.hpp
+    kite_panel.hpp
     depth_ladder.hpp
     kill_switch.hpp
     chain_panel.hpp
@@ -105,6 +106,7 @@ target_compile_definitions(altair_desktop PRIVATE
 # screen explaining the difference.
 target_compile_definitions(altair_desktop PRIVATE
     ALTAIR_SESSION_FILE="${CMAKE_SOURCE_DIR}/data/kite_session.json"
+    ALTAIR_ACCOUNT_FILE="${CMAKE_SOURCE_DIR}/data/kite_account.json"
     ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     ALTAIR_KILL_REQUEST_FILE="${CMAKE_SOURCE_DIR}/data/kill_request.json")
 
@@ -262,6 +264,19 @@ if(ALTAIR_BUILD_TESTS)
         target_compile_definitions(altair_broker_status_test PRIVATE ALTAIR_HAVE_NET=1)
     endif()
     add_test(NAME desktop_broker_status COMMAND altair_broker_status_test)
+
+    # P20-02. The Kite account panel. Exercised against a SYNTHETIC snapshot
+    # because the live account is expired -- a renderer that has never
+    # rendered is the one that crashes when a real snapshot finally arrives.
+    qt_add_executable(altair_kite_panel_test
+        tests/test_kite_panel.cpp
+        kite_panel.hpp)
+    target_link_libraries(altair_kite_panel_test PRIVATE
+        altair_types altair_time altair_feed Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_kite_panel_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_kite_panel_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_kite_panel COMMAND altair_kite_panel_test)
 
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
     # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.

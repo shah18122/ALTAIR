@@ -41,6 +41,7 @@
 #include "kill_switch.hpp"
 #include "data/bar_csv.hpp"
 #include "broker_status.hpp"
+#include "kite_panel.hpp"
 #include "quant_pages.hpp"
 
 #include <QApplication>
@@ -88,7 +89,7 @@ namespace altair::ui {
 [[nodiscard]] inline QStringList nav_page_names() {
     return {QStringLiteral("Live Grid"),   QStringLiteral("Chart"),
             QStringLiteral("Watchlist"),   QStringLiteral("Models"),
-            QStringLiteral("Data Flow"),   QStringLiteral("Broker Wiring"),
+            QStringLiteral("Data Flow"),   QStringLiteral("Kite Account"),
             QStringLiteral("Cost"),
             QStringLiteral("Analytics"),
             QStringLiteral("Ratio Spread"), QStringLiteral("Value — DCF"),
@@ -708,7 +709,13 @@ private:
             pages_->addWidget(page);
         }
 
-        pages_->addWidget(new WiringPanel);
+        // P20-02. The wiring table is still here, at the bottom of the
+        // Kite panel's API-surface tab -- a number is only worth as much as
+        // the pipe it came through -- but the page now leads with the
+        // account, which is an operator's question rather than a developer's.
+        pages_->addWidget(new KitePanel(
+            QStringLiteral(ALTAIR_ACCOUNT_FILE),
+            QStringLiteral(ALTAIR_SESSION_FILE)));
         pages_->addWidget(new CostPanel);
         pages_->addWidget(new AnalyticsPanel);
 
