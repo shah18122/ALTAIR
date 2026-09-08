@@ -30,6 +30,8 @@
 #pragma once
 
 #include <analytics/american.hpp>
+#include <analytics/ewma.hpp>
+#include <analytics/hurst.hpp>
 #include <analytics/garch.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/greeks2.hpp>
@@ -2331,6 +2333,118 @@ private:
             "  scanner that has only ever seen invented quotes is a scanner\n"
             "  nobody should trust the first time it sees a real one.\n");
     }
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P24-03 — Memory: Hurst, EWMA, and the error bars that decide them
+// ---------------------------------------------------------------------------
+
+/// Does this series remember anything? Two estimators, one discipline.
+///
+/// BOTH NUMBERS ON THIS PAGE ARE MEANINGLESS WITHOUT THEIR ERROR BAR, AND THAT
+/// IS THE POINT OF PUTTING THEM TOGETHER.
+///
+/// A Hurst exponent of 0.58 reads as persistence. With a standard error of
+/// 0.04 it is 2 sigma from a random walk and worth acting on; with a standard
+/// error of 0.06 it is not, and nothing about the 0.58 changed.
+/// `hurst_departs_from_random_walk` is the only sanctioned way to act on the
+/// number, and it takes the sigmas rather than assuming them.
+///
+/// ROADMAP section 3 again, in its third form on this UI: measurements carry
+/// error, size on the lower bound, a signal whose bar straddles the null is
+/// not a signal. The Sizing page shows it for edge, the Options page for
+/// implied vol, and this page for memory.
+///
+/// AND THE REGIME DETECTOR ALREADY FOUND THE ANSWER HERE.
+///
+/// P6-03 measured the Hurst label against forward returns and it did not
+/// separate them. That is a negative result this page does not overturn; it
+/// shows where the exponent sits and how wide the bar is, so the negative
+/// result is legible rather than remembered.
+[[nodiscard]] inline QString memory_report(const QString& dataset_root) {
+    QString s = QStringLiteral("MEMORY — Hurst and EWMA — P24-03\n\n");
+
+    const auto closes =
+        ui_load_closes(dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+    if (closes.size() < 2000) {
+        return s + QStringLiteral("  No dataset at dataset/spot/nifty/1d/.\n");
+    }
+    std::vector<double> r = ui_log_returns(closes);
+    for (double& v : r) { v *= 10000.0; }
+
+    // ――― 1. Hurst, with the bar ―――
+    s += QStringLiteral(
+        "――― 1. HURST, AND WHETHER IT DEPARTS FROM 0.5 ―――\n\n"
+        "  R/S on daily NIFTY returns, over several window lengths. 0.5 is a\n"
+        "  random walk; the question is never the exponent alone.\n\n"
+        "     window        H     std err       R2   scales   2-sigma verdict\n");
+    for (const std::size_t w : {512u, 1024u, 2048u, 4096u}) {
+        if (r.size() < w) { continue; }
+        const auto e = hurst_rs(r.data() + (r.size() - w), w);
+        if (!e) { continue; }
+        const bool departs = hurst_departs_from_random_walk(*e, 2.0);
+        s += QStringLiteral("   %1  %2  %3  %4   %5   %6\n")
+                 .arg(w, 8).arg(e->h, 7, 'f', 4).arg(e->std_error, 10, 'f', 4)
+                 .arg(e->r_squared, 7, 'f', 4).arg(e->scales, 6)
+                 .arg(departs ? QStringLiteral("departs")
+                              : QStringLiteral("indistinguishable from noise"));
+    }
+    s += QStringLiteral(
+        "\n  The R2 column is a separate question from the exponent: it says\n"
+        "  whether a scaling law holds AT ALL. A series with no self-similar\n"
+        "  structure still produces a slope, and a low R2 says that slope\n"
+        "  describes nothing.\n\n"
+        "  P6-03 already measured the Hurst LABEL against forward returns and\n"
+        "  found it did not separate them. This page does not overturn that;\n"
+        "  it makes the exponent and its bar visible so the negative result\n"
+        "  is legible rather than remembered.\n\n");
+
+    // ――― 2. EWMA vs the flat window ―――
+    s += QStringLiteral(
+        "――― 2. EWMA VARIANCE AGAINST A FLAT WINDOW ―――\n\n"
+        "  P14 found EWMA beat GARCH on this series. It is worth seeing why a\n"
+        "  one-parameter estimator is hard to beat: it is TIME-AWARE. The\n"
+        "  update takes a timestamp, so a gap in the feed decays the estimate\n"
+        "  by the elapsed time rather than by the number of ticks that\n"
+        "  happened to arrive.\n\n"
+        "     half-life   final vol (bps/day)   annualised\n");
+    for (const std::int64_t days : {5, 10, 21, 63, 252}) {
+        // tau in nanoseconds; a trading day is the unit here and it is stated
+        // rather than derived from a calendar, because this is a decay
+        // constant and not an instrument fact.
+        const Duration tau{days * 86'400'000'000'000LL};
+        auto v = EwmaVariance::create(tau);
+        if (!v) { continue; }
+        double last = 0.0;
+        for (std::size_t i = 0; i < r.size(); ++i) {
+            const Timestamp ts{
+                static_cast<std::int64_t>(i) * 86'400'000'000'000LL};
+            const auto up = v->update(ts, r[i]);
+            if (up) { last = *up; }
+        }
+        const double sd = std::sqrt(last);
+        s += QStringLiteral("   %1        %2          %3%\n")
+                 .arg(days, 9).arg(sd, 14, 'f', 3)
+                 .arg(sd * std::sqrt(252.0) / 100.0, 9, 'f', 2);
+    }
+    s += QStringLiteral(
+        "\n  A longer half-life is not a better estimate, it is a different\n"
+        "  question. Five days answers \"what is volatility now\"; a year\n"
+        "  answers \"what has it been\". Reporting one without saying which is\n"
+        "  how a risk number becomes untraceable.\n\n"
+        "――― WHAT IS STILL WITHOUT A PAGE, AND WHY ―――\n\n"
+        "  analytics/derivatives.hpp — velocity and acceleration of a price,\n"
+        "  with error propagation. It needs a TIMED tick stream, not bars:\n"
+        "  the whole value is resolving motion between quotes, and at daily\n"
+        "  sampling the derivative is the return.\n\n"
+        "  analytics/vix.hpp and american.hpp — both need an option chain.\n\n"
+        "  models/mlp, recurrent, attention — LibTorch training. Fitting one\n"
+        "  on press would freeze the window for minutes, and a page that\n"
+        "  showed the LAST fit would be reporting a number it cannot\n"
+        "  reproduce. They belong behind the training harness, not a button.\n\n"
+        "  features/registry.hpp — a versioned registry with nothing\n"
+        "  registered. A page listing zero features is not information.\n");
     return s;
 }
 

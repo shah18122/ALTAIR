@@ -125,7 +125,10 @@ namespace altair::ui {
             QStringLiteral("Sizing & Limits"),
             // P24-02. A pair whose answer is known before the test,
             // and the walk-forward every backtest passes through.
-            QStringLiteral("Cointegration")};
+            QStringLiteral("Cointegration"),
+            // P24-03. Hurst and EWMA, and the error bars without
+            // which neither number means anything.
+            QStringLiteral("Memory")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -978,6 +981,14 @@ private:
                     coint_page->set_text(cointegration_report(ds));
                 });
         pages_->addWidget(coint_page);
+
+        auto* mem_page = new ComputePage(
+            QStringLiteral("MEMORY — P24-03"),
+            QStringLiteral("Hurst and EWMA, with their error bars"),
+            this);
+        connect(mem_page->button(), &QPushButton::clicked, this,
+                [mem_page, ds] { mem_page->set_text(memory_report(ds)); });
+        pages_->addWidget(mem_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

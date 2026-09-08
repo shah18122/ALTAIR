@@ -113,6 +113,7 @@ int main(int argc, char** argv)
         {"Basis",        basis_report(ds)},
         {"Flagging",     flagging_report(ds)},
         {"Cointegration", cointegration_report(ds)},
+        {"Memory",       memory_report(ds)},
     };
     for (const Backed& b : backed) {
         const bool ok = b.page.size() > 200 && !gave_up(b.page);
