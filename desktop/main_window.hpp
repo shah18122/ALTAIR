@@ -109,7 +109,13 @@ namespace altair::ui {
             QStringLiteral("Strategies"),
             // P22-03. The overnight gap, which is where P21-03 said
             // the whole of this index's return actually lives.
-            QStringLiteral("Overnight Gap")};
+            QStringLiteral("Overnight Gap"),
+            // P23-01. The largest block of engine code with no page:
+            // greeks, IV, the SVI surface and its arbitrage scan.
+            QStringLiteral("Options"),
+            // P23-03. Real futures-vs-spot, and an honest statement of
+            // the one field that blocks the rate.
+            QStringLiteral("Basis")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -907,6 +913,24 @@ private:
                     on_page->set_text(overnight_report(ds));
                 });
         pages_->addWidget(on_page);
+
+        // P23-01. Cheap enough to run on press without a warning.
+        auto* opt_page = new ComputePage(
+            QStringLiteral("OPTIONS — P23-01"),
+            QStringLiteral("Round-trip the pricer, fit a surface, "
+                           "find the arbitrage"),
+            this);
+        connect(opt_page->button(), &QPushButton::clicked, this,
+                [opt_page] { opt_page->set_text(options_report()); });
+        pages_->addWidget(opt_page);
+
+        auto* basis_page = new ComputePage(
+            QStringLiteral("BASIS — P23-03"),
+            QStringLiteral("Futures against spot, 11 years"),
+            this);
+        connect(basis_page->button(), &QPushButton::clicked, this,
+                [basis_page, ds] { basis_page->set_text(basis_report(ds)); });
+        pages_->addWidget(basis_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

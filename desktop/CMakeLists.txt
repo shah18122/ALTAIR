@@ -302,6 +302,45 @@ if(ALTAIR_BUILD_TESTS)
         PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_overnight_page COMMAND altair_overnight_page_test)
 
+    # P23-02. The Options page. Checks the pricer and the IV solver are
+    # inverses to within the TICK -- the tolerance is derived from vega, not
+    # chosen -- that the wings stop resolving, and that the butterfly scan
+    # finds a boundary when pushed past one. Prints the page so its columns
+    # are read by somebody.
+    qt_add_executable(altair_options_page_test
+        tests/test_options_page.cpp
+        quant_pages.hpp)
+    target_link_libraries(altair_options_page_test PRIVATE
+        altair_types altair_time altair_feed altair_analytics altair_models
+        altair_risk altair_backtest altair_strategies
+        Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_options_page_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_options_page_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    set_target_properties(altair_options_page_test
+        PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_options_page COMMAND altair_options_page_test)
+
+    # P23-05. Renders EVERY compute page and asserts the dataset-backed ones
+    # are not showing their no-data fallback. That fallback is correct
+    # behaviour and invisible in a screenshot nobody takes, so a renamed
+    # directory would otherwise leave a page permanently apologising with
+    # every other test green.
+    qt_add_executable(altair_pages_test
+        tests/test_pages.cpp
+        quant_pages.hpp)
+    target_link_libraries(altair_pages_test PRIVATE
+        altair_types altair_time altair_feed altair_analytics altair_models
+        altair_risk altair_backtest altair_strategies
+        Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_pages_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_pages_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    set_target_properties(altair_pages_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_pages COMMAND altair_pages_test)
+
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
     # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.
     target_link_libraries(altair_bar_csv_test PRIVATE

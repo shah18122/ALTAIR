@@ -29,11 +29,18 @@
 
 #pragma once
 
+#include <analytics/american.hpp>
 #include <analytics/garch.hpp>
+#include <analytics/greeks.hpp>
+#include <analytics/greeks2.hpp>
+#include <analytics/iv.hpp>
+#include <analytics/svi.hpp>
+#include <analytics/svi_fit.hpp>
 #include <analytics/hmm.hpp>
 #include <analytics/kalman.hpp>
 #include <analytics/sabr.hpp>
 #include <models/gbdt.hpp>
+#include <models/regime_rl.hpp>
 #include <models/spot_forecast.hpp>
 #include <risk/covariance.hpp>
 #include <risk/optimise.hpp>
@@ -42,6 +49,7 @@
 // P21. strategies/ is header-only here and is NOT linked -- see the note at
 // the bottom of desktop/CMakeLists.txt. It detects; it cannot trade, and it
 // does not link oms/ either, so including it widens nothing.
+#include <strategies/basis.hpp>
 #include <strategies/meanrev.hpp>
 #include <strategies/overnight.hpp>
 #include <strategies/momentum.hpp>
@@ -55,9 +63,11 @@
 
 #include <cmath>
 #include <fstream>
+#include <map>
 #include <limits>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace altair::ui {
@@ -130,6 +140,30 @@ struct UiBar {
             }
             if (b.close > 0.0 && !b.session.empty()) { out.push_back(b); }
         }
+    }
+    return out;
+}
+
+/// Closes with their session date, for joining two series that do not share
+/// a calendar.
+[[nodiscard]] inline std::vector<std::pair<std::string, double>>
+ui_load_dated_closes(const QString& path) {
+    std::vector<std::pair<std::string, double>> out;
+    std::ifstream f(path.toStdString());
+    if (!f) { return out; }
+    std::string line;
+    std::getline(f, line);
+    while (std::getline(f, line)) {
+        std::istringstream ss(line);
+        std::string cell, day;
+        int col = 0;
+        double c = 0.0;
+        while (std::getline(ss, cell, ',')) {
+            if (col == 0 && cell.size() >= 10) { day = cell.substr(0, 10); }
+            if (col == 4 && !cell.empty()) { c = std::atof(cell.c_str()); }
+            ++col;
+        }
+        if (c > 0.0 && !day.empty()) { out.emplace_back(day, c); }
     }
     return out;
 }
@@ -685,13 +719,59 @@ private:
         "\nStates come back SORTED BY VARIANCE. Nothing in the\n"
         "likelihood distinguishes state 0 from state 1, so\n"
         "without sorting a regime label is not comparable\n"
-        "between two runs.\n\n"
+        "between two runs.\n\n");
+
+    // P23-04. THE k-MEANS RESULT, COMPUTED, NOT DESCRIBED.
+    //
+    // This page used to end with a paragraph of prose reporting P18's
+    // findings. That is the one thing quant_pages.hpp forbids: a figure that
+    // exists in two places has already contradicted itself twice in this UI,
+    // and a number in a string literal cannot track the code that produced
+    // it. So the clustering runs here, on the same series, on press.
+    s += QStringLiteral("――― k-MEANS REGIMES — P18, computed ―――\n\n");
+    {
+        // Two features per day: absolute return and a short realised vol.
+        // Deliberately crude -- the question is whether ANY clustering of
+        // return-shape separates the forward return, and a richer feature set
+        // would confound "the clusters are bad" with "the features are bad".
+        std::vector<std::vector<double>> x;
+        const std::size_t w = 10;
+        for (std::size_t i = w; i < r.size(); ++i) {
+            double mu = 0.0;
+            for (std::size_t j = i - w; j < i; ++j) { mu += r[j]; }
+            mu /= static_cast<double>(w);
+            double v = 0.0;
+            for (std::size_t j = i - w; j < i; ++j) {
+                v += (r[j] - mu) * (r[j] - mu);
+            }
+            x.push_back({std::fabs(r[i - 1]),
+                         std::sqrt(v / static_cast<double>(w - 1))});
+        }
+        s += QStringLiteral("    k   separation   persistence      score\n");
+        for (const std::size_t k : {2u, 3u, 4u, 5u}) {
+            const auto c = kmeans(x, k, 0xA17A1Bull);
+            if (!c) { continue; }
+            const auto qy = cluster_quality(x, *c);
+            s += QStringLiteral("   %1  %2   %3  %4\n")
+                     .arg(k, 2).arg(qy.separation, 10, 'f', 4)
+                     .arg(qy.persistence, 12, 'f', 4)
+                     .arg(qy.score(), 9, 'f', 4);
+        }
+        s += QStringLiteral(
+            "\n  `cluster_quality` is RETURN-BLIND on purpose: it scores how\n"
+            "  well-separated and how persistent the clusters are, never\n"
+            "  whether they predict anything. A high score here is a\n"
+            "  well-shaped partition of feature space and nothing more.\n\n");
+    }
+
+    s += QStringLiteral(
         "P18: neither a Q-learner nor a ten-line heuristic beat\n"
         "TWAP on execution timing. Leaning in when price is\n"
         "below the running average is a mean-reversion bet\n"
         "wearing an execution costume; on a series with drift\n"
         "it buys more of a decline. A reward-design finding,\n"
-        "not a broken agent.\n");
+        "not a broken agent. Run strategies_regime_rl for the\n"
+        "numbers behind that sentence.\n");
     return s;
 }
 
@@ -1224,6 +1304,383 @@ private:
         "  Every figure here is computed by the same functions the\n"
         "  acceptance tests call (strategies_overnight, _real), on the same\n"
         "  data, when you press the button.\n");
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P23-01 — Options: greeks, implied vol, and the surface
+// ---------------------------------------------------------------------------
+
+/// The options machinery, exercised end to end.
+///
+/// THERE IS NO OPTION CHAIN, AND THIS PAGE SAYS SO BEFORE IT SHOWS A NUMBER.
+///
+/// `dataset/opt/` does not exist and no Kite option subscription is running,
+/// so NOTHING on this page is a market measurement. Every figure is a
+/// SELF-CONSISTENCY CHECK: price a known option, solve the volatility back out
+/// of that price, and report how much was lost on the round trip. A page that
+/// dressed those up as a smile would be the exact failure this project keeps
+/// finding, so the headings say what they are.
+///
+/// That is still worth having on screen, for the reason P20-02 gave about the
+/// Kite panel: a renderer that has never rendered is the one that crashes when
+/// real data finally arrives. This exercises Black-76, the IV solver, the
+/// error propagator, the SVI fit and its butterfly scan, on every launch.
+///
+/// AND IT LEADS WITH WHERE THE MACHINERY STOPS WORKING.
+///
+/// The interesting output is not that a round trip recovers 15.00 vol at the
+/// money. It is the wing where vega has underflowed and the implied vol is
+/// unresolvable at any spread -- because that is the region a chain-driven
+/// model will silently produce numbers for.
+[[nodiscard]] inline QString options_report() {
+    QString s = QStringLiteral(
+        "OPTIONS — greeks, implied vol, surface\n\n"
+        "――― WHAT THIS IS NOT ―――\n\n"
+        "  There is no option chain. dataset/opt/ does not exist and no Kite\n"
+        "  option subscription is running, so NOTHING below is a market\n"
+        "  measurement and no smile here came from a price anyone quoted.\n\n"
+        "  Every figure is a self-consistency check: price a known option,\n"
+        "  solve the vol back out, report what the round trip lost.\n\n");
+
+    // ――― 1. round trip across the strike ladder ―――
+    const double F = 24000.0 * 100.0;       // paise
+    const double T = 30.0 / 365.0;
+    const double rate = 0.065;
+    const double true_vol = 0.15;
+
+    s += QStringLiteral(
+        "――― 1. PRICE, THEN SOLVE THE VOL BACK ―――\n\n"
+        "  Forward %1, %2 days, rate %3%, true vol %4.\n\n"
+        "  The model price is ROUNDED TO PAISE before the vol is solved back,\n"
+        "  because that is what a real quote does. So `recovered` differs from\n"
+        "  the generating vol by the tick, not by solver error — and the band\n"
+        "  beside it is that half-paise pushed through vega.\n\n"
+        "     strike   moneyness      price      delta       vega"
+        "   recovered   +/- band\n")
+            .arg(F / 100.0, 0, 'f', 0).arg(T * 365.0, 0, 'f', 0)
+            .arg(100.0 * rate, 0, 'f', 1).arg(true_vol, 0, 'f', 4);
+
+    std::size_t solved = 0, unresolvable = 0;
+    for (const double mult : {0.80, 0.90, 0.95, 1.00, 1.05, 1.10, 1.20, 1.35}) {
+        const double K = F * mult;
+        const auto g = black76(OptionRight::Call, Price{static_cast<std::int64_t>(F)},
+                               Price{static_cast<std::int64_t>(K)},
+                               Years{T}, Vol{true_vol}, rate);
+        if (!g) { continue; }
+        // The PUBLIC entry point, which takes an integer-paise price --
+        // `solve_iv` is in `detail::` and takes doubles. Going through the
+        // public one is the right choice and not merely the compiling one:
+        // a real quote arrives quantised to the tick, so rounding the model
+        // price to paise here reproduces the quantisation a live chain would
+        // hand the solver, and the recovered vol below is not exactly the
+        // generating vol for precisely that reason.
+        const auto iv = implied_vol_black76(
+            OptionRight::Call, Price{static_cast<std::int64_t>(g->price + 0.5)},
+            Price{static_cast<std::int64_t>(F)},
+            Price{static_cast<std::int64_t>(K)}, Years{T}, rate);
+        const double band = iv_uncertainty(g->vega, 0.5);
+        if (!iv) {
+            ++unresolvable;
+            s += QStringLiteral("   %1  %2  %3  %4  %5   UNRESOLVABLE\n")
+                     .arg(K / 100.0, 9, 'f', 0).arg(mult, 10, 'f', 2)
+                     .arg(g->price / 100.0, 9, 'f', 2)
+                     .arg(g->delta, 10, 'f', 4).arg(g->vega / 100.0, 10, 'f', 2);
+            continue;
+        }
+        ++solved;
+        const bool wide = !(band < 0.01);
+        s += QStringLiteral("   %1  %2  %3  %4  %5  %6   %7\n")
+                 .arg(K / 100.0, 9, 'f', 0).arg(mult, 10, 'f', 2)
+                 .arg(g->price / 100.0, 9, 'f', 2)
+                 .arg(g->delta, 10, 'f', 4).arg(g->vega / 100.0, 10, 'f', 2)
+                 .arg(iv->vol.raw(), 10, 'f', 6)
+                 .arg(wide ? QStringLiteral("WIDER THAN THE SMILE")
+                           : QStringLiteral("%1").arg(band, 0, 'f', 6));
+    }
+    s += QStringLiteral(
+        "\n  %1 strikes solved, %2 refused outright.\n"
+        "  The band is the point. Where vega has collapsed, half a paise of\n"
+        "  price uncertainty is worth more vol than the entire smile, and an\n"
+        "  IV printed there is a number without a measurement behind it.\n\n")
+            .arg(solved).arg(unresolvable);
+
+    // ――― 2. put-call parity ―――
+    {
+        const auto c = black76(OptionRight::Call, Price{static_cast<std::int64_t>(F)},
+                               Price{static_cast<std::int64_t>(F)},
+                               Years{T}, Vol{true_vol}, rate);
+        const auto pu = black76(OptionRight::Put, Price{static_cast<std::int64_t>(F)},
+                                Price{static_cast<std::int64_t>(F)},
+                                Years{T}, Vol{true_vol}, rate);
+        if (c && pu) {
+            const double resid = parity_residual(
+                c->price, pu->price, Price{static_cast<std::int64_t>(F)},
+                Price{static_cast<std::int64_t>(F)}, Years{T}, rate);
+            s += QStringLiteral(
+                "――― 2. PUT-CALL PARITY ―――\n\n"
+                "  At the money, call %1 put %2, residual %3 paise.\n"
+                "  It is an identity, not a fit: a non-zero residual here is a\n"
+                "  broken pricer, never a market opportunity.\n\n")
+                     .arg(c->price / 100.0, 0, 'f', 4)
+                     .arg(pu->price / 100.0, 0, 'f', 4)
+                     .arg(resid, 0, 'f', 9);
+        }
+    }
+
+    // ――― 3. SVI fit + butterfly scan ―――
+    s += QStringLiteral(
+        "――― 3. SVI SURFACE, AND THE ARBITRAGE BOUNDARY ―――\n\n"
+        "  A smile is generated from STATED parameters, fitted back, and the\n"
+        "  fit is scanned for butterfly arbitrage. The generating parameters\n"
+        "  are a choice printed here, not an estimate.\n\n");
+    {
+        SviParams truth;
+        truth.a = 0.04 * T;
+        truth.b = 0.4 * T;
+        truth.rho = -0.7;
+        truth.m = 0.0;
+        truth.sigma = 0.12;
+        std::vector<SviFitPoint> pts;
+        for (int i = -10; i <= 10; ++i) {
+            const double k = 0.03 * static_cast<double>(i);
+            SviFitPoint pt;
+            pt.k = k;
+            pt.w = svi_total_variance(truth, k);
+            pt.weight = 1.0;
+            pts.push_back(pt);
+        }
+        const auto fit = svi_fit(pts.data(), pts.size());
+        if (fit) {
+            s += QStringLiteral(
+                "  generated  a %1  b %2  rho %3  m %4  sigma %5\n"
+                "  recovered  a %6  b %7  rho %8  m %9  sigma %10\n\n"
+                "  weighted RMSE in total variance %11   worst residual %12\n"
+                "  points %13   Nelder-Mead iterations %14\n\n")
+                     .arg(truth.a, 0, 'f', 6).arg(truth.b, 0, 'f', 6)
+                     .arg(truth.rho, 0, 'f', 4).arg(truth.m, 0, 'f', 4)
+                     .arg(truth.sigma, 0, 'f', 4)
+                     .arg(fit->params.a, 0, 'f', 6).arg(fit->params.b, 0, 'f', 6)
+                     .arg(fit->params.rho, 0, 'f', 4).arg(fit->params.m, 0, 'f', 4)
+                     .arg(fit->params.sigma, 0, 'f', 4)
+                     .arg(fit->rmse, 0, 'g', 4).arg(fit->worst_residual, 0, 'g', 4)
+                     .arg(fit->points).arg(fit->iterations);
+        } else {
+            s += QStringLiteral("  The fit was refused on this smile.\n\n");
+        }
+
+        // Sweep b upward until the butterfly scan reports a negative density.
+        // The boundary is FOUND, not asserted -- the same discipline P17 used
+        // when a guessed SABR nu of 3.5 passed and the real first arbitrage
+        // was at 1.5.
+        s += QStringLiteral(
+            "  Sweeping the slope b until the density goes negative:\n\n"
+            "        b      min density    verdict\n");
+        double first_bad = -1.0;
+        for (const double bmul : {1.0, 2.0, 4.0, 8.0, 16.0, 32.0}) {
+            SviParams q = truth;
+            q.b = 0.4 * T * bmul;
+            const auto scan = svi_butterfly_scan(q, -0.6, 0.6, 401);
+            if (!scan) { continue; }
+            const bool bad = !scan->clean;
+            if (bad && first_bad < 0.0) { first_bad = q.b; }
+            s += QStringLiteral("   %1     %2    %3\n")
+                     .arg(q.b, 8, 'f', 6).arg(scan->worst, 12, 'g', 4)
+                     .arg(bad ? QStringLiteral("ARBITRAGE")
+                              : QStringLiteral("clean"));
+        }
+        s += first_bad > 0.0
+            ? QStringLiteral("\n  First arbitrage at b = %1. A slice past that "
+                             "point prices a\n  negative probability, and no "
+                             "amount of good fit statistics\n  makes it "
+                             "tradeable.\n\n").arg(first_bad, 0, 'f', 6)
+            : QStringLiteral("\n  No arbitrage found across the sweep.\n\n");
+    }
+
+    // ――― 4. higher greeks and American premium ―――
+    {
+        const auto h = black76_higher(OptionRight::Call,
+                                      Price{static_cast<std::int64_t>(F)},
+                                      Price{static_cast<std::int64_t>(F)},
+                                      Years{T}, Vol{true_vol}, rate);
+        if (h) {
+            s += QStringLiteral(
+                "――― 4. SECOND ORDER, AT THE MONEY ―――\n\n"
+                "  vanna %1   volga %2   charm %3   speed %4\n\n"
+                "  Vanna is dDelta/dVol. It is why a delta hedge set at one\n"
+                "  volatility is the wrong hedge at another, and it is the\n"
+                "  reason the surface has to be refitted rather than shifted.\n\n")
+                     .arg(h->vanna, 0, 'g', 5).arg(h->volga, 0, 'g', 5)
+                     .arg(h->charm, 0, 'g', 5).arg(h->speed, 0, 'g', 5);
+        }
+    }
+
+    s += QStringLiteral(
+        "――― WHAT WOULD MAKE THIS A MARKET PAGE ―――\n\n"
+        "  1. A Kite option subscription (P2-02, full mode) or a dump into\n"
+        "     dataset/opt/nifty/. Neither exists.\n"
+        "  2. The forward from the FUTURE, not the spot — dataset/fut/nifty/\n"
+        "     has bars, so this is the nearest gap to close.\n"
+        "  3. A quote's own bid-ask, so the +/- band above is the real one\n"
+        "     rather than a stated half paise.\n\n"
+        "  Until then this page proves the machinery runs and says where it\n"
+        "  stops resolving. It does not claim a volatility surface exists.\n");
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P23-03 — Basis: the future against the spot
+// ---------------------------------------------------------------------------
+
+/// The NIFTY futures basis, on eleven years of real daily data.
+///
+/// THIS ONE IS A REAL MEASUREMENT, WITH ONE FIELD MISSING.
+///
+/// `dataset/fut/nifty/1d/all.csv` and `dataset/spot/nifty/1d/all.csv` cover the
+/// same 2,873 sessions, so the raw basis -- future minus spot -- is observed,
+/// not constructed. That part of this page is market data.
+///
+/// What is NOT computable from these files is the IMPLIED REPO RATE, and the
+/// reason is worth stating rather than working around: converting a basis into
+/// a rate needs the time to expiry, `ln(F/S)/T + q`, and a CONTINUOUS futures
+/// series carries no expiry. Rule 1 puts expiry in the point-in-time spec
+/// store and forbids it as a literal, and "last Thursday of the month" typed
+/// into this file would be exactly the literal that rule exists to stop --
+/// NSE moves expiries for holidays, and the rule changed in 2025.
+///
+/// So the rate section runs `measure_basis` on a STATED tenor as a machinery
+/// check, clearly separated from the observed series above it. A 40-point
+/// basis on a one-week future and on a three-month future are wildly different
+/// rates, which is the whole reason the rate matters more than the basis.
+[[nodiscard]] inline QString basis_report(const QString& dataset_root) {
+    QString s = QStringLiteral(
+        "BASIS — the future against the spot\n\n");
+
+    const auto fut = ui_load_dated_closes(
+        dataset_root + QStringLiteral("/fut/nifty/1d/all.csv"));
+    const auto spot = ui_load_dated_closes(
+        dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+    if (fut.size() < 500 || spot.size() < 500) {
+        return s + QStringLiteral(
+            "  Missing dataset/fut/nifty/1d/all.csv or its spot counterpart.\n"
+            "  Nothing is shown rather than something synthetic.\n");
+    }
+
+    // JOINED ON THE DATE, not stacked by position.
+    //
+    // The first version of this page took the last N rows of each file and
+    // paired them by index. That is wrong whenever the two series do not
+    // share a session calendar, and they do not -- the result was a basis
+    // with a 292-point standard deviation, a 1,749-point minimum and 39.5%
+    // of sessions in backwardation, none of which a NIFTY future has ever
+    // done. Off-by-one days were being differenced as if they were a basis.
+    //
+    // A date join cannot make that mistake, and a session present in only one
+    // file is DROPPED rather than paired with its neighbour.
+    std::map<std::string, double> spot_by_day;
+    for (const auto& kv : spot) { spot_by_day[kv.first] = kv.second; }
+    std::vector<double> basis_pts;
+    basis_pts.reserve(fut.size());
+    std::size_t unmatched = 0;
+    for (const auto& kv : fut) {
+        const auto it = spot_by_day.find(kv.first);
+        if (it == spot_by_day.end()) { ++unmatched; continue; }
+        basis_pts.push_back(kv.second - it->second);
+    }
+    if (basis_pts.size() < 500) {
+        return s + QStringLiteral("  Too few aligned sessions.\n");
+    }
+
+    double sum = 0.0;
+    for (const double b : basis_pts) { sum += b; }
+    const double m = sum / static_cast<double>(basis_pts.size());
+    double s2 = 0.0;
+    for (const double b : basis_pts) { s2 += (b - m) * (b - m); }
+    const double sd = std::sqrt(s2 / static_cast<double>(basis_pts.size() - 1));
+    std::vector<double> sorted = basis_pts;
+    std::sort(sorted.begin(), sorted.end());
+    const auto q = [&sorted](double f) {
+        return sorted[static_cast<std::size_t>(
+            f * static_cast<double>(sorted.size() - 1))];
+    };
+    std::size_t negative = 0;
+    for (const double b : basis_pts) { if (b < 0.0) { ++negative; } }
+
+    s += QStringLiteral(
+        "――― 1. THE OBSERVED BASIS ―――   %1 sessions joined on date\n\n"
+        "  future minus spot, index points:\n\n"
+        "    mean   %2        sd     %3\n"
+        "    p05    %4        p25    %5\n"
+        "    median %6        p75    %7\n"
+        "    p95    %8        max    %9\n"
+        "    min    %10\n\n"
+        "  %11 sessions closed in BACKWARDATION (%12% of them), which is the\n"
+        "  number worth knowing: a future below spot is not an arbitrage, it\n"
+        "  is usually a dividend, a borrow cost, or a market that cannot be\n"
+        "  shorted cheaply.\n\n")
+            .arg(basis_pts.size())
+            .arg(m, 8, 'f', 2).arg(sd, 8, 'f', 2)
+            .arg(q(0.05), 8, 'f', 2).arg(q(0.25), 8, 'f', 2)
+            .arg(q(0.50), 8, 'f', 2).arg(q(0.75), 8, 'f', 2)
+            .arg(q(0.95), 8, 'f', 2).arg(sorted.back(), 8, 'f', 2)
+            .arg(sorted.front(), 8, 'f', 2)
+            .arg(negative)
+            .arg(100.0 * static_cast<double>(negative)
+                     / static_cast<double>(basis_pts.size()), 0, 'f', 1);
+    s += QStringLiteral(
+        "  %1 futures sessions had no spot close on the same date and were\n"
+        "  DROPPED rather than paired with a neighbouring day.\n\n")
+            .arg(unmatched);
+
+    // ――― 2. what a basis is worth as a rate, on a STATED tenor ―――
+    s += QStringLiteral(
+        "――― 2. WHAT A BASIS IS WORTH AS A RATE ―――\n\n"
+        "  NOT COMPUTED FROM THE SERIES ABOVE. Turning a basis into a rate\n"
+        "  needs the time to expiry, and a CONTINUOUS futures series carries\n"
+        "  no expiry. Rule 1 puts expiry in the spec store and forbids it as\n"
+        "  a literal — \"last Thursday\" typed here is exactly the literal that\n"
+        "  rule exists to stop, since NSE moves expiries for holidays and\n"
+        "  changed the convention in 2025.\n\n"
+        "  So the tenor below is STATED, and this is a machinery check on\n"
+        "  measure_basis() rather than a measurement:\n\n"
+        "     tenor    basis    fair basis   mispricing   implied repo\n");
+    {
+        const double spot_px = spot.back().second * 100.0;   // paise
+        const double rate = 0.065, divy = 0.012;
+        for (const double days : {7.0, 30.0, 90.0}) {
+            const double t = days / 365.0;
+            // A future priced EXACTLY at carry, so the mispricing must be zero
+            // and any non-zero value below is an arithmetic error, not an
+            // opportunity.
+            const double fair = spot_px * std::exp((rate - divy) * t);
+            BasisQuote bq;
+            bq.spot = Price{static_cast<std::int64_t>(spot_px)};
+            bq.future = Price{static_cast<std::int64_t>(fair)};
+            bq.spot_ts = Timestamp{0};
+            bq.future_ts = Timestamp{0};
+            bq.t = Years{t};
+            bq.rate = rate;
+            bq.dividend_yield = divy;
+            const auto b = measure_basis(bq, Duration{1'000'000'000});
+            if (!b) { continue; }
+            s += QStringLiteral("   %1d %2 %3 %4 %5\n")
+                     .arg(days, 6, 'f', 0)
+                     .arg(static_cast<double>(b->basis) / 100.0, 8, 'f', 2)
+                     .arg(b->fair_basis / 100.0, 12, 'f', 2)
+                     .arg(b->mispricing / 100.0, 12, 'f', 4)
+                     .arg(100.0 * b->implied_repo, 12, 'f', 4);
+        }
+    }
+    s += QStringLiteral(
+        "\n  The mispricing column is zero by construction — the future was\n"
+        "  priced at carry. A non-zero value there is a broken pricer.\n"
+        "  The implied repo returns the %1% financing rate it was given,\n"
+        "  which is the round trip that makes the function trustworthy.\n\n"
+        "――― WHAT WOULD MAKE SECTION 2 REAL ―――\n\n"
+        "  A per-contract futures series with its expiry, or the spec store\n"
+        "  populated for the historical contracts. Then every session in\n"
+        "  section 1 gets a rate, and a rate is comparable across tenors in\n"
+        "  a way a point basis never is.\n").arg(6.5, 0, 'f', 1);
     return s;
 }
 
