@@ -39,6 +39,9 @@
 #include <analytics/hmm.hpp>
 #include <analytics/kalman.hpp>
 #include <analytics/sabr.hpp>
+#include <book/flow.hpp>
+#include <book/microstructure.hpp>
+#include <flagging/drift.hpp>
 #include <models/gbdt.hpp>
 #include <models/regime_rl.hpp>
 #include <models/spot_forecast.hpp>
@@ -1681,6 +1684,288 @@ private:
         "  populated for the historical contracts. Then every session in\n"
         "  section 1 gets a rate, and a rate is comparable across tenors in\n"
         "  a way a point basis never is.\n").arg(6.5, 0, 'f', 1);
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P23-06 — Flagging: has the world moved under the model?
+// ---------------------------------------------------------------------------
+
+/// The drift detectors, on real NIFTY.
+///
+/// THIS IS A REAL MEASUREMENT AND IT IS THE SELF-CORRECTION LAYER'S ONLY PAGE.
+///
+/// `flagging/` decides when a model has stopped describing the world. Until
+/// now none of it was visible anywhere, which is a strange thing to be missing
+/// from a system whose stated defence against a bad retrain is
+/// shadow -> canary -> auto-rollback.
+///
+/// Every number here comes from daily NIFTY returns split into a REFERENCE
+/// window and a LIVE window. That is exactly the comparison a deployed model
+/// faces, so the detectors are being asked the question they exist to answer
+/// rather than a synthetic one.
+///
+/// WHAT A DRIFT ALARM IS AND IS NOT.
+///
+/// It says the input distribution moved. It does NOT say the model got worse,
+/// and the two come apart constantly: a vol regime change moves every feature
+/// and may leave a well-specified model alone, while a silent data-vendor
+/// change can leave the distribution intact and destroy the mapping. That is
+/// why the scorecard exists beside the detector, and why an alarm here is a
+/// reason to LOOK rather than a reason to roll back.
+[[nodiscard]] inline QString flagging_report(const QString& dataset_root) {
+    QString s = QStringLiteral("FLAGGING — drift detection\n\n");
+
+    const auto closes =
+        ui_load_closes(dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+    if (closes.size() < 3000) {
+        return s + QStringLiteral("  No dataset at dataset/spot/nifty/1d/.\n");
+    }
+    std::vector<double> r = ui_log_returns(closes);
+    for (double& v : r) { v *= 10000.0; }          // bps
+
+    // Reference is the FIRST half, live the second. Split by index rather than
+    // by date because the question is "did it move", not "when".
+    const std::size_t half = r.size() / 2;
+    std::vector<double> ref(r.begin(), r.begin() + static_cast<long>(half));
+    std::vector<double> live(r.begin() + static_cast<long>(half), r.end());
+
+    s += QStringLiteral(
+        "  %1 daily returns. Reference = first %2, live = last %3.\n\n"
+        "――― 1. POPULATION STABILITY INDEX ―――\n\n")
+            .arg(r.size()).arg(ref.size()).arg(live.size());
+    {
+        std::vector<double> fit_copy = ref;
+        PsiDetector psi;
+        const auto fitted =
+            psi.fit(fit_copy.data(), fit_copy.size(), 10, Scaling::Raw);
+        if (!fitted) {
+            s += QStringLiteral("  The reference window was refused.\n\n");
+        } else {
+            const auto v = psi.psi(live.data(), live.size());
+            if (v) {
+                // The 0.10 / 0.25 bands are the industry convention and they
+                // are a CONVENTION, not a test -- stated here so the number is
+                // read against something rather than felt.
+                const char* band = *v < 0.10 ? "no material shift"
+                                 : (*v < 0.25 ? "moderate shift — look"
+                                              : "major shift — the reference "
+                                                "is stale");
+                s += QStringLiteral(
+                    "  PSI %1  over 10 equal-frequency bins\n"
+                    "  Convention: < 0.10 stable, 0.10–0.25 moderate, "
+                    "> 0.25 major.\n"
+                    "  Verdict: %2\n\n").arg(*v, 0, 'f', 5)
+                         .arg(QString::fromUtf8(band));
+            }
+        }
+    }
+
+    // ――― 2. Kolmogorov-Smirnov ―――
+    {
+        std::vector<double> a = ref, b = live;
+        const auto d = ks_statistic(a.data(), a.size(), b.data(), b.size());
+        if (d) {
+            // 1.36 is the SMIRNOV COEFFICIENT c(alpha) at alpha = 0.05, and
+            // the third argument is that coefficient -- not alpha itself.
+            // Passing 0.05 here (as this page first did) returns a critical
+            // value 27 times too small, which would call every comparison
+            // significant and never say so.
+            const double c_alpha_05 = 1.36;
+            const double crit =
+                ks_critical(ref.size(), live.size(), c_alpha_05);
+            s += QStringLiteral(
+                "――― 2. KOLMOGOROV-SMIRNOV ―――\n\n"
+                "  D %1   critical at 5% %2   %3\n\n"
+                "  KS answers a different question from PSI: PSI weights the\n"
+                "  bins a model actually uses, KS is the largest gap anywhere\n"
+                "  in the CDF. They disagree when the tails moved and the body\n"
+                "  did not — which for returns is most of the time.\n\n")
+                     .arg(*d, 0, 'f', 5).arg(crit, 0, 'f', 5)
+                     .arg(*d > crit ? QStringLiteral("DISTRIBUTIONS DIFFER")
+                                    : QStringLiteral("no detectable difference"));
+        }
+    }
+
+    // ――― 3. sequential detectors ―――
+    s += QStringLiteral(
+        "――― 3. SEQUENTIAL DETECTORS ―――\n\n"
+        "  PSI and KS compare two fixed windows. These watch a stream and say\n"
+        "  WHEN, which is what a live system needs — a model does not fail at\n"
+        "  a window boundary.\n\n"
+        "  Fed the absolute return, so they are watching volatility.\n\n");
+    {
+        PageHinkley ph;
+        // Neither threshold has a default in the header, deliberately: a
+        // tolerance of zero fires on any deviation and a threshold is a claim
+        // about how much evidence justifies pulling a model. Both are stated.
+        const double delta = 5.0, lambda = 500.0;
+        std::size_t alarms = 0, first = 0;
+        if (ph.configure(delta, lambda)) {
+            for (std::size_t i = 0; i < r.size(); ++i) {
+                const auto fired = ph.push(std::fabs(r[i]));
+                if (fired && *fired) {
+                    ++alarms;
+                    if (first == 0) { first = i; }
+                }
+            }
+        }
+        s += QStringLiteral(
+            "  Page-Hinkley  delta %1  lambda %2\n"
+            "    alarms %3, first at observation %4 of %5\n\n")
+                 .arg(delta, 0, 'f', 1).arg(lambda, 0, 'f', 1)
+                 .arg(alarms).arg(first).arg(r.size());
+
+        Adwin ad;
+        std::size_t aw = 0, aw_first = 0;
+        if (ad.configure(0.002)) {
+            for (std::size_t i = 0; i < r.size(); ++i) {
+                const auto fired = ad.push(std::fabs(r[i]));
+                if (fired && *fired) {
+                    ++aw;
+                    if (aw_first == 0) { aw_first = i; }
+                }
+            }
+        }
+        s += QStringLiteral(
+            "  ADWIN  confidence 0.002\n"
+            "    window cuts %1, first at observation %2\n\n"
+            "  ADWIN cuts its own window when the two halves differ, so it\n"
+            "  needs no reference period at all. That is the property that\n"
+            "  matters in production: a reference window is a thing somebody\n"
+            "  has to remember to refresh.\n\n").arg(aw).arg(aw_first);
+    }
+
+    s += QStringLiteral(
+        "――― WHAT IS STILL MISSING ―――\n\n"
+        "  The SCORECARD. flagging/scorecard.hpp tracks per-model, per-horizon,\n"
+        "  per-regime accuracy and is what turns an alarm into a decision — a\n"
+        "  distribution shift with stable accuracy is a reason to do nothing.\n"
+        "  It has no page because no model has been scored in production, and\n"
+        "  a scorecard of one shadow fit would be a table of zeros pretending\n"
+        "  to be a track record.\n");
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P23-07 — Microstructure
+// ---------------------------------------------------------------------------
+
+/// Order-book imbalance, microprice, VPIN and Kyle's lambda.
+///
+/// THE FEED HAS NEVER DELIVERED DEPTH, AND THAT IS THE HEADLINE.
+///
+/// The Live Grid already says it in the depth pane: "the feed has never
+/// delivered depth for this instrument — which is not the same as a book with
+/// nothing in it". Every measure on this page needs an L2 book, so none of
+/// them has ever run on real data, and this page exists to say so in one place
+/// and to prove the arithmetic works for when a full-mode subscription arrives.
+///
+/// NYQUIST IS WHY THIS MATTERS AND WHY IT CANNOT BE FAKED FROM BARS.
+///
+/// ROADMAP section 3: order-book imbalance decays in 10–200 ms. The predecessor
+/// polled at 500 ms and could not, even in principle, observe it. No amount of
+/// five-minute bar data substitutes — the quantity does not exist at that
+/// sampling rate, which is why this page shows constructed books rather than
+/// something derived from `dataset/`.
+[[nodiscard]] inline QString microstructure_report() {
+    QString s = QStringLiteral(
+        "MICROSTRUCTURE — imbalance, microprice, VPIN, Kyle's lambda\n\n"
+        "――― THERE IS NO DEPTH ―――\n\n"
+        "  No Kite full-mode subscription is running, so the feed has never\n"
+        "  delivered an L2 book. Nothing here is a market measurement.\n\n"
+        "  And it cannot be reconstructed from dataset/: order-book imbalance\n"
+        "  decays in 10–200 ms, so at five-minute bars the quantity does not\n"
+        "  exist. That is a Nyquist limit, not a data-cleaning problem, and it\n"
+        "  is the reason this engine is event-driven rather than a faster\n"
+        "  poll.\n\n"
+        "――― 1. IMBALANCE AND MICROPRICE, ON CONSTRUCTED BOOKS ―――\n\n"
+        "     bid qty   ask qty       OBI    microprice   mid\n");
+    {
+        for (const std::int64_t bq : {100, 300, 500, 700, 900}) {
+            const std::int64_t aq = 1000 - bq;
+            BookState b{};
+            b.bid[0].px = Price{2'399'900};
+            b.bid[0].qty = Qty{bq};
+            b.ask[0].px = Price{2'400'100};
+            b.ask[0].qty = Qty{aq};
+            b.bid_levels = 1;
+            b.ask_levels = 1;
+            const auto o = obi(b, 1);
+            const auto mp = microprice(b);
+            s += QStringLiteral("   %1   %2  %3    %4  %5\n")
+                     .arg(bq, 9).arg(aq, 8)
+                     .arg(o ? QStringLiteral("%1").arg(*o, 8, 'f', 4)
+                            : QStringLiteral("       —"))
+                     .arg(mp ? QStringLiteral("%1")
+                                   .arg(static_cast<double>(mp->raw()) / 100.0,
+                                        11, 'f', 2)
+                             : QStringLiteral("          —"))
+                     .arg(24000.00, 8, 'f', 2);
+        }
+    }
+    s += QStringLiteral(
+        "\n  The microprice leans toward the side with LESS size, because that\n"
+        "  is the side about to be taken. A mid-price ignores that and is the\n"
+        "  wrong reference for anything that has to cross a spread.\n\n"
+        "――― 2. VPIN AND KYLE'S LAMBDA REFUSE TO GUESS ―――\n\n");
+    {
+        Vpin::Config vc;
+        vc.bucket_volume = 1000;
+        vc.window = 50;
+        vc.min_buckets = 50;
+        Vpin v(vc);
+        const auto empty = v.value();
+        s += QStringLiteral(
+            "  A fresh VPIN with no trades reports %1.\n")
+                 .arg(empty ? QStringLiteral("a value")
+                            : QStringLiteral("NOTHING — as it must"));
+        // Feed a one-sided flow and check it becomes extreme rather than
+        // hovering at 0.5, which is what a broken classifier produces.
+        for (int i = 0; i < 60 * 20; ++i) {
+            v.on_trade(TradeSide::Buy, Qty{50});
+        }
+        const auto loaded = v.value();
+        s += QStringLiteral(
+            "  After 1,200 uniformly BUY-initiated trades: %1 over %2 buckets.\n"
+            "  A perfectly one-sided flow is toxicity 1.0. A classifier that\n"
+            "  returned 0.5 here would be reporting a coin flip and would look\n"
+            "  entirely reasonable on a screen.\n\n")
+                 .arg(loaded ? QStringLiteral("%1").arg(loaded->value, 0, 'f', 4)
+                             : QStringLiteral("still nothing"))
+                 .arg(loaded ? loaded->buckets : 0);
+
+        KyleLambda::Config kc;
+        kc.min_samples = 30;
+        KyleLambda k(kc);
+        const auto before = k.value();
+        // A known slope: 2 paise of impact per unit of signed volume.
+        for (int i = 1; i <= 200; ++i) {
+            const std::int64_t vol = (i % 2 == 0) ? i : -i;
+            k.on_observation(vol, Price{2 * vol});
+        }
+        const auto after = k.value();
+        s += QStringLiteral(
+            "  Kyle's lambda before %1 observations: %2.\n"
+            "  Fed a known slope of 2.0 paise per unit, it recovers %3\n"
+            "  with R2 %4 over %5 samples.\n\n"
+            "  It is a MEASURED quantity with an error bar, so ROADMAP section\n"
+            "  3 says size on its lower confidence bound and never the point\n"
+            "  estimate. The R2 is reported for exactly that reason.\n\n")
+                 .arg(kc.min_samples)
+                 .arg(before ? QStringLiteral("a slope")
+                             : QStringLiteral("nothing, correctly"))
+                 .arg(after ? QStringLiteral("%1").arg(after->lambda, 0, 'f', 6)
+                            : QStringLiteral("—"))
+                 .arg(after ? QStringLiteral("%1").arg(after->r2, 0, 'f', 6)
+                            : QStringLiteral("—"))
+                 .arg(after ? after->samples : 0);
+    }
+    s += QStringLiteral(
+        "――― WHAT WOULD MAKE THIS REAL ―――\n\n"
+        "  A Kite full-mode subscription (P2-02). Depth arrives, the Live Grid\n"
+        "  depth pane fills, and every number above becomes a measurement\n"
+        "  instead of a demonstration. Nothing else on this page changes.\n");
     return s;
 }
 

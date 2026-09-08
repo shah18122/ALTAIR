@@ -92,6 +92,7 @@ int main(int argc, char** argv)
         {"Portfolio",  portfolio_report()},
         {"ML — Trees", ml_report()},
         {"Options",    options_report()},
+        {"Microstructure", microstructure_report()},
     };
     for (const Free& f : free_pages) {
         check(f.page.size() > 200, f.name);
@@ -109,6 +110,7 @@ int main(int argc, char** argv)
         {"Strategies",   strategies_report(ds)},
         {"Overnight",    overnight_report(ds)},
         {"Basis",        basis_report(ds)},
+        {"Flagging",     flagging_report(ds)},
     };
     for (const Backed& b : backed) {
         const bool ok = b.page.size() > 200 && !gave_up(b.page);

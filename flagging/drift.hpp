@@ -60,7 +60,13 @@
 
 namespace altair {
 
-inline constexpr std::size_t kMaxBins = 32;
+// RENAMED from the shorter name, P23-08. models/gbdt.hpp declares an
+// altair::kMaxBins of its own -- 64, for histogram binning -- so any
+// translation unit including both headers failed to compile with an ODR
+// collision on a name in the same namespace. Nothing had included both until
+// the UI wired a drift page beside a tree page. Two unrelated concepts had
+// quietly agreed on a name.
+inline constexpr std::size_t kMaxDriftBins = 32;
 inline constexpr std::size_t kMaxDriftWindow = 4096;
 
 enum class DriftError : std::uint8_t {
@@ -108,7 +114,7 @@ public:
         if (s == Scaling::Unspecified) {
             return std::unexpected(DriftError::UnknownScaling);
         }
-        if (bins < 2 || bins > kMaxBins) {
+        if (bins < 2 || bins > kMaxDriftBins) {
             return std::unexpected(DriftError::BadBins);
         }
         if (n < bins * 4) {
@@ -152,7 +158,7 @@ public:
         if (n < bins_ * 2) {
             return std::unexpected(DriftError::TooFewSamples);
         }
-        double cnt[kMaxBins] = {};
+        double cnt[kMaxDriftBins] = {};
         for (std::size_t i = 0; i < n; ++i) { cnt[bin_of(live[i])] += 1.0; }
         const double floor_p = 0.25 / static_cast<double>(n);
         double acc = 0.0;
@@ -177,8 +183,8 @@ private:
         while (b + 1 < bins_ && v > edge_[b]) { ++b; }
         return b;
     }
-    double edge_[kMaxBins] = {};
-    double ref_[kMaxBins] = {};
+    double edge_[kMaxDriftBins] = {};
+    double ref_[kMaxDriftBins] = {};
     std::size_t bins_ = 0;
     Scaling scaling_ = Scaling::Unspecified;
     bool fitted_ = false;

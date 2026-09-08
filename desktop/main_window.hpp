@@ -115,7 +115,11 @@ namespace altair::ui {
             QStringLiteral("Options"),
             // P23-03. Real futures-vs-spot, and an honest statement of
             // the one field that blocks the rate.
-            QStringLiteral("Basis")};
+            QStringLiteral("Basis"),
+            // P23-06/07. The self-correction layer and the book
+            // measures, neither of which had a page.
+            QStringLiteral("Flagging"),
+            QStringLiteral("Microstructure")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -931,6 +935,25 @@ private:
         connect(basis_page->button(), &QPushButton::clicked, this,
                 [basis_page, ds] { basis_page->set_text(basis_report(ds)); });
         pages_->addWidget(basis_page);
+
+        auto* flag_page = new ComputePage(
+            QStringLiteral("FLAGGING — P23-06"),
+            QStringLiteral("Has the distribution moved? PSI, KS, "
+                           "Page-Hinkley, ADWIN"),
+            this);
+        connect(flag_page->button(), &QPushButton::clicked, this,
+                [flag_page, ds] { flag_page->set_text(flagging_report(ds)); });
+        pages_->addWidget(flag_page);
+
+        auto* micro_page = new ComputePage(
+            QStringLiteral("MICROSTRUCTURE — P23-07"),
+            QStringLiteral("Imbalance, microprice, VPIN, Kyle's lambda"),
+            this);
+        connect(micro_page->button(), &QPushButton::clicked, this,
+                [micro_page] {
+                    micro_page->set_text(microstructure_report());
+                });
+        pages_->addWidget(micro_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
