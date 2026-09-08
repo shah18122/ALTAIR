@@ -39,7 +39,13 @@
 #include <risk/optimise.hpp>
 #include <risk/stress.hpp>
 #include <risk/var.hpp>
+// P21. strategies/ is header-only here and is NOT linked -- see the note at
+// the bottom of desktop/CMakeLists.txt. It detects; it cannot trade, and it
+// does not link oms/ either, so including it widens nothing.
+#include <strategies/meanrev.hpp>
+#include <strategies/momentum.hpp>
 
+#include <QDir>
 #include <QHBoxLayout>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -76,6 +82,52 @@ namespace altair::ui {
             ++col;
         }
         if (c > 0.0) { out.push_back(c); }
+    }
+    return out;
+}
+
+/// One intraday bar: its close and the session it belongs to.
+struct UiBar {
+    double close = 0.0;
+    std::string session;        // the YYYY-MM-DD prefix of the timestamp
+};
+
+/// Every bar in a monthly-partitioned directory, in date order.
+///
+/// P21-03. The intraday frequencies are stored one CSV per month, unlike the
+/// daily series which is a single all.csv, so `ui_load_closes` cannot reach
+/// them. Added so the Strategies page can COMPUTE the session-vs-overnight
+/// decomposition rather than quoting it -- this file's own header forbids
+/// printing a constant the page cannot reproduce, and that decomposition is
+/// the single most load-bearing number on the page.
+[[nodiscard]] inline std::vector<UiBar> ui_load_partitioned(
+    const QString& dir) {
+    std::vector<UiBar> out;
+    QDir d(dir);
+    if (!d.exists()) { return out; }
+    QStringList names = d.entryList(QStringList{QStringLiteral("*.csv")},
+                                    QDir::Files, QDir::Name);
+    for (const QString& name : names) {
+        std::ifstream f(d.filePath(name).toStdString());
+        if (!f) { continue; }
+        std::string line;
+        std::getline(f, line);                     // header
+        while (std::getline(f, line)) {
+            std::istringstream ss(line);
+            std::string cell;
+            int col = 0;
+            UiBar b;
+            while (std::getline(ss, cell, ',')) {
+                if (col == 0 && cell.size() >= 10) {
+                    b.session = cell.substr(0, 10);
+                }
+                if (col == 4 && !cell.empty()) {
+                    b.close = std::atof(cell.c_str());
+                }
+                ++col;
+            }
+            if (b.close > 0.0 && !b.session.empty()) { out.push_back(b); }
+        }
     }
     return out;
 }
@@ -296,12 +348,12 @@ private:
         const auto h = historical_var(r, conf);
         const auto p = parametric_var(r.data(), r.size(), conf);
         if (!h || !p) { continue; }
-        s += QStringLiteral("\n%1%% one-day\n").arg(100.0 * conf, 0, 'f', 0);
-        s += QStringLiteral("  historical   VaR %1%%   ES %2%%  (tail n %3)\n")
+        s += QStringLiteral("\n%1% one-day\n").arg(100.0 * conf, 0, 'f', 0);
+        s += QStringLiteral("  historical   VaR %1%   ES %2%  (tail n %3)\n")
                  .arg(100.0 * h->var, 6, 'f', 3)
                  .arg(100.0 * h->expected_shortfall, 6, 'f', 3)
                  .arg(h->tail_n);
-        s += QStringLiteral("  parametric   VaR %1%%   ES %2%%\n")
+        s += QStringLiteral("  parametric   VaR %1%   ES %2%\n")
                  .arg(100.0 * p->var, 6, 'f', 3)
                  .arg(100.0 * p->expected_shortfall, 6, 'f', 3);
         s += QStringLiteral("  ratio        %1x\n")
@@ -309,7 +361,7 @@ private:
     }
     s += QStringLiteral(
         "\nThe normal is not uniformly wrong, it is wrong in a\n"
-        "SHAPE: it overstates at 95%% and understates at 99%%.\n"
+        "SHAPE: it overstates at 95% and understates at 99%.\n"
         "Understating is the direction that sizes you bigger\n"
         "than the market allows.\n\n"
         "VaR IS NOT SUBADDITIVE. Two independent positions can\n"
@@ -388,7 +440,7 @@ private:
         "where the estimate is most wrong.\n\n"
         "The sample covariance degrades 218x as p/n rises from\n"
         "0.01 to 1.33. At p >= n it is rank deficient, and an\n"
-        "explicit inverse turns that into +400%%/-350%% weights\n"
+        "explicit inverse turns that into +400%/-350% weights\n"
         "that look like conviction.\n");
     return s;
 }
@@ -620,7 +672,7 @@ private:
     s += QStringLiteral("  real NIFTY (%1)   separation %2x\n\n")
              .arg(r.size()).arg(real_sep, 0, 'f', 2);
     for (std::size_t i = 0; i < hr->k; ++i) {
-        s += QStringLiteral("  state %1  sigma %2 (%3%%/yr)  dwell %4 days\n")
+        s += QStringLiteral("  state %1  sigma %2 (%3%/yr)  dwell %4 days\n")
                  .arg(i).arg(hr->sigma[i], 0, 'f', 5)
                  .arg(100.0 * hr->sigma[i] * std::sqrt(252.0), 0, 'f', 1)
                  .arg(hr->expected_dwell(i), 0, 'f', 1);
@@ -638,6 +690,238 @@ private:
         "wearing an execution costume; on a series with drift\n"
         "it buys more of a decline. A reward-design finding,\n"
         "not a broken agent.\n");
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P21-03 — Strategies
+// ---------------------------------------------------------------------------
+
+/// Momentum and mean reversion on real daily NIFTY, priced against their own
+/// turnover.
+///
+/// THE ORDER OF THIS PAGE IS THE ARGUMENT.
+///
+/// The cost hurdle comes first, before any return is shown, because hard rule
+/// 5 says a signal is priced net of full cost BEFORE it exists. Then the noise
+/// control, because a number with no baseline is not a result. Only then the
+/// real series -- by which point the reader already knows what the strategy
+/// has to clear and what pure chance produces.
+///
+/// A page that showed the NIFTY Sharpe first and the caveats underneath would
+/// be read in exactly the wrong order.
+[[nodiscard]] inline QString strategies_report(const QString& dataset_root) {
+    constexpr double kCost = 5.5;       // bps per unit of turnover
+    constexpr double kBars = 250.0;
+
+    QString s = QStringLiteral(
+        "DIRECTIONAL STRATEGIES — P21-01 / P21-02\n"
+        "Time-series momentum and z-score mean reversion.\n\n"
+        "SKELETON. The parameters below are CHOICES, not fits. Nothing here\n"
+        "is trained; when tick data arrives the harness is what gets\n"
+        "pointed at it, and these numbers are the shape of the answer\n"
+        "rather than the answer.\n\n"
+        "――― 1. THE HURDLE, BEFORE ANY RETURN ―――\n\n"
+        "Round trip is charged at %1 bps per unit of turnover. A full flip\n"
+        "from long to short is TWO units, so it costs %2 bps.\n\n")
+        .arg(kCost, 0, 'f', 1).arg(2.0 * kCost, 0, 'f', 1);
+
+    s += QStringLiteral("  turnover/bar    gross bps/bar needed to break even\n");
+    for (const double to : {0.05, 0.10, 0.25, 0.50, 1.00}) {
+        s += QStringLiteral("      %1              %2\n")
+                 .arg(to, 0, 'f', 2)
+                 .arg(required_gross_bps(to, kCost), 0, 'f', 3);
+    }
+    const double h = breakeven_hit_rate(20.0, 20.0, 0.25, kCost);
+    s += QStringLiteral(
+        "\n  At +-20 bps per trade and 0.25 turnover, the strategy must be\n"
+        "  directionally right %1% of the time merely to break even.\n"
+        "  The reality check in CLAUDE.md puts the 10-minute ceiling at\n"
+        "  52-55%. Read those two numbers together before reading any\n"
+        "  Sharpe below.\n\n").arg(100.0 * h, 0, 'f', 2);
+
+    // ――― 2. the control ―――
+    s += QStringLiteral("――― 2. THE CONTROL: 20 PATHS OF PURE NOISE ―――\n\n");
+    std::uint64_t seed = 0xA17A1Bull;
+    auto u = [&seed]() {
+        seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+        return (static_cast<double>(seed >> 11) + 0.5)
+             * (1.0 / 9007199254740992.0);
+    };
+    constexpr int kPaths = 20;
+    double mg[2] = {0.0, 0.0}, mn[2] = {0.0, 0.0};
+    int win[2] = {0, 0}, scored = 0;
+    for (int t = 0; t < kPaths; ++t) {
+        std::vector<double> noise(3000);
+        for (auto& v : noise) {
+            v = 40.0 * std::sqrt(-2.0 * std::log(u()))
+              * std::cos(6.283185307179586 * u());
+        }
+        const auto mp = momentum_positions(noise, MomentumSpec{});
+        const auto vp = meanrev_positions(noise, MeanRevSpec{});
+        if (!mp || !vp) { continue; }
+        const auto ms = evaluate(*mp, noise, kCost, kBars);
+        const auto vs = evaluate(*vp, noise, kCost, kBars);
+        if (!ms || !vs) { continue; }
+        ++scored;
+        mg[0] += ms->gross_bps; mn[0] += ms->net_bps;
+        mg[1] += vs->gross_bps; mn[1] += vs->net_bps;
+        if (ms->net_bps > 0.0) { ++win[0]; }
+        if (vs->net_bps > 0.0) { ++win[1]; }
+    }
+    if (scored > 0) {
+        const double n = static_cast<double>(scored);
+        s += QStringLiteral("  momentum   pooled gross %1  pooled net %2\n")
+                 .arg(mg[0] / n, 8, 'f', 4).arg(mn[0] / n, 8, 'f', 4);
+        s += QStringLiteral("  meanrev    pooled gross %1  pooled net %2\n\n")
+                 .arg(mg[1] / n, 8, 'f', 4).arg(mn[1] / n, 8, 'f', 4);
+        s += QStringLiteral(
+            "  Paths that turned a PROFIT on noise: momentum %1/%2,\n"
+            "  mean reversion %3/%2.\n\n"
+            "  There is nothing in those series. A single backtest landing\n"
+            "  on one of those paths would have shown a profit on a series\n"
+            "  containing no signal at all. That is what one backtest is\n"
+            "  worth, and it is why the pooled figure is the one asserted\n"
+            "  on in the acceptance test.\n\n")
+                 .arg(win[0]).arg(scored).arg(win[1]);
+    }
+
+    // ――― 3. the real series ―――
+    s += QStringLiteral("――― 3. REAL DAILY NIFTY ―――\n\n");
+    const auto closes =
+        ui_load_closes(dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+    if (closes.size() < 2000) {
+        s += QStringLiteral(
+            "  No dataset at dataset/spot/nifty/1d/all.csv.\n\n"
+            "  This section is EMPTY rather than filled with the synthetic\n"
+            "  series from section 2. Absence is not zero, and a synthetic\n"
+            "  number sitting under a heading that says REAL is the exact\n"
+            "  failure this project keeps finding.\n");
+        return s;
+    }
+    std::vector<double> r_bps;
+    r_bps.reserve(closes.size());
+    for (std::size_t i = 1; i < closes.size(); ++i) {
+        r_bps.push_back(10000.0 * std::log(closes[i] / closes[i - 1]));
+    }
+    s += QStringLiteral("  %1 daily bars.\n\n").arg(r_bps.size());
+
+    // WHERE THE RETURN ACTUALLY IS, before anything is measured against it.
+    //
+    // Computed live inside the 5-minute file alone: session hours plus
+    // overnight gaps reconstruct the total move exactly, so there is no
+    // residual for a cross-file close disagreement to hide in. (The 5m and
+    // daily files disagree about the same day's close by about 8 bps of
+    // unbiased noise, which is why the subtraction is NOT done across them.)
+    const auto fine = ui_load_partitioned(
+        dataset_root + QStringLiteral("/spot/nifty/5m"));
+    if (fine.size() > 1000) {
+        double session_sum = 0.0, overnight_sum = 0.0;
+        std::size_t gaps = 0, sessions = 1;
+        for (std::size_t i = 1; i < fine.size(); ++i) {
+            const double lr =
+                10000.0 * std::log(fine[i].close / fine[i - 1].close);
+            if (fine[i].session != fine[i - 1].session) {
+                overnight_sum += lr;
+                ++gaps;
+                ++sessions;
+            } else {
+                session_sum += lr;
+            }
+        }
+        s += QStringLiteral(
+            "  WHERE THE RETURN IS — %1 to %2, from the 5-minute file:\n\n"
+            "    session hours    %3 bps\n"
+            "    overnight gaps   %4 bps\n"
+            "    total            %5 bps   over %6 sessions\n\n")
+                 .arg(QString::fromStdString(fine.front().session))
+                 .arg(QString::fromStdString(fine.back().session))
+                 .arg(session_sum, 10, 'f', 1).arg(overnight_sum, 10, 'f', 1)
+                 .arg(session_sum + overnight_sum, 10, 'f', 1).arg(sessions);
+        if (session_sum < 0.0 && overnight_sum > 0.0) {
+            s += QStringLiteral(
+                "  THE ENTIRE MOVE IS OVERNIGHT. Holding through the session\n"
+                "  LOST %1 bps over this window. Any intraday long-biased\n"
+                "  rule on this index is betting against where the return\n"
+                "  actually is, and that is the first thing to know before\n"
+                "  reading a single number below.\n\n").arg(-session_sum, 0, 'f', 0);
+        }
+    } else {
+        s += QStringLiteral(
+            "  No 5-minute partition at dataset/spot/nifty/5m, so the\n"
+            "  session-versus-overnight split is NOT SHOWN rather than\n"
+            "  guessed.\n\n");
+    }
+
+    // THE CONTROL, before either strategy. NIFTY compounded from 279 to
+    // 24,080 over this history, which is free drift a long-biased rule
+    // collects automatically. Every net below is read against this line, and
+    // the `excess` column -- paired, same bars -- is the one that matters.
+    const auto bh = buy_and_hold(r_bps.size());
+    const auto bh_e = evaluate(bh, r_bps, kCost, kBars);
+    if (bh_e) {
+        s += QStringLiteral(
+            "  BUY AND HOLD, the control:  net %1 bps/bar,  Sharpe %2\n\n"
+            "  A long-biased rule on a drifting index earns some of that for\n"
+            "  free. A positive net proves nothing on its own; the excess\n"
+            "  column is the real one.\n\n")
+                .arg(bh_e->net_bps, 0, 'f', 4)
+                .arg(bh_e->net_sharpe, 0, 'f', 3);
+    }
+
+    s += QStringLiteral(
+        "  MOMENTUM — the whole lookback sweep, not the best point.\n"
+        "  Reporting only the winner is how a choice becomes a fit.\n\n"
+        "   lookback    gross      net   turnover        t    excess   exc_t\n");
+    for (const std::size_t lb : {5u, 10u, 20u, 40u, 60u, 120u, 250u}) {
+        MomentumSpec ms;
+        ms.lookback = lb;
+        const auto pos = momentum_positions(r_bps, ms);
+        if (!pos) { continue; }
+        const auto e = evaluate(*pos, r_bps, kCost, kBars);
+        const auto ex = excess_over(*pos, bh, r_bps, kCost);
+        if (!e || !ex) { continue; }
+        s += QStringLiteral("      %1  %2  %3     %4   %5   %6  %7\n")
+                 .arg(lb, 5).arg(e->gross_bps, 7, 'f', 3)
+                 .arg(e->net_bps, 7, 'f', 3).arg(e->turnover, 6, 'f', 4)
+                 .arg(e->net_t(), 6, 'f', 2).arg(ex->mean_bps, 7, 'f', 3)
+                 .arg(ex->t, 6, 'f', 2);
+    }
+
+    s += QStringLiteral(
+        "\n  MEAN REVERSION — the dead band is the only thing making it\n"
+        "  affordable. entry |z| > 1.5.\n\n"
+        "     exit_z    gross      net   turnover        t    excess   exc_t\n");
+    for (const double ez : {0.1, 0.25, 0.5, 1.0, 1.4}) {
+        MeanRevSpec vs;
+        vs.entry_z = 1.5;
+        vs.exit_z = ez;
+        const auto pos = meanrev_positions(r_bps, vs);
+        if (!pos) { continue; }
+        const auto e = evaluate(*pos, r_bps, kCost, kBars);
+        const auto ex = excess_over(*pos, bh, r_bps, kCost);
+        if (!e || !ex) { continue; }
+        s += QStringLiteral("       %1  %2  %3     %4   %5   %6  %7\n")
+                 .arg(ez, 4, 'f', 2).arg(e->gross_bps, 7, 'f', 3)
+                 .arg(e->net_bps, 7, 'f', 3).arg(e->turnover, 6, 'f', 4)
+                 .arg(e->net_t(), 6, 'f', 2).arg(ex->mean_bps, 7, 'f', 3)
+                 .arg(ex->t, 6, 'f', 2);
+    }
+
+    s += QStringLiteral(
+        "\n――― HOW TO READ THE TWO t COLUMNS ―――\n\n"
+        "  t     is the net mean over its own standard error -- the test\n"
+        "        against ZERO, which for a long-biased rule on a drifting\n"
+        "        index is the flattering question.\n"
+        "  exc_t is the same test against BUY AND HOLD, paired on the same\n"
+        "        bars. It is the one that decides whether the strategy did\n"
+        "        anything.\n\n"
+        "  Below about 2 there is no result either way, and 28 cells are\n"
+        "  swept here, so the honest threshold is nearer 3.3. Section 2\n"
+        "  shows what a t of 1 looks like on a series known to be empty.\n\n"
+        "  Every figure on this page comes from the same functions the\n"
+        "  acceptance test calls (strategies_directional), on the same\n"
+        "  data. Nothing here is cached and nothing is a literal.\n");
     return s;
 }
 

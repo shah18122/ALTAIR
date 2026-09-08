@@ -1,10 +1,10 @@
 # Task Card Ledger
 
-171 rows, 194 cards. One card = one DeepSeek prompt = one review;
-Phases 13–19 group several per row — see the note below.
+172 rows, 197 cards. One card = one DeepSeek prompt = one review;
+Phases 13–21 group several per row — see the note below.
 Status: `TODO` · `SENT` · `REVIEW` · `CORRECTION` · **`DONE`** · `BLOCKED`
 
-**Progress: 163 / 171 rows · 95%**
+**Progress: 164 / 172 rows · 95%**
 
 > Recounted 2026-09-05 BY SCRIPT. Phase 12 closed; the total moved 159 -> 154,
 > and the rows that vanished were never cards.
@@ -840,6 +840,12 @@ in the grid and every export byte-correct.
 | Card | Deliverable | Status |
 |---|---|---|
 | P19-01..06 | Six pages, and the eagle on launch — **DONE** · Execution, Volatility, Risk—VaR, Portfolio, ML—Trees, Regimes, appended to the nav rather than interleaved so no existing `--page` index moves · **every page calls the SAME function its acceptance test calls** — the rule the phase hangs on, and this UI has broken it twice (a dashboard literal that could not track a fit, and a Models table reading chi-square 19 beside a pane computing 13.08) · everything computes ON DEMAND behind a button, because P11Q learned that a fit at construction froze the window for seven seconds before anything drew · **the UI still cannot trade**: the pages link `analytics`, `models`, `risk` and `backtest`, all read-side and all added to the gate-3 allow-list deliberately, while `oms/` and `broker/` stay absent — P19-01 renders schedule SHAPE from arithmetic the UI owns · **a nav/page count guard**, because row N opens page N and a name added without a widget shifts every page after it with no error anywhere; 19 names, 19 pages, aborting at startup otherwise · the eagle goes up immediately on launch and comes down via `finish(&window)` — tied to the widget replacing it, not a timer, since a timed splash expiring mid-load just moves the blank gap later | **DONE** |
+
+## Phase 21 — Directional strategies (1 row / 3 cards)
+
+| Card | Deliverable | Status |
+|---|---|---|
+| P21-01/02/03 | Momentum, mean reversion, and the screen that killed them — **DONE** · fills the Stage 3 hole `ROADMAP_GAP.md` named: `strategies/` had nine scanners and nothing that emitted a directional signal, so the capacity ceiling, the shortfall attribution and the optimiser comparison were all machinery with nothing in them · `momentum.hpp` carries the shared vocabulary (`StrategyResult`, `evaluate`, `buy_and_hold`, `excess_over`) and time-series momentum; `meanrev.hpp` carries the z-score fade, `required_gross_bps` and `breakeven_hit_rate` · **turnover sits beside every return**, and a +1 to -1 flip is charged as TWO units, which is the accounting that decides whether the highest-turnover strategies look affordable · **P21-03 runs both on real NIFTY at 5m / 15m / 60m / daily**, 48 cells, Bonferroni from the actual cell count · **four defects found in my own work during review, all fixed:** (1) the noise control asserted every path must lose and FAILED -- 3 of 8 momentum paths turned a profit on white noise, so the assertion was wrong, not the strategy, and the test now asserts on the pooled statistic and *reports* the scatter, because a single backtest landing on one of those paths would have shown a profit on a series with nothing in it; (2) `exit_z = 0` makes `|z| < 0`, which never fires -- the position entered once and held for 36 years, scoring **+4.84 bps/bar at t +3.02 in a mean-reversion table** when it was the index's own drift; `MeanRevSpec::valid()` now refuses it; (3) **the benchmark was zero when it should have been buy-and-hold** -- NIFTY compounded 279 to 24,080, so +5.09 bps/bar of drift is free and a long-biased rule collects it automatically; adding the paired `excess_over` control moved the verdict from *four cells survive Bonferroni, worth a walk-forward* to **nothing beats holding the index**; (4) the session-vs-overnight split was first computed by subtracting across the 5m and daily files, which disagree about the same day's close by 8.4 bps of unbiased noise -- the residual that subtraction calls "overnight" was partly that disagreement, so it is now done inside the 5m file alone where the two buckets reconstruct the total exactly · **the finding that matters most:** over 2015-02 to 2026-09 NIFTY gained +10,021 bps, of which session hours contributed **-8,765** and overnight gaps **+18,785** -- the entire move happens between the close and the next open, which is why buy-and-hold is negative at 5m, 15m and 60m and strongly positive daily, and it means any intraday long-biased rule on this index is betting against where the return is · wired to the GUI as nav page 21 (`--page 20`), computing live: the page includes `strategies/` headers **without linking** `altair_strategies`, so the gate-3 allow-list is unwidened and the UI still cannot trade · 112 tests green, zero warnings at `/W4` | **DONE** |
 
 ## Reference findings — `gokiteconnect`, read 2026-08-31
 

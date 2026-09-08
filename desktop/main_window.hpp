@@ -102,7 +102,11 @@ namespace altair::ui {
             QStringLiteral("Execution"),   QStringLiteral("Volatility"),
             QStringLiteral("Risk — VaR"),  QStringLiteral("Portfolio"),
             QStringLiteral("ML — Trees"),  QStringLiteral("Regimes"),
-            QStringLiteral("Spot Forecast")};
+            QStringLiteral("Spot Forecast"),
+            // P21-03. The Stage 3 hole from ROADMAP_GAP.md, now
+            // filled: momentum and mean reversion. Appended, so no
+            // existing --page index moves.
+            QStringLiteral("Strategies")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -868,6 +872,23 @@ private:
             run_spot(QStringLiteral("/spot/nifty/15m/"), "15-minute");
         });
         pages_->addWidget(spot_page);
+
+        // P21-03. Momentum and mean reversion. The button label says what
+        // will be computed rather than "Run", because the order of this page
+        // IS the argument: the cost hurdle is shown before any return.
+        auto* strat_page = new ComputePage(
+            QStringLiteral("STRATEGIES — P21-01/02"),
+            QStringLiteral("Cost hurdle, noise control, then real NIFTY"),
+            this);
+        connect(strat_page->button(), &QPushButton::clicked, this,
+                [strat_page, ds] {
+                    strat_page->set_text(QStringLiteral(
+                        "Computing...\n\n20 noise paths, then a lookback "
+                        "sweep and a dead-band\nsweep on real daily NIFTY."));
+                    QApplication::processEvents();
+                    strat_page->set_text(strategies_report(ds));
+                });
+        pages_->addWidget(strat_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

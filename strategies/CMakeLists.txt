@@ -54,6 +54,24 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_cointegration_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_cointegration COMMAND altair_cointegration_test)
 
+    # P21-01/02. Momentum and mean reversion -- the Stage 3 hole. One test
+    # binary for both because the whole reason to build them together is that
+    # they are comparable, and a shared control (the random walk both must lose
+    # money on) belongs in one place rather than copied into two.
+    add_executable(altair_directional_test tests/test_directional.cpp)
+    target_link_libraries(altair_directional_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_directional COMMAND altair_directional_test)
+
+    # P21-03. The same two strategies on REAL NIFTY at four sampling rates.
+    # Separate binary, matching the regime_real precedent above: the synthetic
+    # acceptance test proves the machinery, this one asks whether anything is
+    # actually there.
+    add_executable(altair_directional_real_test tests/test_directional_real.cpp)
+    target_link_libraries(altair_directional_real_test PRIVATE altair_strategies altair_flags)
+    target_compile_definitions(altair_directional_real_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME strategies_directional_real COMMAND altair_directional_real_test)
+
     # P6-03b. The regime detector on 36 years of REAL daily NIFTY rather than
     # on a synthetic series with a regime built into it. The Models page has
     # said "daily NIFTY is sufficient; not yet fitted" since P6-03 shipped.

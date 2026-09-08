@@ -190,7 +190,8 @@ foreach(_lib IN LISTS _altair_ui_links)
 endforeach()
 
 # Header-only engine code the UI includes without linking -- models/markov.hpp,
-# models/markov_eval.hpp, backtest/validation.hpp -- is reached through the
+# models/markov_eval.hpp, backtest/validation.hpp, and as of P21-03
+# strategies/momentum.hpp and strategies/meanrev.hpp -- is reached through the
 # include path above and so never appears in LINK_LIBRARIES. It is pure
 # computation with no order-placing vocabulary, which is the same test the list
 # applies; noted here because the audit cannot see it and a reader will wonder.
