@@ -40,6 +40,7 @@
 #include <risk/stress.hpp>
 #include <risk/var.hpp>
 
+#include <QHBoxLayout>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -113,16 +114,36 @@ public:
             "Nothing on this page is precomputed or cached: every figure is\n"
             "produced by the same function the acceptance test calls, on the\n"
             "same data, when you ask for it."));
-        v->addWidget(run_);
+        row_ = new QHBoxLayout;
+        row_->setContentsMargins(0, 0, 0, 0);
+        row_->addWidget(run_);
+        v->addLayout(row_);
         v->addWidget(out_, 1);
     }
 
     [[nodiscard]] QPushButton* button() const noexcept { return run_; }
+
+    /// A SECOND (or third) action on the same page.
+    ///
+    /// Added rather than making three pages, because these are the SAME
+    /// analysis at different horizons and the whole point is comparing them --
+    /// a reader who has to change page to see the 5-minute result cannot hold
+    /// it next to the daily one. Each still computes only when pressed: the
+    /// 5-minute fit is 214,000 rows across five folds and two growth
+    /// strategies, and running all three on open would freeze the window the
+    /// way P11Q's startup fit did.
+    [[nodiscard]] QPushButton* add_button(const QString& label) {
+        auto* b = new QPushButton(label, this);
+        row_->addWidget(b);
+        return b;
+    }
+
     void set_text(const QString& s) { out_->setPlainText(s); }
     void append(const QString& s) { out_->appendPlainText(s); }
 
 private:
     QPushButton* run_ = nullptr;
+    QHBoxLayout* row_ = nullptr;
     QPlainTextEdit* out_ = nullptr;
 };
 

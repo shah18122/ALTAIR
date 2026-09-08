@@ -831,16 +831,42 @@ private:
         // freeze would arrive late enough to read as a different bug.
         auto* spot_page = new ComputePage(
             QStringLiteral("SPOT FORECAST — P16-06"),
-            QStringLiteral("Fit the DAILY horizon "
-                           "(cost hurdle and oracle first)"),
+            QStringLiteral("Daily  (fast)"),
             this);
+        // THREE HORIZONS ON ONE PAGE, one per button.
+        //
+        // They are the same analysis at different sampling rates and the
+        // comparison IS the finding -- the model is net negative at 5, 15 and
+        // 60 minutes and only turns positive daily, where 95% of moves
+        // already clear the cost. A reader who has to change page to see the
+        // 5-minute number cannot hold it next to the daily one.
+        //
+        // The wait is named in the label rather than discovered: 5-minute is
+        // 214,000 rows across five folds and two growth strategies.
+        auto* b5 = spot_page->add_button(
+            QStringLiteral("5-minute  (~30 s, 214k rows)"));
+        auto* b15 = spot_page->add_button(
+            QStringLiteral("15-minute  (~10 s)"));
+
+        auto run_spot = [spot_page, ds](const QString& sub, const char* label) {
+            spot_page->set_text(
+                QStringLiteral("Fitting %1...\n\nWalk-forward, five folds, "
+                               "level-wise and leaf-wise on identical folds.\n"
+                               "The window is busy until this finishes.")
+                    .arg(QLatin1String(label)));
+            QApplication::processEvents();
+            spot_page->set_text(spot_forecast_report(ds, sub, label));
+        };
         connect(spot_page->button(), &QPushButton::clicked, this,
-                [spot_page, ds] {
-                    spot_page->set_text(QStringLiteral("Fitting..."));
-                    QApplication::processEvents();
-                    spot_page->set_text(spot_forecast_report(
-                        ds, QStringLiteral("/spot/nifty/1d/"), "daily"));
+                [run_spot] {
+                    run_spot(QStringLiteral("/spot/nifty/1d/"), "daily");
                 });
+        connect(b5, &QPushButton::clicked, this, [run_spot] {
+            run_spot(QStringLiteral("/spot/nifty/5m/"), "5-minute");
+        });
+        connect(b15, &QPushButton::clicked, this, [run_spot] {
+            run_spot(QStringLiteral("/spot/nifty/15m/"), "15-minute");
+        });
         pages_->addWidget(spot_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
