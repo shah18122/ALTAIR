@@ -93,6 +93,7 @@ int main(int argc, char** argv)
         {"ML — Trees", ml_report()},
         {"Options",    options_report()},
         {"Microstructure", microstructure_report()},
+        {"Sizing and Limits", sizing_report()},
     };
     for (const Free& f : free_pages) {
         check(f.page.size() > 200, f.name);
@@ -111,6 +112,7 @@ int main(int argc, char** argv)
         {"Overnight",    overnight_report(ds)},
         {"Basis",        basis_report(ds)},
         {"Flagging",     flagging_report(ds)},
+        {"Cointegration", cointegration_report(ds)},
     };
     for (const Backed& b : backed) {
         const bool ok = b.page.size() > 200 && !gave_up(b.page);
@@ -142,6 +144,29 @@ int main(int argc, char** argv)
     check(reg.contains(QStringLiteral("separation"))
               && reg.contains(QStringLiteral("persistence")),
           "with separation and persistence computed on press");
+
+    // -----------------------------------------------------------------------
+    // 4b. The cointegration page's two verdicts must DISAGREE.
+    //
+    // Spot against its own future is tied by arbitrage and must come back
+    // cointegrated; spot against an independent random walk must not. A test
+    // that returns the same answer for both is not a test, and it would be
+    // invisible in an excerpt that only prints the first fourteen lines.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4b] cointegration: a known pair and a known non-pair\n");
+    const QString ci = cointegration_report(ds);
+    const bool real_ok =
+        ci.contains(QStringLiteral("COINTEGRATED, as arbitrage requires"));
+    const bool noise_ok =
+        ci.contains(QStringLiteral("NOT cointegrated, correctly"));
+    std::printf("        futures/spot cointegrated : %s\n",
+                real_ok ? "yes" : "NO");
+    std::printf("        spot/noise   cointegrated : %s\n",
+                noise_ok ? "no" : "YES");
+    check(real_ok,
+          "the future and its own spot come back cointegrated");
+    check(noise_ok,
+          "and an independent random walk does not, so the test discriminates");
 
     // -----------------------------------------------------------------------
     // 5. Print them.

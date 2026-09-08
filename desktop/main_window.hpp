@@ -119,7 +119,13 @@ namespace altair::ui {
             // P23-06/07. The self-correction layer and the book
             // measures, neither of which had a page.
             QStringLiteral("Flagging"),
-            QStringLiteral("Microstructure")};
+            QStringLiteral("Microstructure"),
+            // P24-01. Sizing on the LOWER BOUND of edge, and the
+            // conservation invariant, neither of which was visible.
+            QStringLiteral("Sizing & Limits"),
+            // P24-02. A pair whose answer is known before the test,
+            // and the walk-forward every backtest passes through.
+            QStringLiteral("Cointegration")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -954,6 +960,24 @@ private:
                     micro_page->set_text(microstructure_report());
                 });
         pages_->addWidget(micro_page);
+
+        auto* size_page = new ComputePage(
+            QStringLiteral("SIZING AND LIMITS — P24-01"),
+            QStringLiteral("Size on the lower bound, and what caps it"),
+            this);
+        connect(size_page->button(), &QPushButton::clicked, this,
+                [size_page] { size_page->set_text(sizing_report()); });
+        pages_->addWidget(size_page);
+
+        auto* coint_page = new ComputePage(
+            QStringLiteral("COINTEGRATION — P24-02"),
+            QStringLiteral("Spot against futures, and against noise"),
+            this);
+        connect(coint_page->button(), &QPushButton::clicked, this,
+                [coint_page, ds] {
+                    coint_page->set_text(cointegration_report(ds));
+                });
+        pages_->addWidget(coint_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

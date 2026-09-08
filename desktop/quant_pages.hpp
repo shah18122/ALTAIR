@@ -46,13 +46,18 @@
 #include <models/regime_rl.hpp>
 #include <models/spot_forecast.hpp>
 #include <risk/covariance.hpp>
+#include <risk/limits.hpp>
+#include <risk/sizing.hpp>
+#include <risk/slippage.hpp>
 #include <risk/optimise.hpp>
 #include <risk/stress.hpp>
 #include <risk/var.hpp>
 // P21. strategies/ is header-only here and is NOT linked -- see the note at
 // the bottom of desktop/CMakeLists.txt. It detects; it cannot trade, and it
 // does not link oms/ either, so including it widens nothing.
+#include <backtest/validation.hpp>
 #include <strategies/basis.hpp>
+#include <strategies/cointegration.hpp>
 #include <strategies/meanrev.hpp>
 #include <strategies/overnight.hpp>
 #include <strategies/momentum.hpp>
@@ -1966,6 +1971,366 @@ private:
         "  A Kite full-mode subscription (P2-02). Depth arrives, the Live Grid\n"
         "  depth pane fills, and every number above becomes a measurement\n"
         "  instead of a demonstration. Nothing else on this page changes.\n");
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P24-01 — Sizing and limits
+// ---------------------------------------------------------------------------
+
+/// How big, and what stops it being bigger.
+///
+/// THE ONE SENTENCE THIS PAGE EXISTS FOR.
+///
+/// ROADMAP section 3: size on the LOWER CONFIDENCE BOUND of edge, never the
+/// point estimate, and a signal whose error bar straddles zero is not a signal.
+/// `size_position` implements that literally -- it subtracts `edge_sigmas`
+/// standard errors before doing anything else, and returns `NoEdge` with zero
+/// lots when what is left is not positive.
+///
+/// That is the single most consequential line in `risk/`, and until now it was
+/// not visible anywhere in the UI. The table below sweeps the error bar at a
+/// FIXED point estimate so the reader can see the position go to zero while
+/// the headline edge never changes.
+///
+/// FOUR METHODS, AND THE ANSWER IS THE SMALLEST.
+///
+/// Fixed-fractional, Kelly, vol-target and the exchange freeze quantity each
+/// produce a size; the decision is their minimum, and `binding` names which
+/// one it was. Keeping all four rather than the winner alone is what makes a
+/// surprising size a question with its answer already attached -- and rule 10
+/// wants the decision reproducible from what was recorded.
+[[nodiscard]] inline QString sizing_report() {
+    QString s = QStringLiteral(
+        "SIZING AND LIMITS — P24-01\n\n"
+        "――― 1. THE EDGE IS SIZED ON ITS LOWER BOUND ―――\n\n"
+        "  The point estimate is held FIXED at 12.0 bps throughout. Only the\n"
+        "  error bar moves. Watch the position die while the headline edge\n"
+        "  stays exactly where it was.\n\n"
+        "    edge   std err  sigmas   lower bound   lots   bound by\n");
+
+    // Capital, price and lot size are STATED here. In the engine they come
+    // from the account and the spec store -- rule 1 -- and this page is
+    // demonstrating the decision rule, not quoting a live position.
+    const auto base = [] {
+        SizingInputs in;
+        // Rs 5 crore, in paise.
+        //
+        // The first version of this page used Rs 10 lakh and every row of
+        // every table came back ZERO LOTS -- correctly, because one NIFTY lot
+        // at 24,000 x 75 is Rs 18 lakh of notional and a 1% risk budget on ten
+        // lakh does not reach a single lot. The tables were arithmetically
+        // right and told the reader nothing, which is its own kind of wrong:
+        // a demonstration whose every cell is the same number demonstrates
+        // nothing. Capital is sized here so the METHODS separate.
+        in.capital = Notional{5'000'000'000};
+        in.price = Price{2'400'000};             // 24,000.00
+        in.lot_size = LotSize{75};
+        in.freeze_qty = Qty{1800};
+        in.edge_bps = Bps{12.0};
+        in.edge_sigmas = 2.0;
+        in.period_vol = Vol{0.012};
+        in.risk_fraction = 0.01;
+        in.stop_distance = Price{24'000};
+        in.kelly_divisor = 4.0;
+        in.target_vol = 0.008;
+        in.max_leverage = 3.0;
+        return in;
+    };
+
+    const auto bound_name = [](SizingBound b) {
+        switch (b) {
+        case SizingBound::FixedFractional: return "fixed fractional";
+        case SizingBound::Kelly:           return "Kelly";
+        case SizingBound::VolTarget:       return "vol target";
+        case SizingBound::FreezeQuantity:  return "exchange freeze";
+        case SizingBound::NoEdge:          return "NO EDGE — flat";
+        case SizingBound::Unset:           break;
+        }
+        return "unset";
+    };
+
+    for (const double se : {0.5, 2.0, 4.0, 5.9, 6.0, 8.0}) {
+        SizingInputs in = base();
+        in.edge_std_error_bps = Bps{se};
+        const auto d = size_position(in);
+        if (!d) { continue; }
+        s += QStringLiteral("   %1  %2   %3   %4  %5   %6\n")
+                 .arg(in.edge_bps.raw(), 6, 'f', 1).arg(se, 8, 'f', 1)
+                 .arg(in.edge_sigmas, 6, 'f', 1)
+                 .arg(d->edge_lower_bps, 12, 'f', 2)
+                 .arg(d->lots.raw(), 6)
+                 .arg(QString::fromUtf8(bound_name(d->binding)));
+    }
+    s += QStringLiteral(
+        "\n  At a 6.0 bps standard error the lower bound reaches zero and the\n"
+        "  position does too. Nothing about the 12 bps estimate changed. A\n"
+        "  system that sized on the point estimate would have taken the same\n"
+        "  trade in every row of this table.\n\n");
+
+    // ――― 2. which method binds ―――
+    s += QStringLiteral(
+        "――― 2. WHICH METHOD BINDS ―――\n\n"
+        "  Every method's answer is kept, not just the winner.\n\n"
+        "    target vol   fixed frac   Kelly   vol target   freeze   ->  lots"
+        "   bound by\n");
+    for (const double tv : {0.002, 0.004, 0.008, 0.020, 0.060}) {
+        SizingInputs in = base();
+        in.edge_std_error_bps = Bps{2.0};
+        in.target_vol = tv;
+        const auto d = size_position(in);
+        if (!d) { continue; }
+        s += QStringLiteral("   %1  %2  %3   %4  %5   %6   %7\n")
+                 .arg(tv, 10, 'f', 3)
+                 .arg(d->by_fixed_fractional.raw(), 10)
+                 .arg(d->by_kelly.raw(), 6)
+                 .arg(d->by_vol_target.raw(), 10)
+                 .arg(d->by_freeze.raw(), 7)
+                 .arg(d->lots.raw(), 6)
+                 .arg(QString::fromUtf8(bound_name(d->binding)));
+    }
+    s += QStringLiteral(
+        "\n  The exchange FREEZE QUANTITY is a hard cap and it comes from the\n"
+        "  spec store, never a literal — it is instrument-specific and it\n"
+        "  changes. A size that silently exceeds it is an order the exchange\n"
+        "  rejects, which is the good case; the bad case is a partial fill\n"
+        "  and a position nobody planned.\n\n");
+
+    // ――― 3. Kelly ―――
+    s += QStringLiteral(
+        "――― 3. KELLY, AND WHY THE DIVISOR IS NEVER 1 ―――\n\n"
+        "    divisor   fraction of capital   lots\n");
+    for (const double kd : {1.0, 2.0, 4.0, 8.0}) {
+        SizingInputs in = base();
+        in.edge_std_error_bps = Bps{2.0};
+        in.kelly_divisor = kd;
+        const auto d = size_position(in);
+        const auto kf = kelly_fraction(in);
+        if (!d || !kf) { continue; }
+        s += QStringLiteral("   %1        %2   %3\n")
+                 .arg(kd, 7, 'f', 1).arg(*kf, 18, 'f', 6)
+                 .arg(d->by_kelly.raw(), 6);
+    }
+    s += QStringLiteral(
+        "\n  Full Kelly maximises log growth ON A KNOWN EDGE. The edge here is\n"
+        "  measured, its error bar is in section 1, and full Kelly on a\n"
+        "  mis-measured edge is how accounts die while the model is still\n"
+        "  right on average.\n\n");
+
+    // ――― 4. conservation ―――
+    s += QStringLiteral(
+        "――― 4. THE CONSERVATION INVARIANT ―――\n\n"
+        "  Sum(fills) + Sum(costs) + cash_delta == 0, EXACTLY, in integer\n"
+        "  paise, checked every tick. A breach trips the kill switch.\n\n"
+        "       fills       costs  cash delta   residual   verdict\n");
+    struct Row { std::int64_t f, c, d; const char* note; };
+    for (const Row& r : {Row{-2'400'000, -1'250, 2'401'250, "a clean buy"},
+                         Row{2'400'000, -1'250, -2'398'750, "a clean sell"},
+                         Row{-2'400'000, -1'250, 2'401'251, "one paise adrift"}}) {
+        const std::int64_t resid = conservation_residual(
+            Notional{r.f}, Notional{r.c}, Notional{r.d});
+        s += QStringLiteral("   %1  %2  %3  %4   %5\n")
+                 .arg(r.f, 10).arg(r.c, 10).arg(r.d, 11).arg(resid, 9)
+                 .arg(resid == 0 ? QStringLiteral("balanced — %1")
+                                       .arg(QString::fromUtf8(r.note))
+                                 : QStringLiteral("KILL SWITCH — %1")
+                                       .arg(QString::fromUtf8(r.note)));
+    }
+    s += QStringLiteral(
+        "\n  One paise is a breach. Not a tolerance, not a rounding allowance:\n"
+        "  money is integer paise and the identity is exact, so a residual of\n"
+        "  1 means an accounting path is wrong and every number downstream of\n"
+        "  it is suspect.\n\n"
+        "――― 5. THE LIMIT VOCABULARY ―――\n\n"
+        "  %1 distinct violations are defined as bit flags, so an order can\n"
+        "  breach several at once and the report names all of them rather\n"
+        "  than the first one found. `clean()` is the only way to pass.\n\n"
+        "  Nothing on this page can place an order. risk/ measures and\n"
+        "  refuses; oms/ is the only module that trades, and the UI does not\n"
+        "  link it.\n")
+            .arg(12);
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P24-02 — Cointegration and validation
+// ---------------------------------------------------------------------------
+
+/// Engle-Granger on a pair whose answer is known in advance, and the
+/// walk-forward machinery that every backtest in this tree has to pass through.
+///
+/// WHY SPOT AGAINST FUTURES IS THE RIGHT TEST CASE.
+///
+/// A cointegration test is easy to run and hard to trust: on any two trending
+/// series it will find a relationship, and the literature is full of spurious
+/// pairs that were cointegrated right up until they were traded. So the pair
+/// here is one where the ANSWER IS KNOWN BEFORE THE TEST: NIFTY spot and the
+/// NIFTY future are tied together by arbitrage. If Engle-Granger cannot find
+/// that, the implementation is broken; if it finds cointegration everywhere,
+/// it is also broken, which is what the control below is for.
+///
+/// THE CONTROL IS SPOT AGAINST NOISE, AND IT MUST FAIL.
+///
+/// The same test, same window, same lags, against an independent random walk.
+/// Two independent random walks are the textbook spurious regression: high R2,
+/// no cointegration. A test that cannot tell those apart is a test that will
+/// pair anything with anything.
+[[nodiscard]] inline QString cointegration_report(const QString& dataset_root) {
+    QString s = QStringLiteral("COINTEGRATION AND VALIDATION — P24-02\n\n");
+
+    const auto fut = ui_load_dated_closes(
+        dataset_root + QStringLiteral("/fut/nifty/1d/all.csv"));
+    const auto spot = ui_load_dated_closes(
+        dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+    if (fut.size() < 600 || spot.size() < 600) {
+        return s + QStringLiteral("  No dataset for the futures/spot pair.\n");
+    }
+
+    // Joined on date, for the reason the Basis page learned the hard way.
+    std::map<std::string, double> spot_by_day;
+    for (const auto& kv : spot) { spot_by_day[kv.first] = kv.second; }
+    std::vector<double> y, x;
+    for (const auto& kv : fut) {
+        const auto it = spot_by_day.find(kv.first);
+        if (it == spot_by_day.end()) { continue; }
+        y.push_back(kv.second);        // future
+        x.push_back(it->second);       // spot
+    }
+    // The ADF buffers are a fixed 2048, so the window is the LAST 2000
+    // sessions rather than everything. Stated because a silently truncated
+    // window is how a result stops being about the period somebody thinks.
+    const std::size_t w = std::min<std::size_t>(2000, y.size());
+    if (w < 600) { return s + QStringLiteral("  Too few paired sessions.\n"); }
+    const std::vector<double> yw(y.end() - static_cast<long>(w), y.end());
+    const std::vector<double> xw(x.end() - static_cast<long>(w), x.end());
+
+    s += QStringLiteral(
+        "――― 1. NIFTY FUTURE AGAINST NIFTY SPOT ―――\n\n"
+        "  %1 paired sessions (the last %2 of %3 available — the ADF buffer\n"
+        "  is a fixed 2048 and a silently truncated window is how a result\n"
+        "  stops being about the period somebody thinks it is).\n\n")
+            .arg(w).arg(w).arg(y.size());
+    {
+        const auto eg = engle_granger(yw.data(), xw.data(), w, 1);
+        if (!eg) {
+            s += QStringLiteral("  The test was refused on this pair.\n\n");
+        } else {
+            s += QStringLiteral(
+                "  hedge ratio (beta)   %1        alpha %2\n"
+                "  R2 of the level regression   %3\n"
+                "  level correlation            %4\n\n"
+                "  ADF on the residual: t %5   gamma %6   n %7\n"
+                "  MacKinnon 5% critical        %8\n\n"
+                "  VERDICT: %9\n\n")
+                     .arg(eg->hedge.beta, 0, 'f', 6)
+                     .arg(eg->hedge.alpha, 0, 'f', 2)
+                     .arg(eg->hedge.r_squared, 0, 'f', 6)
+                     .arg(eg->level_correlation, 0, 'f', 6)
+                     .arg(eg->residual_test.t_stat, 0, 'f', 4)
+                     .arg(eg->residual_test.gamma, 0, 'f', 6)
+                     .arg(eg->residual_test.n)
+                     .arg(eg->critical_5pct, 0, 'f', 4)
+                     .arg(eg->cointegrated
+                              ? QStringLiteral("COINTEGRATED, as arbitrage "
+                                               "requires")
+                              : QStringLiteral("NOT cointegrated — which for "
+                                               "this pair would mean the "
+                                               "implementation is wrong"));
+            s += QStringLiteral(
+                "  A beta near 1.0 is the whole point: the future IS the spot\n"
+                "  plus carry, so any other hedge ratio would say the\n"
+                "  regression had found something other than the arbitrage.\n\n");
+        }
+    }
+
+    // ――― 2. the control ―――
+    s += QStringLiteral(
+        "――― 2. THE CONTROL: THE SAME TEST AGAINST NOISE ―――\n\n"
+        "  Two independent random walks are the textbook spurious regression:\n"
+        "  high R2, no cointegration. A test that cannot tell this from\n"
+        "  section 1 will pair anything with anything.\n\n");
+    {
+        std::uint64_t seed = 0xC0FFEE5Eull;
+        auto u = [&seed]() {
+            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+            return (static_cast<double>(seed >> 11) + 0.5)
+                 * (1.0 / 9007199254740992.0);
+        };
+        std::vector<double> walk(w);
+        double lvl = xw.front();
+        for (std::size_t i = 0; i < w; ++i) {
+            lvl *= std::exp(0.01 * std::sqrt(-2.0 * std::log(u()))
+                            * std::cos(6.283185307179586 * u()));
+            walk[i] = lvl;
+        }
+        const auto eg = engle_granger(xw.data(), walk.data(), w, 1);
+        if (eg) {
+            s += QStringLiteral(
+                "  R2 %1   level correlation %2\n"
+                "  ADF t %3 against a 5% critical of %4\n\n"
+                "  VERDICT: %5\n\n")
+                     .arg(eg->hedge.r_squared, 0, 'f', 6)
+                     .arg(eg->level_correlation, 0, 'f', 6)
+                     .arg(eg->residual_test.t_stat, 0, 'f', 4)
+                     .arg(eg->critical_5pct, 0, 'f', 4)
+                     .arg(eg->cointegrated
+                              ? QStringLiteral("cointegrated — which on "
+                                               "independent noise is a BUG, "
+                                               "not a pair")
+                              : QStringLiteral("NOT cointegrated, correctly"));
+        }
+    }
+
+    // ――― 3. walk-forward and the purge ―――
+    s += QStringLiteral(
+        "――― 3. WALK-FORWARD, PURGE AND EMBARGO ―――\n\n"
+        "  Markets are not ergodic, so random K-fold is BANNED in the training\n"
+        "  harness (ROADMAP section 3). Every fold below trains on the past\n"
+        "  and tests on the future, with a gap the length of the label horizon.\n\n");
+    {
+        WalkForwardSpec spec;
+        spec.initial_train = 500;
+        spec.test_len = 100;
+        // step == test_len gives NON-OVERLAPPING test blocks, which is what a
+        // report wants: overlapping tests double-count the same bars and make
+        // a fold count look like independent evidence when it is not.
+        spec.step = 100;
+        spec.gap = 20;
+        spec.expanding = true;
+        const auto folds = walk_forward_count(2000, spec);
+        s += QStringLiteral(
+            "  n 2000, train %1, test %2, gap %3, expanding\n"
+            "  -> %4 folds\n\n"
+            "     fold   train         test          gap\n")
+                 .arg(spec.initial_train).arg(spec.test_len).arg(spec.gap)
+                 .arg(folds ? *folds : 0);
+        const std::size_t nf = folds ? *folds : 0;
+        for (std::size_t i = 0; i < nf && i < 6; ++i) {
+            const auto f = walk_forward_fold(2000, spec, i);
+            if (!f) { continue; }
+            s += QStringLiteral("   %1   [%2, %3)   [%4, %5)   %6\n")
+                     .arg(i, 6)
+                     .arg(f->train.start, 5).arg(f->train.end, 5)
+                     .arg(f->test.start, 5).arg(f->test.end, 5)
+                     .arg(f->test.start - f->train.end, 6);
+        }
+        if (nf > 6) {
+            s += QStringLiteral("   ... %1 more\n").arg(nf - 6);
+        }
+        s += QStringLiteral(
+            "\n  THE GAP IS NOT COSMETIC. A label that looks 20 bars ahead is\n"
+            "  computed from data inside the test block, so a training row\n"
+            "  ending at the boundary has already seen it. Without the gap the\n"
+            "  fold leaks, and it leaks in the direction that flatters.\n\n"
+            "――― WHAT IS STILL MISSING ―――\n\n"
+            "  strategies/parity.hpp, calendar.hpp and score.hpp have no page,\n"
+            "  and cannot get one: parity needs an option chain, the calendar\n"
+            "  scanner needs two dated slices of one, and score.hpp combines\n"
+            "  signals from models that have not been fitted. They are listed\n"
+            "  here rather than given a page of constructed inputs, because a\n"
+            "  scanner that has only ever seen invented quotes is a scanner\n"
+            "  nobody should trust the first time it sees a real one.\n");
+    }
     return s;
 }
 
