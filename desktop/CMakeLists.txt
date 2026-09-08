@@ -279,6 +279,29 @@ if(ALTAIR_BUILD_TESTS)
     set_target_properties(altair_kite_panel_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_kite_panel COMMAND altair_kite_panel_test)
 
+    # P22-04. The Overnight Gap page has its OWN reader, and a reader is where
+    # a page can start answering a different question without saying so. This
+    # checks it against an independent parse of the same files, column by
+    # column -- specifically that `open` is the auction print and not a copy of
+    # the first bar's close, which are five minutes and 38% of the strategy
+    # apart. Links altair_strategies, which is a TEST target and therefore
+    # outside the altair_desktop allow-list audit below; the UI target itself
+    # still only INCLUDES those headers and links nothing new.
+    qt_add_executable(altair_overnight_page_test
+        tests/test_overnight_page.cpp
+        quant_pages.hpp)
+    target_link_libraries(altair_overnight_page_test PRIVATE
+        altair_types altair_time altair_feed altair_analytics altair_models
+        altair_risk altair_backtest altair_strategies
+        Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_overnight_page_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_overnight_page_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    set_target_properties(altair_overnight_page_test
+        PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_overnight_page COMMAND altair_overnight_page_test)
+
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
     # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.
     target_link_libraries(altair_bar_csv_test PRIVATE

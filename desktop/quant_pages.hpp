@@ -43,6 +43,7 @@
 // the bottom of desktop/CMakeLists.txt. It detects; it cannot trade, and it
 // does not link oms/ either, so including it widens nothing.
 #include <strategies/meanrev.hpp>
+#include <strategies/overnight.hpp>
 #include <strategies/momentum.hpp>
 
 #include <QDir>
@@ -54,6 +55,7 @@
 
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -922,6 +924,306 @@ private:
         "  Every figure on this page comes from the same functions the\n"
         "  acceptance test calls (strategies_directional), on the same\n"
         "  data. Nothing here is cached and nothing is a literal.\n");
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P22-03 — Overnight gap
+// ---------------------------------------------------------------------------
+
+/// Sessions from the five-minute partition: the auction print, the 09:20
+/// close, and the session close.
+///
+/// A SECOND reader again, deliberately, exactly as `ui_load_closes` is a
+/// second reader beside the model tests' own. Two independent paths to the
+/// same number is what makes it a property of the data rather than of one
+/// parser -- and here it matters more than usual, because reading the first
+/// bar's CLOSE where the OPEN was meant silently answers a different question
+/// and the difference is the whole strategy.
+[[nodiscard]] inline std::vector<SessionBar> ui_load_sessions(
+    const QString& dir) {
+    std::vector<SessionBar> out;
+    QDir d(dir);
+    if (!d.exists()) { return out; }
+    const QStringList names = d.entryList(QStringList{QStringLiteral("*.csv")},
+                                          QDir::Files, QDir::Name);
+    std::string current;
+    for (const QString& name : names) {
+        std::ifstream f(d.filePath(name).toStdString());
+        if (!f) { continue; }
+        std::string line;
+        std::getline(f, line);                         // header
+        while (std::getline(f, line)) {
+            std::istringstream ss(line);
+            std::string cell;
+            int col = 0;
+            std::string day;
+            double o = 0.0, c = 0.0;
+            while (std::getline(ss, cell, ',')) {
+                if (col == 0 && cell.size() >= 10) { day = cell.substr(0, 10); }
+                if (col == 1 && !cell.empty()) { o = std::atof(cell.c_str()); }
+                if (col == 4 && !cell.empty()) { c = std::atof(cell.c_str()); }
+                ++col;
+            }
+            if (day.empty() || !(o > 0.0) || !(c > 0.0)) { continue; }
+            if (day != current) {
+                current = day;
+                SessionBar b;
+                b.open = o;
+                b.first_bar_close = c;
+                b.close = c;
+                b.day = day;
+                out.push_back(b);
+            } else {
+                out.back().close = c;
+            }
+        }
+    }
+    return out;
+}
+
+/// The overnight gap strategy, and the two prices the whole thing rests on.
+///
+/// THE PAGE LEADS WITH THE EXECUTION ASSUMPTION, NOT THE RETURN.
+///
+/// This is the first positive result in the project, which is exactly why the
+/// caveat goes above the number rather than below it. The edge is the
+/// difference between the 15:30 close and the 09:15 auction print, and neither
+/// is a price a retail account can simply take. Five minutes of slippage
+/// removes most of it, and that five minutes is measured here rather than
+/// estimated.
+[[nodiscard]] inline QString overnight_report(const QString& dataset_root) {
+    QString s = QStringLiteral(
+        "OVERNIGHT GAP — P22-01 / P22-02\n"
+        "Hold the index from the close to the open. Sit out the session.\n\n"
+        "――― READ THIS FIRST ―――\n\n"
+        "  The entire edge is the difference between two prices you cannot\n"
+        "  simply take:\n\n"
+        "    • the 15:30 CLOSE is a half-hour VWAP construction, not a quote\n"
+        "      on the screen at 15:30;\n"
+        "    • the 09:15 OPEN is the pre-open call auction result. You can\n"
+        "      submit into it; you cannot choose your fill.\n\n"
+        "  So both exits are computed below. The gap between them is the\n"
+        "  risk, not a footnote about the risk.\n\n");
+
+    const auto bars = ui_load_sessions(
+        dataset_root + QStringLiteral("/spot/nifty/5m"));
+    if (bars.size() < 2000) {
+        return s + QStringLiteral(
+            "――― NO DATA ―――\n\n"
+            "  dataset/spot/nifty/5m is missing or too short. Nothing is\n"
+            "  shown rather than something synthetic under a heading that\n"
+            "  says NIFTY.\n");
+    }
+
+    const auto r = session_returns(bars);
+    if (!r) {
+        return s + QStringLiteral("  The decomposition failed on this data.\n");
+    }
+
+    // ――― the decomposition ―――
+    auto stat = [](const std::vector<double>& v, double& m, double& t) {
+        m = t = 0.0;
+        if (v.size() < 2) { return; }
+        double sum = 0.0;
+        for (const double x : v) { sum += x; }
+        const double n = static_cast<double>(v.size());
+        m = sum / n;
+        double s2 = 0.0;
+        for (const double x : v) { s2 += (x - m) * (x - m); }
+        const double se = std::sqrt(s2 / (n - 1.0)) / std::sqrt(n);
+        t = se > 0.0 ? m / se : 0.0;
+    };
+    double on_m = 0.0, on_t = 0.0, fb_m = 0.0, fb_t = 0.0;
+    double se_m = 0.0, se_t = 0.0, cc_m = 0.0, cc_t = 0.0;
+    stat(r->overnight, on_m, on_t);
+    stat(r->first_bar, fb_m, fb_t);
+    stat(r->session, se_m, se_t);
+    stat(r->close_to_close, cc_m, cc_t);
+
+    s += QStringLiteral(
+        "――― WHERE THE DAY'S RETURN SITS ―――   %1 sessions\n\n"
+        "                                  mean bps        t\n"
+        "  overnight   close -> open      %2  %3\n"
+        "  proxy       close -> 09:20     %4  %5\n"
+        "  session     open  -> close     %6  %7\n"
+        "  all in      close -> close     %8  %9\n\n")
+            .arg(r->overnight.size())
+            .arg(on_m, 9, 'f', 4).arg(on_t, 7, 'f', 2)
+            .arg(fb_m, 9, 'f', 4).arg(fb_t, 7, 'f', 2)
+            .arg(se_m, 9, 'f', 4).arg(se_t, 7, 'f', 2)
+            .arg(cc_m, 9, 'f', 4).arg(cc_t, 7, 'f', 2);
+
+    s += QStringLiteral(
+        "  The first five minutes of the session alone: %1 bps — %2% of\n"
+        "  the overnight move, handed straight back. That is the gap\n"
+        "  filling, and it is the price of missing the auction.\n\n")
+            .arg(fb_m - on_m, 0, 'f', 4)
+            .arg(100.0 * (on_m - fb_m) / on_m, 0, 'f', 0);
+
+    // ――― the strategy ―――
+    OvernightSpec at_open;
+    OvernightSpec at_first;
+    at_first.exit = Exit::FirstBar;
+    const auto ro = run_overnight(bars, at_open);
+    const auto rf = run_overnight(bars, at_first);
+    if (!ro || !rf) { return s + QStringLiteral("  The run failed.\n"); }
+
+    s += QStringLiteral(
+        "――― THE COST IT CAN BEAR ―――\n\n"
+        "  Cost is an ALL-IN ROUND TRIP: one in-and-out every night.\n\n"
+        "  exit                  mean       t     hit   b/e vs 0  b/e vs hold\n"
+        "  09:15 auction     %1 %2 %3   %4    %5\n"
+        "  09:20 first bar   %6 %7 %8   %9    %10\n\n")
+            .arg(ro->mean_taken_bps, 8, 'f', 4).arg(ro->t_taken, 7, 'f', 2)
+            .arg(ro->hit_rate, 7, 'f', 3)
+            .arg(ro->breakeven_rt_bps(), 8, 'f', 3)
+            .arg(ro->breakeven_rt_vs_hold_bps(), 8, 'f', 3)
+            .arg(rf->mean_taken_bps, 8, 'f', 4).arg(rf->t_taken, 7, 'f', 2)
+            .arg(rf->hit_rate, 7, 'f', 3)
+            .arg(rf->breakeven_rt_bps(), 8, 'f', 3)
+            .arg(rf->breakeven_rt_vs_hold_bps(), 8, 'f', 3);
+
+    s += QStringLiteral(
+        "  The second break-even column is the one that decides anything,\n"
+        "  and it is an IDENTITY rather than a fit: taking every night, the\n"
+        "  bar to beat buy-and-hold is exactly the session drag you avoid,\n"
+        "  %1 bps. Nothing is estimated in that sentence.\n\n")
+            .arg(-se_m, 0, 'f', 4);
+
+    // ――― the shape of the payoff ―――
+    s += QStringLiteral(
+        "――― THE SHAPE OF A NIGHT ―――\n\n"
+        "    mean %1   median %2   sd %3\n"
+        "    p05  %4   p95    %5   worst %6\n\n"
+        "  The MEDIAN night pays more than the MEAN night. That settles what\n"
+        "  kind of strategy this is: most nights pay a little and a few take\n"
+        "  a lot back. A 5th-percentile night gives back %7 average nights;\n"
+        "  the worst one in this history gives back %8.\n\n"
+        "  IT IS SHORT GAP RISK — collecting a premium for wearing the\n"
+        "  occasional overnight shock. The Sharpe will flatter it right up\n"
+        "  until one arrives.\n\n")
+            .arg(ro->mean_taken_bps, 8, 'f', 3).arg(ro->median_bps, 8, 'f', 3)
+            .arg(ro->sd_taken_bps, 8, 'f', 3)
+            .arg(ro->p05_bps, 8, 'f', 3).arg(ro->p95_bps, 8, 'f', 3)
+            .arg(ro->worst_bps, 8, 'f', 1)
+            .arg(ro->nights_per_bad_night(), 0, 'f', 1)
+            .arg(ro->mean_taken_bps > 0.0
+                     ? -ro->worst_bps / ro->mean_taken_bps : 0.0, 0, 'f', 0);
+
+    // ――― by year ―――
+    const auto years = by_year(bars);
+    if (years && !years->empty()) {
+        s += QStringLiteral(
+            "――― IS IT ONE EPISODE, AND IS IT STILL HAPPENING? ―――\n\n"
+            "  The last column is the one to read: the round trip THAT YEAR\n"
+            "  could have borne against buy-and-hold.\n\n"
+            "    year      n    overnight        t      session   RT it bears\n");
+        std::size_t positive = 0;
+        double recent = 0.0, older = 0.0, worst = 1e300;
+        QString worst_year;
+        std::size_t rn = 0, onn = 0;
+        for (std::size_t i = 0; i < years->size(); ++i) {
+            const PeriodStat& ps = (*years)[i];
+            if (ps.overnight_bps > 0.0) { ++positive; }
+            const double w = static_cast<double>(ps.n);
+            if (i + 3 >= years->size()) { recent += ps.overnight_bps * w; rn += ps.n; }
+            else { older += ps.overnight_bps * w; onn += ps.n; }
+            const double margin = ps.breakeven_vs_hold_bps();
+            if (margin < worst) {
+                worst = margin;
+                worst_year = QString::fromStdString(ps.label);
+            }
+            s += QStringLiteral("    %1 %2  %3  %4  %5   %6\n")
+                     .arg(QString::fromStdString(ps.label))
+                     .arg(ps.n, 6)
+                     .arg(ps.overnight_bps, 11, 'f', 3)
+                     .arg(ps.overnight_t, 7, 'f', 2)
+                     .arg(ps.session_bps, 11, 'f', 3)
+                     .arg(margin, 11, 'f', 3);
+        }
+        s += QStringLiteral(
+            "\n  Thinnest year: %1, bearing a round trip of only %2 bps.\n")
+                 .arg(worst_year).arg(worst, 0, 'f', 3);
+        s += QStringLiteral("\n  %1 of %2 years had a positive overnight "
+                            "mean, so it is not one episode.\n")
+                 .arg(positive).arg(years->size());
+        if (rn > 0 && onn > 0) {
+            recent /= static_cast<double>(rn);
+            older /= static_cast<double>(onn);
+            s += QStringLiteral(
+                "  Earlier years %1 bps/night; last three years %2.\n")
+                     .arg(older, 0, 'f', 3).arg(recent, 0, 'f', 3);
+            if (recent < older * 0.6) {
+                s += QStringLiteral(
+                    "\n  THE EFFECT HAS DECAYED. The recent window is a\n"
+                    "  different number from the eleven-year average, and it\n"
+                    "  is the recent one a decision today would rest on.\n");
+            }
+        }
+        s += QStringLiteral("\n");
+    }
+
+    // ――― the sweep ―――
+    s += QStringLiteral(
+        "――― NET PER SESSION vs THE ROUND TRIP ―――\n\n"
+        "  Bring the real rate from config/charges.toml. For NIFTY futures\n"
+        "  the round trip is dominated by sell-side STT, paid every morning.\n\n"
+        "    RT bps    net(open)  exc(open)   net(9:20)  exc(9:20)\n");
+    for (const double rt : {0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0}) {
+        s += QStringLiteral("    %1   %2  %3   %4  %5\n")
+                 .arg(rt, 6, 'f', 1)
+                 .arg(ro->net_at(rt), 9, 'f', 4)
+                 .arg(ro->excess_at(rt), 9, 'f', 4)
+                 .arg(rf->net_at(rt), 9, 'f', 4)
+                 .arg(rf->excess_at(rt), 9, 'f', 4);
+    }
+
+    // ――― selection ―――
+    s += QStringLiteral(
+        "\n――― DOES FILTERING HELP? ―――\n\n"
+        "  It cannot help by trading less: the break-even against zero IS\n"
+        "  the conditional mean, whatever the frequency — half the gross\n"
+        "  and half the cost leaves the ratio alone. It helps only if the\n"
+        "  nights it keeps are better ones. And skipping a night means\n"
+        "  being flat, which forgoes the drift, so the column against\n"
+        "  buy-and-hold gets HARDER as the filter tightens.\n\n"
+        "   session below     took   share       mean   b/e vs hold\n");
+    for (const double th : {1e30, 100.0, 50.0, 0.0, -50.0, -100.0}) {
+        OvernightSpec spec;
+        spec.session_below_bps =
+            th > 1e29 ? std::numeric_limits<double>::infinity() : th;
+        const auto res = run_overnight(bars, spec);
+        if (!res || res->taken == 0) { continue; }
+        s += QStringLiteral("   %1  %2  %3%   %4    %5\n")
+                 .arg(th > 1e29 ? QStringLiteral("every night")
+                                : QStringLiteral("%1").arg(th, 0, 'f', 1), 13)
+                 .arg(res->taken, 6)
+                 .arg(100.0 * static_cast<double>(res->taken)
+                          / static_cast<double>(res->sessions), 5, 'f', 1)
+                 .arg(res->mean_taken_bps, 9, 'f', 4)
+                 .arg(res->breakeven_rt_vs_hold_bps(), 9, 'f', 3);
+    }
+
+    s += QStringLiteral(
+        "\n――― WHAT THIS RESTS ON ―――\n\n"
+        "  1. Filling at the 09:15 auction print. This is the whole result.\n"
+        "  2. Filling at the 15:30 close — NOT MODELLED AT ALL, and it\n"
+        "     moves the same way.\n"
+        "  3. Trading the index, which is not tradeable. A future or an ETF\n"
+        "     is, each with its own basis and roll.\n"
+        "  4. In-sample over one eleven-year window. No walk-forward, no\n"
+        "     purge, no embargo.\n"
+        "  5. A stationary effect — which the per-year table above says it\n"
+        "     is not.\n\n"
+        "  The gross edge is real and significant, and it is the first\n"
+        "  positive result in this project. It is also the one most likely\n"
+        "  to be an artefact of a price nobody can get: the difference\n"
+        "  between the two break-even columns above is five minutes of the\n"
+        "  trading day.\n\n"
+        "  Every figure here is computed by the same functions the\n"
+        "  acceptance tests call (strategies_overnight, _real), on the same\n"
+        "  data, when you press the button.\n");
     return s;
 }
 

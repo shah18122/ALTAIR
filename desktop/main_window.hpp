@@ -106,7 +106,10 @@ namespace altair::ui {
             // P21-03. The Stage 3 hole from ROADMAP_GAP.md, now
             // filled: momentum and mean reversion. Appended, so no
             // existing --page index moves.
-            QStringLiteral("Strategies")};
+            QStringLiteral("Strategies"),
+            // P22-03. The overnight gap, which is where P21-03 said
+            // the whole of this index's return actually lives.
+            QStringLiteral("Overnight Gap")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -889,6 +892,21 @@ private:
                     strat_page->set_text(strategies_report(ds));
                 });
         pages_->addWidget(strat_page);
+
+        // P22-03. Reads 140 monthly files to rebuild 2,873 sessions, so it
+        // stays behind a button like every other page here.
+        auto* on_page = new ComputePage(
+            QStringLiteral("OVERNIGHT GAP — P22-01/02"),
+            QStringLiteral("Decompose the day, then price the gap"),
+            this);
+        connect(on_page->button(), &QPushButton::clicked, this,
+                [on_page, ds] {
+                    on_page->set_text(QStringLiteral(
+                        "Rebuilding sessions from the 5-minute partition..."));
+                    QApplication::processEvents();
+                    on_page->set_text(overnight_report(ds));
+                });
+        pages_->addWidget(on_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
