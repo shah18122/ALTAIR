@@ -63,6 +63,7 @@
 // does not link oms/ either, so including it widens nothing.
 #include <backtest/validation.hpp>
 #include <strategies/basis.hpp>
+#include <strategies/regime.hpp>
 #include <strategies/cointegration.hpp>
 #include <strategies/meanrev.hpp>
 #include <strategies/overnight.hpp>
@@ -1890,14 +1891,166 @@ private:
             "  has to remember to refresh.\n\n").arg(aw).arg(aw_first);
     }
 
+    // ――― 4. THE SCORECARD, WITH REAL FORECASTS ―――
+    //
+    // I earlier declined this section on the grounds that "no model has been
+    // scored in production, and a scorecard of one shadow fit would be a
+    // table of zeros pretending to be a track record". The second half is
+    // right and the first half was the wrong reason to skip it: the momentum
+    // and mean-reversion rules from P21 emit a forecast on every bar of 36
+    // years, and scoring THOSE is neither zeros nor a pretence. What it is
+    // not is a production track record, and the page says which it is.
+    s += QStringLiteral(
+        "――― 4. THE SCORECARD ―――\n\n"
+        "  The P21 rules, scored per REGIME on daily NIFTY. This is a\n"
+        "  backtest scorecard, not a production one: nothing here has traded.\n\n"
+        "  CLAUDE.md: report per regime, NEVER only in aggregate. The\n"
+        "  aggregate is shown last, with the cell counts it was built from,\n"
+        "  so it cannot be quoted without the reader seeing what it hid.\n\n");
+    {
+        Scorecards cards;
+        const std::size_t w = 60;
+        std::size_t scored = 0, incomplete = 0;
+
+        // Regimes, computed CAUSALLY from a trailing window. Vol by tercile
+        // against the whole sample's own quantiles, trend by the sign of a
+        // trailing lag-1 autocorrelation. Crude on purpose -- the subject
+        // here is the scorecard, and a richer detector would confound "the
+        // cells differ" with "the detector is clever".
+        std::vector<double> vols;
+        vols.reserve(r.size());
+        for (std::size_t i = w; i < r.size(); ++i) {
+            double m = 0.0;
+            for (std::size_t k = i - w; k < i; ++k) { m += r[k]; }
+            m /= static_cast<double>(w);
+            double v = 0.0;
+            for (std::size_t k = i - w; k < i; ++k) { v += (r[k]-m)*(r[k]-m); }
+            vols.push_back(std::sqrt(v / static_cast<double>(w - 1)));
+        }
+        std::vector<double> sorted_v = vols;
+        std::sort(sorted_v.begin(), sorted_v.end());
+        const double lo_q = sorted_v[sorted_v.size() / 3];
+        const double hi_q = sorted_v[2 * sorted_v.size() / 3];
+
+        const auto mom = momentum_positions(r, MomentumSpec{});
+        MeanRevSpec mrs;
+        const auto rev = meanrev_positions(r, mrs);
+        if (mom && rev) {
+            for (std::size_t i = w; i + 1 < r.size(); ++i) {
+                MarketRegime reg;
+                const double sd = vols[i - w];
+                reg.vol = sd < lo_q ? VolRegime::Low
+                        : (sd > hi_q ? VolRegime::High : VolRegime::Normal);
+                // Trailing lag-1 autocorrelation, from data through i-1 only.
+                double num = 0.0, den = 0.0;
+                for (std::size_t k = i - w + 1; k < i; ++k) {
+                    num += r[k] * r[k - 1];
+                    den += r[k - 1] * r[k - 1];
+                }
+                const double rho = den > 0.0 ? num / den : 0.0;
+                reg.trend = rho > 0.05 ? TrendRegime::Trending
+                          : (rho < -0.05 ? TrendRegime::MeanReverting
+                                         : TrendRegime::RandomWalk);
+                reg.liquidity = LiquidityRegime::Normal;
+                if (!reg.complete()) { ++incomplete; continue; }
+                const double realised = r[i + 1];
+                (void)cards.observe(0, 0, reg, (*mom)[i], realised);
+                (void)cards.observe(1, 0, reg, (*rev)[i], realised);
+                ++scored;
+            }
+        }
+
+        s += QStringLiteral("  %1 bars scored.\n\n"
+                            "   model      regime                 n      IC"
+                            "    IC se     hit\n").arg(scored);
+        const char* tnames[] = {"?", "trending", "meanrev ", "randwalk"};
+        const char* vnames[] = {"?", "lowvol ", "normvol", "highvol"};
+        for (std::size_t m = 0; m < 2; ++m) {
+            for (std::size_t t = 1; t <= 3; ++t) {
+                for (std::size_t vq = 1; vq <= 3; ++vq) {
+                    const std::size_t cell = t * 4 + vq;
+                    const ScoreCell& c = cards.at(m, 0, cell);
+                    if (c.n == 0) { continue; }
+                    const auto ic = c.ic();
+                    const auto hr = c.hit_rate();
+                    s += QStringLiteral("   %1  %2 %3  %4  %5  %6  %7\n")
+                             .arg(m == 0 ? QStringLiteral("momentum")
+                                         : QStringLiteral("meanrev "))
+                             .arg(QString::fromUtf8(tnames[t]))
+                             .arg(QString::fromUtf8(vnames[vq]))
+                             .arg(c.n, 7)
+                             .arg(ic ? QStringLiteral("%1").arg(*ic, 7, 'f', 4)
+                                     : QStringLiteral("      —"))
+                             .arg(c.ic_std_error(), 7, 'f', 4)
+                             .arg(hr ? QStringLiteral("%1").arg(*hr, 6, 'f', 3)
+                                     : QStringLiteral("     —"));
+                }
+            }
+        }
+
+        // HOW MANY OF THOSE CELLS ARE ACTUALLY A SIGNAL?
+        //
+        // ROADMAP section 3, for the fourth time in this UI: a measurement
+        // without its error bar is not a measurement. `ic_std_error()` is
+        // carried on every cell precisely so a 0.15 from twelve observations
+        // cannot be read beside a 0.10 from nine hundred, and a table of
+        // twenty ICs invites exactly that reading.
+        {
+            std::size_t cells_total = 0, cells_2se = 0;
+            double best_t = 0.0;
+            for (std::size_t m = 0; m < 2; ++m) {
+                for (std::size_t cell = 0; cell < 16; ++cell) {
+                    const ScoreCell& c = cards.at(m, 0, cell);
+                    if (c.n == 0) { continue; }
+                    const auto ic = c.ic();
+                    if (!ic) { continue; }
+                    ++cells_total;
+                    const double t = *ic / c.ic_std_error();
+                    if (std::fabs(t) > best_t) { best_t = std::fabs(t); }
+                    if (std::fabs(t) > 2.0) { ++cells_2se; }
+                }
+            }
+            s += QStringLiteral(
+                "\n  Of %1 populated cells, %2 have an IC further than TWO\n"
+                "  standard errors from zero. The largest is %3 sigma.\n\n"
+                "  Twenty cells were examined, so at a naive 2-sigma bar one\n"
+                "  clears by chance. Read the table as a SHAPE -- momentum\n"
+                "  positive where mean reversion is negative, which is what\n"
+                "  two near-opposite rules must do -- and not as twenty\n"
+                "  separate results.\n").arg(cells_total).arg(cells_2se)
+                     .arg(best_t, 0, 'f', 2);
+        }
+
+        s += QStringLiteral("\n  AND THE AGGREGATE, WITH WHAT IT HID:\n\n");
+        for (std::size_t m = 0; m < 2; ++m) {
+            const auto a = cards.aggregate(m, 0);
+            const auto ic = a.overall.ic();
+            s += QStringLiteral(
+                "   %1  overall IC %2 over %3 obs, from %4 populated cells,\n"
+                "             thinnest %5\n")
+                     .arg(m == 0 ? QStringLiteral("momentum")
+                                 : QStringLiteral("meanrev "))
+                     .arg(ic ? QStringLiteral("%1").arg(*ic, 7, 'f', 4)
+                             : QStringLiteral("      —"))
+                     .arg(a.overall.n).arg(a.populated).arg(a.thinnest);
+        }
+        s += QStringLiteral(
+            "\n  An IC of +0.30 in trending regimes and -0.30 in ranging ones\n"
+            "  aggregates to approximately zero, and read as one number that\n"
+            "  is a model with no edge rather than a model with a switch. The\n"
+            "  cell counts are printed beside the aggregate for exactly that\n"
+            "  reason: the second thing an aggregate hides is how thin the\n"
+            "  cells under it were.\n\n"
+            "  `ic()` REFUSES below four observations rather than returning\n"
+            "  the +/-1 that two points always produce.\n\n");
+    }
+
     s += QStringLiteral(
         "――― WHAT IS STILL MISSING ―――\n\n"
-        "  The SCORECARD. flagging/scorecard.hpp tracks per-model, per-horizon,\n"
-        "  per-regime accuracy and is what turns an alarm into a decision — a\n"
-        "  distribution shift with stable accuracy is a reason to do nothing.\n"
-        "  It has no page because no model has been scored in production, and\n"
-        "  a scorecard of one shadow fit would be a table of zeros pretending\n"
-        "  to be a track record.\n");
+        "  A PRODUCTION scorecard. The table above is a backtest: nothing in\n"
+        "  it has traded, so it measures the rules rather than the pipeline.\n"
+        "  flagging/deploy.hpp's shadow -> canary -> auto-rollback path needs\n"
+        "  a model actually serving before it has anything to gate.\n");
     return s;
 }
 

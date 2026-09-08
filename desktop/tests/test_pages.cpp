@@ -242,6 +242,31 @@ int main(int argc, char** argv)
           "not a bare velocity");
 
     // -----------------------------------------------------------------------
+    // 4f. The scorecard must never show an aggregate without its cells.
+    //
+    // flagging/scorecard.hpp exists because an IC of +0.30 in trending
+    // regimes and -0.30 in ranging ones aggregates to about zero, and read as
+    // one number that is a model with no edge rather than a model with a
+    // switch. A page that printed the aggregate alone would be the exact
+    // failure the header is written against.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4f] the scorecard reports per regime, with error bars\n");
+    const QString fl = flagging_report(ds);
+    check(fl.contains(QStringLiteral("THE SCORECARD")),
+          "the scorecard section is present");
+    check(fl.contains(QStringLiteral("IC se")),
+          "every IC is printed beside its own standard error");
+    check(fl.contains(QStringLiteral("populated cells")),
+          "and the page counts how many clear two standard errors");
+    check(fl.contains(QStringLiteral("AND THE AGGREGATE, WITH WHAT IT HID")),
+          "the aggregate is shown WITH the cell counts it was built from");
+    check(fl.contains(QStringLiteral("thinnest")),
+          "including the thinnest cell, because that is the second thing an "
+          "aggregate hides");
+    check(fl.contains(QStringLiteral("nothing here has traded")),
+          "and it says plainly that this is a backtest, not a track record");
+
+    // -----------------------------------------------------------------------
     // 5. Print them.
     // -----------------------------------------------------------------------
     std::printf("\n[5] excerpts\n");
