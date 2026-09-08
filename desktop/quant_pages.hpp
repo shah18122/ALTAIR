@@ -34,6 +34,7 @@
 #include <analytics/kalman.hpp>
 #include <analytics/sabr.hpp>
 #include <models/gbdt.hpp>
+#include <models/spot_forecast.hpp>
 #include <risk/covariance.hpp>
 #include <risk/optimise.hpp>
 #include <risk/stress.hpp>
@@ -437,6 +438,124 @@ private:
         "the hit rate 0.5177 -> 0.5309, a lift of +1.58 sigma.\n"
         "QUANTLAB measured 0.41 -> 0.56 on ITS primary signal;\n"
         "that does not transfer, and nothing is sized on it.\n");
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P19-07 — the spot forecast
+// ---------------------------------------------------------------------------
+
+/// Gradient-boosted spot forecast, net of cost.
+///
+/// The order on screen is the argument, and it matches the acceptance test:
+/// the COST HURDLE first, the PERFECT ORACLE second, and only then what the
+/// model did. A page leading with "54% directional accuracy" reports a number
+/// as an edge -- P8-15 measured an oracle netting -0.07 bps/bar at five
+/// minutes against a 5.5 bps round trip.
+[[nodiscard]] inline QString spot_forecast_report(const QString& dataset_root,
+                                                  const QString& sub,
+                                                  const char* label) {
+    std::vector<double> closes =
+        ui_load_closes(dataset_root + sub + QStringLiteral("all.csv"));
+    if (closes.size() < 2000) {
+        closes.clear();
+        for (int y = 2015; y <= 2026; ++y) {
+            for (int m = 1; m <= 12; ++m) {
+                const auto part = ui_load_closes(
+                    dataset_root + sub
+                    + QStringLiteral("%1-%2.csv")
+                          .arg(y, 4, 10, QLatin1Char('0'))
+                          .arg(m, 2, 10, QLatin1Char('0')));
+                closes.insert(closes.end(), part.begin(), part.end());
+            }
+        }
+    }
+    if (closes.size() < 2000) {
+        return QStringLiteral("SPOT FORECAST - %1\n\nNo data under %2%3.")
+            .arg(QLatin1String(label), dataset_root, sub);
+    }
+
+    SpotSpec spec;
+    spec.horizon = 1;
+    spec.cost_bps = 5.5;
+    spec.folds = 5;
+    spec.lags = 8;
+    const auto r = forecast_spot(closes, spec);
+    if (!r) {
+        return QStringLiteral("SPOT FORECAST - %1\n\nCould not run.")
+            .arg(QLatin1String(label));
+    }
+
+    QString s = QStringLiteral("GRADIENT-BOOSTED SPOT FORECAST - %1\n"
+                               "P16-06, walk-forward with a gap\n\n")
+                    .arg(QLatin1String(label));
+    s += QStringLiteral("%1 rows, %2 scored OUT OF SAMPLE\n\n")
+             .arg(r->rows).arg(r->scored);
+
+    s += QStringLiteral("THE COST HURDLE, BEFORE ANY MODEL\n");
+    s += QStringLiteral("  moves exceeding the %1 bps round trip : %2%\n")
+             .arg(spec.cost_bps, 0, 'f', 1)
+             .arg(100.0 * r->frac_exceeding_cost, 0, 'f', 1);
+    s += QStringLiteral("  PERFECT ORACLE, every bar            : %1 bps/bar\n")
+             .arg(r->oracle_net_bps, 0, 'f', 3);
+    s += QStringLiteral("  PERFECT ORACLE, selective            : %1 bps/bar\n\n")
+             .arg(r->oracle_selective_net_bps, 0, 'f', 3);
+    if (r->oracle_net_bps < 0.0) {
+        s += QStringLiteral(
+            "  A PERFECT ORACLE LOSES MONEY here. No model can clear a bar\n"
+            "  an oracle cannot, so nothing below matters.\n\n");
+    }
+
+    s += QStringLiteral("%1 %2 %3 %4\n")
+             .arg(QStringLiteral(""), -28)
+             .arg(QStringLiteral("RMSE bps"), 10)
+             .arg(QStringLiteral("dir"), 9)
+             .arg(QStringLiteral("net bps"), 11);
+    s += QStringLiteral("%1 %2 %3 %4\n")
+             .arg(QStringLiteral("constant (train mean)"), -28)
+             .arg(r->rmse_constant, 10, 'f', 3)
+             .arg(r->dir_constant, 9, 'f', 4)
+             .arg(QStringLiteral("-"), 11);
+    s += QStringLiteral("%1 %2 %3 %4\n")
+             .arg(QStringLiteral("GBDT level-wise"), -28)
+             .arg(r->rmse_level, 10, 'f', 3)
+             .arg(r->dir_level, 9, 'f', 4)
+             .arg(r->net_bps_level, 11, 'f', 3);
+    s += QStringLiteral("%1 %2 %3 %4\n\n")
+             .arg(QStringLiteral("GBDT leaf-wise (LightGBM)"), -28)
+             .arg(r->rmse_leaf, 10, 'f', 3)
+             .arg(r->dir_leaf, 9, 'f', 4)
+             .arg(r->net_bps_leaf, 11, 'f', 3);
+    s += QStringLiteral("directional edge over the constant:\n"
+                        "  level-wise %1 sigma    leaf-wise %2 sigma\n\n")
+             .arg(r->sigma_level(), 0, 'f', 2)
+             .arg(r->sigma_leaf(), 0, 'f', 2);
+
+    if (r->rmse_level > r->rmse_constant) {
+        s += QStringLiteral(
+            "RMSE is WORSE than a constant. Whatever directional skill is\n"
+            "above did not come with better MAGNITUDE -- and position size\n"
+            "is a function of magnitude.\n\n");
+    }
+    s += r->net_bps_level > r->net_bps_leaf
+        ? QStringLiteral("Level-wise beats leaf-wise by %1 bps/bar.\n")
+              .arg(r->net_bps_level - r->net_bps_leaf, 0, 'f', 3)
+        : QStringLiteral("Leaf-wise beats level-wise by %1 bps/bar.\n")
+              .arg(r->net_bps_leaf - r->net_bps_level, 0, 'f', 3);
+
+    if (r->net_bps_level > 0.0) {
+        s += QStringLiteral(
+            "\nNET POSITIVE at %1 bps/bar -- read the two numbers beside it\n"
+            "before this is anything. The directional edge is %2 sigma%3,\n"
+            "and %4% of moves already clear the cost at this horizon, so ANY\n"
+            "skill above a coin flip turns positive here. That makes the\n"
+            "HURDLE low, not the model good.\n")
+                 .arg(r->net_bps_level, 0, 'f', 3)
+                 .arg(r->sigma_level(), 0, 'f', 2)
+                 .arg(std::fabs(r->sigma_level()) > 2.0
+                          ? QString() : QStringLiteral(" (NOT significant)"))
+                 .arg(100.0 * r->frac_exceeding_cost, 0, 'f', 1);
+    }
     return s;
 }
 

@@ -152,12 +152,32 @@ struct GbdtParams {
     double subsample = 0.8;
     /// Minimum rows in a leaf. THE main brake on overfitting in a tree.
     std::size_t min_leaf = 20;
+    /// LEAF-WISE growth, which is THE LightGBM innovation.
+    ///
+    /// Level-wise (XGBoost's default) splits every node at a depth before
+    /// going deeper, so a tree of depth d has up to 2^d leaves and most of
+    /// them are splits nobody asked for. Leaf-wise picks the ONE leaf with
+    /// the largest loss reduction anywhere in the tree and splits that,
+    /// repeatedly, until it has `max_leaves`.
+    ///
+    /// The gain is real: at equal leaf count leaf-wise reaches lower training
+    /// loss, because every split it made was the best one available. So is
+    /// the cost -- it grows deep, narrow, asymmetric trees that chase a
+    /// handful of rows, which is exactly overfitting, and it is why LightGBM
+    /// needs `num_leaves` and `min_data_in_leaf` where a depth limit used to
+    /// be enough. On the sample sizes in this project that risk is the larger
+    /// of the two effects, which is why this is a FLAG and not the default.
+    bool leaf_wise = false;
+    /// Leaf budget for leaf-wise growth. Ignored when `leaf_wise` is false,
+    /// where `max_depth` bounds the tree instead.
+    std::size_t max_leaves = 31;
     std::uint64_t seed = 0xB0057;
 
     [[nodiscard]] bool valid() const noexcept {
         return trees > 0 && max_depth > 0 && max_depth < 32
             && learning_rate > 0.0 && learning_rate <= 1.0
-            && subsample > 0.0 && subsample <= 1.0 && min_leaf > 0;
+            && subsample > 0.0 && subsample <= 1.0 && min_leaf > 0
+            && (!leaf_wise || max_leaves >= 2);
     }
 };
 
@@ -278,6 +298,102 @@ inline void grow(Tree& t, std::vector<double>& gain_acc,
     grow(t, gain_acc, binned, g, std::move(r), p, bins, prm, depth + 1, ri);
 }
 
+/// LEAF-WISE (best-first) growth.
+///
+/// Keeps a frontier of splittable leaves, each with its best split already
+/// evaluated, and repeatedly splits whichever has the largest gain ANYWHERE in
+/// the tree. The recursion in `grow` cannot express that -- it commits to a
+/// subtree before it has seen what the sibling could offer -- so this is a
+/// loop over an explicit frontier rather than a flag on the recursive walk.
+inline void grow_leafwise(Tree& t, std::vector<double>& gain_acc,
+                          const std::vector<std::uint8_t>& binned,
+                          const std::vector<double>& g,
+                          std::vector<std::size_t> root, std::size_t p,
+                          std::size_t bins, const GbdtParams& prm) {
+    struct Frontier {
+        std::size_t node;
+        std::vector<std::size_t> idx;
+        Split split;
+        std::size_t depth;
+    };
+    auto leaf_value = [&g](const std::vector<std::size_t>& idx) {
+        double m = 0.0;
+        for (const std::size_t i : idx) { m += g[i]; }
+        return m / static_cast<double>(idx.size());
+    };
+
+    t.node[0].value = leaf_value(root);
+    t.node[0].feature = Node::kLeaf;
+
+    std::vector<Frontier> front;
+    front.push_back({0, std::move(root),
+                     best_split(binned, g, front.empty()
+                                    ? std::vector<std::size_t>{}
+                                    : std::vector<std::size_t>{},
+                                p, bins, prm.min_leaf),
+                     0});
+    // Evaluate the root's split properly (the placeholder above cannot see
+    // its own idx member yet).
+    front[0].split = best_split(binned, g, front[0].idx, p, bins, prm.min_leaf);
+
+    std::size_t leaves = 1;
+    while (leaves < prm.max_leaves) {
+        // THE BEST LEAF ANYWHERE, which is the whole difference from
+        // level-wise.
+        std::size_t best = front.size();
+        double best_gain = 0.0;
+        for (std::size_t k = 0; k < front.size(); ++k) {
+            if (front[k].split.feature == Node::kLeaf) { continue; }
+            if (front[k].depth >= prm.max_depth) { continue; }
+            if (front[k].split.gain > best_gain) {
+                best_gain = front[k].split.gain;
+                best = k;
+            }
+        }
+        if (best == front.size()) { break; }
+
+        Frontier f = std::move(front[best]);
+        front.erase(front.begin() + static_cast<long>(best));
+
+        std::vector<std::size_t> l, r;
+        l.reserve(f.idx.size());
+        r.reserve(f.idx.size());
+        for (const std::size_t i : f.idx) {
+            if (binned[i * p + f.split.feature] <= f.split.bin) {
+                l.push_back(i);
+            } else {
+                r.push_back(i);
+            }
+        }
+        if (l.empty() || r.empty()) { continue; }
+
+        gain_acc[f.split.feature] += f.split.gain;
+        t.node[f.node].feature = f.split.feature;
+        t.node[f.node].split_bin = f.split.bin;
+        t.node.push_back(Node{});
+        const std::size_t li = t.node.size() - 1;
+        t.node.push_back(Node{});
+        const std::size_t ri = t.node.size() - 1;
+        t.node[f.node].left = li;
+        t.node[f.node].right = ri;
+        t.node[li].feature = Node::kLeaf;
+        t.node[li].value = leaf_value(l);
+        t.node[ri].feature = Node::kLeaf;
+        t.node[ri].value = leaf_value(r);
+        ++leaves;
+
+        for (auto& [child, idx] : {std::pair<std::size_t, std::vector<std::size_t>*>{li, &l},
+                                   {ri, &r}}) {
+            if (idx->size() >= 2 * prm.min_leaf) {
+                front.push_back({child, *idx,
+                                 best_split(binned, g, *idx, p, bins,
+                                            prm.min_leaf),
+                                 f.depth + 1});
+            }
+        }
+    }
+}
+
 } // namespace detail
 
 /// Fit by gradient boosting on squared loss: each tree is fitted to the
@@ -328,8 +444,13 @@ fit_gbdt(const Frame& f, const std::vector<double>& y, const GbdtParams& prm,
 
         Tree t;
         t.node.push_back(Node{});
-        detail::grow(t, m.gain, binned, resid, idx, f.p,
-                     b->bins, prm, 0, 0);
+        if (prm.leaf_wise) {
+            detail::grow_leafwise(t, m.gain, binned, resid, idx, f.p,
+                                  b->bins, prm);
+        } else {
+            detail::grow(t, m.gain, binned, resid, idx, f.p,
+                         b->bins, prm, 0, 0);
+        }
         for (std::size_t r = 0; r < f.rows; ++r) {
             pred[r] += prm.learning_rate * t.predict(&binned[r * f.p]);
         }

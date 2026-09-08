@@ -101,7 +101,8 @@ namespace altair::ui {
             // a shortcut pinned to "page 7" must keep meaning what it meant.
             QStringLiteral("Execution"),   QStringLiteral("Volatility"),
             QStringLiteral("Risk — VaR"),  QStringLiteral("Portfolio"),
-            QStringLiteral("ML — Trees"),  QStringLiteral("Regimes")};
+            QStringLiteral("ML — Trees"),  QStringLiteral("Regimes"),
+            QStringLiteral("Spot Forecast")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -822,6 +823,25 @@ private:
                     reg_page->set_text(regime_report(ds));
                 });
         pages_->addWidget(reg_page);
+
+        // P19-07. ONE horizon per press, not all four. The 5-minute fit is
+        // 214,000 rows across five folds and two growth strategies, which is
+        // tens of seconds -- a page that ran every horizon on open would
+        // freeze the window exactly the way P11Q's startup fit did, and the
+        // freeze would arrive late enough to read as a different bug.
+        auto* spot_page = new ComputePage(
+            QStringLiteral("SPOT FORECAST — P16-06"),
+            QStringLiteral("Fit the DAILY horizon "
+                           "(cost hurdle and oracle first)"),
+            this);
+        connect(spot_page->button(), &QPushButton::clicked, this,
+                [spot_page, ds] {
+                    spot_page->set_text(QStringLiteral("Fitting..."));
+                    QApplication::processEvents();
+                    spot_page->set_text(spot_forecast_report(
+                        ds, QStringLiteral("/spot/nifty/1d/"), "daily"));
+                });
+        pages_->addWidget(spot_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

@@ -96,6 +96,16 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_regime_rl COMMAND altair_regime_rl_test)
 
+    # P16-06. Gradient-boosted SPOT FORECAST across four horizons, net of
+    # cost, with leaf-wise (LightGBM) growth run against level-wise on
+    # identical folds. The cost hurdle and the perfect-oracle bound are
+    # printed BEFORE any model number, per rule 5.
+    add_executable(altair_spot_forecast_test tests/test_spot_forecast.cpp)
+    target_link_libraries(altair_spot_forecast_test PRIVATE altair_models altair_flags)
+    target_compile_definitions(altair_spot_forecast_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME models_spot_forecast COMMAND altair_spot_forecast_test)
+
     # P8-15. Horizon forecast net of cost, on the real 60-minute series.
     add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
     target_link_libraries(altair_horizon_test
