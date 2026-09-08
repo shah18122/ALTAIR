@@ -113,6 +113,7 @@ int main(int argc, char** argv)
         {"Overnight",    overnight_report(ds)},
         {"Basis",        basis_report(ds)},
         {"Flagging",     flagging_report(ds)},
+        {"Features",     features_report(ds)},
         {"Cointegration", cointegration_report(ds)},
         {"Memory",       memory_report(ds)},
     };
@@ -220,6 +221,25 @@ int main(int argc, char** argv)
         check(offenders == 0,
               "no rendered page contains a literal double percent");
     }
+
+    // -----------------------------------------------------------------------
+    // 4e. The registry must SEAL, and refuse to grow afterwards.
+    //
+    // A registry that can accept a feature after a model was fitted against it
+    // is not a version, and `feature_version` is one of the five things rule
+    // 10 requires beside every live decision.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4e] the feature registry seals and then refuses\n");
+    const QString fe = features_report(ds);
+    check(fe.contains(QStringLiteral("SEALED")),
+          "the registry seals and reports a feature_version");
+    check(fe.contains(QStringLiteral("refused, as it must be")),
+          "and refuses an add() after the seal");
+    check(!fe.contains(QStringLiteral("ACCEPTED — which would be a bug")),
+          "the post-seal add was not accepted");
+    check(fe.contains(QStringLiteral("vel/se")),
+          "the kinematics section reports velocity over its standard error, "
+          "not a bare velocity");
 
     // -----------------------------------------------------------------------
     // 5. Print them.

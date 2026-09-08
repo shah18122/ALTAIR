@@ -43,7 +43,10 @@
 #include <analytics/sabr.hpp>
 #include <book/flow.hpp>
 #include <book/microstructure.hpp>
+#include <analytics/derivatives.hpp>
+#include <features/registry.hpp>
 #include <flagging/drift.hpp>
+#include <flagging/scorecard.hpp>
 #include <models/dcf.hpp>
 #include <models/gbdt.hpp>
 #include <models/regime_rl.hpp>
@@ -2764,6 +2767,151 @@ private:
     s += QStringLiteral("――― %1 ―――\n  exit %2\n\n")
              .arg(found).arg(proc.exitCode());
     s += out;
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P26-04 — Features and kinematics
+// ---------------------------------------------------------------------------
+
+/// The feature registry, actually populated, and the derivative estimator on
+/// real bars.
+///
+/// I DECLINED BOTH OF THESE AND WAS WRONG ABOUT BOTH.
+///
+/// "features/registry.hpp -- a versioned registry with nothing registered; a
+/// page listing zero features is not information." True as far as it went, and
+/// the wrong conclusion: the fix is to REGISTER the features that exist. The
+/// registry's whole job is turning a set of features into a stable
+/// `feature_version` that rule 10 can record beside a decision, and that is
+/// demonstrable with the features this tree already has.
+///
+/// "analytics/derivatives.hpp -- needs a TIMED tick stream, not bars." Half
+/// right. The regime that MATTERS is sub-second and bars cannot reach it. But
+/// the estimator, its window, its order and above all its ERROR PROPAGATION
+/// work on any timed series, and a velocity smaller than its own standard
+/// error is not a velocity at any sampling rate. That is worth showing.
+[[nodiscard]] inline QString features_report(const QString& dataset_root) {
+    QString s = QStringLiteral("FEATURES AND KINEMATICS — P26-04\n\n");
+
+    // ――― 1. the registry ―――
+    s += QStringLiteral(
+        "――― 1. THE REGISTRY, POPULATED ―――\n\n"
+        "  Registration ORDER is part of the identity: the index is what a\n"
+        "  model's weights are attached to, so inserting a feature in the\n"
+        "  middle silently rewires every trained model that came before.\n\n"
+        "   idx  name                          ver  band            lookback\n");
+    FeatureRegistry reg;
+    struct F { const char* n; std::uint16_t v; HorizonBand lo, hi; std::int64_t ns; };
+    // Real features from features/. The bands are the ones each is meaningful
+    // over, not the ones it happens to compute on.
+    const F specs[] = {
+        {"book.imbalance.l1",      1, HorizonBand::Micro,    HorizonBand::Fast,     1'000'000'000LL},
+        {"book.microprice.dev",    1, HorizonBand::Micro,    HorizonBand::Fast,     1'000'000'000LL},
+        {"flow.vpin",              1, HorizonBand::Fast,     HorizonBand::Intraday, 300'000'000'000LL},
+        {"flow.kyle.lambda",       1, HorizonBand::Fast,     HorizonBand::Intraday, 300'000'000'000LL},
+        {"kin.velocity",           1, HorizonBand::Fast,     HorizonBand::Intraday, 60'000'000'000LL},
+        {"kin.acceleration",       1, HorizonBand::Fast,     HorizonBand::Intraday, 60'000'000'000LL},
+        {"vol.ewma.10m",           2, HorizonBand::Intraday, HorizonBand::Swing,    600'000'000'000LL},
+        {"vol.rv.twoscale",        1, HorizonBand::Intraday, HorizonBand::Swing,    3'600'000'000'000LL},
+        {"regime.hmm.state",       1, HorizonBand::Intraday, HorizonBand::Swing,    86'400'000'000'000LL},
+        {"opt.calendar.dte",       1, HorizonBand::Swing,    HorizonBand::Swing,    86'400'000'000'000LL},
+    };
+    for (const F& f : specs) {
+        FeatureSpec fs;
+        fs.name = f.n;
+        fs.version = f.v;
+        fs.min_band = f.lo;
+        fs.max_band = f.hi;
+        fs.lookback = Duration{f.ns};
+        const auto idx = reg.add(fs);
+        if (!idx) { continue; }
+        s += QStringLiteral("   %1  %2  %3  %4  %5\n")
+                 .arg(*idx, 3)
+                 .arg(QString::fromUtf8(f.n), -28)
+                 .arg(f.v, 3)
+                 .arg(QStringLiteral("%1..%2")
+                          .arg(QString::fromUtf8(band_name(f.lo)),
+                               QString::fromUtf8(band_name(f.hi))), -14)
+                 .arg(static_cast<double>(f.ns) / 1e9, 8, 'f', 1);
+    }
+    const auto sealed = reg.seal();
+    if (sealed) {
+        s += QStringLiteral(
+            "\n  %1 features. SEALED — feature_version %2\n\n"
+            "  That hash is one of the five things rule 10 requires beside\n"
+            "  every live decision: {model_hash, feature_version, config_hash,\n"
+            "  spec_version, tick_seqno}. It is FNV-1a and deliberately not\n"
+            "  cryptographic — it identifies a configuration, it does not\n"
+            "  defend against one — but it must be STABLE across builds and\n"
+            "  platforms, or a recorded version stops meaning anything next\n"
+            "  quarter.\n\n"
+            "  Sealing is one-way. An add() after this is refused, because a\n"
+            "  registry that can grow after a model was fitted against it is\n"
+            "  not a version.\n\n").arg(reg.size())
+                 .arg(QStringLiteral("0x%1")
+                          .arg(*sealed, 16, 16, QLatin1Char('0')));
+        const auto after = reg.add(FeatureSpec{"late.arrival", 1,
+                                               HorizonBand::Fast,
+                                               HorizonBand::Fast,
+                                               Duration{1'000'000'000LL}});
+        s += QStringLiteral("  adding one more after the seal: %1\n\n")
+                 .arg(after ? QStringLiteral("ACCEPTED — which would be a bug")
+                            : QStringLiteral("refused, as it must be"));
+    }
+
+    // ――― 2. kinematics ―――
+    s += QStringLiteral(
+        "――― 2. VELOCITY AND ACCELERATION, WITH THEIR ERROR ―――\n\n"
+        "  On one-minute NIFTY closes. THE REGIME THAT MATTERS IS SUB-SECOND\n"
+        "  and bars cannot reach it — order-book imbalance decays in 10-200 ms\n"
+        "  and at 60-second sampling the quantity does not exist. What DOES\n"
+        "  survive the sampling rate is the error propagation, and that is\n"
+        "  what this section is for.\n\n");
+    const auto closes = ui_load_closes(
+        dataset_root + QStringLiteral("/spot/nifty/1m/2026-09.csv"));
+    if (closes.size() < 200) {
+        s += QStringLiteral("  No recent 1-minute file to read.\n");
+        return s;
+    }
+    std::vector<TimedPoint> pts;
+    pts.reserve(closes.size());
+    for (std::size_t i = 0; i < closes.size(); ++i) {
+        TimedPoint tp;
+        tp.ts = Timestamp{static_cast<std::int64_t>(i) * 60'000'000'000LL};
+        tp.value = closes[i] * 100.0;          // paise
+        pts.push_back(tp);
+    }
+    const Timestamp at{static_cast<std::int64_t>(pts.size() - 1)
+                       * 60'000'000'000LL};
+    s += QStringLiteral(
+        "     window   order   velocity      accel   resid sd   vel/se\n");
+    for (const std::int64_t mins : {5, 15, 30, 60}) {
+        const Duration w{mins * 60'000'000'000LL};
+        const auto d = derivatives_at(pts.data(), pts.size(), at, w, 2);
+        if (!d) { continue; }
+        // The standard error of the velocity is roughly residual_sd over
+        // sqrt(N) times the window half-width in seconds -- the header says
+        // so, and it is the only thing that makes the velocity readable.
+        const double h = static_cast<double>(w.raw()) / 2e9;
+        const double se = d->points > 0
+            ? d->residual_sd / (std::sqrt(static_cast<double>(d->points)) * h)
+            : 0.0;
+        s += QStringLiteral("   %1m %2  %3  %4  %5  %6\n")
+                 .arg(mins, 6).arg(d->order, 6)
+                 .arg(d->velocity, 11, 'g', 4)
+                 .arg(d->acceleration, 11, 'g', 4)
+                 .arg(d->residual_sd, 10, 'f', 2)
+                 .arg(se > 0.0 ? d->velocity / se : 0.0, 8, 'f', 2);
+    }
+    s += QStringLiteral(
+        "\n  The last column is the one to read. A velocity smaller than its\n"
+        "  own standard error is not a velocity — ROADMAP section 3, the same\n"
+        "  rule the Sizing page applies to edge and the Memory page to Hurst.\n"
+        "  Widening the window lowers the noise and raises the lag, and the\n"
+        "  table shows both moving at once rather than one in isolation.\n\n"
+        "  `scale` is carried on every result so two measurements from\n"
+        "  different windows cannot be compared by accident.\n");
     return s;
 }
 

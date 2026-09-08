@@ -140,7 +140,10 @@ namespace altair::ui {
             QStringLiteral("Link Kite"),
             // P26-02. Runs the acceptance test rather than
             // reimplementing its walk-forward.
-            QStringLiteral("Neural")};
+            QStringLiteral("Neural"),
+            // P26-04. The registry populated, and the derivative
+            // estimator with its error bar.
+            QStringLiteral("Features")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -1028,6 +1031,14 @@ private:
                     neural_page->set_text(neural_report());
                 });
         pages_->addWidget(neural_page);
+
+        auto* feat_page = new ComputePage(
+            QStringLiteral("FEATURES AND KINEMATICS — P26-04"),
+            QStringLiteral("Seal a registry, then measure a velocity"),
+            this);
+        connect(feat_page->button(), &QPushButton::clicked, this,
+                [feat_page, ds] { feat_page->set_text(features_report(ds)); });
+        pages_->addWidget(feat_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
