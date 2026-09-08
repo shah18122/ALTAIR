@@ -93,6 +93,7 @@ int main(int argc, char** argv)
         {"ML — Trees", ml_report()},
         {"Options",    options_report()},
         {"Microstructure", microstructure_report()},
+        {"Value - DCF",  dcf_report()},
         {"Sizing and Limits", sizing_report()},
     };
     for (const Free& f : free_pages) {
@@ -168,6 +169,57 @@ int main(int argc, char** argv)
           "the future and its own spot come back cointegrated");
     check(noise_ok,
           "and an independent random walk does not, so the test discriminates");
+
+    // -----------------------------------------------------------------------
+    // 4c. The DCF page must lead with what it is not.
+    //
+    // It was a blocked_page until P25-02 because no filings are ingested.
+    // That is still true, and a valuation page that stopped saying so would be
+    // the most misleading thing in this UI -- the numbers look exactly like
+    // fetched ones.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4c] the DCF page states its inputs are typed, not fetched\n");
+    const QString dc = dcf_report();
+    check(dc.contains(QStringLiteral("STATED, NOT FETCHED")),
+          "the page says the inputs were typed before showing a valuation");
+    check(dc.contains(QStringLiteral("TERMINAL SHARE")),
+          "and reports how much of the value is a perpetuity assumption");
+    check(dc.contains(QStringLiteral("fundamentals.hpp")),
+          "and names what would make it real");
+    // The refused cells must be shown as refused, never as zero.
+    check(dc.contains(QStringLiteral("cells refused")),
+          "the sensitivity grid reports refused cells rather than zero-filling");
+
+    // -----------------------------------------------------------------------
+    // 4d. NO PAGE MAY CONTAIN "%%".
+    //
+    // QStringLiteral is not printf. `%%` is not an escape there -- `arg()`
+    // substitutes %1..%99 and leaves a bare % alone -- so a printf habit
+    // renders literally as "13.2%%" on screen. This has now been introduced
+    // and swept four separate times in this UI, which is three times too many
+    // for a fix that only ever addressed the instance.
+    //
+    // Asserting on the CLASS is the fix. A page that reintroduces it fails
+    // here rather than shipping a stutter nobody reports.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4d] no page renders a printf-style double percent\n");
+    {
+        std::size_t offenders = 0;
+        for (const Free& f : free_pages) {
+            if (f.page.contains(QStringLiteral("%%"))) {
+                ++offenders;
+                std::printf("        %s contains %%%%\n", f.name);
+            }
+        }
+        for (const Backed& b : backed) {
+            if (b.page.contains(QStringLiteral("%%"))) {
+                ++offenders;
+                std::printf("        %s contains %%%%\n", b.name);
+            }
+        }
+        check(offenders == 0,
+              "no rendered page contains a literal double percent");
+    }
 
     // -----------------------------------------------------------------------
     // 5. Print them.

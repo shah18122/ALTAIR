@@ -52,6 +52,7 @@ qt_add_executable(altair_desktop
     kite_panel.hpp
     depth_ladder.hpp
     kill_switch.hpp
+    order_ticket.hpp
     chain_panel.hpp
     analytics_panel.hpp
 )
@@ -105,6 +106,7 @@ target_compile_definitions(altair_desktop PRIVATE
 # "no session" from one shortcut and "session" from another, with nothing on
 # screen explaining the difference.
 target_compile_definitions(altair_desktop PRIVATE
+    ALTAIR_INTENT_FILE="${CMAKE_SOURCE_DIR}/data/order_intents.jsonl"
     ALTAIR_SESSION_FILE="${CMAKE_SOURCE_DIR}/data/kite_session.json"
     ALTAIR_ACCOUNT_FILE="${CMAKE_SOURCE_DIR}/data/kite_account.json"
     ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -340,6 +342,24 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     set_target_properties(altair_pages_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_pages COMMAND altair_pages_test)
+
+    # P25-04. The order ticket's WRITER, checked against the same vectors
+    # oms/ parses. It deliberately does NOT link altair_oms: the whole point
+    # of the intent queue is that the two sides share a wire format and
+    # nothing else, so a test that linked both would be checking a shared
+    # header rather than the contract.
+    qt_add_executable(altair_order_ticket_test
+        tests/test_order_ticket.cpp
+        order_ticket.hpp)
+    target_link_libraries(altair_order_ticket_test PRIVATE
+        altair_types altair_time Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_order_ticket_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_order_ticket_test PRIVATE
+        ALTAIR_INTENT_VECTORS="${CMAKE_SOURCE_DIR}/oms/tests/vectors/intents.jsonl")
+    set_target_properties(altair_order_ticket_test
+        PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_order_ticket COMMAND altair_order_ticket_test)
 
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
     # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.

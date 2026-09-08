@@ -79,7 +79,15 @@ enum class Capability : std::uint8_t {
     /// Add or remove instruments from the watchlist.
     EditWatchlist,
     /// Start a model training run.
-    TrainModel
+    TrainModel,
+    /// P25-04. Put an ORDER INTENT on the queue oms/ drains.
+    ///
+    /// Not "place an order" -- the UI cannot place one and this capability
+    /// does not give it the ability. It gates writing a REQUEST that oms/ will
+    /// validate against the spec store and may refuse. Admin only: Staff can
+    /// see every position and every number in this window and still not ask
+    /// for a trade, which is the distinction the two roles exist to draw.
+    RequestOrder
 };
 
 [[nodiscard]] inline bool may(Role r, Capability c) noexcept {
@@ -96,6 +104,7 @@ enum class Capability : std::uint8_t {
     case Capability::RequestKillSwitch:
     case Capability::ChangeFeedSource:
     case Capability::TrainModel:
+    case Capability::RequestOrder:
         return false;
     case Capability::Unspecified:
     default:

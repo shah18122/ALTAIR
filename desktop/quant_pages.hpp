@@ -44,6 +44,7 @@
 #include <book/flow.hpp>
 #include <book/microstructure.hpp>
 #include <flagging/drift.hpp>
+#include <models/dcf.hpp>
 #include <models/gbdt.hpp>
 #include <models/regime_rl.hpp>
 #include <models/spot_forecast.hpp>
@@ -2445,6 +2446,205 @@ private:
         "  reproduce. They belong behind the training harness, not a button.\n\n"
         "  features/registry.hpp — a versioned registry with nothing\n"
         "  registered. A page listing zero features is not information.\n");
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P11Q-05 / P25-02 — Discounted cash flow
+// ---------------------------------------------------------------------------
+
+/// A DCF, and the honest statement of how much of it is a forecast.
+///
+/// THE INPUTS ARE STATED. NOTHING HERE WAS FETCHED.
+///
+/// This page used to be a `blocked_page` saying `models/dcf.hpp` needs
+/// point-in-time fundamentals from `strategies/fundamentals.hpp` and no filings
+/// have been ingested. That is still true and it is still printed. What was
+/// wrong was leaving the arithmetic unexercised because of it: the pricer, the
+/// WACC, the net-debt bridge and the sensitivity grid all work, and a DCF whose
+/// INPUTS are typed in is exactly how every DCF gets built anyway.
+///
+/// So the inputs below are a stated, illustrative company. They are not
+/// Reliance and they are not fetched from anywhere. When filings land, the same
+/// functions run on real numbers and this page changes in one place.
+///
+/// THE ANSWER IS A RANGE, AND THE PAGE LEADS WITH THAT.
+///
+/// A single DCF number is the least useful output this file can produce. What
+/// decides whether a valuation means anything is `terminal_share` -- how much
+/// of the value is a perpetuity assumption rather than a forecast -- and the
+/// sensitivity grid, which shows the whole answer moving as the two
+/// unobservable inputs move. Both are above the headline number here, not
+/// below it.
+[[nodiscard]] inline QString dcf_report() {
+    // ---- the stated inputs -------------------------------------------
+    // Everything in PAISE, because `equity_from_enterprise` takes Notional and
+    // rule 3 puts money in integer paise. 1 crore of rupees = 1e9 paise.
+    constexpr double kCrore = 1'000'000'000.0;      // paise per crore
+    const double fcff = 1200.0 * kCrore;            // Rs 1,200 crore
+    const Notional debt{static_cast<std::int64_t>(4500.0 * kCrore)};
+    const Notional cash{static_cast<std::int64_t>(1800.0 * kCrore)};
+    const double shares = 620'000'000.0;            // 62 crore shares
+    const double market_cap_cr = 21'500.0;          // for the comparison only
+
+    GrowthProfile g;
+    g.high_years = 5;
+    g.high_growth = 0.14;
+    g.fade_years = 5;
+    g.terminal_growth = 0.045;
+
+    QString s = QStringLiteral(
+        "DISCOUNTED CASH FLOW — P11Q-05\n\n"
+        "――― THE INPUTS ARE STATED, NOT FETCHED ―――\n\n"
+        "  No filings have been ingested. strategies/fundamentals.hpp returns\n"
+        "  nothing before a statement's FILING date, by design, and there is\n"
+        "  nothing behind it yet. Every number below was typed here.\n\n"
+        "  It is still worth running: the pricer, the WACC, the net-debt\n"
+        "  bridge and the sensitivity grid all work, and a DCF is built from\n"
+        "  typed assumptions in any case. When filings land, the same\n"
+        "  functions run on real numbers and this page changes in one place.\n\n"
+        "  FCFF                 %1 cr\n"
+        "  growth               %2% for %3y, fading to %4% over %5y\n"
+        "  total debt           %6 cr\n"
+        "  cash                 %7 cr\n"
+        "  shares               %8 cr\n\n")
+            .arg(fcff / kCrore, 0, 'f', 0)
+            .arg(100.0 * g.high_growth, 0, 'f', 1).arg(g.high_years)
+            .arg(100.0 * g.terminal_growth, 0, 'f', 1).arg(g.fade_years)
+            .arg(static_cast<double>(debt.raw()) / kCrore, 0, 'f', 0)
+            .arg(static_cast<double>(cash.raw()) / kCrore, 0, 'f', 0)
+            .arg(shares / 10'000'000.0, 0, 'f', 1);
+
+    // ---- WACC ---------------------------------------------------------
+    const double eq_mkt = market_cap_cr * kCrore;
+    const double dbt = static_cast<double>(debt.raw());
+    const auto w = wacc(eq_mkt, dbt, 0.132, 0.086, 0.25);
+    if (!w) { return s + QStringLiteral("  WACC was refused.\n"); }
+    s += QStringLiteral(
+        "――― 1. WACC ―――\n\n"
+        "  cost of equity 13.2%   cost of debt 8.6%   tax 25%\n"
+        "  E %1 cr   D %2 cr\n\n"
+        "  WACC = E/V*Re + D/V*Rd*(1-tax) = %3%\n\n"
+        "  THE TAX SHIELD IS ON THE DEBT LEG ONLY. Applying it to the whole\n"
+        "  expression understates the discount rate by the equity share of\n"
+        "  the shield, and it is one of the three errors models/dcf.hpp was\n"
+        "  written around.\n\n")
+            .arg(eq_mkt / kCrore, 0, 'f', 0).arg(dbt / kCrore, 0, 'f', 0)
+            .arg(100.0 * *w, 0, 'f', 3);
+
+    // ---- the valuation ------------------------------------------------
+    const auto ev = dcf_fcff(fcff, g, *w);
+    if (!ev) { return s + QStringLiteral("  The DCF was refused.\n"); }
+    const double equity = equity_from_enterprise(*ev, debt, cash);
+    const double per_share = equity / shares / 100.0;   // paise -> rupees
+
+    s += QStringLiteral(
+        "――― 2. HOW MUCH OF THIS IS A FORECAST? ―――\n\n"
+        "  PV of the %1 explicit + fading years   %2 cr\n"
+        "  PV of the perpetuity                   %3 cr\n"
+        "  TERMINAL SHARE                         %4%\n\n"
+        "  That last line is the one to read first. %4% of this valuation is\n"
+        "  an assumption about forever, not a forecast of anything. A DCF is\n"
+        "  not a measurement of a company; it is a measurement of the\n"
+        "  perpetuity assumption, wearing ten years of arithmetic.\n\n")
+            .arg(ev->dcf.years)
+            .arg(ev->dcf.pv_explicit / kCrore, 0, 'f', 0)
+            .arg(ev->dcf.pv_terminal / kCrore, 0, 'f', 0)
+            .arg(100.0 * ev->dcf.terminal_share, 0, 'f', 1);
+
+    s += QStringLiteral(
+        "――― 3. THE BRIDGE, AND THE NUMBER ―――\n\n"
+        "  enterprise value    %1 cr\n"
+        "  less total debt     %2 cr\n"
+        "  plus cash           %3 cr\n"
+        "  equity value        %4 cr\n"
+        "  per share           Rs %5\n\n"
+        "  `equity_from_enterprise` is defined ONLY on EnterpriseValue. An\n"
+        "  EquityValue has already netted the debt — FCFE is after interest\n"
+        "  and repayment — so double-subtracting is a compile error rather\n"
+        "  than a valuation quietly low by the debt.\n\n")
+            .arg(ev->value() / kCrore, 0, 'f', 0)
+            .arg(dbt / kCrore, 0, 'f', 0)
+            .arg(static_cast<double>(cash.raw()) / kCrore, 0, 'f', 0)
+            .arg(equity / kCrore, 0, 'f', 0)
+            .arg(per_share, 0, 'f', 2);
+
+    // ---- sensitivity ---------------------------------------------------
+    const auto ts = terminal_growth_sensitivity(fcff, g, *w);
+    if (ts) {
+        s += QStringLiteral(
+            "――― 4. WHAT MOVES IT ―――\n\n"
+            "  %1% of total value per 1 BASIS POINT of terminal growth.\n"
+            "  Over a plausible 50bp of disagreement about an unobservable\n"
+            "  perpetual rate, that is %2% of the valuation.\n\n")
+                 .arg(100.0 * *ts, 0, 'f', 4)
+                 .arg(100.0 * *ts * 50.0, 0, 'f', 2);
+    }
+
+    const auto grid = sensitivity_grid(fcff, g, *w, 0.005, 0.005, 2);
+    if (grid) {
+        s += QStringLiteral(
+            "  Equity value per share, Rs. Rows are WACC, columns terminal\n"
+            "  growth. A cell where growth meets the discount rate is REFUSED,\n"
+            "  not zero-filled: it is undefined, and averaging a zero into a\n"
+            "  range drags the answer down while looking like arithmetic.\n\n"
+            "        WACC \\ g  ");
+        for (std::size_t j = 0; j < grid->n_growth; ++j) {
+            s += QStringLiteral("%1  ").arg(100.0 * grid->growth[j], 7, 'f', 2);
+        }
+        s += QStringLiteral("\n");
+        for (std::size_t i = 0; i < grid->n_rate; ++i) {
+            s += QStringLiteral("        %1%   ")
+                     .arg(100.0 * grid->rate[i], 6, 'f', 2);
+            for (std::size_t j = 0; j < grid->n_growth; ++j) {
+                const std::size_t k = i * grid->n_growth + j;
+                if (!grid->priced[k]) {
+                    s += QStringLiteral("      —  ");
+                    continue;
+                }
+                const double eq = grid->value[k]
+                                - dbt + static_cast<double>(cash.raw());
+                s += QStringLiteral("%1  ")
+                         .arg(eq / shares / 100.0, 7, 'f', 0);
+            }
+            s += QStringLiteral("\n");
+        }
+        s += QStringLiteral(
+            "\n  highest / lowest priced cell   %1x\n"
+            "  cells refused                  %2 of %3\n\n"
+            "  A %1x spread across half a percent either way on two inputs\n"
+            "  nobody can observe is the actual output of this exercise. The\n"
+            "  single number in section 3 is one cell of this table.\n\n")
+                 .arg(grid->spread(), 0, 'f', 2)
+                 .arg(grid->refused())
+                 .arg(grid->n_rate * grid->n_growth);
+    }
+
+    // ---- the finding about projection length ---------------------------
+    s += QStringLiteral(
+        "――― 5. A LONGER PROJECTION DOES NOT REMOVE THE ASSUMPTION ―――\n\n"
+        "     explicit+fade years   terminal share\n");
+    for (const std::size_t hy : {3u, 5u, 8u, 10u, 15u}) {
+        GrowthProfile g2 = g;
+        g2.high_years = hy;
+        g2.fade_years = hy;
+        const auto e2 = dcf_fcff(fcff, g2, *w);
+        if (!e2) { continue; }
+        s += QStringLiteral("        %1                 %2%\n")
+                 .arg(2 * hy, 6).arg(100.0 * e2->dcf.terminal_share, 8, 'f', 1);
+    }
+    s += QStringLiteral(
+        "\n  Projecting further MOVES the assumption rather than removing it:\n"
+        "  the terminal share falls, but only because more of the same\n"
+        "  guess has been written out year by year in the fade. The\n"
+        "  perpetuity is smaller and the forecast is longer, and a\n"
+        "  twenty-year explicit forecast of an Indian mid-cap is not\n"
+        "  evidence about anything.\n\n"
+        "――― WHAT WOULD MAKE THIS REAL ―――\n\n"
+        "  strategies/fundamentals.hpp, populated. It returns nothing before\n"
+        "  a statement's FILING date — not its period-end date — which is the\n"
+        "  whole point of a point-in-time store and the reason a backtest\n"
+        "  using it cannot see a result before the market did.\n");
     return s;
 }
 

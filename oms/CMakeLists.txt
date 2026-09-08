@@ -17,6 +17,17 @@ target_link_libraries(altair_oms INTERFACE
 )
 
 if(ALTAIR_BUILD_TESTS)
+    # P25-03. The intent queue the UI writes and oms/ drains. The vectors
+    # path is compiled in so the test runs from any working directory, and
+    # BOTH sides point at the same file -- desktop/ has its own emitter and
+    # never includes oms/, so the vectors are the only thing keeping the two
+    # ends of the queue agreeing.
+    add_executable(altair_order_intent_test tests/test_order_intent.cpp)
+    target_link_libraries(altair_order_intent_test PRIVATE altair_oms altair_flags)
+    target_compile_definitions(altair_order_intent_test PRIVATE
+        ALTAIR_INTENT_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/intents.jsonl")
+    add_test(NAME order_intent COMMAND altair_order_intent_test)
+
     add_executable(altair_order_state_test tests/test_order_state.cpp)
     target_link_libraries(altair_order_state_test PRIVATE altair_oms altair_flags)
     add_test(NAME order_state COMMAND altair_order_state_test)

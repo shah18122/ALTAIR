@@ -39,6 +39,7 @@
 #include "depth_ladder.hpp"
 #include "chain_panel.hpp"
 #include "kill_switch.hpp"
+#include "order_ticket.hpp"
 #include "data/bar_csv.hpp"
 #include "broker_status.hpp"
 #include "kite_panel.hpp"
@@ -128,7 +129,10 @@ namespace altair::ui {
             QStringLiteral("Cointegration"),
             // P24-03. Hurst and EWMA, and the error bars without
             // which neither number means anything.
-            QStringLiteral("Memory")};
+            QStringLiteral("Memory"),
+            // P25-04. Buy and Sell, as REQUESTS on the queue oms/
+            // drains. The UI still cannot reach a broker.
+            QStringLiteral("Order Ticket")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -748,15 +752,18 @@ private:
 
         pages_->addWidget(new ChainPanel);
 
-        pages_->addWidget(blocked_page(
-            QStringLiteral("Value — DCF"), QStringLiteral("P11Q-05"),
-            QStringLiteral(
-                "models/dcf.hpp computes FCFF at WACC and FCFE at the cost of "
-                "equity, with separate EnterpriseValue and EquityValue types so "
-                "the two cannot be confused. It needs point-in-time "
-                "fundamentals from strategies/fundamentals.hpp, which returns "
-                "nothing before a statement's FILING date — and no filings have "
-                "been ingested.")));
+        // P25-02. Was a blocked_page. Still true that no filings are
+        // ingested, and the page says so first — but leaving the arithmetic
+        // unexercised because the INPUTS are typed was the wrong call: a DCF
+        // is built from typed assumptions in any case, and the sensitivity
+        // grid is the actual deliverable.
+        auto* dcf_page = new ComputePage(
+            QStringLiteral("VALUE — DCF — P11Q-05"),
+            QStringLiteral("Value it, then show how little that means"),
+            this);
+        connect(dcf_page->button(), &QPushButton::clicked, this,
+                [dcf_page] { dcf_page->set_text(dcf_report()); });
+        pages_->addWidget(dcf_page);
 
         pages_->addWidget(blocked_page(
             QStringLiteral("Aggregator"), QStringLiteral("P11Q-05"),
@@ -989,6 +996,8 @@ private:
         connect(mem_page->button(), &QPushButton::clicked, this,
                 [mem_page, ds] { mem_page->set_text(memory_report(ds)); });
         pages_->addWidget(mem_page);
+
+        pages_->addWidget(new OrderTicket(role_, user_));
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

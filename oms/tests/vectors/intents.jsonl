@@ -1,0 +1,3 @@
+{"v":1,"id":"01J8XA0000000000000000BUY1","at":"2026-09-08T18:22:31+05:30","by":"smit","token":260105,"symbol":"NIFTY BANK","exchange":"NSE","side":"BUY","lots":1,"order_type":"LIMIT","limit_paise":5711490,"product":"NRML","validity":"DAY"}
+{"v":1,"id":"01J8XA0000000000000000SEL1","at":"2026-09-08T18:23:02+05:30","by":"smit","token":256265,"symbol":"NIFTY 50","exchange":"NSE","side":"SELL","lots":3,"order_type":"LIMIT","limit_paise":2415580,"product":"MIS","validity":"DAY"}
+{"v":1,"id":"01J8XA0000000000000000MKT1","at":"2026-09-08T18:24:10+05:30","by":"smit","token":17512194,"symbol":"NIFTY26SEPFUT","exchange":"NFO","side":"BUY","lots":2,"order_type":"MARKET","limit_paise":0,"product":"NRML","validity":"IOC"}
