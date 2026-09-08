@@ -38,6 +38,7 @@
 #include "cost_panel.hpp"
 #include "depth_ladder.hpp"
 #include "chain_panel.hpp"
+#include "kite_link.hpp"
 #include "kill_switch.hpp"
 #include "order_ticket.hpp"
 #include "data/bar_csv.hpp"
@@ -132,7 +133,11 @@ namespace altair::ui {
             QStringLiteral("Memory"),
             // P25-04. Buy and Sell, as REQUESTS on the queue oms/
             // drains. The UI still cannot reach a broker.
-            QStringLiteral("Order Ticket")};
+            QStringLiteral("Order Ticket"),
+            // P26-01. Drives altair_kite_login as a SUBPROCESS, so
+            // no credential enters this address space and the UI
+            // links no broker code.
+            QStringLiteral("Link Kite")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -998,6 +1003,13 @@ private:
         pages_->addWidget(mem_page);
 
         pages_->addWidget(new OrderTicket(role_, user_));
+
+        // The callback repaints the pill the instant a session is written,
+        // rather than leaving it stale until the next five-second poll. A
+        // person who just linked and sees a stale pill concludes it failed and
+        // retries with a token that is now spent.
+        pages_->addWidget(new KiteLinkPanel(
+            role_, [this] { refresh_broker_pill(); }));
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

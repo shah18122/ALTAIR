@@ -53,6 +53,7 @@ qt_add_executable(altair_desktop
     depth_ladder.hpp
     kill_switch.hpp
     order_ticket.hpp
+    kite_link.hpp
     chain_panel.hpp
     analytics_panel.hpp
 )
@@ -360,6 +361,23 @@ if(ALTAIR_BUILD_TESTS)
     set_target_properties(altair_order_ticket_test
         PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_order_ticket COMMAND altair_order_ticket_test)
+
+    # P26-01. The Link Kite panel's two pure functions: token redaction and
+    # pulling the login URL out of the subprocess's usage text. The QProcess
+    # half is not tested here -- it launches a binary only the `net` preset
+    # builds, and a test that skipped itself in the default preset would pass
+    # by not running.
+    qt_add_executable(altair_kite_link_test
+        tests/test_kite_link.cpp
+        kite_link.hpp)
+    target_link_libraries(altair_kite_link_test PRIVATE
+        altair_types altair_time Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_kite_link_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_kite_link_test PRIVATE
+        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    set_target_properties(altair_kite_link_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_kite_link COMMAND altair_kite_link_test)
 
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
     # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.
