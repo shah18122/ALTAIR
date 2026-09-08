@@ -92,6 +92,16 @@ struct RealTape {
          QStringLiteral("fut/nifty/1m"), true},
         {264969, QStringLiteral("INDIA VIX"),
          QStringLiteral("spot/indiavix/1m"), false},
+        // P25-01. NIFTY BANK, token looked up from data/instruments.csv --
+        // tradingsymbol "NIFTY BANK", segment INDICES, exchange NSE -- and
+        // not typed from memory, for the same reason as the three above.
+        //
+        // `trades` is false: it is an index, so the source carries no volume
+        // and the grid must leave the cell EMPTY rather than draw a zero.
+        // The ingested files have an empty volume field for exactly that
+        // reason, and a zero here would be indistinguishable from a real one.
+        {260105, QStringLiteral("NIFTY BANK"),
+         QStringLiteral("spot/banknifty/1m"), false},
     };
 }
 
