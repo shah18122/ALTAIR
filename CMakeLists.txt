@@ -72,13 +72,71 @@ if(ALTAIR_STRICT_INVARIANTS)
     target_compile_definitions(altair_flags INTERFACE ALTAIR_STRICT_INVARIANTS=1)
 endif()
 
-if(ALTAIR_ENABLE_ASAN AND NOT MSVC)
-    target_compile_options(altair_flags INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all)
-    target_link_options(altair_flags    INTERFACE -fsanitize=address,undefined)
+# ─────────────────────────────────────────────────────────────────────────────
+# Sanitizers
+#
+# BOTH OF THESE USED TO BE GUARDED ON `NOT MSVC`, AND THIS IS AN MSVC BOX.
+#
+# The `asan` and `tsan` presets therefore configured, built, and ran their whole
+# suite with NO INSTRUMENTATION AT ALL -- a plain Debug build wearing a
+# sanitizer's name. Every "asan green" and "tsan green" this project has
+# recorded on Windows was a statement about a build that had never been
+# sanitised, and Phase 0's gate log has said since the beginning that the
+# lock-free memory orderings are "unvalidated ... the single largest
+# correctness risk in the phase". They were even less validated than that
+# admitted: the preset that appeared to check them did not exist.
+#
+# A silently-degraded check is worse than an absent one. It answers the
+# question nobody asks again.
+# ─────────────────────────────────────────────────────────────────────────────
+
+if(ALTAIR_ENABLE_ASAN)
+    if(MSVC)
+        # MSVC has had AddressSanitizer since VS 2019 16.9 and it works.
+        # /RTC1 -- which CMake puts in the default Debug flags -- is
+        # INCOMPATIBLE with it and the compiler refuses the combination, so it
+        # is stripped here rather than left for whoever next selects the
+        # preset to decode.
+        target_compile_options(altair_flags INTERFACE /fsanitize=address)
+        foreach(_cfg "" _DEBUG _RELWITHDEBINFO)
+            string(REPLACE "/RTC1" "" CMAKE_CXX_FLAGS${_cfg}
+                   "${CMAKE_CXX_FLAGS${_cfg}}")
+            string(REPLACE "/RTC1" "" CMAKE_C_FLAGS${_cfg}
+                   "${CMAKE_C_FLAGS${_cfg}}")
+        endforeach()
+        message(STATUS "ASAN: ON (MSVC /fsanitize=address, /RTC1 stripped)")
+    else()
+        target_compile_options(altair_flags INTERFACE
+            -fsanitize=address,undefined -fno-sanitize-recover=all)
+        target_link_options(altair_flags INTERFACE
+            -fsanitize=address,undefined)
+        message(STATUS "ASAN: ON (address,undefined)")
+    endif()
 endif()
-if(ALTAIR_ENABLE_TSAN AND NOT MSVC)
+
+if(ALTAIR_ENABLE_TSAN)
+    if(MSVC)
+        # MSVC HAS NO ThreadSanitizer. There is no flag to add and no
+        # workaround; clang-cl does not ship one either.
+        #
+        # This REFUSES rather than warning, because a warning at configure time
+        # scrolls past and the suite then passes, and a passing suite named
+        # `tsan` is a claim that the orderings were checked. They were not, and
+        # cannot be, on this toolchain. Run the preset under GCC or Clang --
+        # which is item 3 of Phase 0's re-gate list, and is still the way to
+        # discharge it.
+        message(FATAL_ERROR
+            "ALTAIR_ENABLE_TSAN: MSVC has no ThreadSanitizer, so this preset "
+            "cannot do what its name says. It used to configure anyway and "
+            "run an UNINSTRUMENTED Debug build, which reported green and meant "
+            "nothing.\n"
+            "Run this preset on Linux with GCC or Clang. On Windows use the "
+            "`asan` preset, which IS instrumented, or `debug` for a plain "
+            "build.")
+    endif()
     target_compile_options(altair_flags INTERFACE -fsanitize=thread)
     target_link_options(altair_flags    INTERFACE -fsanitize=thread)
+    message(STATUS "TSAN: ON")
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
