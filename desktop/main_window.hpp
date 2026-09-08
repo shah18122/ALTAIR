@@ -137,7 +137,10 @@ namespace altair::ui {
             // P26-01. Drives altair_kite_login as a SUBPROCESS, so
             // no credential enters this address space and the UI
             // links no broker code.
-            QStringLiteral("Link Kite")};
+            QStringLiteral("Link Kite"),
+            // P26-02. Runs the acceptance test rather than
+            // reimplementing its walk-forward.
+            QStringLiteral("Neural")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -1010,6 +1013,21 @@ private:
         // retries with a token that is now spent.
         pages_->addWidget(new KiteLinkPanel(
             role_, [this] { refresh_broker_pill(); }));
+
+        auto* neural_page = new ComputePage(
+            QStringLiteral("NEURAL TIER — P8-16"),
+            QStringLiteral("Run the walk-forward (about 6 s)"),
+            this);
+        connect(neural_page->button(), &QPushButton::clicked, this,
+                [neural_page] {
+                    neural_page->set_text(QStringLiteral(
+                        "Running altair_neural_5m_test...\n\n"
+                        "211,000 five-minute returns, five folds. The window\n"
+                        "is busy until it finishes."));
+                    QApplication::processEvents();
+                    neural_page->set_text(neural_report());
+                });
+        pages_->addWidget(neural_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

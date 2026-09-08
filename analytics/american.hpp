@@ -68,7 +68,15 @@ struct AmericanValue {
     double european = 0.0;
     /// price - european, always >= 0. UNIT: paise.
     double early_exercise_premium = 0.0;
-    /// The flat exercise trigger the approximation assumed. UNIT: paise.
+    /// The flat exercise trigger the approximation assumed, IN THE OPTION'S
+    /// OWN COORDINATES. UNIT: paise.
+    ///
+    /// For a call it is a level the spot rises to; for a put, one it falls to.
+    /// The put is priced through a spot/strike-swapped call (see
+    /// `american_value`) and this field is transformed BACK out of those
+    /// coordinates -- it was not, until P26-03, and a put reported a boundary
+    /// above the money.
+    ///
     /// Equal to 0 when early exercise is never optimal.
     double exercise_boundary = 0.0;
     /// True when the spot is already at or past the boundary, so the
@@ -214,7 +222,24 @@ american_value(OptionRight right, Price spot, Price strike, Years t, Vol vol,
         out.price = c.price;
         out.european = detail::euro_carry(OptionRight::Put, S, K, T, v, rate,
                                           carry);
-        out.exercise_boundary = c.exercise_boundary;
+        // TRANSFORM THE BOUNDARY BACK. P26-03.
+        //
+        // `c.exercise_boundary` is in the AUXILIARY call's coordinates, where
+        // the "spot" is this put's STRIKE. Published unchanged it is a number
+        // with a different meaning under the same field name -- and it looks
+        // plausible, which is worse: for a 24,000 spot it came out at 25,900,
+        // above the money, for a PUT. A reader comparing it against spot to
+        // see how far from exercise they are gets a confident wrong answer.
+        //
+        // The auxiliary call exercises when its spot (this put's K) reaches X,
+        // and X is proportional to its strike (this put's S): X = c*S. So
+        // K >= c*S is the same condition as S <= K/c = K*S/X, which is the
+        // put's own trigger in its own coordinates.
+        //
+        // `immediate_exercise` needs no transform: the auxiliary condition
+        // K >= X already IS "this put should be exercised now".
+        out.exercise_boundary = c.exercise_boundary > 0.0
+            ? (S * K) / c.exercise_boundary : 0.0;
         out.immediate_exercise = c.immediate_exercise;
         if (out.price < out.european) { out.price = out.european; }
         out.early_exercise_premium = out.price - out.european;

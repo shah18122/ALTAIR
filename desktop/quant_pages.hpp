@@ -66,6 +66,7 @@
 #include <strategies/momentum.hpp>
 
 #include <QDir>
+#include <QProcess>
 #include <QHBoxLayout>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -1526,7 +1527,49 @@ private:
         }
     }
 
+    // ――― 5. American early exercise ―――
+    //
+    // I earlier listed american.hpp with the headers that "need an option
+    // chain". That was wrong: it prices from the same stated inputs Black-76
+    // takes, and the early-exercise premium is computable without a single
+    // market quote. The section exists because the claim was incorrect.
     s += QStringLiteral(
+        "――― 5. AMERICAN EARLY EXERCISE ―――\n\n"
+        "  Same stated inputs. `carry` is the cost of carry b: b = r for a\n"
+        "  non-dividend stock, b = r - q with a dividend yield, b = 0 for a\n"
+        "  future. It is EXPLICIT rather than derived, because deriving it\n"
+        "  silently is how a future gets priced as a stock.\n\n"
+        "     right   carry     European    American   early-ex   boundary\n");
+    {
+        for (const auto& cfg : {std::pair<OptionRight, double>{
+                                    OptionRight::Put, 0.065},
+                                {OptionRight::Put, 0.0},
+                                {OptionRight::Call, 0.065},
+                                {OptionRight::Call, 0.0}}) {
+            const auto av = american_value(
+                cfg.first, Price{static_cast<std::int64_t>(F)},
+                Price{static_cast<std::int64_t>(F)}, Years{T},
+                Vol{true_vol}, rate, cfg.second);
+            if (!av) { continue; }
+            s += QStringLiteral("   %1  %2  %3  %4  %5  %6\n")
+                     .arg(cfg.first == OptionRight::Put
+                              ? QStringLiteral("put ") : QStringLiteral("call"), 6)
+                     .arg(cfg.second, 6, 'f', 3)
+                     .arg(av->european / 100.0, 11, 'f', 2)
+                     .arg(av->price / 100.0, 11, 'f', 2)
+                     .arg(av->early_exercise_premium / 100.0, 10, 'f', 4)
+                     .arg(av->exercise_boundary > 0.0
+                              ? QStringLiteral("%1").arg(
+                                    av->exercise_boundary / 100.0, 9, 'f', 0)
+                              : QStringLiteral("     never"));
+        }
+    }
+    s += QStringLiteral(
+        "\n  A zero boundary means early exercise is never optimal, and the\n"
+        "  premium is then zero by construction rather than by rounding. On a\n"
+        "  FUTURE (b = 0) both sides can be worth exercising early; on a\n"
+        "  non-dividend stock (b = r) an American call never is, which is the\n"
+        "  textbook result and a useful thing for this table to reproduce.\n\n"
         "――― WHAT WOULD MAKE THIS A MARKET PAGE ―――\n\n"
         "  1. A Kite option subscription (P2-02, full mode) or a dump into\n"
         "     dataset/opt/nifty/. Neither exists.\n"
@@ -2645,6 +2688,82 @@ private:
         "  a statement's FILING date — not its period-end date — which is the\n"
         "  whole point of a point-in-time store and the reason a backtest\n"
         "  using it cannot see a result before the market did.\n");
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// P26-02 — Neural tier
+// ---------------------------------------------------------------------------
+
+/// The neural models, by RUNNING THE ACCEPTANCE TEST rather than recomputing.
+///
+/// I earlier declined this page on the grounds that "fitting on press freezes
+/// the window, and showing the LAST fit reports a number the page cannot
+/// reproduce". The first half was wrong -- `models/mlp.hpp` and
+/// `models/recurrent.hpp` are HAND-ROLLED, not LibTorch: a fixed random hidden
+/// layer with a ridge-solved readout, fitted in closed form. The whole
+/// walk-forward over 211,000 five-minute returns takes about six seconds.
+///
+/// The second half was right, and it is why this page shells out to
+/// `altair_neural_5m_test` instead of reimplementing the harness here.
+/// `quant_pages.hpp` opens with the rule the whole file hangs on: a number
+/// that exists in two places has already contradicted itself twice in this UI.
+/// A second copy of a walk-forward -- its folds, its per-fold scaler, its
+/// purge -- is exactly that failure with more places to make it. Running the
+/// binary means the page cannot drift from the test, because it IS the test.
+///
+/// The same pattern as the Link Kite panel, and for the same reason: launching
+/// a process is how you consume something you must not duplicate.
+[[nodiscard]] inline QString neural_report() {
+    QString s = QStringLiteral(
+        "NEURAL TIER — P8-16\n\n"
+        "――― THIS PAGE RUNS THE ACCEPTANCE TEST ―――\n\n"
+        "  It does not reimplement the walk-forward. A second copy of the\n"
+        "  folds, the per-fold scaler and the purge is the one failure this\n"
+        "  file exists to prevent, so the page shells out to\n"
+        "  altair_neural_5m_test and renders what it printed. The page cannot\n"
+        "  drift from the test because it is the test.\n\n"
+        "  About six seconds: 211,000 five-minute returns, five folds.\n\n");
+
+    // Beside the running executable first, then the sibling build tree.
+    const QString exe =
+#if defined(_WIN32)
+        QStringLiteral("altair_neural_5m_test.exe");
+#else
+        QStringLiteral("altair_neural_5m_test");
+#endif
+    QStringList tried;
+    tried << QCoreApplication::applicationDirPath()
+                 + QStringLiteral("/../models/") + exe;
+    tried << QCoreApplication::applicationDirPath() + QStringLiteral("/") + exe;
+#ifdef ALTAIR_SOURCE_DIR
+    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/default/models/") + exe;
+#endif
+    QString found;
+    for (const QString& p : tried) {
+        if (QFileInfo(p).isFile()) { found = QFileInfo(p).canonicalFilePath(); break; }
+    }
+    if (found.isEmpty()) {
+        return s + QStringLiteral(
+            "  altair_neural_5m_test was not found. It is built with the\n"
+            "  tests; run build.bat and press again.\n");
+    }
+
+    QProcess proc;
+    proc.setProgram(found);
+    proc.setProcessChannelMode(QProcess::MergedChannels);
+    proc.start();
+    if (!proc.waitForStarted(5000)) {
+        return s + QStringLiteral("  could not start %1\n").arg(found);
+    }
+    if (!proc.waitForFinished(120000)) {
+        proc.kill();
+        return s + QStringLiteral("  timed out after 120 s\n");
+    }
+    const QString out = QString::fromUtf8(proc.readAll());
+    s += QStringLiteral("――― %1 ―――\n  exit %2\n\n")
+             .arg(found).arg(proc.exitCode());
+    s += out;
     return s;
 }
 

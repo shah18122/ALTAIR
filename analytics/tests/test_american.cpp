@@ -321,12 +321,69 @@ void degenerate_inputs_are_refused()
           "a NaN rate is refused");
 }
 
+/// P26-03. THE PUT'S EXERCISE BOUNDARY IS IN THE PUT'S OWN COORDINATES.
+///
+/// The put is priced through a spot/strike-swapped call, and the boundary that
+/// call computes lives in ITS coordinates -- where the "spot" is this put's
+/// strike. It was published unchanged until P26-03, so a 24,000 put reported a
+/// boundary of 25,900: above the money, for a put, and plausible enough to be
+/// read as a real number by anyone checking how far from exercise they were.
+///
+/// This file had exactly one mention of `exercise_boundary` before now and
+/// never asserted on it, which is why the field could be wrong for half its
+/// inputs while every test stayed green. A value nobody checks is a value.
+void the_put_boundary_is_below_the_money()
+{
+    const Price S{2'400'000};
+    const Price K{2'400'000};
+    const Years T{30.0 / 365.0};
+    const Vol v{0.15};
+
+    for (const double carry : {0.0, 0.03, 0.065}) {
+        const auto p = american_value(OptionRight::Put, S, K, T, v, 0.065,
+                                      carry);
+        if (!p) { continue; }
+        if (p->exercise_boundary <= 0.0) { continue; }   // never optimal
+        std::printf("  put  carry %.3f  boundary %.0f  spot %.0f\n",
+                    carry, p->exercise_boundary / 100.0,
+                    static_cast<double>(S.raw()) / 100.0);
+        check(p->exercise_boundary < static_cast<double>(S.raw()),
+              "a put exercises early when spot FALLS, so its boundary is"
+              " below the money");
+    }
+
+    // And the call's stays above, so the transform was applied to the put
+    // ALONE rather than to both.
+    const auto c = american_value(OptionRight::Call, S, K, T, v, 0.065, 0.0);
+    if (c && c->exercise_boundary > 0.0) {
+        std::printf("  call carry 0.000  boundary %.0f\n",
+                    c->exercise_boundary / 100.0);
+        check(c->exercise_boundary > static_cast<double>(S.raw()),
+              "and a call's boundary is above it");
+    }
+
+    // The transform is an identity, not a fit: the put boundary is S*K over
+    // the auxiliary call's boundary, and the auxiliary call here is the one
+    // with spot and strike equal, so the two boundaries must multiply to S*K.
+    const auto p0 = american_value(OptionRight::Put, S, K, T, v, 0.065, 0.0);
+    if (p0 && c && p0->exercise_boundary > 0.0 && c->exercise_boundary > 0.0) {
+        const double product = p0->exercise_boundary * c->exercise_boundary;
+        const double sk = static_cast<double>(S.raw())
+                        * static_cast<double>(K.raw());
+        std::printf("  boundary product / (S*K) = %.9f\n", product / sk);
+        check(std::fabs(product / sk - 1.0) < 1e-9,
+              "put boundary times call boundary is exactly S*K, so the"
+              " transform is the identity it claims to be");
+    }
+}
+
 } // namespace
 
 int main()
 {
     std::printf("altair analytics american tests\n");
     a_call_with_carry_above_the_rate_is_european();
+    the_put_boundary_is_below_the_money();
     it_tracks_a_binomial_tree();
     an_american_option_is_never_worth_less_than_a_european_one();
     a_deep_in_the_money_put_approaches_intrinsic();
