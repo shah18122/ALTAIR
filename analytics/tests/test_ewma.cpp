@@ -15,6 +15,7 @@
 //
 // No check description here may contain the substring FAIL.
 
+#include <core/testing/latency_gate.hpp>
 #include <analytics/ewma.hpp>
 
 #include <cstdio>
@@ -406,8 +407,19 @@ void the_cost_is_known()
     std::printf("    Ewma::update %.1f ns   EwmaVariance::update %.1f ns"
                 "   [sink %.3e]\n", mean_ns, var_ns, sink);
     check(sink != 0.0, "the benchmark loops were not optimised away");
-    check(mean_ns < 100.0, "an EWMA update stays under 100 ns");
-    check(var_ns < 150.0, "an EWMA variance update stays under 150 ns");
+    // Gate 6, only where the optimiser ran. See core/testing/latency_gate.hpp.
+    // Unconditional until P27-04; under real AddressSanitizer the update
+    // measured 168 ns against its 100 ns budget and the variance 200 ns
+    // against 150. Both describe an instrumented binary nobody ships.
+    if (::altair::testing::latency_gate_active()) {
+        check(mean_ns < 100.0, "an EWMA update stays under 100 ns");
+        check(var_ns < 150.0, "an EWMA variance update stays under 150 ns");
+    } else {
+        ::altair::testing::latency_not_measured("an EWMA update", mean_ns,
+                                                100.0);
+        ::altair::testing::latency_not_measured("an EWMA variance update",
+                                                var_ns, 150.0);
+    }
     std::printf("    (the exp() dominates; a fixed-alpha update avoids it,"
                 " which is the\n     only thing it is actually better at)\n");
 }

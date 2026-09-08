@@ -11,6 +11,7 @@
 //
 // No check description here may contain the substring FAIL.
 
+#include <core/testing/latency_gate.hpp>
 #include <analytics/rolling.hpp>
 
 #include <cstdio>
@@ -561,8 +562,26 @@ void non_finite_input_is_counted_and_the_cost_is_known()
     std::printf("    push + variance over a %zu-window: %.0f ns\n", W, q_ns);
     std::printf("    RunningMoments::add (O(1), 4 moments): %.1f ns\n", a_ns);
     std::printf("    [sink %.3e]\n", sink);
-    check(q_ns < 5000.0, "an O(N) window query at N=256 stays under 5 us");
-    check(a_ns < 200.0, "an O(1) streaming update stays under 200 ns");
+    // Gate 6, only where the optimiser ran. See core/testing/latency_gate.hpp.
+    //
+    // These two asserted unconditionally until P27-04. They survived the debug
+    // preset by margin rather than by design, and the FIRST genuinely
+    // instrumented asan run -- P27-01 found the sanitizer had never actually
+    // been enabled on this toolchain -- pushed the window query to 7,012 ns
+    // against its 5,000 ns budget. Nothing was wrong with the code. The
+    // assertion was measuring an unoptimised, instrumented binary that is
+    // never shipped, which is the exact case latency_gate.hpp was written for
+    // and which its own header already names: "The asan and tsan presets are
+    // Debug builds and are covered by the same test."
+    if (::altair::testing::latency_gate_active()) {
+        check(q_ns < 5000.0, "an O(N) window query at N=256 stays under 5 us");
+        check(a_ns < 200.0, "an O(1) streaming update stays under 200 ns");
+    } else {
+        ::altair::testing::latency_not_measured(
+            "an O(N) window query at N=256", q_ns, 5000.0);
+        ::altair::testing::latency_not_measured(
+            "an O(1) streaming update", a_ns, 200.0);
+    }
 }
 
 } // namespace
