@@ -345,6 +345,43 @@ void the_generators_have_the_moments_they_claim()
 
 } // namespace
 
+
+// P33-03. THE POISSON DRAW WAS SILENTLY TRUNCATED.
+//
+// The inversion loop was capped at sixteen arrivals with no bound on lambda.
+// A Merton model calibrated at fifty jumps a year, entered without dividing by
+// 252, gives lambda = 50 -- and the path came back finite, the metrics
+// computed, and essentially every step had been forced to exactly sixteen
+// jumps. Measured: at lambda 20, P(N <= 16) is 0.221.
+void a_lambda_that_would_truncate_is_refused()
+{
+    std::printf("\nN a_lambda_that_would_truncate_is_refused\n");
+
+    double buf[256];
+    Rng rng(99u);
+
+    JumpParams ok{};
+    ok.sigma = 0.01;
+    ok.lambda = 0.05;
+    ok.jump_sd = 0.02;
+    check(jump_returns(buf, 256, ok, rng).has_value(),
+          "a realistic per-step intensity is accepted");
+
+    JumpParams bad = ok;
+    bad.lambda = 50.0;      // fifty jumps a YEAR, not per step
+    const auto r = jump_returns(buf, 256, bad, rng);
+    check(!r.has_value() && r.error() == McError::BadParameter,
+          "and one that is fifty per STEP is REFUSED rather than quietly "
+          "capped -- an intensity that large is a units error, and the old "
+          "code returned a hard-capped process that looked fine");
+
+    JumpParams edge = ok;
+    edge.lambda = 12.0;
+    check(jump_returns(buf, 256, edge, rng).has_value(),
+          "the bound itself is admissible: at twelve arrivals per step "
+          "against a cap of 64, P(N > cap) is below 1e-25");
+}
+
 int main()
 {
     std::printf("altair Monte Carlo and metrics tests\n");
@@ -352,6 +389,8 @@ int main()
     max_drawdown_grows_with_the_length_of_the_backtest();
     the_sqrt_252_assumes_independence();
     the_generators_have_the_moments_they_claim();
+
+    a_lambda_that_would_truncate_is_refused();
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");
     return failures == 0 ? 0 : 1;

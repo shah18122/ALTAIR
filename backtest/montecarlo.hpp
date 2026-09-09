@@ -209,10 +209,30 @@ heston_returns(double* out, std::size_t n, const HestonParams& p,
     return {};
 }
 
+/// The most arrivals one step may draw.
+///
+/// P33-03. The inversion loop has to be bounded -- this runs per step, per
+/// path, and must not allocate or spin -- but the bound has to be far enough
+/// out that hitting it is impossible rather than merely unlikely, and the
+/// caller has to be refused if it is not.
+inline constexpr std::size_t kMaxJumpsPerStep = 64;
+
 struct JumpParams {
     double mu = 0.0;
     double sigma = 0.0;
-    double lambda = 0.0;        // jump intensity, per step
+    /// Jump intensity, PER STEP. Not per year.
+    ///
+    /// THE UNITS ERROR THIS REFUSES. A Merton model calibrated at, say, fifty
+    /// jumps a year entered here without dividing by 252 gives lambda = 50 --
+    /// and the first version of jump_returns accepted it, drew from an
+    /// inversion loop capped at sixteen arrivals, and silently returned
+    /// exactly sixteen jumps on essentially every step. Measured: at
+    /// lambda 20, P(N <= 16) is 0.221, so 78 per cent of steps were truncated;
+    /// at lambda 50 it is zero to six decimal places.
+    ///
+    /// Nothing reported anything. The path came back finite, the metrics
+    /// computed, and the tail was whatever a hard-capped process produces.
+    double lambda = 0.0;
     double jump_mean = 0.0;     // mean log jump size
     double jump_sd = 0.0;       // sd of log jump size
 };
@@ -231,6 +251,13 @@ jump_returns(double* out, std::size_t n, const JumpParams& p,
         || !(p.jump_sd >= 0.0)) {
         return std::unexpected(McError::BadParameter);
     }
+    // REFUSED, not truncated. Twelve arrivals per step against a cap of 64
+    // leaves P(N > cap) below 1e-25, so the bound cannot be reached in any
+    // run anybody will make -- and a lambda above it is not a jump process
+    // being simulated, it is a units error. Rule 9.
+    if (p.lambda > 12.0) {
+        return std::unexpected(McError::BadParameter);
+    }
     const double comp = p.lambda
         * (std::exp(p.jump_mean + 0.5 * p.jump_sd * p.jump_sd) - 1.0);
     const double drift = p.mu - 0.5 * p.sigma * p.sigma - comp;
@@ -243,7 +270,7 @@ jump_returns(double* out, std::size_t n, const JumpParams& p,
         double acc = std::exp(-p.lambda);
         double term = acc;
         std::size_t k = 0;
-        while (u > acc && k < 16) {
+        while (u > acc && k < kMaxJumpsPerStep) {
             ++k;
             term *= p.lambda / static_cast<double>(k);
             acc += term;

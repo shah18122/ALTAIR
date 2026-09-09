@@ -336,9 +336,19 @@ fit_expanding(const std::vector<double>& returns, std::size_t states,
 struct IndependenceTest {
     double chi_square = 0.0;
     std::size_t degrees_of_freedom = 0;
-    /// Cells that were too thin for the statistic to mean anything. The usual
-    /// rule of thumb is an expected count of five; cells below it are counted
-    /// and reported rather than quietly included.
+    /// Cells whose EXPECTED count is below five, the usual rule of thumb for
+    /// when a chi-square statistic stops meaning what it claims.
+    ///
+    /// THEY ARE COUNTED AND THEY ARE ALSO INCLUDED IN THE STATISTIC. That is
+    /// the standard treatment and it is the right one -- dropping cells
+    /// changes the degrees of freedom and quietly makes the test something
+    /// else -- but an earlier version of this comment said "counted and
+    /// reported rather than quietly included", which reads as though they
+    /// were excluded. They are not.
+    ///
+    /// So this number is a CAVEAT ON `rejects_independence`, not a diagnostic
+    /// beside it: a rejection carrying many thin cells is a rejection the
+    /// approximation does not support.
     std::size_t thin_cells = 0;
     /// Critical value at 5% for `degrees_of_freedom`, or 0 when the table
     /// does not cover it.
@@ -349,8 +359,30 @@ struct IndependenceTest {
 };
 
 /// Chi-square critical values at 5%, indexed by degrees of freedom.
-/// Only the range a 2..9 state chain can produce, so a lookup outside it is
-/// reported as unavailable rather than extrapolated.
+///
+/// P33-03: THE TABLE STOPPED AT df 63 AND A 9-STATE CHAIN NEEDS 64.
+///
+/// A k-state chain tests independence with (k-1)^2 degrees of freedom, and
+/// kMaxStates is 9 -- so the largest chain this file will build lands exactly
+/// one past the end. `chi2_critical_5pct` returned 0.0, `rejects_independence`
+/// requires a positive critical value, and the result was that a nine-state
+/// chain could NEVER reject independence. Silently: the statistic was computed
+/// correctly, the struct reported it, and the one boolean anybody reads said
+/// "the chain is no better than the unconditional distribution" regardless of
+/// what the data said.
+///
+/// That is the worse direction of the two. A test that always says "no
+/// structure" on a model whose whole purpose is to find structure looks
+/// exactly like an honest negative result, and this tree is full of honest
+/// negative results.
+///
+/// Extended to df 87, and every entry VERIFIED against a computed inverse
+/// regularised incomplete gamma rather than copied from a printed table --
+/// P23-08's `ks_critical` was wrong by a factor of 27 because a critical value
+/// was taken on trust.
+///
+/// A lookup past the end still returns 0.0 and is still reported as
+/// unavailable rather than extrapolated.
 [[nodiscard]] inline double chi2_critical_5pct(std::size_t df) noexcept {
     static constexpr double kTable[] = {
         0.0,    3.841,  5.991,  7.815,  9.488, 11.070, 12.592, 14.067,
@@ -360,7 +392,11 @@ struct IndependenceTest {
         46.194, 47.400, 48.602, 49.802, 50.998, 52.192, 53.384, 54.572,
         55.758, 56.942, 58.124, 59.304, 60.481, 61.656, 62.830, 64.001,
         65.171, 66.339, 67.505, 68.669, 69.832, 70.993, 72.153, 73.311,
-        74.468, 75.624, 76.778, 77.931, 79.082, 80.232, 81.381, 82.529
+        74.468, 75.624, 76.778, 77.931, 79.082, 80.232, 81.381, 82.529,
+        // df 64 is a NINE-state chain -- the largest kMaxStates allows.
+        83.675, 84.821, 85.965, 87.108, 88.250, 89.391, 90.531, 91.670,
+        92.808, 93.945, 95.081, 96.217, 97.351, 98.484, 99.617, 100.749,
+        101.879, 103.010, 104.139, 105.267, 106.395, 107.522, 108.648, 109.773
     };
     constexpr std::size_t kN = sizeof(kTable) / sizeof(kTable[0]);
     return df < kN ? kTable[df] : 0.0;

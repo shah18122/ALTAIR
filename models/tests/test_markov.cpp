@@ -293,6 +293,70 @@ static void test_an_empty_row_stays_empty()
           " states nothing can land in");
 }
 
+
+// P33-03. THE CRITICAL TABLE STOPPED ONE SHORT OF THE BIGGEST CHAIN.
+//
+// A k-state chain tests independence with (k-1)^2 degrees of freedom, so
+// kMaxStates = 9 needs df 64 -- and the table ended at 63. The lookup returned
+// 0.0, `rejects_independence` requires a positive critical value, and a
+// nine-state chain therefore could never reject, whatever the data said.
+//
+// Silent, and in the worse direction: a test that always answers "no
+// structure" on a model built to find structure looks exactly like an honest
+// negative result, and this tree is full of honest negative results.
+void the_largest_chain_can_still_reject()
+{
+    std::printf("\nN the_largest_chain_can_still_reject\n");
+
+    for (std::size_t k = 2; k <= kMaxStates; ++k) {
+        const std::size_t df = (k - 1) * (k - 1);
+        const double c = chi2_critical_5pct(df);
+        std::printf("    %zu states -> df %2zu -> critical %7.3f%s\n",
+                    k, df, c, c > 0.0 ? "" : "   <- UNAVAILABLE");
+        check(c > 0.0,
+              "every state count the API allows has a critical value -- a "
+              "missing one silently disables the test rather than failing it");
+    }
+
+    // Spot-checked against a computed inverse regularised incomplete gamma,
+    // not copied from a printed table. P23-08's ks_critical was wrong by a
+    // factor of 27 because a critical value was taken on trust.
+    check(std::fabs(chi2_critical_5pct(1) - 3.841) < 0.001,
+          "df 1 is 3.841");
+    check(std::fabs(chi2_critical_5pct(16) - 26.296) < 0.001,
+          "df 16, a five-state chain, is 26.296");
+    check(std::fabs(chi2_critical_5pct(64) - 83.675) < 0.001,
+          "and df 64, a NINE-state chain, is 83.675 -- the entry that was "
+          "missing");
+
+    // A nine-state chain with real structure must now actually reject. Built
+    // so the answer is known before the test: the next state is the current
+    // one two times in three.
+    std::vector<std::size_t> seq;
+    std::uint64_t s = 12345u;
+    std::size_t cur = 0;
+    for (int i = 0; i < 20000; ++i) {
+        s = s * 6364136223846793005ull + 1442695040888963407ull;
+        const double u =
+            static_cast<double>((s >> 11) & 0xFFFFFFFFull) / 4294967296.0;
+        if (u > 0.667) { cur = static_cast<std::size_t>(u * 9.0) % 9; }
+        seq.push_back(cur);
+    }
+    const auto m = fit_from_states(seq, 9);
+    check(m.has_value(), "a nine-state chain fits");
+    if (m) {
+        const auto t = independence_chi_square(*m);
+        std::printf("    nine states, sticky chain: chi2 %.1f vs critical "
+                    "%.1f, df %zu\n",
+                    t.chi_square, t.critical_5pct, t.degrees_of_freedom);
+        check(t.critical_5pct > 0.0,
+              "the nine-state critical value is available");
+        check(t.rejects_independence,
+              "and a chain that stays put two times in three REJECTS "
+              "independence -- which it could not do at all before");
+    }
+}
+
 int main()
 {
     std::printf("P8-13 -- a Markov regime chain on the real daily NIFTY\n");
@@ -306,6 +370,8 @@ int main()
     test_thin_cells_are_counted();
     test_is_it_markov_at_all();
     test_an_empty_row_stays_empty();
+
+    the_largest_chain_can_still_reject();
 
     std::printf("\n%s\n", failures == 0 ? "all checks passed"
                                         : "checks did not pass");
