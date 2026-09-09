@@ -486,6 +486,27 @@ int main(int argc, char** argv)
     }
 
     // -----------------------------------------------------------------------
+    // 4k. P32-06 -- the forecast says WHICH BAR.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4k] the forecast timestamp\n");
+    {
+        const QString sf = spot_forecast_report(
+            ds, QStringLiteral("/spot/nifty/1d/"), "NIFTY daily");
+        check(sf.contains(QStringLiteral("Last bar SEEN")),
+              "the forecast names the last bar it was given");
+        check(sf.contains(QStringLiteral("Forecast IS ABOUT")),
+              "and the bar it is about -- two stamps, because one is an "
+              "observation and the other is a claim");
+        check(!sf.contains(QStringLiteral("UNSTAMPED")),
+              "and the daily file's time column parsed, so both are real "
+              "dates rather than an absence");
+        const int at = sf.indexOf(QStringLiteral("Last bar SEEN"));
+        if (at >= 0) {
+            std::printf("%s", sf.mid(at, 420).toUtf8().constData());
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // 5. Print them.
     // -----------------------------------------------------------------------
     std::printf("\n[5] excerpts\n");

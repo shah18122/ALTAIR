@@ -60,6 +60,17 @@ if(ALTAIR_BUILD_TESTS)
     # altair_broker (the non-net half) only -- there is no transport and no
     # credential in it, so it builds and runs in EVERY preset rather than only
     # where OpenSSL is present.
+    # P32-07. The ticker's WIRE: the URL, the two control messages and the
+    # redaction. Needs altair_broker_net because kite_ticker.hpp includes
+    # https_client.hpp for the platform-root loader, so it exists only where
+    # OpenSSL does -- guarded below rather than here.
+    if(ALTAIR_HAVE_NET)
+        add_executable(altair_kite_ticker_test tests/test_kite_ticker.cpp)
+        target_link_libraries(altair_kite_ticker_test
+            PRIVATE altair_broker_net altair_flags)
+        add_test(NAME kite_ticker COMMAND altair_kite_ticker_test)
+    endif()
+
     add_executable(altair_kite_historical_test tests/test_kite_historical.cpp)
     target_link_libraries(altair_kite_historical_test
         PRIVATE altair_broker altair_flags)

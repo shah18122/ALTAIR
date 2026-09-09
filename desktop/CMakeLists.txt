@@ -85,6 +85,7 @@ qt_add_executable(altair_desktop
     # generated for a different target and fails with unresolved vtable
     # symbols rather than anything that names the cause.
     terminal.hpp
+    live_feed.hpp
     kite_link.hpp
     chain_panel.hpp
     analytics_panel.hpp
@@ -140,6 +141,7 @@ target_compile_definitions(altair_desktop PRIVATE
 # screen explaining the difference.
 target_compile_definitions(altair_desktop PRIVATE
     ALTAIR_QUOTE_FILE="${CMAKE_SOURCE_DIR}/data/kite_quotes.json"
+    ALTAIR_TICKS_FILE="${CMAKE_SOURCE_DIR}/data/kite_ticks.json"
     ALTAIR_INTENT_FILE="${CMAKE_SOURCE_DIR}/data/order_intents.jsonl"
     ALTAIR_SESSION_FILE="${CMAKE_SOURCE_DIR}/data/kite_session.json"
     ALTAIR_ACCOUNT_FILE="${CMAKE_SOURCE_DIR}/data/kite_account.json"
@@ -435,6 +437,12 @@ if(ALTAIR_BUILD_TESTS)
         panels.hpp
         order_ticket.hpp
         kill_switch.hpp
+        # P32-07. live_feed.hpp declares a Q_OBJECT and terminal.hpp includes
+        # it, so it has to be in THIS target's source list too -- AUTOMOC only
+        # processes files a target names, and leaving it out links against a
+        # moc generated for a different target and fails with three unresolved
+        # vtable symbols rather than anything that says "add the header".
+        live_feed.hpp
         watchlist.hpp)
     target_link_libraries(altair_terminal_test PRIVATE
         altair_types altair_time altair_feed altair_instruments
@@ -447,6 +455,7 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_INTENT_FILE="${CMAKE_SOURCE_DIR}/data/order_intents.jsonl"
         ALTAIR_KILL_REQUEST_FILE="${CMAKE_SOURCE_DIR}/data/kill_request.json"
         ALTAIR_QUOTE_FILE="${CMAKE_SOURCE_DIR}/data/kite_quotes.json"
+        ALTAIR_TICKS_FILE="${CMAKE_SOURCE_DIR}/data/kite_ticks.json"
         ALTAIR_DEV_CREDENTIALS)
     set_target_properties(altair_terminal_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_terminal COMMAND altair_terminal_test)

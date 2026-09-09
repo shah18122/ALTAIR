@@ -49,6 +49,16 @@ if(ALTAIR_HAVE_NET)
     target_link_libraries(altair_kite_account PRIVATE
         altair_broker_net altair_flags)
 
+    # P32-07. THE LIVE TICK FEED. feed/kite_decoder.hpp has turned Kite's
+    # binary frames into Ticks since P2-02 and nothing had ever handed it a
+    # frame off a socket -- every "live" number in this tree has come from a
+    # replay file. Separate binary for the same reason as the other four: a
+    # program that reads a live trading credential does not belong inside the
+    # process holding positions, and desktop/ may not link broker/ at all.
+    add_executable(altair_kite_ticker kite_ticker_main.cpp)
+    target_link_libraries(altair_kite_ticker PRIVATE
+        altair_broker_net altair_feed altair_instruments altair_flags)
+
     # P29-01. Snapshots /quote for the watchlist. broker/kite_quote.hpp has
     # PARSED a quote since P20-03 with twenty-two green checks and nothing had
     # ever FETCHED one, so the watchlist showed a replay price and no bid, no

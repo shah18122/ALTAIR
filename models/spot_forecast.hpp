@@ -40,6 +40,7 @@
 
 #include <models/gbdt.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <expected>
@@ -149,6 +150,39 @@ struct SpotForecast {
     double lo = 0.0, hi = 0.0;
     /// Rows the model was fitted on.
     std::size_t fitted_on = 0;
+
+    // ── WHICH BAR. P32-06. ───────────────────────────────────────────────
+    //
+    // A FORECAST WITHOUT A TIMESTAMP IS NOT A FORECAST.
+    //
+    // Everything above says what the number is and how uncertain it is.
+    // Nothing said WHEN, and a price level with no bar attached is not
+    // actionable and not checkable: nobody can come back later and ask
+    // whether it was right, because there is no row to compare it against.
+    //
+    // Rule 10 wants every live decision reproducible from
+    // {model_hash, feature_version, config_hash, spec_version, tick_seqno}.
+    // The seqno's job on this path is done by these two stamps: the last bar
+    // the model SAW, and the bar it is ABOUT.
+    //
+    // TWO STAMPS, NOT ONE, AND THE DIFFERENCE IS THE POINT. `last_ts_ns` is
+    // an observation and `for_ts_ns` is a claim. Collapsing them into "the
+    // forecast time" is how a number computed at 15:29 gets read as a number
+    // about 15:29, which is the direction that looks like an edge.
+    //
+    // Zero means the caller supplied no stamps. NOT epoch: a forecast for
+    // 1970-01-01T00:00:00Z is a real timestamp and a wrong one, and it would
+    // render as a date rather than as an absence.
+    std::int64_t last_ts_ns = 0;   ///< the last bar the model was given
+    std::int64_t for_ts_ns = 0;    ///< the bar this forecast is about
+    /// Bar width in ns, carried so a reader can check for_ts - last_ts is one
+    /// bar of the series it was actually fitted on rather than of whatever
+    /// the page assumed.
+    std::int64_t interval_ns = 0;
+
+    [[nodiscard]] bool stamped() const noexcept {
+        return last_ts_ns != 0 && for_ts_ns != 0;
+    }
     /// True when the band straddles the last price -- i.e. the forecast does
     /// not say which side of today the next bar lands on. On this series it
     /// always does, and a caller that hides this is publishing a direction it
@@ -164,9 +198,14 @@ struct SpotForecast {
 /// caller already measured rather than computing a training residual. Passing
 /// the training residual would narrow the band by exactly the amount the model
 /// overfits, which is the one direction it must never be wrong in.
+/// `stamps` are the bar timestamps of `closes`, in nanoseconds, and may be
+/// empty. When supplied they must be the SAME LENGTH as `closes` -- a
+/// mismatched pair would label the forecast with somebody else's bar, and
+/// there is no way for a reader to notice that on screen.
 [[nodiscard]] inline std::expected<SpotForecast, SpotError>
 forecast_next(const std::vector<double>& closes, const SpotSpec& spec,
-              double oos_rmse_bps, bool leaf_wise) {
+              double oos_rmse_bps, bool leaf_wise,
+              const std::vector<std::int64_t>& stamps = {}) {
     if (!spec.valid()) { return std::unexpected(SpotError::BadParameter); }
     if (closes.size() < 2000) {
         return std::unexpected(SpotError::TooFewSamples);
@@ -226,6 +265,45 @@ forecast_next(const std::vector<double>& closes, const SpotSpec& spec,
     out.band_bps = oos_rmse_bps;
     out.lo = out.last_price * std::exp((out.move_bps - oos_rmse_bps) / 10000.0);
     out.hi = out.last_price * std::exp((out.move_bps + oos_rmse_bps) / 10000.0);
+
+    // ── WHICH BAR THIS IS ABOUT ──────────────────────────────────────────
+    //
+    // REFUSED RATHER THAN GUESSED when the stamps do not line up with the
+    // closes. A stamp vector of a different length cannot be aligned to the
+    // prices by any rule that is not an assumption, and the consequence of
+    // getting it wrong is a forecast labelled with somebody else's bar --
+    // which nothing downstream and nobody reading the screen could detect.
+    if (!stamps.empty()) {
+        if (stamps.size() != closes.size()) {
+            return std::unexpected(SpotError::BadParameter);
+        }
+        out.last_ts_ns = stamps.back();
+
+        // THE BAR WIDTH IS THE MEDIAN GAP, NOT THE LAST GAP.
+        //
+        // The last gap on a daily series is routinely a weekend, and on an
+        // intraday one it is routinely the overnight break -- so "last + last
+        // gap" would put a Monday forecast on Tuesday and a 09:15 forecast on
+        // the following afternoon. The median gap over the recent tail is the
+        // bar width the series actually has.
+        //
+        // The tail rather than the whole series, because the sampling rate of
+        // a series can change: NIFTY daily starts in 1990 and the modern part
+        // is what a forecast for the next bar is about.
+        std::vector<std::int64_t> gaps;
+        const std::size_t look = stamps.size() < 200 ? stamps.size() : 200;
+        for (std::size_t i = stamps.size() - look + 1; i < stamps.size(); ++i) {
+            const std::int64_t g = stamps[i] - stamps[i - 1];
+            if (g > 0) { gaps.push_back(g); }
+        }
+        if (!gaps.empty()) {
+            std::sort(gaps.begin(), gaps.end());
+            out.interval_ns = gaps[gaps.size() / 2];
+            out.for_ts_ns =
+                out.last_ts_ns
+                + out.interval_ns * static_cast<std::int64_t>(spec.horizon);
+        }
+    }
     return out;
 }
 

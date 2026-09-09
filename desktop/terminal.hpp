@@ -49,6 +49,7 @@
 
 #include "auth.hpp"
 #include "kill_switch.hpp"
+#include "live_feed.hpp"
 #include "order_ticket.hpp"
 #include "panels.hpp"
 
@@ -215,6 +216,8 @@ public:
         right_->addTab(halt_, QStringLiteral("Halt"));
         pending_ = new PendingIntents(right_);
         right_->addTab(pending_, QStringLiteral("Queue"));
+        feed_ = new LiveFeedPanel(right_);
+        right_->addTab(feed_, QStringLiteral("Feed"));
 
         // Re-read the queue whenever that tab is opened, so it cannot show a
         // count from before a request this session made.
@@ -242,6 +245,7 @@ public:
     [[nodiscard]] OrderTicket* ticket() const noexcept { return ticket_; }
     [[nodiscard]] KillSwitchPanel* halt() const noexcept { return halt_; }
     [[nodiscard]] PendingIntents* queue() const noexcept { return pending_; }
+    [[nodiscard]] LiveFeedPanel* feed() const noexcept { return feed_; }
 
 private:
     QSplitter* split_ = nullptr;
@@ -250,6 +254,7 @@ private:
     OrderTicket* ticket_ = nullptr;
     KillSwitchPanel* halt_ = nullptr;
     PendingIntents* pending_ = nullptr;
+    LiveFeedPanel* feed_ = nullptr;
 };
 
 } // namespace altair::ui

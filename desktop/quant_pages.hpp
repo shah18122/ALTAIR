@@ -105,6 +105,82 @@ namespace altair::ui {
 /// independent paths to the same series is what makes a number a property of
 /// the data rather than of one parser, and it is the reason the figures on
 /// these pages can be compared against the test output at all.
+/// Bar stamps in nanoseconds, alongside the closes. P32-06.
+///
+/// `ui_load_closes` throws the time column away, which is why the spot
+/// forecast could not say which bar it was about. This keeps it.
+///
+/// THE FILES ARE NOT ALL THE SAME SHAPE. Two forms appear on disk:
+/// `2026-09-08` and `2026-09-08T15:29:00+05:30`. Both are parsed; a row whose
+/// stamp parses as neither is DROPPED ALONG WITH ITS CLOSE, so the two
+/// vectors stay the same length. Dropping the close and keeping the price
+/// would silently shift every later stamp by one bar, which is the failure
+/// mode this function exists to prevent.
+struct UiStamped {
+    std::vector<double> closes;
+    std::vector<std::int64_t> stamps_ns;
+};
+
+[[nodiscard]] inline UiStamped ui_load_stamped(const QString& path) {
+    UiStamped out;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) { return out; }
+    QTextStream ts(&f);
+    ts.readLine();                                  // header
+    while (!ts.atEnd()) {
+        const QString line = ts.readLine();
+        if (line.trimmed().isEmpty()) { continue; }
+        const QStringList col = line.split(QLatin1Char(','));
+        if (col.size() < 5) { continue; }
+        bool ok = false;
+        const double close = col[4].toDouble(&ok);
+        if (!ok || !(close > 0.0)) { continue; }
+
+        const QString stamp = col[0].trimmed();
+        QDateTime dt = QDateTime::fromString(stamp, Qt::ISODate);
+        if (!dt.isValid()) {
+            dt = QDateTime::fromString(stamp.left(10),
+                                       QStringLiteral("yyyy-MM-dd"));
+            // A DATE IS NOT AN INSTANT UNTIL SOMEBODY SAYS WHICH ZONE. A
+            // bare 2026-09-08 in an NSE file is an IST trading day, and
+            // reading it as UTC lands it 5.5 hours early -- which is the same
+            // class of bug P11Q-11 hit on the watchlist's expiry column,
+            // where it printed a contract expiring the day before it does.
+            if (dt.isValid()) {
+                dt.setTimeZone(QTimeZone(5 * 3600 + 30 * 60));
+            }
+        }
+        if (!dt.isValid()) { continue; }
+        out.closes.push_back(close);
+        out.stamps_ns.push_back(
+            static_cast<std::int64_t>(dt.toMSecsSinceEpoch()) * 1'000'000LL);
+    }
+    return out;
+}
+
+/// A bar width in words. The median gap of the series, so it says what the
+/// data is rather than what the caller assumed.
+[[nodiscard]] inline QString describe_ns(std::int64_t ns) {
+    const std::int64_t sec = ns / 1'000'000'000LL;
+    if (sec % 86400 == 0) {
+        return QStringLiteral("%1 day(s)").arg(sec / 86400);
+    }
+    if (sec % 3600 == 0) { return QStringLiteral("%1 hour(s)").arg(sec / 3600); }
+    if (sec % 60 == 0) { return QStringLiteral("%1 minute(s)").arg(sec / 60); }
+    return QStringLiteral("%1 s").arg(sec);
+}
+
+/// A nanosecond instant as an IST wall clock. The exchange's zone, always.
+[[nodiscard]] inline QString ui_ist(std::int64_t ns, bool with_time) {
+    if (ns == 0) { return QStringLiteral("—"); }
+    const QDateTime dt =
+        QDateTime::fromMSecsSinceEpoch(ns / 1'000'000LL,
+                                       QTimeZone(5 * 3600 + 30 * 60));
+    return dt.toString(with_time ? QStringLiteral("yyyy-MM-dd HH:mm")
+                                 : QStringLiteral("yyyy-MM-dd"))
+           + QStringLiteral(" IST");
+}
+
 [[nodiscard]] inline std::vector<double> ui_load_closes(const QString& path) {
     std::vector<double> out;
     std::ifstream f(path.toStdString());
@@ -828,19 +904,66 @@ private:
     // amount the model overfits.
     {
         SpotSpec ns = spec;
+        // THE STAMPS, RELOADED FROM THE SAME FILES THE CLOSES CAME FROM.
+        //
+        // P32-06. Reloaded rather than threaded through, because `closes` is
+        // assembled by two different paths above (a single all.csv, or twelve
+        // monthly files a year) and a stamp vector built by only one of them
+        // would be silently short. Same paths, same order, same length -- and
+        // forecast_next REFUSES a length mismatch rather than labelling the
+        // forecast with somebody else's bar.
+        std::vector<std::int64_t> stamps;
+        {
+            const UiStamped one =
+                ui_load_stamped(dataset_root + sub + QStringLiteral("all.csv"));
+            if (one.closes.size() >= 2000) {
+                stamps = one.stamps_ns;
+            } else {
+                for (int y = 2015; y <= 2026; ++y) {
+                    for (int m = 1; m <= 12; ++m) {
+                        const UiStamped part = ui_load_stamped(
+                            dataset_root + sub
+                            + QStringLiteral("%1-%2.csv")
+                                  .arg(y, 4, 10, QLatin1Char('0'))
+                                  .arg(m, 2, 10, QLatin1Char('0')));
+                        stamps.insert(stamps.end(), part.stamps_ns.begin(),
+                                      part.stamps_ns.end());
+                    }
+                }
+            }
+            if (stamps.size() != closes.size()) { stamps.clear(); }
+        }
+
         for (int which = 0; which < 2; ++which) {
             const bool leaf = (which == 1);
             const double rmse = leaf ? r->rmse_leaf : r->rmse_level;
-            const auto fc = forecast_next(closes, ns, rmse, leaf);
+            const auto fc = forecast_next(closes, ns, rmse, leaf, stamps);
             if (!fc) { continue; }
             if (which == 0) {
+                const bool intraday =
+                    fc->interval_ns > 0 && fc->interval_ns < 86'400'000'000'000LL;
                 s += QStringLiteral(
                     "\n――― THE NEXT BAR, AS A PRICE ―――\n\n"
-                    "  Last available close   %1\n"
-                    "  Fitted on              %2 rows\n\n"
+                    "  Last bar SEEN          %1  close %2\n"
+                    "  Forecast IS ABOUT      %3\n"
+                    "  Bar width              %4\n"
+                    "  Fitted on              %5 rows\n\n"
+                    "  Two stamps, not one. The first is an observation and\n"
+                    "  the second is a claim; collapsing them is how a number\n"
+                    "  computed at the close gets read as a number about the\n"
+                    "  close, which is the direction that looks like an edge.\n\n"
                     "     model        move      forecast          band"
                     "                 straddles last?\n")
-                         .arg(fc->last_price, 12, 'f', 2)
+                         .arg(fc->stamped()
+                                  ? ui_ist(fc->last_ts_ns, intraday)
+                                  : QStringLiteral("UNSTAMPED — the file's "
+                                                   "time column did not parse"))
+                         .arg(fc->last_price, 0, 'f', 2)
+                         .arg(fc->stamped() ? ui_ist(fc->for_ts_ns, intraday)
+                                            : QStringLiteral("—"))
+                         .arg(fc->interval_ns > 0
+                                  ? describe_ns(fc->interval_ns)
+                                  : QStringLiteral("—"))
                          .arg(fc->fitted_on);
             }
             s += QStringLiteral("   %1  %2 bps  %3  %4 .. %5   %6\n")
