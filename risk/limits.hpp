@@ -219,7 +219,7 @@ struct AccountState {
 };
 
 /// The order being proposed, plus the spec fields it must respect.
-struct OrderIntent {
+struct ProposedOrder {
     /// Signed quantity: positive to buy, negative to sell. UNIT: units.
     Qty qty{0};
     /// Limit price. UNIT: paise.
@@ -243,7 +243,7 @@ struct OrderIntent {
 /// `now` comes off the tick (rule 7). Nothing here reads a clock, so a replay
 /// produces the same decisions as the live path (rule 6).
 [[nodiscard]] ALTAIR_HOT inline Violation
-check_order(const OrderIntent& o, const AccountState& acct,
+check_order(const ProposedOrder& o, const AccountState& acct,
             const RiskLimits& lim, const KillSwitch& kill,
             Timestamp now) noexcept {
     // Checked first and short-circuits. There is no order it would approve,

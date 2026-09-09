@@ -88,7 +88,7 @@ struct PositionLine {
 };
 
 inline constexpr int kMaxExpiryBuckets = 8;
-inline constexpr int kMaxSectors = 24;
+inline constexpr int kMaxPortfolioSectors = 24;
 
 /// Book-level exposure. Every field is paise unless stated.
 struct PortfolioGreeks {
@@ -116,7 +116,7 @@ struct PortfolioGreeks {
     /// not a flat book, and this is what says so.
     std::int64_t vega_by_expiry[kMaxExpiryBuckets] = {};
     /// Absolute cash delta per sector, for concentration limits.
-    std::int64_t abs_delta_by_sector[kMaxSectors] = {};
+    std::int64_t abs_delta_by_sector[kMaxPortfolioSectors] = {};
 
     /// Gross and net notional. UNIT: paise.
     std::int64_t gross_notional = 0;
@@ -218,13 +218,13 @@ aggregate(const PositionLine* lines, std::size_t n) noexcept {
     double d = 0, g = 0, v = 0, t = 0, r = 0, vn = 0, vg = 0, ch = 0;
     double gross = 0, net = 0;
     double vega_bucket[kMaxExpiryBuckets] = {};
-    double sector[kMaxSectors] = {};
+    double sector[kMaxPortfolioSectors] = {};
     PortfolioGreeks out{};
 
     for (std::size_t i = 0; i < n; ++i) {
         const PositionLine& p = lines[i];
         if (p.expiry_bucket >= kMaxExpiryBuckets
-            || p.sector_id >= kMaxSectors) {
+            || p.sector_id >= kMaxPortfolioSectors) {
             return std::unexpected(PortfolioError::TooManyBuckets);
         }
         const auto e = line_exposure(p);
@@ -261,7 +261,7 @@ aggregate(const PositionLine* lines, std::size_t n) noexcept {
         if (!p) { return std::unexpected(p.error()); }
         out.vega_by_expiry[i] = *p;
     }
-    for (int i = 0; i < kMaxSectors; ++i) {
+    for (int i = 0; i < kMaxPortfolioSectors; ++i) {
         const auto p = detail::to_paise(sector[i]);
         if (!p) { return std::unexpected(p.error()); }
         out.abs_delta_by_sector[i] = *p;
@@ -315,7 +315,7 @@ struct SectorPeak {
 [[nodiscard]] inline SectorPeak
 largest_sector(const PortfolioGreeks& g) noexcept {
     SectorPeak peak{};
-    for (int i = 1; i < kMaxSectors; ++i) {
+    for (int i = 1; i < kMaxPortfolioSectors; ++i) {
         if (g.abs_delta_by_sector[i] > peak.exposure) {
             peak.exposure = g.abs_delta_by_sector[i];
             peak.sector = i;

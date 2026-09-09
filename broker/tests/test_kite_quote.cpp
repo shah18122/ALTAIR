@@ -10,7 +10,7 @@
 //   1. A ZEROED DEPTH SLOT IS NOT LIQUIDITY. Kite always sends five levels;
 //      a thin book has fewer real ones.
 //   2. ABSENT IS NOT EMPTY. A symbol Kite did not return must not come back as
-//      a Quote with a bid of zero.
+//      a KiteQuote with a bid of zero.
 //   3. ROUNDING, NOT TRUNCATION. Truncating rupees to paise biases the SPREAD.
 
 #include <broker/kite_quote.hpp>
@@ -163,7 +163,7 @@ int main() {
     {
         const auto q = parse_quote(kBody, "NSE:RELIANCE");
         check(!q && q.error() == QuoteError::NotPresent,
-              "a symbol Kite did not return is NotPresent, not a Quote full "
+              "a symbol Kite did not return is NotPresent, not a KiteQuote full "
               "of zeros -- otherwise a typo in a watchlist row shows a bid of "
               "0.00, which is a price");
     }

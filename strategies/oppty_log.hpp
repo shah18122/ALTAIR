@@ -94,7 +94,7 @@ enum class OpportunityKind : std::uint8_t {
 inline constexpr std::size_t kOpportunityKinds = 8;
 
 /// Why this observation is or is not tradable. The whole point of the log.
-enum class Verdict : std::uint8_t {
+enum class OpportunityVerdict : std::uint8_t {
     Unknown = 0,
     /// Post-cost edge is positive and the trade can be placed.
     Actionable,
@@ -111,15 +111,15 @@ enum class Verdict : std::uint8_t {
 };
 inline constexpr std::size_t kVerdicts = 7;
 
-[[nodiscard]] inline const char* verdict_name(Verdict v) noexcept {
+[[nodiscard]] inline const char* verdict_name(OpportunityVerdict v) noexcept {
     switch (v) {
-        case Verdict::Unknown:         return "Unknown";
-        case Verdict::Actionable:      return "Actionable";
-        case Verdict::CostExceedsEdge: return "CostExceedsEdge";
-        case Verdict::Unreachable:     return "Unreachable";
-        case Verdict::NoMispricing:    return "NoMispricing";
-        case Verdict::StaleQuotes:     return "StaleQuotes";
-        case Verdict::NoQuote:         return "NoQuote";
+        case OpportunityVerdict::Unknown:         return "Unknown";
+        case OpportunityVerdict::Actionable:      return "Actionable";
+        case OpportunityVerdict::CostExceedsEdge: return "CostExceedsEdge";
+        case OpportunityVerdict::Unreachable:     return "Unreachable";
+        case OpportunityVerdict::NoMispricing:    return "NoMispricing";
+        case OpportunityVerdict::StaleQuotes:     return "StaleQuotes";
+        case OpportunityVerdict::NoQuote:         return "NoQuote";
     }
     return "?";
 }
@@ -142,7 +142,7 @@ inline constexpr std::size_t kVerdicts = 7;
 struct Observation {
     Timestamp ts{};
     OpportunityKind kind = OpportunityKind::Unknown;
-    Verdict verdict = Verdict::Unknown;
+    OpportunityVerdict verdict = OpportunityVerdict::Unknown;
     Executability executability = Executability::Unknown;
     /// Instrument identity, from the spec store. Opaque here on purpose: the
     /// log does not need to know what a symbol means.
@@ -159,19 +159,19 @@ struct Observation {
 /// "we could not have done it" is a more informative answer than "it would not
 /// have paid", and reporting the second when the first is true sends you to
 /// look at the cost schedule for a problem that lives in the account.
-[[nodiscard]] inline Verdict classify(Notional gross, Notional cost,
+[[nodiscard]] inline OpportunityVerdict classify(Notional gross, Notional cost,
                                       Executability ex,
                                       std::int64_t noise_floor) noexcept {
-    if (ex == Executability::NoQuote)          { return Verdict::NoQuote; }
-    if (ex == Executability::QuotesTooFarApart){ return Verdict::StaleQuotes; }
+    if (ex == Executability::NoQuote)          { return OpportunityVerdict::NoQuote; }
+    if (ex == Executability::QuotesTooFarApart){ return OpportunityVerdict::StaleQuotes; }
     // Below the floor is NOT a mispricing. The floor is the caller's, in
     // paise, and it has no default: what counts as "no mispricing" depends on
     // the tick size and the instrument, which are spec-store facts (rule 1).
     const std::int64_t g = gross.raw() < 0 ? -gross.raw() : gross.raw();
-    if (g <= noise_floor)                      { return Verdict::NoMispricing; }
-    if (ex != Executability::Executable)       { return Verdict::Unreachable; }
-    if (gross.raw() - cost.raw() <= 0)         { return Verdict::CostExceedsEdge; }
-    return Verdict::Actionable;
+    if (g <= noise_floor)                      { return OpportunityVerdict::NoMispricing; }
+    if (ex != Executability::Executable)       { return OpportunityVerdict::Unreachable; }
+    if (gross.raw() - cost.raw() <= 0)         { return OpportunityVerdict::CostExceedsEdge; }
+    return OpportunityVerdict::Actionable;
 }
 
 /// What the largest of `n` independent noise observations looks like.
@@ -226,7 +226,7 @@ struct SessionReport {
         if (!(e > 0.0)) { return 0.0; }
         return static_cast<double>(best_net.raw()) / e;
     }
-    [[nodiscard]] std::uint64_t count(Verdict v) const noexcept {
+    [[nodiscard]] std::uint64_t count(OpportunityVerdict v) const noexcept {
         return by_verdict[static_cast<std::size_t>(v)];
     }
     [[nodiscard]] std::uint64_t count(OpportunityKind k) const noexcept {
@@ -251,7 +251,7 @@ public:
         ++r_.observed;
         ++r_.by_verdict[static_cast<std::size_t>(o.verdict)];
         ++r_.by_kind[static_cast<std::size_t>(o.kind)];
-        if (o.verdict == Verdict::Actionable) {
+        if (o.verdict == OpportunityVerdict::Actionable) {
             ++r_.actionable_by_kind[static_cast<std::size_t>(o.kind)];
         }
 

@@ -338,7 +338,7 @@ void degenerate_input_is_refused()
           && aggregate(&bad, 1).error() == PortfolioError::TooManyBuckets,
           "an out-of-range expiry bucket is refused rather than wrapping into"
           " another bucket's number");
-    bad = p; bad.sector_id = kMaxSectors;
+    bad = p; bad.sector_id = kMaxPortfolioSectors;
     check(!aggregate(&bad, 1), "and so is an out-of-range sector");
 
     check(!margin_utilisation(Notional{100}, Notional{0}),

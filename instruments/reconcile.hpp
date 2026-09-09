@@ -28,7 +28,7 @@ namespace altair {
 inline constexpr std::size_t kSpecSourceCount = 5;   // SpecSource has 5 values
 
 /// Why a contract was accepted or blocked. D3, D6, D7.
-enum class Verdict : std::uint8_t {
+enum class ReconcileVerdict : std::uint8_t {
     Agreed,          // every source present agreed on all three compared fields
     SingleSource,    // only one source described it — accepted, uncorroborated
     MissingPrimary,  // a primary WAS loaded but does not carry this — BLOCK
@@ -54,7 +54,7 @@ enum class ReconcileError : std::uint8_t {
 /// re-reading the source files — which at 08:20 you will not have time to do.
 struct ContractVerdict {
     ContractSpec  merged;        // the spec to add to the store
-    Verdict       verdict;
+    ReconcileVerdict       verdict;
     ConflictField field;         // None unless verdict == ValueConflict
     std::uint8_t  present_mask;  // bit i set == SpecSource(i) carried it
     std::uint8_t  conflict_mask; // bit i set == source i differed from the winner
@@ -63,9 +63,9 @@ struct ContractVerdict {
     std::int64_t  values[kSpecSourceCount];
 };
 
-[[nodiscard]] constexpr bool verdict_blocks(Verdict v) noexcept {
-    return v == Verdict::MissingPrimary || v == Verdict::NoBroker
-        || v == Verdict::ValueConflict;
+[[nodiscard]] constexpr bool verdict_blocks(ReconcileVerdict v) noexcept {
+    return v == ReconcileVerdict::MissingPrimary || v == ReconcileVerdict::NoBroker
+        || v == ReconcileVerdict::ValueConflict;
 }
 
 struct ReconcileReport {
@@ -305,11 +305,11 @@ public:
             ContractVerdict& v = verdicts_[i];
             decide(entries_[i], r.primary_source_seen, v);
             switch (v.verdict) {
-                case Verdict::Agreed:         ++r.agreed;          break;
-                case Verdict::SingleSource:   ++r.single_source;   break;
-                case Verdict::MissingPrimary: ++r.missing_primary; break;
-                case Verdict::NoBroker:       ++r.no_broker;       break;
-                case Verdict::ValueConflict:  ++r.conflicts;       break;
+                case ReconcileVerdict::Agreed:         ++r.agreed;          break;
+                case ReconcileVerdict::SingleSource:   ++r.single_source;   break;
+                case ReconcileVerdict::MissingPrimary: ++r.missing_primary; break;
+                case ReconcileVerdict::NoBroker:       ++r.no_broker;       break;
+                case ReconcileVerdict::ValueConflict:  ++r.conflicts;       break;
             }
         }
         r.blocked = r.missing_primary + r.no_broker + r.conflicts;
@@ -319,7 +319,7 @@ public:
 
     [[nodiscard]] std::size_t size() const noexcept { return count_; }
 
-    /// Verdict i, in insertion order. UNIT: none.
+    /// ReconcileVerdict i, in insertion order. UNIT: none.
     ///
     /// Returns NotReconciled before the first reconcile(), and again after any
     /// add() that followed one. This is not pedantry: a default-constructed
@@ -423,7 +423,7 @@ private:
                 }
             }
             if (mask != 0) {
-                v.verdict = Verdict::ValueConflict;
+                v.verdict = ReconcileVerdict::ValueConflict;
                 v.field = names[f];
                 v.conflict_mask = mask;
                 for (std::size_t s = 0; s < kSpecSourceCount; ++s) {
@@ -441,7 +441,7 @@ private:
             }
         }
         if (primary_seen && !has_primary) {
-            v.verdict = Verdict::MissingPrimary;
+            v.verdict = ReconcileVerdict::MissingPrimary;
             return;
         }
 
@@ -449,12 +449,12 @@ private:
             (e.present_mask & (1u << static_cast<std::size_t>(SpecSource::KiteDump))) != 0
             || (e.present_mask & (1u << static_cast<std::size_t>(SpecSource::XtsMaster))) != 0;
         if (!has_broker) {
-            v.verdict = Verdict::NoBroker;
+            v.verdict = ReconcileVerdict::NoBroker;
             return;
         }
 
-        v.verdict = (popcount8(e.present_mask) == 1) ? Verdict::SingleSource
-                                                     : Verdict::Agreed;
+        v.verdict = (popcount8(e.present_mask) == 1) ? ReconcileVerdict::SingleSource
+                                                     : ReconcileVerdict::Agreed;
     }
 
     /// Requirements 6, 7, 8.

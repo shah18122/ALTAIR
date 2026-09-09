@@ -1,4 +1,4 @@
-// risk/var.hpp -- Value at Risk three ways, and Expected Shortfall.
+// risk/var.hpp -- Value at Risk three ways, and Expected SlippageShortfall.
 //
 // P15-01 / P15-02.
 //
@@ -30,7 +30,7 @@
 //
 // meaning the model says diversification INCREASED risk. That is not a
 // numerical artefact, it is a property of quantiles, and it is why Basel moved
-// the trading book from VaR to Expected Shortfall after 2008. A concrete
+// the trading book from VaR to Expected SlippageShortfall after 2008. A concrete
 // counterexample is an acceptance test in this card rather than a footnote,
 // because the failure is easy to state and almost never demonstrated.
 //

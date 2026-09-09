@@ -286,7 +286,7 @@ void three_way_agreement_on_real_values()
     check(rep.blocked == 0, "so nothing is blocked");
 
     const ContractVerdict* v = *g_rec.verdict_at(0);
-    check(v->verdict == Verdict::Agreed, "verdict Agreed");
+    check(v->verdict == ReconcileVerdict::Agreed, "verdict Agreed");
     check(v->merged.lot_size == LotSize{65},
           "merged lot size 65 -- the same number in the NSE bhavcopy, "
           "fo_mktlots and the Kite dump");

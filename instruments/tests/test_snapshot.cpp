@@ -265,7 +265,7 @@ void withheld_verdicts_block_through_p1_06()
     for (std::size_t i = 0; i < g_rec.size(); ++i) {
         const ContractVerdict* cv = *g_rec.verdict_at(i);
         if (std::strncmp(cv->merged.underlying, "NIFTY", 6) == 0) {
-            check(cv->verdict == Verdict::MissingPrimary,
+            check(cv->verdict == ReconcileVerdict::MissingPrimary,
                   "NIFTY, whose primary was withheld, is the blocked one");
             check(verdict_blocks(cv->verdict),
                   "through P1-06's EXISTING machinery — no second blocking path");

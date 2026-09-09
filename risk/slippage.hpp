@@ -104,7 +104,7 @@ struct OrderOutcome {
 /// large delay cost is a latency problem, a large impact cost is a sizing
 /// problem, and a large opportunity cost is a limit-price problem. A single
 /// blended "slippage" number cannot tell anyone which of the three to fix.
-struct Shortfall {
+struct SlippageShortfall {
     /// decision -> arrival, on the whole order.
     double delay_bps = 0.0;
     /// arrival -> fill, on the filled quantity only.
@@ -128,7 +128,7 @@ struct Shortfall {
 /// Every term is weighted by the quantity it actually applies to, so the three
 /// add to the total without double counting: delay applies to the whole order,
 /// impact only to what filled, opportunity only to what did not.
-[[nodiscard]] inline std::expected<Shortfall, SlippageError>
+[[nodiscard]] inline std::expected<SlippageShortfall, SlippageError>
 implementation_shortfall(const OrderOutcome& o) noexcept {
     const double dp = static_cast<double>(o.decision_price.raw());
     const double ap = static_cast<double>(o.arrival_price.raw());
@@ -145,7 +145,7 @@ implementation_shortfall(const OrderOutcome& o) noexcept {
     const double sgn = adverse_sign(o.side);
     const double to_bps = 10'000.0 / dp;
 
-    Shortfall s{};
+    SlippageShortfall s{};
     s.unfilled_ratio = (q - f) / q;
     s.delay_bps = sgn * (ap - dp) * to_bps;
     // Impact and opportunity are each scaled by the share of the order they

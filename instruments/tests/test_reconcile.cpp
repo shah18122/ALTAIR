@@ -101,7 +101,7 @@ void three_sources_agree()
     check(r.primary_source_seen, "a primary was loaded");
 
     const ContractVerdict* v = only(g_rec);
-    check(v != nullptr && v->verdict == Verdict::Agreed, "verdict Agreed");
+    check(v != nullptr && v->verdict == ReconcileVerdict::Agreed, "verdict Agreed");
     check(v != nullptr && v->present_mask
               == ((1u << 0) | (1u << 2) | (1u << 3)), "three presence bits");
     check(v != nullptr && !verdict_blocks(v->verdict), "does not block");
@@ -130,7 +130,7 @@ void lot_size_conflict_blocks()
     check(r.agreed == 0, "nothing agreed");
 
     const ContractVerdict* v = only(g_rec);
-    check(v != nullptr && v->verdict == Verdict::ValueConflict, "ValueConflict");
+    check(v != nullptr && v->verdict == ReconcileVerdict::ValueConflict, "ValueConflict");
     check(v != nullptr && v->field == ConflictField::LotSize, "field is LotSize");
     check(v != nullptr && verdict_blocks(v->verdict), "verdict_blocks true");
     check(v != nullptr
@@ -210,7 +210,7 @@ void missing_primary_only_when_a_primary_was_loaded()
     for (std::size_t i = 0; i < g_rec.size(); ++i) {
         const ContractVerdict* vv = *g_rec.verdict_at(i);
         if (std::strncmp(vv->merged.underlying, "BANKNIFTY", 9) == 0) {
-            check(vv->verdict == Verdict::MissingPrimary,
+            check(vv->verdict == ReconcileVerdict::MissingPrimary,
                   "BANKNIFTY is the one missing its primary");
         }
     }
@@ -233,7 +233,7 @@ void no_broker_blocks()
     for (std::size_t i = 0; i < g_rec.size(); ++i) {
         const ContractVerdict* vv = *g_rec.verdict_at(i);
         if (std::strncmp(vv->merged.underlying, "FINNIFTY", 8) == 0) {
-            check(vv->verdict == Verdict::NoBroker, "FINNIFTY is the unroutable one");
+            check(vv->verdict == ReconcileVerdict::NoBroker, "FINNIFTY is the unroutable one");
             check(vv->merged.token[0] == 0 && vv->merged.token[1] == 0,
                   "and it has no broker token at all");
         }
@@ -362,7 +362,7 @@ void apply_to_store_blocks()
 
 // ── 9 ────────────────────────────────────────────────────────────────────
 // The guard that stops a forgotten reconcile() from reading as an all-clear.
-// Verdict::Agreed is ordinal 0, so a default-constructed ContractVerdict claims
+// ReconcileVerdict::Agreed is ordinal 0, so a default-constructed ContractVerdict claims
 // agreement. Without the dirty flag this whole function passes.
 void unreconciled_never_reads_as_agreed()
 {
@@ -380,7 +380,7 @@ void unreconciled_never_reads_as_agreed()
     (void)g_rec.reconcile();
     check(g_rec.reconciled(), "after reconcile() it is clean");
     check(g_rec.verdict_at(0).has_value(), "and the verdict is readable");
-    check((*g_rec.verdict_at(0))->verdict == Verdict::ValueConflict,
+    check((*g_rec.verdict_at(0))->verdict == ReconcileVerdict::ValueConflict,
           "and it is the conflict, not the default Agreed");
 
     // An add AFTER a reconcile must invalidate the answer, not serve a stale one.

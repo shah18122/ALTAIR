@@ -45,9 +45,9 @@ constexpr std::int64_t kMs = 1'000'000;
 const Timestamp kNow{1'000'000 * kMs};
 
 // A clean NIFTY order: 2 lots of 75 at Rs 24,080, on a Rs 0.05 tick.
-OrderIntent good_order()
+ProposedOrder good_order()
 {
-    OrderIntent o{};
+    ProposedOrder o{};
     o.qty = Qty{150};
     o.limit_price = Price{2'408'000};
     o.quote_ts = kNow - duration::millis(50);
@@ -83,7 +83,7 @@ void a_clean_order_passes_and_a_broken_one_reports_everything()
 
     // One order that is wrong four ways at once. A fail-fast checker would
     // report one of them and leave three to be discovered one build at a time.
-    OrderIntent bad = good_order();
+    ProposedOrder bad = good_order();
     bad.qty = Qty{160};                       // not a whole 75-lot
     bad.limit_price = Price{2'408'003};       // not on a 5-paise tick
     bad.quote_ts = kNow - duration::seconds(3);   // stale
@@ -110,21 +110,21 @@ void a_missing_spec_blocks_but_an_absent_band_does_not()
     KillSwitch k;
     AccountState a{};
 
-    OrderIntent no_lot = good_order();
+    ProposedOrder no_lot = good_order();
     no_lot.lot_size = LotSize{0};
     check(has(check_order(no_lot, a, limits(), k, kNow),
               Violation::SpecUnavailable),
           "a zero LOT SIZE blocks -- it means the spec store was read before"
           " it was loaded, not that any quantity is acceptable");
 
-    OrderIntent no_tick = good_order();
+    ProposedOrder no_tick = good_order();
     no_tick.tick_size = Price{0};
     check(has(check_order(no_tick, a, limits(), k, kNow),
               Violation::SpecUnavailable),
           "and so does a zero TICK SIZE");
 
     // A zero band is the OPPOSITE: the exchange genuinely publishes none.
-    OrderIntent no_band = good_order();
+    ProposedOrder no_band = good_order();
     no_band.band_lower = Price{0};
     no_band.band_upper = Price{0};
     const Violation v = check_order(no_band, a, limits(), k, kNow);
@@ -136,7 +136,7 @@ void a_missing_spec_blocks_but_an_absent_band_does_not()
           "specifically, no band violation is raised against an absent band");
 
     // A one-sided band is honoured on the side that exists.
-    OrderIntent upper_only = good_order();
+    ProposedOrder upper_only = good_order();
     upper_only.band_lower = Price{0};
     upper_only.band_upper = Price{2'400'000};
     check(has(check_order(upper_only, a, limits(), k, kNow),
@@ -201,7 +201,7 @@ void caps_are_checked_against_the_resulting_position()
 
     AccountState a{};
     a.position = Qty{225};                    // 3 lots already on
-    OrderIntent o = good_order();
+    ProposedOrder o = good_order();
     o.qty = Qty{150};                         // 2 more -> 375, over the 300 cap
 
     const Violation v = check_order(o, a, l, k, kNow);
@@ -298,19 +298,19 @@ void staleness_rejects_both_old_and_future_quotes()
     AccountState a{};
     RiskLimits l = limits();                       // 500 ms budget
 
-    OrderIntent fresh = good_order();
+    ProposedOrder fresh = good_order();
     fresh.quote_ts = kNow - duration::millis(499);
     check(!has(check_order(fresh, a, l, k, kNow), Violation::StaleQuote),
           "a quote 499 ms old is inside a 500 ms budget");
 
-    OrderIntent old = good_order();
+    ProposedOrder old = good_order();
     old.quote_ts = kNow - duration::millis(501);
     check(has(check_order(old, a, l, k, kNow), Violation::StaleQuote),
           "and one 501 ms old is not");
 
     // A quote from the FUTURE is as broken as one too old, and accepting it
     // would be look-ahead (rule 7).
-    OrderIntent future = good_order();
+    ProposedOrder future = good_order();
     future.quote_ts = kNow + duration::millis(10);
     check(has(check_order(future, a, l, k, kNow), Violation::StaleQuote),
           "a quote stamped in the FUTURE is refused too -- accepting it would"
@@ -334,7 +334,7 @@ void portfolio_and_loss_limits_bind()
 
     AccountState a{};
     a.gross_notional = Notional{19'900'000'000};   // just under the 200 cr cap
-    OrderIntent o = good_order();                  // adds 36.12 cr
+    ProposedOrder o = good_order();                  // adds 36.12 cr
     check(has(check_order(o, a, l, k, kNow), Violation::MaxGrossNotional),
           "an order that would push gross notional past the portfolio cap is"
           " refused on the resulting total");

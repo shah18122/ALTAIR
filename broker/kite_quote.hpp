@@ -28,7 +28,7 @@
 // zero-filled, and `feed/tick.hpp` D6 already says an unpopulated level is
 // zeroed rather than absent -- P11Q-03's depth ladder was built around exactly
 // this hazard, because drawing a zeroed slot as a price at zero shows infinite
-// liquidity at the best possible price. `DepthLevel::populated` carries the
+// liquidity at the best possible price. `KiteDepthLevel::populated` carries the
 // distinction so the caller cannot lose it.
 //
 // PRICES ARRIVE AS DOUBLES AND LEAVE AS PAISE.
@@ -72,7 +72,7 @@ enum class QuoteError : std::uint8_t {
 }
 
 /// One depth level. `populated` is the field that matters.
-struct DepthLevel {
+struct KiteDepthLevel {
     Price price{0};
     std::int64_t quantity = 0;
     std::int64_t orders = 0;
@@ -82,7 +82,7 @@ struct DepthLevel {
     bool populated = false;
 };
 
-struct Quote {
+struct KiteQuote {
     std::uint32_t instrument_token = 0;
     Price last_price{0};
     std::int64_t last_quantity = 0;
@@ -100,8 +100,8 @@ struct Quote {
     std::int64_t oi = 0;
     bool has_oi = false;
     Price lower_circuit{0}, upper_circuit{0};
-    DepthLevel buy[5]{};
-    DepthLevel sell[5]{};
+    KiteDepthLevel buy[5]{};
+    KiteDepthLevel sell[5]{};
     /// Exchange timestamp, as sent. Kept as the raw string because the two
     /// Kite time formats have different semantics (P0's reference note) and
     /// re-parsing it here would be a third place that has to know.
@@ -178,7 +178,7 @@ namespace detail {
 ///
 /// `key` is the `exchange:tradingsymbol` Kite echoes back, e.g.
 /// "NSE:NIFTY 50" or "NFO:NIFTY26SEPFUT".
-[[nodiscard]] inline std::expected<Quote, QuoteError>
+[[nodiscard]] inline std::expected<KiteQuote, QuoteError>
 parse_quote(std::string_view body, std::string_view key) {
     if (body.find("\"status\"") == std::string_view::npos) {
         return std::unexpected(QuoteError::Malformed);
@@ -191,7 +191,7 @@ parse_quote(std::string_view body, std::string_view key) {
     const auto at = body.find(quoted);
     if (at == std::string_view::npos) {
         // ABSENT, not empty. A symbol Kite did not return is a symbol we know
-        // nothing about, and returning a zero-filled Quote would put a bid of
+        // nothing about, and returning a zero-filled KiteQuote would put a bid of
         // 0.00 on a watchlist row.
         return std::unexpected(QuoteError::NotPresent);
     }
@@ -204,7 +204,7 @@ parse_quote(std::string_view body, std::string_view key) {
     const std::string_view obj =
         body.substr(at, (end == std::string_view::npos ? body.size() : end) - at);
 
-    Quote q;
+    KiteQuote q;
     double v = 0.0;
     if (detail::find_number(obj, 0, "instrument_token", v)) {
         q.instrument_token = static_cast<std::uint32_t>(v);
@@ -249,7 +249,7 @@ parse_quote(std::string_view body, std::string_view key) {
     }
 
     // ---- depth, and the zeroed tail -----------------------------------
-    auto side = [&](std::string_view name, DepthLevel* out) {
+    auto side = [&](std::string_view name, KiteDepthLevel* out) {
         const auto s = obj.find(std::string("\"") + std::string(name) + "\":[");
         if (s == std::string_view::npos) { return; }
         std::size_t cur = s;

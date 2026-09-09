@@ -116,7 +116,7 @@ std::string esc(std::string_view s)
 }
 
 void write_depth(std::ofstream& o, const char* name,
-                 const altair::kite::DepthLevel (&lv)[5])
+                 const altair::kite::KiteDepthLevel (&lv)[5])
 {
     o << "      \"" << name << "\": [";
     bool first = true;
@@ -218,7 +218,7 @@ int main(int argc, char** argv)
     // Parse each key SEPARATELY. One malformed instrument must not cost the
     // others: the watchlist can show four rows and one refusal, and that is
     // strictly better than five blanks.
-    struct Got { std::string key; kite::Quote q; bool ok = false;
+    struct Got { std::string key; kite::KiteQuote q; bool ok = false;
                  const char* err = ""; };
     std::vector<Got> got;
     std::size_t ok_count = 0;
@@ -260,7 +260,7 @@ int main(int argc, char** argv)
                 o << "null";
                 continue;
             }
-            const kite::Quote& q = g.q;
+            const kite::KiteQuote& q = g.q;
             o << "{\n      \"token\": " << q.instrument_token
               << ",\n      \"last_paise\": " << q.last_price.raw()
               << ",\n      \"volume\": " << q.volume

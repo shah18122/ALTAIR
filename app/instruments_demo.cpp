@@ -67,14 +67,14 @@ constexpr Timestamp ist_date(std::int64_t y, unsigned m, unsigned d) noexcept
                      - kIstOffset.raw()};
 }
 
-const char* verdict_name(Verdict v)
+const char* verdict_name(ReconcileVerdict v)
 {
     switch (v) {
-        case Verdict::Agreed:         return "Agreed";
-        case Verdict::SingleSource:   return "SingleSource";
-        case Verdict::MissingPrimary: return "MissingPrimary";
-        case Verdict::NoBroker:       return "NoBroker";
-        case Verdict::ValueConflict:  return "ValueConflict";
+        case ReconcileVerdict::Agreed:         return "Agreed";
+        case ReconcileVerdict::SingleSource:   return "SingleSource";
+        case ReconcileVerdict::MissingPrimary: return "MissingPrimary";
+        case ReconcileVerdict::NoBroker:       return "NoBroker";
+        case ReconcileVerdict::ValueConflict:  return "ValueConflict";
     }
     return "?";
 }
@@ -299,7 +299,7 @@ void stage_reconcile_real(const char* path, Timestamp snap)
         const auto v = g_rec.verdict_at(i);
         if (!v) { continue; }
         const ContractVerdict* cv = *v;
-        if (cv->verdict != Verdict::Agreed) { continue; }
+        if (cv->verdict != ReconcileVerdict::Agreed) { continue; }
         std::printf("  %-26s %-16s %-9lld %lld\n", cv->merged.symbol,
                     verdict_name(cv->verdict),
                     static_cast<long long>(cv->merged.lot_size.raw()),
@@ -367,17 +367,17 @@ void stage_reconcile(Timestamp snap)
         }
         const ContractVerdict* cv = *v;
         const char* note = "";
-        if (cv->verdict == Verdict::ValueConflict) {
+        if (cv->verdict == ReconcileVerdict::ValueConflict) {
             note = "<- BLOCKED, sources disagree";
-        } else if (cv->verdict == Verdict::MissingPrimary) {
+        } else if (cv->verdict == ReconcileVerdict::MissingPrimary) {
             note = "<- BLOCKED, no exchange row";
-        } else if (cv->verdict == Verdict::SingleSource) {
+        } else if (cv->verdict == ReconcileVerdict::SingleSource) {
             note = "uncorroborated";
         }
         std::printf("  %-26s %-16s %-9lld %s\n", cv->merged.symbol,
                     verdict_name(cv->verdict),
                     static_cast<long long>(cv->merged.lot_size.raw()), note);
-        if (cv->verdict == Verdict::ValueConflict) {
+        if (cv->verdict == ReconcileVerdict::ValueConflict) {
             std::printf("  %-26s   Kite said %lld, the exchange said %lld -- "
                         "neither is guessed at\n", "",
                         static_cast<long long>(

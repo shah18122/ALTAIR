@@ -163,6 +163,18 @@ if(ALTAIR_BUILD_BENCH)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
+# One flat namespace, one declaration per name. P33-02.
+#
+# `namespace altair` holds everything, so two directories independently
+# choosing the same obvious name is an ODR violation that only surfaces when
+# somebody includes both headers -- which in this tree has meant months later,
+# as a wall of errors pointing at the wrong file. Four times now. This fails
+# CONFIGURE instead.
+# ─────────────────────────────────────────────────────────────────────────────
+include(cmake/NamespaceAudit.cmake)
+altair_audit_namespace()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Subdirectories — uncommented as each phase's cards land.
 # The order below mirrors ROADMAP.md §12.
 # ─────────────────────────────────────────────────────────────────────────────

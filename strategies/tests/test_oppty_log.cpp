@@ -114,22 +114,22 @@ void four_reasons_for_no_opportunities_look_identical_in_a_winners_log()
                 " once; look at the FEED\n"
                 "      Actionable        %6llu\n",
                 static_cast<unsigned long long>(r.observed),
-                static_cast<unsigned long long>(r.count(Verdict::NoMispricing)),
-                static_cast<unsigned long long>(r.count(Verdict::CostExceedsEdge)),
-                static_cast<unsigned long long>(r.count(Verdict::Unreachable)),
-                static_cast<unsigned long long>(r.count(Verdict::StaleQuotes)),
-                static_cast<unsigned long long>(r.count(Verdict::Actionable)));
+                static_cast<unsigned long long>(r.count(OpportunityVerdict::NoMispricing)),
+                static_cast<unsigned long long>(r.count(OpportunityVerdict::CostExceedsEdge)),
+                static_cast<unsigned long long>(r.count(OpportunityVerdict::Unreachable)),
+                static_cast<unsigned long long>(r.count(OpportunityVerdict::StaleQuotes)),
+                static_cast<unsigned long long>(r.count(OpportunityVerdict::Actionable)));
 
-    check(r.count(Verdict::Actionable) == 0,
+    check(r.count(OpportunityVerdict::Actionable) == 0,
           "not one opportunity was actionable all session");
     check(r.observed == 830,
           "and yet 830 observations were recorded -- a log of winners would"
           " hold zero rows and the whole session would read as 'nothing"
           " happened'");
-    check(r.count(Verdict::NoMispricing) == 400
-          && r.count(Verdict::CostExceedsEdge) == 250
-          && r.count(Verdict::Unreachable) == 120
-          && r.count(Verdict::StaleQuotes) == 60,
+    check(r.count(OpportunityVerdict::NoMispricing) == 400
+          && r.count(OpportunityVerdict::CostExceedsEdge) == 250
+          && r.count(OpportunityVerdict::Unreachable) == 120
+          && r.count(OpportunityVerdict::StaleQuotes) == 60,
           "the four reasons are separated exactly, and they point at four"
           " different places: the market, the cost schedule, the account, and"
           " the feed");
@@ -138,7 +138,7 @@ void four_reasons_for_no_opportunities_look_identical_in_a_winners_log()
                 " the first of them, which is the only one\n       of the four"
                 " that means give up.\n");
 
-    check(r.count(Verdict::Unreachable) > 0,
+    check(r.count(OpportunityVerdict::Unreachable) > 0,
           "the Unreachable bucket in particular is not an error state -- 120"
           " times the edge cleared the bill and P5-05's short-cash constraint"
           " was what stopped it, which is a fact about the account and not"
@@ -147,7 +147,7 @@ void four_reasons_for_no_opportunities_look_identical_in_a_winners_log()
     // Ordering: unreachable is decided BEFORE the cost comparison.
     const Observation u = obs(OpportunityKind::CashFutures, 90'000, 40'000,
                               Executability::ShortCashUnavailable, floor_);
-    check(u.verdict == Verdict::Unreachable && u.net.raw() > 0,
+    check(u.verdict == OpportunityVerdict::Unreachable && u.net.raw() > 0,
           "an unreachable observation with a POSITIVE net is filed as"
           " Unreachable, not as Actionable -- and not as CostExceedsEdge"
           " either, which would send someone to the cost schedule to fix a"
@@ -179,7 +179,7 @@ void gross_lives_in_the_log_and_nowhere_on_a_decision_type()
     // A zeroed row cannot pass for anything.
     Observation zeroed{};
     check(zeroed.kind == OpportunityKind::Unknown
-          && zeroed.verdict == Verdict::Unknown
+          && zeroed.verdict == OpportunityVerdict::Unknown
           && zeroed.executability == Executability::Unknown,
           "and a zeroed observation is Unknown in all three enums, so an"
           " uninitialised row cannot be counted as a cash-futures observation"
@@ -236,7 +236,7 @@ void a_ring_that_overwrites_samples_the_end_of_the_session()
           "and the AGGREGATES cover every observation regardless of what was"
           " retained -- the report is the session, the rows are a draw from"
           " it");
-    check(r.count(Verdict::Actionable) == kSession / 2,
+    check(r.count(OpportunityVerdict::Actionable) == kSession / 2,
           "so the actionable count is exact at 10,000, not estimated from 200"
           " sampled rows");
     check(log.row_count() == kCap,

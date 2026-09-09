@@ -992,7 +992,7 @@ private:
 
         auto* var_page = new ComputePage(
             QStringLiteral("RISK — P15"),
-            QStringLiteral("Compute VaR and Expected Shortfall three ways"),
+            QStringLiteral("Compute VaR and Expected SlippageShortfall three ways"),
             this);
         connect(var_page->button(), &QPushButton::clicked, this,
                 [var_page, ds] {

@@ -4,7 +4,7 @@
 //
 //   1. VaR IS NOT SUBADDITIVE. A constructed counterexample where the model
 //      says diversification increased risk. This is why Basel moved the
-//      trading book to Expected Shortfall, and it is almost never demonstrated
+//      trading book to Expected SlippageShortfall, and it is almost never demonstrated
 //      because it is easier to state than to build.
 //
 //   2. ON REAL NIFTY, THE GAUSSIAN NUMBER IS TOO SMALL AT THE TAIL. P11Q-10
@@ -59,7 +59,7 @@ int main() {
     using altair::monte_carlo_var;
     using altair::parametric_var;
 
-    std::printf("P15-01/02 Value at Risk and Expected Shortfall\n");
+    std::printf("P15-01/02 Value at Risk and Expected SlippageShortfall\n");
 
     // ---- 1. VaR IS NOT SUBADDITIVE ----------------------------------------
     //
@@ -93,7 +93,7 @@ int main() {
                   "VaR(A+B) EXCEEDS VaR(A) + VaR(B): the model says combining "
                   "two independent positions INCREASED risk. That is not a "
                   "numerical artefact, it is a property of quantiles, and it "
-                  "is why Basel moved the trading book to Expected Shortfall");
+                  "is why Basel moved the trading book to Expected SlippageShortfall");
 
             std::printf("    ES(A) = %.2f, ES(B) = %.2f, sum = %.2f;"
                         "  ES(A+B) = %.2f\n",
@@ -102,7 +102,7 @@ int main() {
                         vab->expected_shortfall);
             check(vab->expected_shortfall
                       <= va->expected_shortfall + vb->expected_shortfall + 1e-9,
-                  "Expected Shortfall is SUBADDITIVE on the same portfolios, "
+                  "Expected SlippageShortfall is SUBADDITIVE on the same portfolios, "
                   "so it says what a risk measure has to say: diversifying "
                   "did not make things worse");
         }

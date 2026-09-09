@@ -648,7 +648,7 @@ private:
         "VaR IS NOT SUBADDITIVE. Two independent positions can\n"
         "each show no risk alone and a real loss combined — the\n"
         "model saying diversification INCREASED risk. Expected\n"
-        "Shortfall does not do that, which is why Basel moved\n"
+        "SlippageShortfall does not do that, which is why Basel moved\n"
         "the trading book to it after 2008.\n");
     return s;
 }
