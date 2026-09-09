@@ -55,7 +55,6 @@ qt_standard_project_setup()
 
 qt_add_executable(altair_desktop
     main.cpp
-    assets/altair.qrc
     main_window.hpp
     tick_model.hpp
     filter.hpp
@@ -91,6 +90,28 @@ qt_add_executable(altair_desktop
     chain_panel.hpp
     analytics_panel.hpp
 )
+
+# P34-02. THE ICON RESOURCE WAS NEVER COMPILED, AND NOTHING SAID SO.
+#
+# assets/altair.qrc was listed as a source of altair_desktop. AUTOMOC and
+# AUTOUIC are switched on by qt_standard_project_setup(); AUTORCC IS NOT. So
+# the .qrc sat in the source list and no build rule ever mentioned it -- no
+# qrc_*.cpp was generated, the resource did not exist, and every lookup of
+# ":/altair_eagle.svg" returned nothing.
+#
+# QIcon and QPixmap both answer a missing resource with a null object rather
+# than an error, so `app.setWindowIcon(QIcon(":/altair_eagle.svg"))` in
+# main.cpp has been a silent no-op since it was written: the window and the
+# taskbar have been showing Qt's default icon the whole time. It surfaced only
+# when the login dialog asked for the same file and its label collapsed to
+# zero height.
+#
+# qt_add_resources is explicit and generates a rule that appears in the build
+# graph, which is the property the .qrc-in-a-source-list form lacked.
+qt_add_resources(altair_desktop "altair_assets"
+    PREFIX "/"
+    BASE assets
+    FILES assets/altair_eagle.svg)
 
 # P11Q-05a. The cost panel reads config/charges.toml through P3-09b's loader,
 # which exists only where vcpkg has provided toml++. Where it does not, the

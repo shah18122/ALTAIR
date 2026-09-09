@@ -50,9 +50,11 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QApplication>
@@ -79,27 +81,57 @@ public:
 
         auto* v = new QVBoxLayout(this);
 
+        // THE MARK, AND THEN THE NAME. Aquila, the eagle Altair sits in --
+        // the same SVG the window and the taskbar use, so the sign-in screen
+        // and the running application are recognisably one program.
+        //
+        // Rendered from the SVG rather than a bitmap: it is asked for at
+        // 72 px here and 16 px in the taskbar, and a PNG picked for one of
+        // those is soft at the other.
+        auto* mark = new QLabel(this);
+        // The mark came up EMPTY the first time, and the reason was not
+        // here: desktop/assets/altair.qrc was in the target's source list and
+        // AUTORCC was never on, so no resource existed to find. Both QIcon
+        // and QPixmap answer a missing resource with a null object and no
+        // diagnostic, which is why this looked like a layout bug for as long
+        // as it did. See qt_add_resources in desktop/CMakeLists.txt.
+        //
+        // QPixmap rather than QIcon::pixmap now that the resource is real:
+        // this is one fixed size on one surface, so the icon engine's
+        // state-and-mode machinery buys nothing.
+        QPixmap logo(QStringLiteral(":/altair_eagle.svg"));
+        if (!logo.isNull()) {
+            mark->setPixmap(logo.scaled(72, 72, Qt::KeepAspectRatio,
+                                        Qt::SmoothTransformation));
+        } else {
+            // VISIBLE, not silent. A missing mark is cosmetic; a label that
+            // collapses to nothing looks like a layout that was never
+            // written, and that is what sent me looking in the wrong place.
+            mark->setText(QStringLiteral("[mark unavailable]"));
+            mark->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        }
+        mark->setAlignment(Qt::AlignCenter);
+        v->addWidget(mark);
+
         auto* title = new QLabel(QStringLiteral("<h2>Altair</h2>"), this);
         title->setAlignment(Qt::AlignCenter);
         v->addWidget(title);
 
-        if (dev_credentials_active()) {
-            // PERMANENT and undismissable. A warning with an X on it is a
-            // warning that gets clicked away on the second day.
-            auto* warn = new QLabel(
-                QStringLiteral(
-                    "<b>DEVELOPMENT BUILD</b><br>Default accounts "
-                    "<code>admin/admin</code> and <code>staff/staff</code> are "
-                    "compiled in. The <code>prod</code> preset does not define "
-                    "ALTAIR_DEV_CREDENTIALS, so this build cannot ship with "
-                    "them."),
-                this);
-            warn->setWordWrap(true);
-            warn->setStyleSheet(QStringLiteral(
-                "background:#4A3410;color:#F0C674;padding:8px;"
-                "border:1px solid #B9770B;"));
-            v->addWidget(warn);
-        }
+        // P34-02. THE DEVELOPMENT-BUILD BANNER IS GONE, AT SMIT'S REQUEST,
+        // AND WHAT IT PROTECTED IS NOT.
+        //
+        // It said the default accounts are compiled in. That was true and it
+        // was worth saying while this was the only thing standing between a
+        // stranger and the window -- but it said it on every sign-in for
+        // months to the one person who already knew, which is how a warning
+        // stops being read.
+        //
+        // The property itself is unchanged and is still enforced where it
+        // matters rather than by a label: `prod` does not define
+        // ALTAIR_DEV_CREDENTIALS, so a shipped binary has NO accounts
+        // provisioned and the message below says so and lets nobody in.
+        // desktop/CMakeLists.txt still prints "DEV CREDENTIALS COMPILED IN"
+        // at configure time, where the person choosing the preset sees it.
 
         if (users_.empty()) {
             auto* none = new QLabel(
