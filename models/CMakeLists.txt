@@ -118,6 +118,18 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME models_forecast_scorecard
              COMMAND altair_forecast_scorecard_test)
 
+    # P35-01. Conformal calibration -- the band that covers what it claims.
+    #
+    # The test is the paper's own experiment on synthetic data: a band at half
+    # the width it needs, whose exceedance the wrapper must pull back to
+    # target. The control is the check that matters -- an ALREADY calibrated
+    # band run through the same wrapper must come out still near target,
+    # because a calibrator that only ever widens would pass the first test and
+    # be useless.
+    add_executable(altair_conformal_test tests/test_conformal.cpp)
+    target_link_libraries(altair_conformal_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_conformal COMMAND altair_conformal_test)
+
     # P8-15. Horizon forecast net of cost, on the real 60-minute series.
     add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
     target_link_libraries(altair_horizon_test
