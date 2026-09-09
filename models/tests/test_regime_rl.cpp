@@ -94,6 +94,36 @@ double run_episode(const std::vector<double>& px, std::size_t start,
 
 } // namespace
 
+
+// P33-05, RULE 11. AN OUT-OF-RANGE ACTION CLAMPS TOWARD SAFETY.
+//
+// aggression() read m[a < kActions ? a : kActions - 1], and kActions-1 is the
+// LARGEST multiplier of the five. Any bug producing a bad action index did not
+// fail -- it traded at three times size, silently, returning a perfectly
+// ordinary double.
+void an_unknown_action_clamps_to_the_least_aggressive()
+{
+    using altair::QLearner;
+
+    std::printf("\nN an_unknown_action_clamps_to_the_least_aggressive\n");
+
+    double lo = QLearner::aggression(0), hi = QLearner::aggression(0);
+    for (std::size_t a = 0; a < QLearner::kActions; ++a) {
+        const double v = QLearner::aggression(a);
+        if (v < lo) { lo = v; }
+        if (v > hi) { hi = v; }
+    }
+    const double out = QLearner::aggression(QLearner::kActions + 7);
+    std::printf("    in-range [%.2f, %.2f];  out-of-range -> %.2f\n",
+                lo, hi, out);
+    check(out == lo,
+          "an action outside the table maps to the LEAST aggressive "
+          "multiplier, not the most -- both are wrong, and only one of them "
+          "costs money");
+    check(out != hi,
+          "and specifically NOT to kActions - 1, which is what it did");
+}
+
 int main() {
     using altair::QLearner;
     using altair::cluster_quality;
@@ -337,6 +367,8 @@ int main() {
               "and a ragged feature matrix is refused rather than read past "
               "the end of the shorter row");
     }
+
+    an_unknown_action_clamps_to_the_least_aggressive();
 
     std::printf("\n%s\n", failures == 0 ? "all checks passed" : "FAILURES");
     return failures == 0 ? 0 : 1;

@@ -339,7 +339,8 @@ parse_kite_header(const char* header, std::size_t len) noexcept {
 /// PRECONDITION: `cols` came from parse_kite_header on the same file.
 [[nodiscard]] inline std::expected<ContractSpec, KiteParseError>
 parse_kite_row(const char* row, std::size_t len,
-               const KiteColumns& cols, Timestamp snapshot_at) noexcept {
+               const KiteColumns& cols, Timestamp snapshot_at,
+               bool* out_truncated = nullptr) noexcept {
     if (row == nullptr || len == 0) {
         return std::unexpected(KiteParseError::TooFewFields);
     }
@@ -446,9 +447,25 @@ parse_kite_row(const char* row, std::size_t len,
     // company name. Found by loading the real 106'150-row dump.
     const detail::KiteField& src =
         (seg == Segment::Cash) ? sym : f[cols.name];
-    const std::size_t un = src.n < kMaxUnderlyingLen ? src.n : kMaxUnderlyingLen;
+    // RULE 11: THIS TRUNCATES, SO IT COUNTS.
+    //
+    // `underlying` is 23 characters and 2,121 of the 108,411 rows in a real
+    // Kite dump are longer. Worse than the loss of characters: 137 distinct
+    // 23-character prefixes map to MORE THAN ONE company --
+    // "PROCTER & GAMBLE HEALTH L" and "PROCTER & GAMBLE HEALTH LIMITE" become
+    // the same key -- so anything grouping by underlying silently merges two
+    // issuers.
+    //
+    // Refusing the row is worse than accepting a marked one: these are real
+    // instruments and dropping 2,121 of them to protect a field width would
+    // block trading in every one. So this takes rule 11's third arm -- the
+    // truncation is COUNTED, carried in KiteLoadReport, and shown. A known,
+    // measured 2,121 is a different thing from a silent one.
+    const bool truncated = src.n > kMaxUnderlyingLen;
+    const std::size_t un = truncated ? kMaxUnderlyingLen : src.n;
     std::memcpy(s.underlying, src.p, un);
     s.underlying[un] = '\0';
+    if (out_truncated != nullptr && truncated) { *out_truncated = true; }
     return s;
 }
 
@@ -463,6 +480,15 @@ struct KiteLoadReport {
     std::size_t rejected_by_sink;
     /// Rows that would not parse. UNIT: rows.
     std::size_t unparseable;
+    /// Rows whose UNDERLYING NAME did not fit in kMaxUnderlyingLen and was
+    /// truncated. UNIT: rows. P33-05, rule 11.
+    ///
+    /// Not an error and not a rejection -- the spec is usable and the row is
+    /// added. It is here because truncation can COLLIDE two issuers onto one
+    /// underlying key (137 prefixes do, on a real dump), and a caller
+    /// grouping by underlying deserves the count rather than discovering it
+    /// as a merged position.
+    std::size_t underlying_truncated;
     /// The first parse error seen, for diagnosis. Only meaningful when
     /// unparseable > 0.
     KiteParseError first_error;
@@ -521,7 +547,11 @@ load_kite_dump_into(const char* csv, std::size_t len,
         const std::size_t stop = trim_cr(pos, e);
         if (stop > pos) {
             ++row_no;
-            const auto spec = parse_kite_row(csv + pos, stop - pos, *cols, snapshot_at);
+            bool trunc = false;
+            const auto spec =
+                parse_kite_row(csv + pos, stop - pos, *cols, snapshot_at,
+                               &trunc);
+            if (trunc) { ++rep.underlying_truncated; }
             if (!spec.has_value()) {
                 // One malformed contract must not cost the session its whole
                 // universe. Count it, remember the first, keep going.

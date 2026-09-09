@@ -259,9 +259,27 @@ public:
     static constexpr std::size_t kActions = 5;
 
     /// Action a maps to an aggression multiplier in [0.2, 3.0].
+    ///
+    /// P33-05, RULE 11: AN OUT-OF-RANGE ACTION CLAMPED TO THE MOST AGGRESSIVE
+    /// ONE.
+    ///
+    /// It read `m[a < kActions ? a : kActions - 1]`, and index kActions-1 is
+    /// 3.0 -- the largest multiplier of the five. So any bug that produced a
+    /// bad action index did not fail, it traded at THREE TIMES size, silently
+    /// and with a perfectly ordinary-looking return value.
+    ///
+    /// The bound cannot refuse here: this is a `noexcept` lookup returning a
+    /// double, and giving it an expected<> would push a wrapper into every
+    /// call site of a hot path for a case that should never happen. So it
+    /// takes rule 11's other arm -- a clamp that cannot be avoided clamps
+    /// toward the SAFE side. An unknown action is now the smallest
+    /// multiplier, not the largest.
+    ///
+    /// Wrong either way. The difference is that this direction costs an
+    /// opportunity and the other one costs money.
     [[nodiscard]] static double aggression(std::size_t a) noexcept {
         static constexpr double m[kActions] = {0.2, 0.6, 1.0, 1.8, 3.0};
-        return m[a < kActions ? a : kActions - 1];
+        return a < kActions ? m[a] : m[0];
     }
 
     [[nodiscard]] static std::size_t state_of(double frac_time_left,

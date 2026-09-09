@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -442,6 +443,69 @@ void loads_into_the_reconciler()
 
 } // namespace
 
+
+// P33-05, RULE 11. A TRUNCATED UNDERLYING IS COUNTED, NOT SWALLOWED.
+//
+// `underlying` is kMaxUnderlyingLen characters. On a real 108,411-row Kite
+// dump 2,121 names are longer, and -- the part that matters -- 137 distinct
+// 23-character prefixes map to more than one company. "PROCTER & GAMBLE
+// HEALTH L" and "PROCTER & GAMBLE HEALTH LIMITE" become the same key, so
+// anything grouping by underlying merges two issuers.
+//
+// Refusing those rows would be worse than accepting marked ones, so this
+// takes rule 11's third arm: truncate, but count it and carry the count.
+void a_truncated_underlying_is_counted()
+{
+    std::printf("\nN a_truncated_underlying_is_counted\n");
+
+    // Two futures rows on the same 23-character prefix, differing only past
+    // it. Without the counter they are indistinguishable from two rows that
+    // fitted.
+    const std::string csv =
+        "instrument_token,exchange_token,tradingsymbol,name,last_price,"
+        "expiry,strike,tick_size,lot_size,instrument_type,segment,exchange" + std::string("\n") +
+        "111,1,AAAFUT,\"PROCTER & GAMBLE HEALTH L\",0,2026-09-24,0,0.05,"
+        "350,FUT,NFO-FUT,NFO" + std::string("\n") +
+        "222,2,BBBFUT,\"PROCTER & GAMBLE HEALTH LIMITE\",0,2026-09-24,0,"
+        "0.05,350,FUT,NFO-FUT,NFO" + std::string("\n") +
+        "333,3,CCCFUT,\"SHORT NAME\",0,2026-09-24,0,0.05,350,FUT,NFO-FUT,"
+        "NFO" + std::string("\n");
+
+    // SpecStore is 1.63 MB; app/instruments_demo.cpp measured it and this
+    // file already keeps its stores at static scope for the same reason.
+    static SpecStore store;
+    const auto r = load_kite_dump_unreconciled(csv.c_str(), csv.size(), store,
+                                               kSnap);
+    check(r.has_value(), "the dump loads");
+    if (!r) { return; }
+    std::printf("    added %zu, underlying_truncated %zu\n",
+                r->added, r->underlying_truncated);
+    check(r->added == 3, "all three rows are ADDED -- a name too long for the "
+                         "field is not a reason to refuse a real instrument");
+    check(r->underlying_truncated == 2,
+          "and the two that did not fit are COUNTED, which is the whole "
+          "difference between a known truncation and a silent one");
+
+    // And the collision is real: both truncate to the same key.
+    const auto ia = store.id_of(FeedSource::Kite, 111u);
+    const auto ib = store.id_of(FeedSource::Kite, 222u);
+    check(ia.has_value() && ib.has_value(), "both rows are in the store");
+    if (ia && ib) {
+        const auto a = store.current(*ia);
+        const auto b = store.current(*ib);
+        if (a && b) {
+            std::printf("    token 111 underlying %s\n"
+                        "    token 222 underlying %s\n",
+                        (*a)->underlying, (*b)->underlying);
+            check(std::string((*a)->underlying)
+                      == std::string((*b)->underlying),
+                  "the two long names collapse to the SAME underlying key -- "
+                  "which is why the count has to exist rather than the "
+                  "characters just being dropped quietly");
+        }
+    }
+}
+
 int main()
 {
     std::printf("altair instruments kite_dump tests\n");
@@ -457,6 +521,7 @@ int main()
     loads_into_the_reconciler();
 
     report_throughput();
+    a_truncated_underlying_is_counted();
 
     if (failures == 0) {
         std::printf("\nPASS\n");

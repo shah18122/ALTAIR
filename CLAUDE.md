@@ -43,6 +43,7 @@ You write card P<phase>-<nn>  →  Smit pastes to DeepSeek  →  output comes ba
 | 3 | Manifest respected | only files listed in the card exist/changed |
 | 4 | Tests pass | every named acceptance test present, `ctest` green |
 | 5 | No hot-path allocation | no `new`/`malloc`/`vector` growth/`string`/`shared_ptr`/`std::function` in `ALTAIR_HOT` |
+| 5b | **Bounds refuse** | every fixed buffer, table and loop cap either refuses, proves it cannot be reached, or counts what it dropped — rule 11 |
 | 6 | Latency budget | benchmark vs ROADMAP §11; regression fails |
 | 7 | **Numerical / financial** | units · cancellation · boundaries (T→0, IV→0, zero depth, expiry day) · sign conventions · day-count · **which side STT applies to** · premium-vs-notional turnover |
 | 8 | **Physics** | dimensional consistency · conservation invariants · no look-ahead · no sampling above Nyquist · error propagation |
@@ -85,6 +86,41 @@ from-scratch rewrite. Format is in PROTOCOL.md §7.
    raises a flag. It never falls back to a guess.
 10. **Every live decision is reproducible** from
     `{model_hash, feature_version, config_hash, spec_version, tick_seqno}`.
+11. **A fixed bound must refuse what exceeds it.** Every fixed-size buffer,
+    lookup table, loop cap and capacity constant has exactly three permitted
+    behaviours when the input could exceed it:
+
+    - **Refuse** — return `std::unexpected`, and say which bound was hit.
+    - **Prove it cannot be reached**, and state the proof next to the bound.
+      `kMaxJumpsPerStep = 64` against a refused `lambda > 12` is a proof:
+      P(N > 64) < 1e-25.
+    - **Truncate VISIBLY** — count it, carry the count in the result, and put
+      it on screen. Only for data loading, where refusing a real row is worse
+      than accepting a marked one.
+
+    Silently clamping is banned. **This has been found five times** and every
+    one of them returned a plausible number that nothing downstream could
+    question:
+
+    | Where | Bound | What it did |
+    |---|---|---|
+    | `backtest/montecarlo.hpp` | 16 jump arrivals | at λ=20, 78% of steps forced to exactly 16 |
+    | `models/markov.hpp` | χ² table ended at df 63 | a 9-state chain — `kMaxStates` — could never reject |
+    | `models/recurrent.hpp` | 4,096 rows | GRU trained on 1.9% of 211,000 bars |
+    | `models/mlp.hpp` | 8,192 rows | MLP trained on 3.9% of the same |
+    | `instruments/kite_dump.hpp` | 23-char underlying | 137 prefixes collide two companies each |
+
+    Three of those are the *same bug written twice with different constants*,
+    which is what makes it a rule rather than five fixes.
+
+    **And where a clamp is genuinely unavoidable, it clamps toward the SAFE
+    side.** `QLearner::aggression` mapped an out-of-range action to
+    `kActions - 1` — the MOST aggressive of the five. A bug that produced a
+    bad index traded 3x size.
+
+    The tell is always the same: a returned metric computed over the *same*
+    truncated slice, so the one number that would have exposed the truncation
+    agreed with it.
 
 ---
 

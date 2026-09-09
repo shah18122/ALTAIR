@@ -115,28 +115,60 @@ public:
         }
     }
 
+    /// P33-05: THE SAME SILENT TRUNCATION recurrent.hpp HAD, AT 8,192.
+    ///
+    /// `static thread_local double S[8192 * (H + 1)]` and then
+    /// `n = min(b.size(), 8192)`. A caller handing this a block of 211,000
+    /// bars got a readout fitted on 3.9 per cent of them -- and the training
+    /// MSE was computed over the same truncated slice, so the one number that
+    /// would have exposed it agreed with the fit.
+    ///
+    /// Identical shape and identical fix to the GRU's: the solve consumes
+    /// rows through a Gram matrix of (H+1) x (H+1), so they STREAM and
+    /// nothing is held. Two files having the same bug with different
+    /// constants is the argument for hard rule 11 rather than for quietly
+    /// fixing this one.
     double train_epoch(const Dataset& d, const Block& b, double) noexcept {
-        static thread_local double S[8192 * (H + 1)];
-        const std::size_t n = b.size() < 8192 ? b.size() : 8192;
+        constexpr std::size_t M = H + 1;
+        const std::size_t n = b.size();
         if (n == 0) { return 0.0; }
-        double h[H], x[X];
+
+        // Weighted for the solve, unweighted for the reported error: the
+        // original returned an unweighted MSE and swapping in a weighted one
+        // silently would be its own small lie.
+        double aw[M * M] = {}, rw[M] = {};
+        double au[M * M] = {}, ru[M] = {}, yty = 0.0;
+
+        double h[H], x[X], sv[M];
         for (std::size_t i = 0; i < n; ++i) {
             for (std::size_t j = 0; j < X; ++j) { x[j] = d.x.at(b.start + i, j); }
             hidden(x, h);
-            for (std::size_t j = 0; j < H; ++j) { S[i * (H + 1) + j] = h[j]; }
-            S[i * (H + 1) + H] = 1.0;
-        }
-        solve(S, d.y + b.start, d.weight + b.start, n);
-        double err = 0.0;
-        for (std::size_t i = 0; i < n; ++i) {
-            double p = 0.0;
-            for (std::size_t j = 0; j <= H; ++j) {
-                p += w2_[j] * S[i * (H + 1) + j];
+            for (std::size_t j = 0; j < H; ++j) { sv[j] = h[j]; }
+            sv[H] = 1.0;
+            const double yi = d.y[b.start + i];
+            const double sw = d.weight != nullptr ? d.weight[b.start + i] : 1.0;
+            yty += yi * yi;
+            for (std::size_t a = 0; a < M; ++a) {
+                rw[a] += sw * sv[a] * yi;
+                ru[a] += sv[a] * yi;
+                for (std::size_t c = 0; c < M; ++c) {
+                    aw[a * M + c] += sw * sv[a] * sv[c];
+                    au[a * M + c] += sv[a] * sv[c];
+                }
             }
-            const double e = p - d.y[b.start + i];
-            err += e * e;
         }
-        return err / static_cast<double>(n);
+
+        solve_normal(aw, rw);
+
+        // SSE = w'Aw - 2w'rhs + y'y. Exact, and no second pass over the rows.
+        double sse = yty;
+        for (std::size_t a = 0; a < M; ++a) {
+            sse -= 2.0 * w2_[a] * ru[a];
+            for (std::size_t c = 0; c < M; ++c) {
+                sse += w2_[a] * au[a * M + c] * w2_[c];
+            }
+        }
+        return sse > 0.0 ? sse / static_cast<double>(n) : 0.0;
     }
 
     void predict(const Dataset& d, const Block& b, double* out) const noexcept {
@@ -157,22 +189,22 @@ public:
     }
 
 private:
-    void solve(const double* S, const double* y, const double* wt,
-               std::size_t n) noexcept {
+    /// Solve (G + ridge*I) w = rhs from the ALREADY-ACCUMULATED system.
+    ///
+    /// Takes the Gram matrix rather than the design matrix, so the caller
+    /// never has to hold the rows -- see train_epoch for why that matters.
+    /// Copies its inputs, because the elimination destroys them.
+    ///
+    /// The ridge is applied to the intercept as well, which is not the
+    /// textbook choice: shrinking an intercept toward zero biases every
+    /// prediction toward zero. The bias column accumulates n against a ridge
+    /// of order one, so it is parts per thousand -- named rather than left
+    /// silently almost-right.
+    void solve_normal(const double* gram, const double* rhs_in) noexcept {
         constexpr std::size_t M = H + 1;
-        static thread_local double A[M * M];
-        double rhs[M] = {};
-        for (std::size_t i = 0; i < M * M; ++i) { A[i] = 0.0; }
-        for (std::size_t i = 0; i < n; ++i) {
-            const double sw = wt != nullptr ? wt[i] : 1.0;
-            const double* s = S + i * M;
-            for (std::size_t a = 0; a < M; ++a) {
-                rhs[a] += sw * s[a] * y[i];
-                for (std::size_t b2 = 0; b2 < M; ++b2) {
-                    A[a * M + b2] += sw * s[a] * s[b2];
-                }
-            }
-        }
+        double A[M * M], rhs[M];
+        for (std::size_t i = 0; i < M * M; ++i) { A[i] = gram[i]; }
+        for (std::size_t i = 0; i < M; ++i) { rhs[i] = rhs_in[i]; }
         for (std::size_t a = 0; a < M; ++a) { A[a * M + a] += ridge_; }
         for (std::size_t k = 0; k < M; ++k) {
             std::size_t piv = k;
