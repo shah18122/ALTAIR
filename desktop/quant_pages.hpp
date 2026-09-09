@@ -681,6 +681,54 @@ private:
                           ? QString() : QStringLiteral(" (NOT significant)"))
                  .arg(100.0 * r->frac_exceeding_cost, 0, 'f', 1);
     }
+    // ――― THE FORECAST, AS A PRICE ―――
+    //
+    // P30-01. Everything above is basis points, because everything above is
+    // an EVALUATION. Smit asked for a price, and he is right that a basis
+    // point is not a forecast anybody can act on: it makes the reader hold the
+    // last close in their head and do exponential arithmetic.
+    //
+    // The band is the model's own OUT-OF-SAMPLE RMSE from the walk-forward
+    // above -- not a training residual, which would be narrower by exactly the
+    // amount the model overfits.
+    {
+        SpotSpec ns = spec;
+        for (int which = 0; which < 2; ++which) {
+            const bool leaf = (which == 1);
+            const double rmse = leaf ? r->rmse_leaf : r->rmse_level;
+            const auto fc = forecast_next(closes, ns, rmse, leaf);
+            if (!fc) { continue; }
+            if (which == 0) {
+                s += QStringLiteral(
+                    "\n――― THE NEXT BAR, AS A PRICE ―――\n\n"
+                    "  Last available close   %1\n"
+                    "  Fitted on              %2 rows\n\n"
+                    "     model        move      forecast          band"
+                    "                 straddles last?\n")
+                         .arg(fc->last_price, 12, 'f', 2)
+                         .arg(fc->fitted_on);
+            }
+            s += QStringLiteral("   %1  %2 bps  %3  %4 .. %5   %6\n")
+                     .arg(leaf ? QStringLiteral("leaf-wise ")
+                               : QStringLiteral("level-wise"))
+                     .arg(fc->move_bps, 8, 'f', 3)
+                     .arg(fc->price, 12, 'f', 2)
+                     .arg(fc->lo, 10, 'f', 2).arg(fc->hi, 10, 'f', 2)
+                     .arg(fc->band_straddles_last()
+                              ? QStringLiteral("YES")
+                              : QStringLiteral("no"));
+        }
+        s += QStringLiteral(
+            "\n  THE LAST COLUMN IS THE ANSWER. A band that straddles the\n"
+            "  last close does not say which side of today the next bar\n"
+            "  lands on, and the point inside it is not a direction. On this\n"
+            "  series it straddles at every horizon, because the RMSE above\n"
+            "  is WORSE than a constant -- the band is wider than the move it\n"
+            "  is drawn around.\n\n"
+            "  Published without the band, the same number reads as a\n"
+            "  forecast. That is the only reason this column exists.\n");
+    }
+
     return s;
 }
 

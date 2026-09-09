@@ -202,6 +202,56 @@ int main() {
     // ---- REFUSALS ---------------------------------------------------------
     {
         std::vector<double> few(100, 100.0);
+    // ---- P30-01: the forecast as a PRICE, with its band -------------------
+    {
+        std::printf("\n[P30-01] the next bar, as a price rather than points\n");
+        std::vector<double> closes =
+            load_closes(std::string(ALTAIR_DATASET_DIR) +
+                        "/spot/nifty/1d/all.csv");
+        if (closes.size() >= 2000) {
+            SpotSpec s2;
+            const auto rep = forecast_spot(closes, s2);
+            check(rep.has_value(), "the evaluation ran");
+            if (rep) {
+                const auto fc = forecast_next(closes, s2, rep->rmse_leaf, true);
+                check(fc.has_value(), "and a next-bar forecast was produced");
+                if (fc) {
+                    std::printf("    last %.2f  move %+.3f bps  forecast %.2f\n"
+                                "    band %.2f .. %.2f  (rmse %.3f bps)\n",
+                                fc->last_price, fc->move_bps, fc->price,
+                                fc->lo, fc->hi, fc->band_bps);
+                    // THE IDENTITY. A price forecast that is not the last
+                    // price carried by the predicted log return is a different
+                    // number wearing the same name.
+                    const double want =
+                        fc->last_price * std::exp(fc->move_bps / 10000.0);
+                    check(std::fabs(fc->price - want) < 1e-9,
+                          "the price IS the last close carried by the"
+                          " predicted log return -- exponential, not additive");
+                    check(fc->last_price == closes.back(),
+                          "and it is carried from the LAST AVAILABLE close,"
+                          " not from a row the model had a label for");
+                    check(fc->lo < fc->price && fc->price < fc->hi,
+                          "the band brackets the point");
+                    // The finding, asserted rather than remembered: P16-06
+                    // measured this model's RMSE as worse than a constant, so
+                    // the band must swallow the move it is drawn around.
+                    check(fc->band_straddles_last(),
+                          "and it STRADDLES the last close -- the forecast"
+                          " does not say which side of today the next bar"
+                          " lands on, which is what an RMSE worse than a"
+                          " constant means in price terms");
+                }
+                // A band cannot be narrowed by asking for one.
+                const auto zero = forecast_next(closes, s2, -1.0, true);
+                check(!zero.has_value(),
+                      "a negative band is refused rather than clamped");
+            }
+        } else {
+            std::printf("    no daily dataset; skipped\n");
+        }
+    }
+
         check(!forecast_spot(few, SpotSpec{}).has_value(),
               "a hundred closes cannot support a walk-forward and are refused");
         SpotSpec bad;

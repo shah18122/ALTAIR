@@ -108,6 +108,127 @@ private:
 ///
 /// `closes` are prices; features are lagged log returns, so the model never
 /// sees a level and cannot learn "the index is higher now than in 1998".
+/// A forecast for the NEXT bar, as a PRICE.
+///
+/// P30-01. `forecast_spot` above is an EVALUATION -- it walks folds and reports
+/// how well the model did. It never predicts anything forward, and everything
+/// it returns is in basis points. Smit asked for a price.
+///
+/// A BASIS POINT IS NOT A FORECAST SOMEBODY CAN ACT ON.
+///
+/// "+12.4 bps" requires the reader to hold the last price in their head and do
+/// the arithmetic, and the arithmetic is exponential rather than additive
+/// because the label is a log return. So this returns the level: the last
+/// available close carried forward by the model's own prediction.
+///
+/// AND IT IS RETURNED WITH A BAND, NEVER ALONE.
+///
+/// ROADMAP section 3: a measurement without its error is not a measurement,
+/// and this project has now applied that to edge, implied vol, Hurst,
+/// velocity and an information coefficient. A point forecast is the same
+/// object. The band is the model's own OUT-OF-SAMPLE RMSE from the
+/// walk-forward -- not the training residual, which is optimistic by exactly
+/// the amount the model overfits -- so `lo` and `hi` are one standard error of
+/// the thing the model actually gets wrong.
+///
+/// THE BAND WILL BE EMBARRASSINGLY WIDE, AND THAT IS THE POINT.
+///
+/// P16-06 measured this model's RMSE as WORSE than a constant at every
+/// horizon. A band drawn from that RMSE swamps the point, which is the honest
+/// picture: the forecast is a number, and the number is not distinguishable
+/// from the last price.
+struct SpotForecast {
+    /// The last close the model was given. UNIT: the caller's price units.
+    double last_price = 0.0;
+    /// The model's prediction for the next `horizon` bars. UNIT: bps.
+    double move_bps = 0.0;
+    /// last_price * exp(move_bps / 10000). Same units as last_price.
+    double price = 0.0;
+    /// One out-of-sample RMSE, in bps and as a price distance.
+    double band_bps = 0.0;
+    double lo = 0.0, hi = 0.0;
+    /// Rows the model was fitted on.
+    std::size_t fitted_on = 0;
+    /// True when the band straddles the last price -- i.e. the forecast does
+    /// not say which side of today the next bar lands on. On this series it
+    /// always does, and a caller that hides this is publishing a direction it
+    /// does not have.
+    [[nodiscard]] bool band_straddles_last() const noexcept {
+        return lo <= last_price && last_price <= hi;
+    }
+};
+
+/// Fit on ALL available history and predict the next bar.
+///
+/// `band_bps` must come from a walk-forward, so this takes the RMSE the
+/// caller already measured rather than computing a training residual. Passing
+/// the training residual would narrow the band by exactly the amount the model
+/// overfits, which is the one direction it must never be wrong in.
+[[nodiscard]] inline std::expected<SpotForecast, SpotError>
+forecast_next(const std::vector<double>& closes, const SpotSpec& spec,
+              double oos_rmse_bps, bool leaf_wise) {
+    if (!spec.valid()) { return std::unexpected(SpotError::BadParameter); }
+    if (closes.size() < 2000) {
+        return std::unexpected(SpotError::TooFewSamples);
+    }
+    if (!(oos_rmse_bps >= 0.0)) {
+        return std::unexpected(SpotError::BadParameter);
+    }
+
+    std::vector<double> r;
+    r.reserve(closes.size());
+    for (std::size_t i = 1; i < closes.size(); ++i) {
+        r.push_back(10000.0 * std::log(closes[i] / closes[i - 1]));
+    }
+
+    // Same rows as forecast_spot builds, so the model being predicted from is
+    // the model that was evaluated. A second feature construction here would
+    // be a second thing to keep in step.
+    Frame f;
+    f.p = spec.lags;
+    std::vector<double> y;
+    for (std::size_t i = spec.lags; i + spec.horizon < r.size(); ++i) {
+        for (std::size_t k = 0; k < spec.lags; ++k) {
+            f.x.push_back(r[i - spec.lags + k]);
+        }
+        double fwd = 0.0;
+        for (std::size_t h = 0; h < spec.horizon; ++h) { fwd += r[i + h]; }
+        y.push_back(fwd);
+        ++f.rows;
+    }
+    if (f.rows < 500) { return std::unexpected(SpotError::TooFewSamples); }
+
+    GbdtParams pr;
+    pr.trees = 120;
+    pr.max_depth = leaf_wise ? 12 : 4;
+    pr.learning_rate = 0.05;
+    pr.seed = 0xB0057u;
+    pr.leaf_wise = leaf_wise;
+    pr.max_leaves = 16;
+
+    const auto model = fit_gbdt(f, y, pr);
+    if (!model) { return std::unexpected(SpotError::TooFewSamples); }
+
+    // The feature row for the NEXT bar is the last `lags` returns available.
+    // It is deliberately NOT a row from `f`: every row in f has a label, which
+    // means every row in f is far enough from the end that its forward window
+    // closed. The row we want is the one that has no label yet.
+    std::vector<double> last_row(spec.lags, 0.0);
+    for (std::size_t k = 0; k < spec.lags; ++k) {
+        last_row[k] = r[r.size() - spec.lags + k];
+    }
+
+    SpotForecast out;
+    out.fitted_on = f.rows;
+    out.last_price = closes.back();
+    out.move_bps = model->predict_row(last_row.data());
+    out.price = out.last_price * std::exp(out.move_bps / 10000.0);
+    out.band_bps = oos_rmse_bps;
+    out.lo = out.last_price * std::exp((out.move_bps - oos_rmse_bps) / 10000.0);
+    out.hi = out.last_price * std::exp((out.move_bps + oos_rmse_bps) / 10000.0);
+    return out;
+}
+
 [[nodiscard]] inline std::expected<SpotReport, SpotError>
 forecast_spot(const std::vector<double>& closes, const SpotSpec& spec) {
     if (!spec.valid()) { return std::unexpected(SpotError::BadParameter); }
