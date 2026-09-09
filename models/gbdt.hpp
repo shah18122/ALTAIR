@@ -325,15 +325,16 @@ inline void grow_leafwise(Tree& t, std::vector<double>& gain_acc,
     t.node[0].value = leaf_value(root);
     t.node[0].feature = Node::kLeaf;
 
+    // The root's split is evaluated AFTER the frontier entry exists, because
+    // best_split needs the row set the entry owns.
+    //
+    // The first version tried to do it inline and passed an EMPTY index
+    // vector as a placeholder, which made best_split compute total*total/0 --
+    // a NaN parent gain that every later comparison then silently discarded,
+    // because NaN compares false against everything. It was harmless and it
+    // read as though the root had been split-searched twice for a reason.
     std::vector<Frontier> front;
-    front.push_back({0, std::move(root),
-                     best_split(binned, g, front.empty()
-                                    ? std::vector<std::size_t>{}
-                                    : std::vector<std::size_t>{},
-                                p, bins, prm.min_leaf),
-                     0});
-    // Evaluate the root's split properly (the placeholder above cannot see
-    // its own idx member yet).
+    front.push_back({0, std::move(root), Split{}, 0});
     front[0].split = best_split(binned, g, front[0].idx, p, bins, prm.min_leaf);
 
     std::size_t leaves = 1;

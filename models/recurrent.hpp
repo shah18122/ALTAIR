@@ -295,25 +295,73 @@ public:
     /// One "epoch" is one closed-form solve. There is no gradient step, which
     /// is why `lr` is ignored and the loop converges immediately -- stated
     /// here rather than left for a reader to discover from a flat loss curve.
+    ///
+    /// P33-04: THIS SILENTLY TRAINED ON THE FIRST 4,096 ROWS AND DISCARDED
+    /// THE REST.
+    ///
+    /// The first version stored every encoded row in
+    /// `static thread_local double S[4096 * (H + 1)]` and then took
+    /// `n = min(b.size(), 4096)`. A caller handing it a block of 211,000
+    /// five-minute bars got a readout fitted on 4,096 of them -- 1.9 per
+    /// cent -- with no error, no warning and a returned training MSE computed
+    /// over the same truncated slice, so the number that would have exposed
+    /// it agreed with the fit.
+    ///
+    /// The buffer never needed to exist. A ridge solve consumes the rows
+    /// through a Gram matrix of (H+1) x (H+1) -- seventeen by seventeen here
+    /// -- so the rows can be STREAMED and nothing has to be held. That is the
+    /// fix: no cap, no 557 KB static, and the accumulators are the same size
+    /// whether the block is a thousand rows or a million.
+    ///
+    /// The training MSE comes out of the same accumulators rather than a
+    /// second pass, using
+    ///
+    ///     SSE = w'Aw - 2w'rhs + y'y
+    ///
+    /// which is exact. Re-encoding every row a second time to compute it
+    /// would double the cost of the expensive half.
     double train_epoch(const Dataset& d, const Block& b, double) noexcept {
-        static thread_local double S[4096 * (H + 1)];
-        const std::size_t n = b.size() < 4096 ? b.size() : 4096;
+        constexpr std::size_t M = H + 1;
+        const std::size_t n = b.size();
         if (n == 0) { return 0.0; }
+
+        // Weighted, for the solve. And UNWEIGHTED, for the reported error --
+        // the original reported an unweighted MSE and that is kept, because a
+        // weighted training error and an unweighted one are different numbers
+        // and silently swapping them is its own small lie.
+        double aw[M * M] = {}, rw[M] = {};
+        double au[M * M] = {}, ru[M] = {}, yty = 0.0;
+
         double h[H];
+        double sv[M];
         for (std::size_t i = 0; i < n; ++i) {
             encode(d, b.start + i, h);
-            for (std::size_t j = 0; j < H; ++j) { S[i * (H + 1) + j] = h[j]; }
-            S[i * (H + 1) + H] = 1.0;       // bias column
+            for (std::size_t j = 0; j < H; ++j) { sv[j] = h[j]; }
+            sv[H] = 1.0;                        // bias column
+            const double yi = d.y[b.start + i];
+            const double sw = d.weight != nullptr ? d.weight[b.start + i] : 1.0;
+            yty += yi * yi;
+            for (std::size_t a = 0; a < M; ++a) {
+                rw[a] += sw * sv[a] * yi;
+                ru[a] += sv[a] * yi;
+                for (std::size_t c = 0; c < M; ++c) {
+                    aw[a * M + c] += sw * sv[a] * sv[c];
+                    au[a * M + c] += sv[a] * sv[c];
+                }
+            }
         }
-        solve_ridge(S, d.y + b.start, d.weight + b.start, n);
-        double err = 0.0;
-        for (std::size_t i = 0; i < n; ++i) {
-            double p = 0.0;
-            for (std::size_t j = 0; j <= H; ++j) { p += w_[j] * S[i * (H + 1) + j]; }
-            const double e = p - d.y[b.start + i];
-            err += e * e;
+
+        solve_normal(aw, rw);
+
+        double sse = yty;
+        for (std::size_t a = 0; a < M; ++a) {
+            sse -= 2.0 * w_[a] * ru[a];
+            for (std::size_t c = 0; c < M; ++c) {
+                sse += w_[a] * au[a * M + c] * w_[c];
+            }
         }
-        return err / static_cast<double>(n);
+        // Rounding can push an exactly-zero residual a hair below zero.
+        return sse > 0.0 ? sse / static_cast<double>(n) : 0.0;
     }
 
     void predict(const Dataset& d, const Block& b, double* out) const noexcept {
@@ -334,20 +382,23 @@ public:
     [[nodiscard]] const Cell& cell() const noexcept { return cell_; }
 
 private:
-    void solve_ridge(const double* S, const double* y, const double* wt,
-                     std::size_t n) noexcept {
+    /// Solve (G + ridge*I) w = rhs, where G is the accumulated Gram matrix.
+    ///
+    /// Takes the ALREADY-ACCUMULATED system rather than the design matrix, so
+    /// the caller never has to hold the rows -- see train_epoch for why that
+    /// matters. Copies its inputs because the elimination destroys them.
+    void solve_normal(const double* gram, const double* rhs_in) noexcept {
         constexpr std::size_t M = H + 1;
-        double A[M * M] = {}, rhs[M] = {};
-        for (std::size_t i = 0; i < n; ++i) {
-            const double sw = wt != nullptr ? wt[i] : 1.0;
-            const double* s = S + i * M;
-            for (std::size_t a = 0; a < M; ++a) {
-                rhs[a] += sw * s[a] * y[i];
-                for (std::size_t b2 = 0; b2 < M; ++b2) {
-                    A[a * M + b2] += sw * s[a] * s[b2];
-                }
-            }
-        }
+        double A[M * M], rhs[M];
+        for (std::size_t i = 0; i < M * M; ++i) { A[i] = gram[i]; }
+        for (std::size_t i = 0; i < M; ++i) { rhs[i] = rhs_in[i]; }
+
+        // THE INTERCEPT IS PENALISED TOO, which is not the textbook choice --
+        // shrinking an intercept toward zero biases every prediction toward
+        // zero. It is left as it is because the bias column accumulates n
+        // (4,096 at the smallest block anyone runs) against a ridge of order
+        // one, so the shrinkage is parts per thousand. Named rather than
+        // silently correct.
         for (std::size_t a = 0; a < M; ++a) { A[a * M + a] += ridge_; }
 
         // Gaussian elimination with PARTIAL PIVOTING. Without the pivot a

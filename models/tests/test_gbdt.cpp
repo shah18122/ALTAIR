@@ -62,6 +62,129 @@ std::vector<double> load_closes(const std::string& path) {
 
 } // namespace
 
+
+// P33-04. LEAF-WISE GROWTH HAD NO TEST.
+//
+// grow_leafwise is the trickiest sixty lines in gbdt.hpp -- an explicit
+// frontier, a best-anywhere search, and a leaf budget -- and nothing set
+// `leaf_wise = true`. It was exercised only indirectly through the spot
+// forecast, where nothing asserted it behaved as claimed.
+//
+// The header makes a specific, falsifiable claim: "at equal leaf count
+// leaf-wise reaches lower training loss, because every split it made was the
+// best one available." That is what is checked, along with the budget it is
+// supposed to respect and the determinism rule 10 requires.
+void leaf_wise_growth_does_what_the_header_claims()
+{
+    using altair::Frame;
+    using altair::Gbdt;
+    using altair::GbdtParams;
+    using altair::Node;
+    using altair::Tree;
+    using altair::fit_gbdt;
+
+    std::printf("\nN leaf_wise_growth_does_what_the_header_claims\n");
+
+    constexpr std::size_t kN = 4000, kP = 4;
+    Frame f;
+    f.p = kP;
+    f.rows = kN;
+    f.x.resize(kN * kP);
+    std::vector<double> y(kN);
+    std::uint64_t s = 4242u;
+    auto u = [&s]() {
+        s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+        return static_cast<double>(s >> 11) / 9007199254740992.0;
+    };
+    for (std::size_t i = 0; i < kN; ++i) {
+        double a = 0.0;
+        for (std::size_t c = 0; c < kP; ++c) {
+            const double v = u() * 2.0 - 1.0;
+            f.x[i * kP + c] = v;
+            a += (c == 0 ? 3.0 : (c == 1 ? -2.0 : 0.0)) * v;
+        }
+        // A kink, so trees have something a linear model would miss.
+        y[i] = a + (f.x[i * kP] > 0.4 ? 5.0 : 0.0) + 0.10 * (u() - 0.5);
+    }
+
+    auto train_mse = [&](const Gbdt& m) {
+        double e = 0.0;
+        for (std::size_t i = 0; i < kN; ++i) {
+            const double d = m.predict_row(&f.x[i * kP]) - y[i];
+            e += d * d;
+        }
+        return e / static_cast<double>(kN);
+    };
+
+    // EQUAL LEAF BUDGET. Level-wise at depth 4 has at most 16 leaves, so
+    // leaf-wise gets 16. Subsampling off, so the two see identical rows and
+    // the comparison is between the growth policies and nothing else.
+    GbdtParams lvl;
+    lvl.trees = 60;
+    lvl.max_depth = 4;
+    lvl.learning_rate = 0.08;
+    lvl.subsample = 1.0;
+    lvl.min_leaf = 20;
+    lvl.leaf_wise = false;
+
+    GbdtParams leaf = lvl;
+    leaf.leaf_wise = true;
+    leaf.max_leaves = 16;
+    leaf.max_depth = 12;      // leaf-wise needs room to be deep
+
+    const auto ml = fit_gbdt(f, y, lvl);
+    const auto mf = fit_gbdt(f, y, leaf);
+    check(ml.has_value() && mf.has_value(), "both growth policies fit");
+    if (!ml || !mf) { return; }
+
+    const double e_lvl = train_mse(*ml), e_leaf = train_mse(*mf);
+    std::printf("    training MSE: level-wise %.5f   leaf-wise %.5f\n",
+                e_lvl, e_leaf);
+    check(e_leaf < e_lvl,
+          "at an equal leaf budget leaf-wise reaches LOWER training loss, "
+          "which is the header's claim and the entire reason the flag "
+          "exists");
+
+    // THE BUDGET IS A BUDGET. A frontier loop that miscounts leaves grows
+    // without bound, and nothing downstream would notice except the fit
+    // getting mysteriously better.
+    std::size_t worst = 0;
+    for (const Tree& t : mf->tree) {
+        std::size_t leaves = 0;
+        for (const Node& nd : t.node) {
+            if (nd.feature == Node::kLeaf) { ++leaves; }
+        }
+        if (leaves > worst) { worst = leaves; }
+    }
+    std::printf("    most leaves in any leaf-wise tree: %zu (budget %zu)\n",
+                worst, leaf.max_leaves);
+    check(worst <= leaf.max_leaves,
+          "and no tree exceeds max_leaves -- a frontier that miscounts grows "
+          "without bound and only looks like a better fit");
+
+    // RULE 10: same seed, same model.
+    const auto again = fit_gbdt(f, y, leaf);
+    check(again.has_value(), "it fits again");
+    if (again) {
+        double diff = 0.0;
+        for (std::size_t i = 0; i < kN; ++i) {
+            diff += std::fabs(again->predict_row(&f.x[i * kP])
+                              - mf->predict_row(&f.x[i * kP]));
+        }
+        check(diff == 0.0,
+              "and two fits from one seed are bit-identical, which rule 10 "
+              "needs and a frontier ordered by an unstable comparison would "
+              "not give");
+    }
+
+    // A leaf budget below two is refused rather than producing a stump that
+    // looks like a fitted model.
+    GbdtParams bad = leaf;
+    bad.max_leaves = 1;
+    check(!fit_gbdt(f, y, bad).has_value(),
+          "max_leaves = 1 is REFUSED");
+}
+
 int main() {
     using altair::Frame;
     using altair::Gbdt;
@@ -70,6 +193,7 @@ int main() {
     using altair::permutation_importance;
 
     std::printf("P16 gradient-boosted trees\n");
+    leaf_wise_growth_does_what_the_header_claims();
 
     // ---- 1. IT LEARNS SOMETHING LINEAR REGRESSION CANNOT ------------------
     //

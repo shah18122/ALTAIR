@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -300,12 +301,104 @@ void order_matters_and_the_readout_learns()
 
 } // namespace
 
+
+// P33-04. THE READOUT SILENTLY TRAINED ON THE FIRST 4,096 ROWS.
+//
+// train_epoch stored every encoded row in a fixed 4,096-row static buffer and
+// then took n = min(block, 4096). A caller handing it 211,000 five-minute bars
+// -- which the P8-16 neural test does -- got a readout fitted on 1.9 per cent
+// of them, with no error and no warning. The returned training MSE was
+// computed over the same truncated slice, so the one number that would have
+// exposed it agreed with the fit.
+//
+// THE TEST IS CONSTRUCTED SO TRUNCATION CANNOT PASS. The first 5,000 rows
+// carry one relationship and the next 5,000 carry the OPPOSITE. A readout that
+// sees only the first block fits the first relationship; one that sees both
+// fits something in between. The two are distinguishable by sign.
+void the_readout_sees_every_row_it_was_given()
+{
+    std::printf("\nN the_readout_sees_every_row_it_was_given\n");
+
+    // Named apart from the file-scope kH / kX / kSeq the other
+    // tests use: shadowing them is a /W4 warning.
+    constexpr std::size_t kTH = 4, kTX = 2, kTSeq = 3;
+    constexpr std::size_t kHalf = 5000, kAll = 2 * kHalf;
+
+    std::vector<double> tx(kAll * kTX), ty(kAll), tw(kAll, 1.0);
+    std::vector<std::size_t> tbar(kAll, 0);
+    std::vector<LabelWindow> twin(kAll);
+    std::uint64_t s = 777u;
+    auto u = [&s]() {
+        s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+        return static_cast<double>(s >> 11) / 9007199254740992.0 - 0.5;
+    };
+    for (std::size_t i = 0; i < kAll; ++i) {
+        const double a = u(), b = u();
+        tx[i * kTX] = a;
+        tx[i * kTX + 1] = b;
+        // FIRST half: y is +4*a. SECOND half: y is -4*a. A fit that never
+        // sees the second half comes back with a large positive relationship;
+        // one that sees both comes back near zero.
+        ty[i] = (i < kHalf ? 4.0 : -4.0) * a;
+    }
+
+    Dataset d{};
+    d.x = Matrix{tx.data(), kAll, kTX};
+    d.y = ty.data();
+    d.weight = tw.data();
+    d.bar = tbar.data();
+    d.window = twin.data();
+    d.rows = kAll;
+
+    RecurrentReadout<GruCell<kTH, kTX>, kTH, kTX, kTSeq> first_only{-1.0, 1e-6};
+    first_only.reset(0xA11CEu);
+    (void)first_only.train_epoch(d, Block{0, kHalf}, 0.0);
+
+    RecurrentReadout<GruCell<kTH, kTX>, kTH, kTX, kTSeq> both{-1.0, 1e-6};
+    both.reset(0xA11CEu);
+    (void)both.train_epoch(d, Block{0, kAll}, 0.0);
+
+    // Compare what each predicts on the SECOND half, where the two training
+    // sets disagree about the sign.
+    std::vector<double> p1(kAll, 0.0), p2(kAll, 0.0);
+    first_only.predict(d, Block{kHalf, kAll}, p1.data());
+    both.predict(d, Block{kHalf, kAll}, p2.data());
+
+    double e1 = 0.0, e2 = 0.0;
+    for (std::size_t i = kHalf; i < kAll; ++i) {
+        e1 += (p1[i] - ty[i]) * (p1[i] - ty[i]);
+        e2 += (p2[i] - ty[i]) * (p2[i] - ty[i]);
+    }
+    e1 /= static_cast<double>(kHalf);
+    e2 /= static_cast<double>(kHalf);
+    std::printf("    MSE on the second half: fitted on first half only %.5f,"
+                "  fitted on both %.5f\n", e1, e2);
+
+    check(e2 < e1,
+          "a readout given all 10,000 rows does better on the second half "
+          "than one given only the first 5,000 -- which it cannot do if the "
+          "rows past a fixed buffer are silently discarded");
+
+    // And directly: the two fits must differ at all. Identical parameters
+    // would mean the extra 5,000 rows changed nothing.
+    const double* w1 = first_only.params();
+    const double* w2 = both.params();
+    bool differs = false;
+    for (std::size_t j = 0; j <= kTH; ++j) {
+        if (std::fabs(w1[j] - w2[j]) > 1e-12) { differs = true; }
+    }
+    check(differs,
+          "and the fitted parameters are not identical, which is the direct "
+          "statement that the extra rows were used");
+}
+
 int main()
 {
     std::printf("altair LSTM and GRU tests\n");
     the_forget_gate_bias_decides_whether_there_is_memory();
     the_gru_update_gate_has_the_opposite_sign();
     order_matters_and_the_readout_learns();
+    the_readout_sees_every_row_it_was_given();
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");
     return failures == 0 ? 0 : 1;
