@@ -190,22 +190,46 @@ static void test_zero_volume_is_not_zero()
     for (const Candle& c : absent.bars) {
         if (!c.volume_known) ++unknown;
     }
-    std::printf("    %zu of %zu daily bars report volume 0 -- the index"
-                " published no turnover in the early years\n",
-                absent.zero_volume_rows, absent.bars.size());
+    std::printf("    %zu of %zu daily bars report volume 0, and %zu report"
+                " NOTHING AT ALL\n",
+                absent.zero_volume_rows, absent.bars.size(),
+                absent.absent_volume_rows);
 
-    check(unknown == absent.zero_volume_rows,
-          "read as ABSENT, every zero-volume row is marked unknown, so a chart"
-          " can leave the bar blank rather than drawing a zero-height one that"
-          " says nothing traded on a day the market was open");
+    // THREE STATES, NOT TWO. P26-02b.
+    //
+    // These two checks read `== zero_volume_rows` and `== 0` until the daily
+    // series was extended from Kite, which reports NO volume for an index and
+    // writes the field EMPTY. That is a third statement -- "nothing was
+    // reported" -- and it is distinct from both a number and a literal zero.
+    //
+    // `bar_csv.hpp` already knew: it counts `absent_volume_rows` separately
+    // "because they are different statements". Nothing in the data had ever
+    // exercised that until now, so the test asserted a two-state world and
+    // failed the moment a real third state arrived. The loader was right and
+    // these assertions were narrow.
+    //
+    // `zero_volume_is_absent` governs how a literal 0 is read. It says nothing
+    // about an empty field, which is unknown under BOTH readings -- so the
+    // absent count appears on both sides below.
+    check(unknown == absent.zero_volume_rows + absent.absent_volume_rows,
+          "read as ABSENT, every zero-volume row AND every empty-volume row is"
+          " marked unknown, so a chart can leave the bar blank rather than"
+          " drawing a zero-height one that says nothing traded on a day the"
+          " market was open");
 
     std::size_t literal_unknown = 0;
     for (const Candle& c : literal.bars) {
         if (!c.volume_known) ++literal_unknown;
     }
-    check(literal_unknown == 0,
-          "read as LITERAL, none is -- and the difference is a property of the"
-          " SOURCE, which is why the argument is required and has no default");
+    check(literal_unknown == literal.absent_volume_rows,
+          "read as LITERAL, a zero is a measurement and only a genuinely EMPTY"
+          " field stays unknown -- the difference between the two readings is a"
+          " property of the SOURCE, which is why the argument is required and"
+          " has no default");
+    check(absent.absent_volume_rows > 0,
+          "and the file really does contain empty-volume rows, so the two"
+          " checks above are distinguishing something rather than agreeing by"
+          " both being zero");
 
     // An unknown component makes an aggregate unknown, rather than being
     // silently treated as zero.

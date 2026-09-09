@@ -234,6 +234,25 @@ private:
         p.setProgram(exe_);
         p.setArguments(args);
         p.setProcessChannelMode(QProcess::MergedChannels);
+        // THE WORKING DIRECTORY IS LOAD-BEARING. P26-02.
+        //
+        // altair_kite_login writes "data/kite_session.json" -- a RELATIVE path
+        // -- and QProcess inherits this window's working directory, which for
+        // a desktop shortcut is the build output folder. The first successful
+        // link through this panel therefore reported SESSION ESTABLISHED and
+        // wrote build/default/desktop/data/kite_session.json, while every
+        // reader in the tree looks at ALTAIR_SOURCE_DIR/data. The exchange had
+        // worked; the file was simply somewhere nobody reads, and the pill and
+        // every fetch went on saying TokenException against a four-day-old
+        // session.
+        //
+        // Pinning it here rather than teaching the binary an absolute path:
+        // the binary is also run by hand from a shell, where a relative path
+        // is the right behaviour, and the caller is the one that knows where
+        // the tree is.
+#ifdef ALTAIR_SOURCE_DIR
+        p.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
+#endif
         p.start();
         if (!p.waitForStarted(5000)) {
             return {-1, QStringLiteral("could not start %1").arg(exe_)};
