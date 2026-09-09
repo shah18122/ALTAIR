@@ -146,6 +146,8 @@ struct IntentDraft {
 
 /// The ticket.
 class OrderTicket final : public QWidget {
+    Q_OBJECT
+
 public:
     OrderTicket(Role role, QString user, QWidget* parent = nullptr)
         : QWidget(parent), role_(role), user_(std::move(user)) {
@@ -245,6 +247,45 @@ public:
 
         connect(buy_, &QPushButton::clicked, this, [this] { submit(true); });
         connect(sell_, &QPushButton::clicked, this, [this] { submit(false); });
+    }
+
+public Q_SLOTS:
+    /// Load an instrument picked somewhere else -- the watchlist, today.
+    ///
+    /// P32-01. THE COMBO WAS THREE HARD-CODED TOKENS AND THE WATCHLIST HAD
+    /// EVERY INSTRUMENT. Before the terminal merged them, an operator watching
+    /// a strike had to read its token off one page and find it on another,
+    /// and the ticket could only offer the three somebody typed into this
+    /// file. Anything else was unreachable from the ticket at all.
+    ///
+    /// A token arriving here is ADDED if the combo does not have it, and the
+    /// name comes from the caller because the caller read it from the
+    /// instrument master, which is authoritative. This never invents a name
+    /// for a token it does not recognise: an unnamed instrument shows its
+    /// token, which is unambiguous, rather than a guess that reads like a
+    /// contract.
+    ///
+    /// It does NOT touch lots, product, validity or the limit price. Those
+    /// are the operator's, and silently resetting them on a selection change
+    /// is how somebody sends the size they typed for a different instrument.
+    void set_instrument(unsigned token, const QString& name) {
+        if (token == 0) { return; }
+        const int at = symbol_->findData(QVariant::fromValue(token));
+        if (at >= 0) {
+            symbol_->setCurrentIndex(at);
+            return;
+        }
+        const QString label =
+            name.trimmed().isEmpty()
+                ? QStringLiteral("token %1").arg(token)
+                : name.trimmed();
+        symbol_->addItem(label, QVariant::fromValue(token));
+        symbol_->setCurrentIndex(symbol_->count() - 1);
+    }
+
+    /// For tests and for the terminal: which token the ticket would request.
+    [[nodiscard]] unsigned current_token() const {
+        return symbol_->currentData().toUInt();
     }
 
 private:

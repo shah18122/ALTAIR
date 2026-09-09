@@ -921,6 +921,8 @@ public:
         connect(add_, &QPushButton::clicked, this, &WatchlistPanel::on_add);
         connect(remove_, &QPushButton::clicked, this,
                 &WatchlistPanel::on_remove);
+        connect(table_, &QTableWidget::currentCellChanged, this,
+                [this](int row, int, int, int) { emit_pick(row); });
         refresh();
     }
 
@@ -928,6 +930,16 @@ public:
     /// per row is a freeze that arrives at about the tenth instrument, late
     /// enough to read as a different bug.
     MasterIndex master_;
+
+Q_SIGNALS:
+    /// A row was selected. P32-01: the terminal's one wire.
+    ///
+    /// The SYMBOL sent is the master's, not the typed one, for the same
+    /// reason the table shows the master's: the typed name is whatever
+    /// somebody entered and the master's is what Kite calls the contract.
+    void instrumentPicked(unsigned token, const QString& symbol);
+
+public:
 
     [[nodiscard]] const Watchlist& list() const noexcept { return list_; }
 
@@ -942,6 +954,21 @@ private:
 #endif
 
 public:
+
+private:
+    /// Emit the selected row's identity, if it has one.
+    ///
+    /// Guarded on the row index rather than trusted: `currentCellChanged`
+    /// fires during setRowCount() while the model is being rebuilt, when the
+    /// current row can point past the end of `list_.rows()`. Reading it there
+    /// is a crash in a process that is holding positions.
+    void emit_pick(int row) {
+        const auto& rows = list_.rows();
+        if (row < 0 || row >= static_cast<int>(rows.size())) { return; }
+        const WatchRow& r = rows[static_cast<std::size_t>(row)];
+        const InstrumentProfile p = master_.find(r.token);
+        Q_EMIT instrumentPicked(r.token, p.found ? p.symbol : r.symbol);
+    }
 
 private Q_SLOTS:
     void on_add() {

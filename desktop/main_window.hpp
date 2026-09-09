@@ -44,6 +44,7 @@
 #include "data/bar_csv.hpp"
 #include "broker_status.hpp"
 #include "kite_panel.hpp"
+#include "terminal.hpp"
 #include "quant_pages.hpp"
 
 #include <QApplication>
@@ -90,12 +91,23 @@ namespace altair::ui {
 /// unvalidated one, because it refuses a name that is genuinely on screen.
 [[nodiscard]] inline QStringList nav_page_names() {
     return {QStringLiteral("Live Grid"),   QStringLiteral("Chart"),
-            QStringLiteral("Watchlist"),   QStringLiteral("Models"),
+            // P32-01. Watchlist, Order Ticket and Trade Handler were three
+            // nav rows for one action: pick an instrument, size it, and be
+            // able to stop. They are now one page.
+            //
+            // THIS MOVES --page INDICES, which every addition since P19 has
+            // been careful not to do. It is a deliberate exception and not an
+            // oversight: three rows leave the list and one arrives, so
+            // everything after position 2 shifts. `--page` takes a NAME as
+            // well as an index and the name form is unaffected, which is the
+            // form anything durable should have been using -- the index form
+            // is what P11Q-07b already found fails silently.
+            QStringLiteral("Terminal"),    QStringLiteral("Models"),
             QStringLiteral("Data Flow"),   QStringLiteral("Kite Account"),
             QStringLiteral("Cost"),
             QStringLiteral("Analytics"),
             QStringLiteral("Ratio Spread"), QStringLiteral("Value — DCF"),
-            QStringLiteral("Aggregator"),  QStringLiteral("Trade Handler"),
+            QStringLiteral("Aggregator"),
             QStringLiteral("Audit Trail"),
             // P19-01..06. Phases 13-18 each get a page, per Smit's standing
             // rule that every model is visible in the UI. Appended rather
@@ -131,9 +143,6 @@ namespace altair::ui {
             // P24-03. Hurst and EWMA, and the error bars without
             // which neither number means anything.
             QStringLiteral("Memory"),
-            // P25-04. Buy and Sell, as REQUESTS on the queue oms/
-            // drains. The UI still cannot reach a broker.
-            QStringLiteral("Order Ticket"),
             // P26-01. Drives altair_kite_login as a SUBPROCESS, so
             // no credential enters this address space and the UI
             // links no broker code.
@@ -497,6 +506,7 @@ private Q_SLOTS:
 
 private:
     ModelPanel* models_panel_ = nullptr;
+    TerminalPage* terminal_ = nullptr;
     AuditPanel* audit_panel_ = nullptr;
     bool tape_real_ = false;
     std::size_t tape_sessions_ = 0;
@@ -767,7 +777,11 @@ private:
     }
 
     void build_pages() {
-        pages_->addWidget(new WatchlistPanel(role_));
+        // P32-01. The terminal: the watchlist, the ticket and the halt
+        // control, composed rather than rewritten. See desktop/terminal.hpp
+        // for why it is a composition and what the one wire between them is.
+        terminal_ = new TerminalPage(role_, user_);
+        pages_->addWidget(terminal_);
         models_panel_ = new ModelPanel(role_);
         pages_->addWidget(models_panel_);
 
@@ -838,8 +852,6 @@ private:
                 "LOWER confidence bound of edge, with n_eff correcting for "
                 "correlated members. It has no members to combine until the "
                 "Models page above has something in it.")));
-
-        pages_->addWidget(new KillSwitchPanel(role_, user_));
 
         audit_panel_ = new AuditPanel;
         pages_->addWidget(audit_panel_);
@@ -1062,8 +1074,6 @@ private:
         connect(mem_page->button(), &QPushButton::clicked, this,
                 [mem_page, ds] { mem_page->set_text(memory_report(ds)); });
         pages_->addWidget(mem_page);
-
-        pages_->addWidget(new OrderTicket(role_, user_));
 
         // The callback repaints the pill the instant a session is written,
         // rather than leaving it stale until the next five-second poll. A

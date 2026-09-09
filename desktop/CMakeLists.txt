@@ -53,6 +53,11 @@ qt_add_executable(altair_desktop
     depth_ladder.hpp
     kill_switch.hpp
     order_ticket.hpp
+    # P32-01. AUTOMOC only processes files in the target's own source list,
+    # and terminal.hpp declares a Q_OBJECT. Leaving it out links against a moc
+    # generated for a different target and fails with unresolved vtable
+    # symbols rather than anything that names the cause.
+    terminal.hpp
     kite_link.hpp
     chain_panel.hpp
     analytics_panel.hpp
@@ -379,6 +384,39 @@ if(ALTAIR_BUILD_TESTS)
     set_target_properties(altair_order_ticket_test
         PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_order_ticket COMMAND altair_order_ticket_test)
+
+    # P32-01. The terminal's WIRE. The merge itself is layout; the wire is the
+    # part that was broken by construction -- the ticket's instrument list was
+    # three tokens typed into a header and the watchlist held every instrument
+    # in the Kite master, so anything but those three could not be requested at
+    # all. A layout change could silently fail to fix that and look right.
+    #
+    # Counts emissions with a lambda rather than QSignalSpy: Qt6::Test is
+    # not among the DLLs windeployqt puts beside these binaries, and linking a
+    # component nobody deploys fails at RUN time with 0xC0000135 and no
+    # message naming it. Needs a real QApplication rather than a
+    # QCoreApplication, because QTableWidget is a widget.
+    qt_add_executable(altair_terminal_test
+        tests/test_terminal.cpp
+        terminal.hpp
+        panels.hpp
+        order_ticket.hpp
+        kill_switch.hpp
+        watchlist.hpp)
+    target_link_libraries(altair_terminal_test PRIVATE
+        altair_types altair_time altair_feed altair_instruments
+        Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_terminal_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_terminal_test PRIVATE
+        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
+        ALTAIR_INTENT_FILE="${CMAKE_SOURCE_DIR}/data/order_intents.jsonl"
+        ALTAIR_KILL_REQUEST_FILE="${CMAKE_SOURCE_DIR}/data/kill_request.json"
+        ALTAIR_QUOTE_FILE="${CMAKE_SOURCE_DIR}/data/kite_quotes.json"
+        ALTAIR_DEV_CREDENTIALS)
+    set_target_properties(altair_terminal_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_terminal COMMAND altair_terminal_test)
 
     # P26-01. The Link Kite panel's two pure functions: token redaction and
     # pulling the login URL out of the subprocess's usage text. The QProcess
