@@ -130,6 +130,16 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_conformal_test PRIVATE altair_models altair_flags)
     add_test(NAME models_conformal COMMAND altair_conformal_test)
 
+    # P35-02. The calibrated band on a price forecast, and the by-regime
+    # breakout that stops an average coverage number hiding a band which is
+    # wrong exactly when volatility is high.
+    #
+    # Its first check is hard rule 7 made executable: detonate one bar and
+    # require every volatility value at or before it to be bit-identical.
+    add_executable(altair_calibration_test tests/test_calibration.cpp)
+    target_link_libraries(altair_calibration_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_calibration COMMAND altair_calibration_test)
+
     # P8-15. Horizon forecast net of cost, on the real 60-minute series.
     add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
     target_link_libraries(altair_horizon_test

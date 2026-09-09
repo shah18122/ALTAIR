@@ -52,6 +52,14 @@
 // is the default here and RegimeWeighted is a mode you select and then have to
 // justify with a measured exceedance rate.
 //
+// AND THE DECAY RATE TURNED OUT TO MATTER MORE THAN EITHER. Measured on a
+// clustering-volatility series, shortening the memory from 250 bars to 25 cut
+// the per-regime calibration error from 4.50 pp to 0.77 pp -- a bigger gain
+// than regime weighting ever produced, and enough that regime weighting then
+// made things WORSE. See `ConformalSpec::lambda` for the table. The mode is the
+// parameter everybody discusses and the memory is the one that moves the
+// number.
+//
 // CAUSALITY -- HARD RULE 7.
 //
 // Every score in the buffer comes from a bar whose outcome was already known
@@ -134,8 +142,30 @@ struct ConformalSpec {
     ///
     /// The useful way to choose this is the effective memory it implies, which
     /// `ConformalStep::effective_memory` reports back: 1/lambda bars, roughly.
-    /// 0.004 is about 250 bars, one trading year on daily data.
-    double lambda = 0.004;
+    ///
+    /// THE DECAY MATTERS MORE THAN THE MODE, AND THAT WAS NOT OBVIOUS. This
+    /// defaulted to 0.004 -- about 250 bars, one trading year -- on the
+    /// reasoning that a year of errors is a natural calibration window. The
+    /// measurement in models/tests/test_calibration.cpp says otherwise. On a
+    /// series with clustering volatility, against a 10% target:
+    ///
+    ///     fixed band              reg-MAE 4.87 pp
+    ///     SWC, 500 unweighted     reg-MAE 5.22 pp   (worse than no wrapper)
+    ///     TWC, 250-bar memory     reg-MAE 4.50 pp
+    ///     RWC, 250-bar memory     reg-MAE 2.69 pp
+    ///     TWC, 25-bar memory      reg-MAE 0.77 pp
+    ///     RWC, 25-bar memory      reg-MAE 1.71 pp
+    ///
+    /// Two things fall out. Shortening the memory beats adding the regime
+    /// kernel, by a wide margin. And once the memory IS short the kernel makes
+    /// things worse, because it shrinks an already-small effective sample for
+    /// bias it has no room left to remove -- the localisation-variance trade
+    /// of the paper's Theorem 5.4, landing on the variance side.
+    ///
+    /// 0.02 is about 50 bars. It is a defensible default and it is NOT a
+    /// substitute for sweeping this on the actual series, which is why
+    /// `CalibrationReport` carries n_eff and effective memory.
+    double lambda = 0.02;
 
     /// Gaussian kernel bandwidth, in STANDARDISED units -- so 1.0 means "one
     /// standard deviation of the training regime distribution". Only read in
