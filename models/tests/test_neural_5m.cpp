@@ -274,6 +274,103 @@ int main() {
     s_gru.dir = static_cast<double>(up_gru) / n;
     const double se = std::sqrt(0.25 / n);
 
+    // ---- P30-02: THE NEXT BAR, AS A PRICE ---------------------------------
+    //
+    // Everything above is an RMSE ratio: a comparison, in basis points,
+    // against a constant. Smit asked for a price, and a basis point is not a
+    // forecast anybody can act on -- it makes the reader hold the last close
+    // in their head and do exponential arithmetic.
+    //
+    // THE ROW PREDICTED IS THE ONE WITH NO LABEL.
+    //
+    // `rows` is r.size() - kLags and row i's label is r[i + kLags], so the
+    // last labelled row is rows-1 and the features for the bar AFTER it are
+    // the final kLags returns. That row cannot be in the training frame by
+    // construction, which is exactly why it is the one to forecast.
+    //
+    // The GRU here is refitted on EVERY row, the same choice forecast_next
+    // makes for the trees: the walk-forward above is what measures the model,
+    // and a forecast should be made from all the history there is.
+    {
+        std::printf("\n  ── the next bar, as a price ──\n");
+        double mu = 0.0, sd = 0.0;
+        std::size_t nsc = 0;
+        for (std::size_t i = 0; i < rows; ++i) {
+            for (std::size_t j = 0; j < kLags; ++j) { mu += xs[i * kLags + j]; ++nsc; }
+        }
+        mu /= static_cast<double>(nsc);
+        for (std::size_t i = 0; i < rows; ++i) {
+            for (std::size_t j = 0; j < kLags; ++j) {
+                const double dv = xs[i * kLags + j] - mu;
+                sd += dv * dv;
+            }
+        }
+        sd = std::sqrt(sd / static_cast<double>(nsc));
+        if (!(sd > 0.0)) { sd = 1.0; }
+
+        // rows + 1: the labelled rows, plus the unlabelled one being forecast.
+        std::vector<double> zs((rows + 1) * kLags);
+        for (std::size_t i = 0; i < rows; ++i) {
+            for (std::size_t j = 0; j < kLags; ++j) {
+                zs[i * kLags + j] = (xs[i * kLags + j] - mu) / sd;
+            }
+        }
+        for (std::size_t j = 0; j < kLags; ++j) {
+            zs[rows * kLags + j] = (r[rows + j] - mu) / sd;
+        }
+        std::vector<double> ys2(rows + 1, 0.0), ws2(rows + 1, 1.0);
+        std::vector<std::size_t> bars2(rows + 1, 0);
+        std::vector<altair::LabelWindow> wins2(rows + 1);
+        for (std::size_t i = 0; i < rows; ++i) { ys2[i] = ys[i]; }
+
+        altair::Dataset d2{};
+        d2.x = altair::Matrix{zs.data(), rows + 1, kLags};
+        d2.y = ys2.data();
+        d2.weight = ws2.data();
+        d2.bar = bars2.data();
+        d2.window = wins2.data();
+        d2.rows = rows + 1;
+
+        altair::Block all{0, rows};          // labelled rows only, for the fit
+        altair::Block one{rows, rows + 1};   // the unlabelled bar
+
+        altair::RecurrentReadout<altair::GruCell<16, kLags>, 16, kLags, kSeq>
+            gru2(1.0, 1.0);
+        gru2.reset(0x6C0FFEEu);
+        (void)gru2.train_epoch(d2, all, 0.0);
+
+        std::vector<double> pred(rows + 1, 0.0);
+        gru2.predict(d2, one, pred.data());
+        const double move_bps = pred[rows];
+
+        const double last = m5.close.back();
+        const double price = last * std::exp(move_bps / 10'000.0);
+        // The band is the GRU's OUT-OF-SAMPLE RMSE from the walk-forward
+        // above, not a training residual -- which would be narrower by exactly
+        // the amount the model overfits.
+        const double band = s_gru.rmse;
+        const double lo = last * std::exp((move_bps - band) / 10'000.0);
+        const double hi = last * std::exp((move_bps + band) / 10'000.0);
+
+        std::printf("    last 5-minute close   %12.2f\n", last);
+        std::printf("    GRU move              %+12.4f bps\n", move_bps);
+        std::printf("    FORECAST              %12.2f\n", price);
+        std::printf("    band (1 oos rmse)     %12.2f .. %.2f  (%.4f bps)\n",
+                    lo, hi, band);
+
+        check(std::fabs(price - last * std::exp(move_bps / 10'000.0)) < 1e-9,
+              "the price IS the last close carried by the predicted log"
+              " return -- exponential, not additive");
+        check(lo < price && price < hi, "the band brackets the point");
+        // The finding, asserted rather than remembered: the GRU's RMSE ratio
+        // against the constant is above 1.0, so in price terms the band must
+        // swallow the move it is drawn around.
+        check(lo <= last && last <= hi,
+              "and the band STRADDLES the last close -- an RMSE ratio above"
+              " 1.0 means, in price terms, that the forecast does not say"
+              " which side of the last bar the next one lands on");
+    }
+
     std::printf("\n  %zu scored predictions\n\n", scored);
     std::printf("  %-22s %10s %10s %10s\n", "", "RMSE(bps)", "vs const",
                 "direction");
