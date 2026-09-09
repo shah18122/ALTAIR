@@ -86,6 +86,7 @@ qt_add_executable(altair_desktop
     # symbols rather than anything that names the cause.
     terminal.hpp
     live_feed.hpp
+    live_forecast.hpp
     kite_link.hpp
     chain_panel.hpp
     analytics_panel.hpp

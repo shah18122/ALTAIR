@@ -45,6 +45,7 @@
 #include "broker_status.hpp"
 #include <QDir>
 #include "kite_panel.hpp"
+#include "live_forecast.hpp"
 #include "terminal.hpp"
 #include "quant_pages.hpp"
 
@@ -157,7 +158,10 @@ namespace altair::ui {
             // P31-01. The last two large blocks of engine code with no page:
             // P5-06's parity/box/butterfly scanner and P5-07's calendar
             // scanner. Appended, so no existing --page index moves.
-            QStringLiteral("Parity & Calendar")};
+            QStringLiteral("Parity & Calendar"),
+            // P33-01. The next candle from the last COMPLETED one, pulled
+            // live, plus the record that says whether to believe it.
+            QStringLiteral("Live Forecast")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -1241,6 +1245,35 @@ private:
         connect(arb_page->button(), &QPushButton::clicked, this,
                 [arb_page] { arb_page->set_text(arbitrage_scans_report()); });
         pages_->addWidget(arb_page);
+
+        // P33-01. Two buttons because they are two different actions: one
+        // reaches the network and one does not, and a single button that
+        // sometimes made a network call would hide which just happened.
+        auto* lf_page = new ComputePage(
+            QStringLiteral("LIVE FORECAST — P33-01"),
+            QStringLiteral("Fetch latest from Kite, then forecast"),
+            this);
+        (void)lf_page->add_symbols();
+        auto* lf_off = lf_page->add_button(
+            QStringLiteral("Offline (history on disk)"));
+        auto* lf_iv = lf_page->add_interval();
+        auto run_lf = [lf_page, lf_iv](bool live) {
+            lf_page->set_text(QStringLiteral(
+                "%1\n\nWalk-forward with a refit every hundred bars, "
+                "then the next candle.\nThe window is busy until this "
+                "finishes.")
+                    .arg(live ? QStringLiteral("Fetching from Kite...")
+                              : QStringLiteral("Backtesting...")));
+            QApplication::processEvents();
+            lf_page->set_text(live_forecast_report(
+                QStringLiteral(ALTAIR_DATASET_DIR), lf_page->symbol(),
+                lf_iv->currentData().toString(), live));
+        };
+        connect(lf_page->button(), &QPushButton::clicked, this,
+                [run_lf] { run_lf(true); });
+        connect(lf_off, &QPushButton::clicked, this,
+                [run_lf] { run_lf(false); });
+        pages_->addWidget(lf_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

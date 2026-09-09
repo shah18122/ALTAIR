@@ -51,6 +51,7 @@
 #include <models/gbdt.hpp>
 #include <models/regime_rl.hpp>
 #include <models/aggregator.hpp>
+#include <models/forecast_scorecard.hpp>
 #include <models/spot_forecast.hpp>
 #include <risk/covariance.hpp>
 #include <risk/limits.hpp>
@@ -305,13 +306,18 @@ struct QuantSymbol {
     const char* dir;      ///< the dataset/ directory: nifty, banknifty, ...
     const char* label;    ///< what to call it on screen
     bool tradeable;       ///< false for an index of implied vol
+    /// Kite's instrument_token. P33-01: the live forecast has to ask Kite for
+    /// the newest candle, and Kite is addressed by token. It lives here rather
+    /// than in a second table because two lists of the same three instruments
+    /// is one list that will go out of step.
+    std::uint32_t kite_token;
 };
 
 [[nodiscard]] inline const QuantSymbol* quant_symbols(std::size_t& n) {
     static const QuantSymbol kSyms[] = {
-        {"nifty",     "NIFTY 50",   true},
-        {"banknifty", "NIFTY BANK", true},
-        {"indiavix",  "INDIA VIX",  false},
+        {"nifty",     "NIFTY 50",   true,  256265u},
+        {"banknifty", "NIFTY BANK", true,  260105u},
+        {"indiavix",  "INDIA VIX",  false, 264969u},
     };
     n = sizeof(kSyms) / sizeof(kSyms[0]);
     return kSyms;
@@ -432,6 +438,18 @@ public:
             }
         });
         return symbols_;
+    }
+
+    /// The sampling rate, for pages where that is part of the question.
+    [[nodiscard]] QComboBox* add_interval() {
+        auto* c = new QComboBox(this);
+        c->addItem(QStringLiteral("daily"), QStringLiteral("1d"));
+        c->addItem(QStringLiteral("60-minute"), QStringLiteral("60m"));
+        c->addItem(QStringLiteral("15-minute"), QStringLiteral("15m"));
+        c->addItem(QStringLiteral("5-minute"), QStringLiteral("5m"));
+        row_->insertWidget(2, new QLabel(QStringLiteral("Interval"), this));
+        row_->insertWidget(3, c);
+        return c;
     }
 
     /// Which instrument is selected, as its dataset directory name.

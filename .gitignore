@@ -105,5 +105,9 @@ data/instruments.csv
 # Same rule: pulled with a credential, and a tick store is a recording of a
 # real session on a real account.
 **/kite_ticks.json
+# P33-01. The Live Forecast page fetches a recent window into this scratch
+# directory on every click. Same rule as every other file on this list: it is
+# market data pulled with a credential and regenerable from the API.
+data/live_forecast_scratch/
 **/*.altick
 

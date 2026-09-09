@@ -106,6 +106,18 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_spot_forecast COMMAND altair_spot_forecast_test)
 
+    # P33-01. The forecast SCORECARD and its decision maker. Needs no dataset:
+    # it is checked against two synthetic series whose answer is known before
+    # the test -- one a forecaster can beat and one it cannot -- because a
+    # judge that always says "no better" is right about almost every financial
+    # series and is worthless.
+    add_executable(altair_forecast_scorecard_test
+        tests/test_forecast_scorecard.cpp)
+    target_link_libraries(altair_forecast_scorecard_test
+        PRIVATE altair_models altair_flags)
+    add_test(NAME models_forecast_scorecard
+             COMMAND altair_forecast_scorecard_test)
+
     # P8-15. Horizon forecast net of cost, on the real 60-minute series.
     add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
     target_link_libraries(altair_horizon_test

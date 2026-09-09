@@ -20,6 +20,7 @@
 //
 // No check description here may contain the substring FAIL.
 
+#include "../live_forecast.hpp"
 #include "../quant_pages.hpp"
 
 #include <QCoreApplication>
@@ -504,6 +505,41 @@ int main(int argc, char** argv)
         if (at >= 0) {
             std::printf("%s", sf.mid(at, 420).toUtf8().constData());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // 4l. P33-01 -- the partial-bar guard, which is the page's one real
+    // correctness property.
+    //
+    // While the session is open, TODAY's daily candle exists and its close is
+    // wherever the price happens to be. Anchoring a forecast on it forecasts
+    // from a number that is still moving. This project has paid for that once
+    // already: India VIX's 2026-09-04 bar sat in dataset/ with close 10.80
+    // when the settled value is 10.68.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4l] the partial-bar guard\n");
+    {
+        const auto ist = QTimeZone(5 * 3600 + 30 * 60);
+        const std::int64_t day = 86400LL * 1000000000LL;
+        const QDateTime d0(QDate(2026, 9, 9), QTime(0, 0), ist);
+        const std::int64_t bar = d0.toMSecsSinceEpoch() * 1000000LL;
+
+        const QDateTime noon(QDate(2026, 9, 9), QTime(12, 0), ist);
+        const QDateTime after(QDate(2026, 9, 9), QTime(15, 45), ist);
+        check(!bar_is_complete(bar, day, noon.toMSecsSinceEpoch() * 1000000LL),
+              "at noon, today's DAILY bar is NOT complete -- it is stamped "
+              "00:00 but settles at 15:30, so start+one-day would call it "
+              "finished for the whole afternoon");
+        check(bar_is_complete(bar, day, after.toMSecsSinceEpoch() * 1000000LL),
+              "and after 15:30 it is");
+
+        const std::int64_t five = 300LL * 1000000000LL;
+        const QDateTime b5(QDate(2026, 9, 9), QTime(10, 0), ist);
+        const std::int64_t s5 = b5.toMSecsSinceEpoch() * 1000000LL;
+        check(!bar_is_complete(s5, five, s5 + 100LL * 1000000000LL),
+              "an intraday bar is not complete part way through");
+        check(bar_is_complete(s5, five, s5 + five),
+              "and is exactly when its own width has elapsed");
     }
 
     // -----------------------------------------------------------------------
