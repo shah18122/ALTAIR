@@ -42,6 +42,7 @@
 #include "kill_switch.hpp"
 #include "order_ticket.hpp"
 #include "data/bar_csv.hpp"
+#include "data/real_tape.hpp"
 #include "broker_status.hpp"
 #include <QDir>
 #include "kite_panel.hpp"
@@ -229,11 +230,16 @@ class MainWindow final : public QMainWindow {
 public:
     /// Borrows `ticks`; the caller owns the storage and must outlive the
     /// window. Same contract as `Replayer`, for the same reason.
+    /// `sessions` is the trading-day window the tape was loaded with, kept
+    /// so a RELOAD asks for the same span the window opened with rather than
+    /// silently changing how much tape is on screen.
     MainWindow(const ReplayTick* ticks, std::size_t count, Role role,
-               const QString& user, QWidget* parent = nullptr)
+               const QString& user, std::size_t sessions,
+               QWidget* parent = nullptr)
         : QMainWindow(parent),
           ticks_(ticks),
           count_(count),
+          sessions_(sessions),
           replayer_(ticks, count),
           clock_(DemoSessionTimes::trading(), DemoSessionTimes::pre_open()),
           role_(role),
@@ -363,6 +369,54 @@ public:
         if (source_ != nullptr && index >= 0 && index < source_->count()) {
             source_->setCurrentIndex(index);
         }
+    }
+
+    /// Re-read dataset/ into the grid's tape. Returns what happened, in
+    /// one line, for the caller to show where the user is already looking.
+    ///
+    /// P34-01. The tape was read once, in main(), before the window existed.
+    /// So altair_kite_update could bring every series current and the grid
+    /// would go on replaying the bars it loaded at startup -- the status line
+    /// would even keep reporting the OLD last-bar date, which is worse than
+    /// showing nothing because it is a specific wrong answer.
+    ///
+    /// IT REFUSES ON THE SYNTHETIC TAPE, and that is not laziness. When
+    /// dataset/ was unreadable at startup, main() registered the FABRICATED
+    /// instruments -- different tokens, names suffixed "(syn)". Swapping the
+    /// tape underneath them would feed real ticks to rows that cannot match
+    /// them: every tick unknown, every row frozen at its fake price, and the
+    /// window looking like it had updated. Rule 9 -- say so and change
+    /// nothing.
+    [[nodiscard]] QString reload_tape() {
+        if (!tape_real_) {
+            return QStringLiteral(
+                "· grid NOT reloaded -- this window opened on the SYNTHETIC "
+                "tape, so its rows are fabricated instruments and real ticks "
+                "would not match them. Restart to pick up the real tape.");
+        }
+        RealTape fresh =
+            load_real_tape(QStringLiteral(ALTAIR_DATASET_DIR), sessions_);
+        if (!fresh.ok()) {
+            // The tape ON SCREEN is left exactly as it was. A failed reload
+            // must not empty a grid that was working.
+            return QStringLiteral("· grid NOT reloaded, and the old tape is "
+                                  "untouched: %1").arg(fresh.error);
+        }
+        const std::size_t was = count_;
+        owned_tape_ = std::move(fresh.ticks);
+        ticks_ = owned_tape_.data();
+        count_ = owned_tape_.size();
+        set_tape_is_real(true, fresh.sessions, QString(), fresh.first_ns,
+                         fresh.last_ns);
+        restart();
+        return QStringLiteral("· grid reloaded: %1 bars over %2 session(s), "
+                              "last %3  (was %4 bars)")
+            .arg(count_)
+            .arg(fresh.sessions)
+            .arg(QDateTime::fromMSecsSinceEpoch(fresh.last_ns / 1'000'000,
+                                                ist_tz())
+                     .toString(QStringLiteral("yyyy-MM-dd HH:mm")))
+            .arg(was);
     }
 
     void add_instrument(std::uint32_t token, const QString& symbol,
@@ -624,42 +678,7 @@ private:
         // an entry here for a directory that does not exist is impossible
         // rather than merely unlikely.
         source_ = new QComboBox;
-        source_->addItem(QStringLiteral("Synthetic replay"), QString());
-        {
-            struct Iv { const char* dir; const char* label; long long secs; };
-            const Iv ivs[] = {{"1m", "1-minute", 60},
-                              {"5m", "5-minute", 300},
-                              {"15m", "15-minute", 900},
-                              {"60m", "60-minute", 3600},
-                              {"1d", "daily", 86400}};
-            std::size_t nsym = 0;
-            const QuantSymbol* syms = quant_symbols(nsym);
-            for (std::size_t i = 0; i < nsym; ++i) {
-                for (const Iv& iv : ivs) {
-                    const QString rel = QStringLiteral("spot/%1/%2")
-                                            .arg(QLatin1String(syms[i].dir),
-                                                 QLatin1String(iv.dir));
-                    // ONLY WHAT IS ACTUALLY THERE. An entry that selects to an
-                    // empty chart is worse than a shorter list: it reads as a
-                    // broken chart rather than as absent data.
-                    if (!QDir(QStringLiteral(ALTAIR_DATASET_DIR "/") + rel)
-                             .exists()) {
-                        continue;
-                    }
-                    source_->addItem(
-                        QStringLiteral("%1 %2")
-                            .arg(QLatin1String(syms[i].label),
-                                 QLatin1String(iv.label)),
-                        QStringLiteral("%1|%2").arg(rel).arg(iv.secs));
-                }
-            }
-            // The near future, which is neither spot nor selectable above.
-            if (QDir(QStringLiteral(ALTAIR_DATASET_DIR "/fut/nifty/1d"))
-                    .exists()) {
-                source_->addItem(QStringLiteral("NIFTY future daily"),
-                                 QStringLiteral("fut/nifty/1d|86400"));
-            }
-        }
+        rebuild_sources();
         connect(source_, &QComboBox::currentIndexChanged, this,
                 [this](int) { rebuild_chart(); });
 
@@ -852,6 +871,61 @@ private:
                      aggregated ? QStringLiteral(" (aggregated)")
                                 : QStringLiteral(" (file's native bars)")));
         chart_->set_candles(std::move(bars), Conservation{});
+    }
+
+    /// Rebuild the chart's source list from what is ON DISK.
+    ///
+    /// P34-01. It was built once, in the constructor. altair_kite_update can
+    /// create a partition that did not exist when the window opened -- and
+    /// the list only offers directories it can see, deliberately, because an
+    /// entry that selects to an empty chart reads as a broken chart rather
+    /// than as absent data. So a series that arrives mid-session was
+    /// invisible until a restart.
+    ///
+    /// The selection is preserved across the rebuild by its DATA, not its
+    /// index: the whole point is that entries may have been inserted, so an
+    /// index means something different afterwards.
+    void rebuild_sources() {
+        const QString keep = source_->currentData().toString();
+        source_->clear();
+        source_->addItem(QStringLiteral("Synthetic replay"), QString());
+        {
+            struct Iv { const char* dir; const char* label; long long secs; };
+            const Iv ivs[] = {{"1m", "1-minute", 60},
+                              {"5m", "5-minute", 300},
+                              {"15m", "15-minute", 900},
+                              {"60m", "60-minute", 3600},
+                              {"1d", "daily", 86400}};
+            std::size_t nsym = 0;
+            const QuantSymbol* syms = quant_symbols(nsym);
+            for (std::size_t i = 0; i < nsym; ++i) {
+                for (const Iv& iv : ivs) {
+                    const QString rel = QStringLiteral("spot/%1/%2")
+                                            .arg(QLatin1String(syms[i].dir),
+                                                 QLatin1String(iv.dir));
+                    // ONLY WHAT IS ACTUALLY THERE. An entry that selects to an
+                    // empty chart is worse than a shorter list: it reads as a
+                    // broken chart rather than as absent data.
+                    if (!QDir(QStringLiteral(ALTAIR_DATASET_DIR "/") + rel)
+                             .exists()) {
+                        continue;
+                    }
+                    source_->addItem(
+                        QStringLiteral("%1 %2")
+                            .arg(QLatin1String(syms[i].label),
+                                 QLatin1String(iv.label)),
+                        QStringLiteral("%1|%2").arg(rel).arg(iv.secs));
+                }
+            }
+            // The near future, which is neither spot nor selectable above.
+            if (QDir(QStringLiteral(ALTAIR_DATASET_DIR "/fut/nifty/1d"))
+                    .exists()) {
+                source_->addItem(QStringLiteral("NIFTY future daily"),
+                                 QStringLiteral("fut/nifty/1d|86400"));
+            }
+        }
+        const int at = source_->findData(keep);
+        if (at >= 0) { source_->setCurrentIndex(at); }
     }
 
     void build_pages() {
@@ -1208,8 +1282,18 @@ private:
         // rather than leaving it stale until the next five-second poll. A
         // person who just linked and sees a stale pill concludes it failed and
         // retries with a token that is now spent.
-        pages_->addWidget(new KiteLinkPanel(
-            role_, [this] { refresh_broker_pill(); }));
+        // P34-01. The callback now does two things: repaint the pill, and
+        // rebuild the chart's source list. The updater may have created a
+        // partition that did not exist when this window opened -- the list is
+        // built from what is ON DISK, so a series that arrives mid-session is
+        // invisible until it is rebuilt.
+        pages_->addWidget(new KiteLinkPanel(role_, [this] {
+            refresh_broker_pill();
+            rebuild_sources();
+            // LAST, because it is the only one that can fail, and it reports
+            // in the panel's own log rather than a box over it.
+            return reload_tape();
+        }));
 
         auto* neural_page = new ComputePage(
             QStringLiteral("NEURAL TIER — P8-16"),
@@ -1526,8 +1610,14 @@ private:
                     QStringLiteral("HH:mm:ss"))));
     }
 
+    // BORROWED until the first reload, OWNED after it. `ticks_` starts
+    // pointing at main()'s vector (the contract on the constructor) and, once
+    // reload_tape() succeeds, points into `owned_tape_` instead. The borrowed
+    // storage outlives the window either way, so neither pointer can dangle.
     const ReplayTick* ticks_ = nullptr;
     std::size_t count_ = 0;
+    std::vector<ReplayTick> owned_tape_;
+    std::size_t sessions_ = 0;
     Replayer replayer_;
     MarketClock clock_;
 

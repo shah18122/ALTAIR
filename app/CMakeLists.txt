@@ -49,6 +49,15 @@ if(ALTAIR_HAVE_NET)
     target_link_libraries(altair_kite_account PRIVATE
         altair_broker_net altair_flags)
 
+    # P34-01. Brings dataset/ up to date in one call, MERGING into the month
+    # files rather than replacing them -- altair_kite_fetch refuses to
+    # overwrite an existing month, which is right for a bulk backfill and
+    # exactly wrong for a daily top-up, where the month being appended to is
+    # always the one already on disk.
+    add_executable(altair_kite_update kite_update_main.cpp)
+    target_link_libraries(altair_kite_update PRIVATE
+        altair_broker_net altair_flags)
+
     # P32-07. THE LIVE TICK FEED. feed/kite_decoder.hpp has turned Kite's
     # binary frames into Ticks since P2-02 and nothing had ever handed it a
     # frame off a socket -- every "live" number in this tree has come from a

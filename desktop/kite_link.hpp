@@ -45,6 +45,9 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QApplication>
+#include <QCoreApplication>
+#include <QFileInfo>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QProcess>
@@ -123,7 +126,7 @@ public:
     /// immediately instead of waiting for the next five-second poll. A person
     /// who just linked an account and sees a stale pill concludes it did not
     /// work and does it again with a spent token.
-    KiteLinkPanel(Role role, std::function<void()> on_linked,
+    KiteLinkPanel(Role role, std::function<QString()> on_linked,
                   QWidget* parent = nullptr)
         : QWidget(parent), role_(role), on_linked_(std::move(on_linked)) {
         auto* v = new QVBoxLayout(this);
@@ -307,7 +310,11 @@ private:
             // the same value gets a 403 that reads like a different bug.
             paste_->clear();
             say(QStringLiteral("· session written. That token is now SPENT."));
-            if (on_linked_) { on_linked_(); }
+            update_dataset();
+            if (on_linked_) {
+                const QString note = on_linked_();
+                if (!note.isEmpty()) { say(note); }
+            }
 #if !ALTAIR_HAVE_NET
             // THE PILL WILL NOT SAY AUTHENTICATED, AND THAT IS CORRECT.
             //
@@ -330,8 +337,87 @@ private:
         }
     }
 
+    /// Bring dataset/ up to date, immediately after linking.
+    ///
+    /// P34-01. Smit asked that connecting a token update the whole tree
+    /// rather than leaving fifteen series at whatever date the last manual
+    /// fetch reached. A daily token is exactly the window in which this is
+    /// possible, so it happens at the moment the token exists rather than
+    /// waiting to be remembered.
+    ///
+    /// SUBPROCESS, same boundary as everything else here: desktop/ links no
+    /// broker/ and holds no credential. altair_kite_update reads the session
+    /// file; this window does not and cannot.
+    ///
+    /// IT MERGES AND IT IS IDEMPOTENT -- running it twice adds nothing -- so
+    /// doing it on every link is safe rather than merely convenient.
+    void update_dataset() {
+        QString exe =
+#if defined(_WIN32)
+            QStringLiteral("altair_kite_update.exe");
+#else
+            QStringLiteral("altair_kite_update");
+#endif
+        QStringList tried;
+        tried << QCoreApplication::applicationDirPath()
+                     + QStringLiteral("/../app/") + exe;
+        tried << QCoreApplication::applicationDirPath()
+                     + QStringLiteral("/../../net/app/") + exe;
+#ifdef ALTAIR_SOURCE_DIR
+        tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+#endif
+        QString found;
+        for (const QString& c : tried) {
+            if (QFileInfo(c).isFile()) {
+                found = QFileInfo(c).canonicalFilePath();
+                break;
+            }
+        }
+        if (found.isEmpty()) {
+            say(QStringLiteral(
+                "· altair_kite_update is not in this build, so dataset/ was "
+                "NOT refreshed. It needs the `net` preset."));
+            return;
+        }
+
+        say(QStringLiteral(
+            "· updating dataset/ -- NIFTY, BANKNIFTY and INDIA VIX at 1m, "
+            "5m, 15m, 60m and daily. This takes a minute."));
+        QApplication::processEvents();
+
+        QProcess proc;
+        proc.setProgram(found);
+        proc.setArguments({QStringLiteral("--go")});
+        proc.setProcessChannelMode(QProcess::MergedChannels);
+#ifdef ALTAIR_SOURCE_DIR
+        // Pinned for the reason P26-02b found the hard way: a subprocess
+        // launched from a desktop shortcut resolves `dataset` relative to the
+        // build folder and writes a second tree nobody reads.
+        proc.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
+#endif
+        proc.start();
+        if (!proc.waitForStarted(5000) || !proc.waitForFinished(600000)) {
+            proc.kill();
+            say(QStringLiteral("· the updater did not finish. dataset/ may be "
+                               "partly updated -- it merges, so nothing was "
+                               "lost."));
+            return;
+        }
+        // The whole tail, because the per-series lines ARE the report: which
+        // series moved, how many bars, and how many stored bars turned out to
+        // have been captured mid-session.
+        const QString out = QString::fromUtf8(proc.readAll()).trimmed();
+        for (const QString& ln : out.split(QChar('\n'))) {
+            if (!ln.trimmed().isEmpty()) { say(ln); }
+        }
+    }
+
     Role role_;
-    std::function<void()> on_linked_;
+    /// Returns ONE LINE saying what the window did with the new data --
+    /// logged here, beside the updater's own output, because that is where
+    /// the user is reading. A `void` callback could not say "the grid was not
+    /// reloaded, and here is why".
+    std::function<QString()> on_linked_;
     QString exe_;
     QPushButton* open_ = nullptr;
     QPushButton* exchange_ = nullptr;

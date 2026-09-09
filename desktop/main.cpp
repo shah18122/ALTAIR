@@ -29,6 +29,7 @@
 #include <QIcon>
 #include <QPixmap>
 #include <QSplashScreen>
+#include <QTimer>
 #include <cstdio>
 #include <core/types/units.hpp>
 #include <feed/replay.hpp>
@@ -305,7 +306,8 @@ int main(int argc, char** argv) {
         who = login.user();
     }
 
-    altair::ui::MainWindow window(ticks.data(), ticks.size(), role, who);
+    altair::ui::MainWindow window(ticks.data(), ticks.size(), role, who,
+                                 want_sessions);
     if (real.ok()) {
         for (const auto& ins : real.instruments) {
             // `trades` is false for an index: no turnover to report, so the
@@ -349,6 +351,30 @@ int main(int argc, char** argv) {
             std::fprintf(stderr,
                          "--compute: this page has no compute button.\n");
         }
+    }
+
+    // --reload-tape exercises the path the Link Kite button takes after the
+    // dataset updater runs, WITHOUT spending a daily Kite token.
+    //
+    // P34-01. reload_tape() swaps the grid off main()'s borrowed tape and on
+    // to storage the window owns, then restarts the replayer against it. A
+    // compile proves neither half. This flag is how that swap was actually
+    // verified, and it prints its one-line result to stderr so a capture
+    // script can read it without a screenshot.
+    if (args.contains(QStringLiteral("--reload-tape"))) {
+        // ON A DELAY, and the delay is the point. Firing it here would
+        // reload a tape this same process read moments earlier -- the
+        // one case where a BROKEN reload and a working one produce
+        // identical output, because the bar count cannot have changed.
+        // Eight seconds is long enough to alter a file underneath a
+        // running window, which is what the Link Kite path does for
+        // real: the updater is a subprocess and it writes while this
+        // window is up.
+        QTimer::singleShot(8000, &window, [&window] {
+            const QString note = window.reload_tape();
+            std::fprintf(stderr, "%s\n", note.toUtf8().constData());
+            std::fflush(stderr);
+        });
     }
 
     // --train runs the Models page's walk-forward, for the same reason
