@@ -311,6 +311,38 @@ public:
         seek(static_cast<int>(n));
     }
 
+    /// Press the current page's compute button, if it has one.
+    ///
+    /// P31-02. `--page` opens on a compute page and the page says "Not run
+    /// yet. Press the button above." -- which is correct behaviour and makes
+    /// a screenshot of it useless: every one of these pages computes on
+    /// demand, deliberately, so that nothing on screen is a cached number
+    /// nobody can reproduce.
+    ///
+    /// This is the same escape `--train` already is for the Models panel, and
+    /// it exists for the reason the comment beside `--page` in main.cpp gives:
+    /// a capture cannot click, and synthesising a keystroke sends it to
+    /// whatever window has focus. It calls click() on the page's own button,
+    /// so it runs EXACTLY the path a person's click runs -- it does not reach
+    /// past the widget to call the report function itself, which would make
+    /// the capture prove something the button does not.
+    ///
+    /// Returns false when the current page has no compute button, which is
+    /// most of them: the grid, the chart and the watchlist are live and have
+    /// nothing to press.
+    bool compute_current() {
+        // dynamic_cast, not qobject_cast: ComputePage is a plain QWidget
+        // subclass with no Q_OBJECT macro, and adding one would put it in
+        // AUTOMOC's path for every target that includes quant_pages.hpp --
+        // five test binaries, each of which would then need the header in its
+        // own source list or link against a moc generated for a different
+        // target. RTTI is on and this is a UI action, not a hot path.
+        auto* page = dynamic_cast<ComputePage*>(pages_->currentWidget());
+        if (page == nullptr) { return false; }
+        page->button()->click();
+        return true;
+    }
+
     /// Select a chart data source by index. Same reason as `show_page`:
     /// starting where the work is, without simulating a click.
     void show_source(int index) {

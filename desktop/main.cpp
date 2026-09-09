@@ -341,6 +341,16 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --compute presses the button on whatever page --page opened. Separate
+    // from --page because most pages have no button, and a flag that silently
+    // does nothing on two thirds of the nav is worse than one that says so.
+    if (args.contains(QStringLiteral("--compute"))) {
+        if (!window.compute_current()) {
+            std::fprintf(stderr,
+                         "--compute: this page has no compute button.\n");
+        }
+    }
+
     // --train runs the Models page's walk-forward, for the same reason
     // --page exists: a capture script cannot click a button, and synthesising
     // a click sends it to whatever window has focus. Standalone, so it is
