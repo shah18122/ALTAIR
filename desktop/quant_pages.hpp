@@ -58,6 +58,11 @@
 #include <risk/optimise.hpp>
 #include <risk/stress.hpp>
 #include <risk/var.hpp>
+#ifdef ALTAIR_HAVE_CHARGES_TOML
+#include <risk/charges_toml.hpp>
+#endif
+#include <strategies/parity.hpp>
+#include <strategies/calendar.hpp>
 // P21. strategies/ is header-only here and is NOT linked -- see the note at
 // the bottom of desktop/CMakeLists.txt. It detects; it cannot trade, and it
 // does not link oms/ either, so including it widens nothing.
@@ -69,6 +74,8 @@
 #include <strategies/overnight.hpp>
 #include <strategies/momentum.hpp>
 
+#include <QDateTime>
+#include <QTimeZone>
 #include <QDir>
 #include <QTextStream>
 #include <QProcess>
@@ -3263,6 +3270,636 @@ struct SeriesSpan {
         "\n  dataset/ is gitignored and regenerable. Counted from disk on\n"
         "  every open, because a typed inventory goes stale the first time\n"
         "  something is ingested and nobody edits the list.\n");
+    return s;
+}
+
+/// P31-01. The two arbitrage scanners that had no page.
+///
+/// The audit that produced P23 found 34 headers of real results against 22
+/// with a page. These are the last two of the large ones: P5-06's put-call
+/// parity, box and butterfly scanner, and P5-07's calendar scanner.
+///
+/// WHAT IS BEING MEASURED HERE IS THE SCANNER, NOT THE MARKET.
+///
+/// There is no option chain -- dataset/opt/ is empty and no option
+/// subscription is running -- so every chain below is priced by this page at
+/// a stated vol and then handed to the engine's own scanner. That sounds like
+/// a weaker exercise than it is: on BOTH of these cards the finding was that
+/// the textbook scanner is wrong, and a synthetic arbitrage-free chain is the
+/// only surface on which that can be proved. A real chain cannot tell you
+/// whether an opportunity is real; a chain you priced yourself can.
+///
+/// Nothing here is reimplemented. The page builds quotes and calls
+/// butterfly_margin, scan_parity, scan_box, scan_option_calendar and
+/// scan_futures_calendar -- the same functions the engine calls.
+[[nodiscard]] inline QString arbitrage_scans_report() {
+    QString s = QStringLiteral(
+        "PARITY & CALENDAR — the two scanners that had no page\n\n"
+        "――― WHAT THIS IS NOT ―――\n\n"
+        "  There is no option chain. dataset/opt/ is empty and no option\n"
+        "  subscription is running, so NO number below is a market\n"
+        "  measurement and nothing here is an opportunity anyone can trade.\n\n"
+        "  Every chain is priced BY THIS PAGE at a stated vol and handed to\n"
+        "  the engine's own scanner. On both of these cards the finding was\n"
+        "  that the textbook scanner is WRONG, and a synthetic, convex,\n"
+        "  arbitrage-free chain is the only surface on which that can be\n"
+        "  shown: a real chain cannot tell you whether an opportunity is\n"
+        "  genuine, and one you priced yourself can.\n\n");
+
+    // ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+    // 1. The butterfly. Needs no cost schedule: convexity is a property of
+    //    three quotes.
+    // ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+    s += QStringLiteral(
+        "――― 1. THE TEXTBOOK BUTTERFLY ASSUMES AN EVEN LADDER ―――\n\n"
+        "  The condition every reference gives is\n\n"
+        "      C(K1) - 2*C(K2) + C(K3) >= 0\n\n"
+        "  and it is valid only when K2-K1 == K3-K2. NIFTY's ladder is 50\n"
+        "  points near the money and 100 further out, so three CONSECUTIVE\n"
+        "  LISTED strikes routinely straddle the step change.\n\n"
+        "  Both rows below are the SAME flat 14-vol Black-76 chain, forward\n"
+        "  24000, 30 days. A flat surface is convex in strike by\n"
+        "  construction, so any butterfly found on it is the scanner's, not\n"
+        "  the market's.\n\n"
+        "    ladder                  gaps       weighted    unweighted\n");
+
+    {
+        const double F = 2'400'000.0, T = 30.0 / 365.0, vol = 0.14;
+        const auto fair = [&](std::int64_t K) -> std::int64_t {
+            const auto g = black76(OptionRight::Call, Price{2'400'000},
+                                   Price{K}, Years{T}, Vol{vol}, 0.0);
+            return g ? static_cast<std::int64_t>(g->price + 0.5) : 0;
+        };
+        (void)F;
+        const auto tight = [](std::int64_t fairp) {
+            return Touch{Price{fairp}, Price{fairp}};
+        };
+
+        struct Ladder { const char* name; std::int64_t k1, k2, k3; };
+        const Ladder ladders[] = {
+            {"24000 / 24100 / 24200", 2'400'000, 2'410'000, 2'420'000},
+            {"24000 / 24100 / 24300", 2'400'000, 2'410'000, 2'430'000},
+        };
+        double fictional = 0.0;
+        for (const Ladder& L : ladders) {
+            ButterflyQuote q{};
+            q.k1 = Price{L.k1}; q.k2 = Price{L.k2}; q.k3 = Price{L.k3};
+            q.c1 = tight(fair(L.k1));
+            q.c2 = tight(fair(L.k2));
+            q.c3 = tight(fair(L.k3));
+            const auto r = butterfly_margin(q);
+            if (!r) { continue; }
+            s += QStringLiteral("    %1  %2/%3   %4   %5\n")
+                     .arg(QString::fromLatin1(L.name), -22)
+                     .arg(r->lower_gap / 100).arg(r->upper_gap / 100, -4)
+                     .arg(r->margin / 100.0, 10, 'f', 2)
+                     .arg(r->unweighted / 100.0, 13, 'f', 2);
+            if (!r->equally_spaced && r->unweighted < 0.0) {
+                fictional = -r->unweighted / 100.0;
+            }
+        }
+        if (fictional > 0.0) {
+            s += QStringLiteral(
+                "\n  A scanner using the textbook form on the uneven triple\n"
+                "  reports Rs %1 per unit of FREE MONEY, every tick, on a\n"
+                "  chain that has no arbitrage in it at all — and it does so\n"
+                "  at every strike where the ladder steps from 50 to 100.\n\n"
+                "  It is not a rounding wobble. The error is the strike\n"
+                "  asymmetry times the slope of the call curve, so it is\n"
+                "  rupees and it grows with how uneven the ladder is.\n\n"
+                "  The weighted form used above is\n\n"
+                "      (K3-K2)*C(K1) - (K3-K1)*C(K2) + (K2-K1)*C(K3) >= 0\n\n"
+                "  which reduces to the textbook one when the spacing is\n"
+                "  equal — the first row, where the two agree. The strikes\n"
+                "  come from the spec store; the STEP is never assumed.\n\n")
+                     .arg(fictional, 0, 'f', 2);
+        }
+    }
+
+    // ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+    // 4. The calendar alignment. Also needs no cost schedule: it compares
+    //    total variance, and a variance has no brokerage.
+    //
+    //    Placed here, before the costed sections, because it and the
+    //    butterfly are the two findings this page exists to show and neither
+    //    depends on a build option.
+    // ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+    s += QStringLiteral(
+        "――― 2. TWO EXPIRIES DO NOT SHARE A FORWARD ―――\n\n"
+        "  The calendar condition is on TOTAL IMPLIED VARIANCE at fixed\n"
+        "  log-moneyness:  w(k,T2) >= w(k,T1) for T2 > T1, at every\n"
+        "  k = ln(K/F(T)).  The forward is not the same at the two expiries,\n"
+        "  so fixed k means a DIFFERENT STRIKE on each one.\n\n"
+        "  Iterating strikes and reading each slice at that strike's own\n"
+        "  moneyness feels like aligning by moneyness and is exactly the\n"
+        "  strike-aligned test wearing the other label. Both are run below,\n"
+        "  401 sampled strikes each.\n\n");
+
+    {
+        // dsigma/dk parametrisation: SVI's `b` is in variance units and
+        // scales with T, so the same `b` that is a realistic skew at 30 days
+        // is an absurd one at 7 and an inadmissible slice besides.
+        const auto smile = [](double atm_vol, double t, double dsig_dk,
+                              double rho) {
+            SviParams p{};
+            p.rho = rho;
+            p.m = 0.0;
+            p.sigma = 0.10;
+            p.b = 2.0 * atm_vol * t * dsig_dk / rho;
+            p.a = atm_vol * atm_vol * t - p.b * p.sigma;
+            return p;
+        };
+        const auto scaled = [](const SviParams& p, double lambda) {
+            SviParams q = p;
+            q.a = p.a * lambda;
+            q.b = p.b * lambda;
+            return q;
+        };
+
+        const double r = 0.065;
+
+        // ── 2a. an index calendar, pure carry ──
+        {
+            const double T1 = 7.0 / 365.0, T2 = 21.0 / 365.0;
+            const std::int64_t F1 = 2'400'000;
+            const std::int64_t F2 = static_cast<std::int64_t>(
+                static_cast<double>(F1) * std::exp(r * (T2 - T1)) + 0.5);
+            DatedSlice s1{}, s2{};
+            s1.slice = smile(0.14, T1, -0.70, -0.72);
+            s1.forward = Price{F1};
+            s1.t = Years{T1};
+            s2.slice = scaled(s1.slice, 1.60);   // clean by construction
+            s2.forward = Price{F2};
+            s2.t = Years{T2};
+
+            const auto by_k = scan_option_calendar(s1, s2, Price{2'160'000},
+                                                   Price{2'640'000}, 401,
+                                                   CalendarAlignment::Moneyness);
+            const auto by_K = scan_option_calendar(s1, s2, Price{2'160'000},
+                                                   Price{2'640'000}, 401,
+                                                   CalendarAlignment::Strike);
+            if (by_k && by_K) {
+                const double dk = std::log(static_cast<double>(F2)
+                                           / static_cast<double>(F1));
+                s += QStringLiteral(
+                    "  2a. INDEX, PURE CARRY. 7d against 21d. The far forward\n"
+                    "      %1 sits ABOVE the near %2, so k moves %3.\n"
+                    "      The far slice is the near one scaled by 1.60, so the\n"
+                    "      surface is CLEAN by construction and anything found\n"
+                    "      in it is the scan's own.\n\n"
+                    "        by moneyness : %4 / %5 violations, worst %6\n"
+                    "        by strike    : %7 / %8 violations, worst %9\n")
+                         .arg(static_cast<double>(F2) / 100.0, 0, 'f', 2)
+                         .arg(static_cast<double>(F1) / 100.0, 0, 'f', 2)
+                         .arg(dk, 0, 'f', 4)
+                         .arg(by_k->violations, 4).arg(by_k->points)
+                         .arg(by_k->worst, 0, 'f', 6)
+                         .arg(by_K->violations, 4).arg(by_K->points)
+                         .arg(by_K->worst, 0, 'f', 6);
+                if (by_k->worst != 0.0) {
+                    s += QStringLiteral(
+                        "\n      The strike-aligned margin is %1 of the correct\n"
+                        "      one. Real, biased, and second order: on this pair\n"
+                        "      the misalignment is NOT enough to invent an\n"
+                        "      opportunity. Reporting that as the headline would\n"
+                        "      be as wrong as ignoring it — what it fixes is the\n"
+                        "      threshold at which it starts to matter, and 2b\n"
+                        "      moves the forward the other way and further.\n\n")
+                             .arg(QStringLiteral("%1 per cent")
+                                      .arg(100.0 * by_K->worst / by_k->worst,
+                                           0, 'f', 1));
+                }
+            }
+        }
+
+        // ── 2b. the card: a dividend moves the forward the other way ──
+        {
+            const double T1 = 7.0 / 365.0, T2 = 35.0 / 365.0;
+            const double S = 295'000.0, div = 4'000.0;
+            const std::int64_t F1 =
+                static_cast<std::int64_t>(S * std::exp(r * T1));
+            const std::int64_t F2 =
+                static_cast<std::int64_t>(S * std::exp(r * T2) - div);
+            DatedSlice s1{}, s2{};
+            s1.slice = smile(0.28, T1, -0.60, -0.60);
+            s1.forward = Price{F1};
+            s1.t = Years{T1};
+            // A GENUINE violation: total variance FALLS half a per cent from
+            // the near expiry to the far one, at every k.
+            s2.slice = scaled(s1.slice, 0.995);
+            s2.forward = Price{F2};
+            s2.t = Years{T2};
+
+            const auto by_k = scan_option_calendar(s1, s2, Price{250'000},
+                                                   Price{340'000}, 401,
+                                                   CalendarAlignment::Moneyness);
+            const auto by_K = scan_option_calendar(s1, s2, Price{250'000},
+                                                   Price{340'000}, 401,
+                                                   CalendarAlignment::Strike);
+            if (by_k && by_K) {
+                const double dk = std::log(static_cast<double>(F2)
+                                           / static_cast<double>(F1));
+                s += QStringLiteral(
+                    "  2b. THE CARD. A 2950 stock going Rs 40 ex-dividend\n"
+                    "      between the expiries — the ordinary state of affairs\n"
+                    "      for a dividend payer, not an anomaly. The far forward\n"
+                    "      %1 sits BELOW the near %2, so k moves %3:\n"
+                    "      the OTHER way from 2a and three times as far.\n"
+                    "      Total variance genuinely falls 0.5 per cent from near\n"
+                    "      to far, so there is a REAL violation at every strike.\n\n"
+                    "        by moneyness : %4 / %5 violations found\n"
+                    "        by strike    : %6 / %7 violations found\n\n")
+                         .arg(static_cast<double>(F2) / 100.0, 0, 'f', 2)
+                         .arg(static_cast<double>(F1) / 100.0, 0, 'f', 2)
+                         .arg(dk, 0, 'f', 5)
+                         .arg(by_k->violations, 4).arg(by_k->points)
+                         .arg(by_K->violations, 4).arg(by_K->points);
+                const int hidden = by_k->violations - by_K->violations;
+                if (hidden > 0) {
+                    s += QStringLiteral(
+                        "      %1 GENUINE VIOLATIONS HIDDEN.\n\n"
+                        "      Which is the failure nobody expects. The strike-\n"
+                        "      aligned test does not INVENT arbitrage here, it\n"
+                        "      CONCEALS it, above the smile's minimum where w\n"
+                        "      rises with k. That is the worse of the two: an\n"
+                        "      invented opportunity costs money once and then\n"
+                        "      gets fixed, and a hidden one is never seen at all.\n\n")
+                             .arg(hidden);
+                }
+            }
+        }
+
+        s += QStringLiteral(
+            "  A caller who does not name an alignment is REFUSED: the two\n"
+            "  answers differ, one of them is wrong, and there is no default\n"
+            "  that is not a decision.\n\n"
+            "  And nothing here compares implied VOLS. In a stressed market\n"
+            "  the front month can trade at 30 vol against 18 two months\n"
+            "  out; w still rises, because T rises faster than sigma^2\n"
+            "  falls. A scanner comparing vols would flag every stressed\n"
+            "  market as an arbitrage.\n\n");
+    }
+
+    // ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+    // 3-5. Everything that needs a bill.
+    //
+    // RULE 5: every signal is priced net of full cost BEFORE IT EXISTS. So
+    // these three cannot run against an invented schedule. Where the loader
+    // is absent the page names the blocker, exactly as the cost panel does --
+    // a made-up charge is worse than no charge, because rule 5 is what
+    // everything downstream trusts.
+    // ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+#ifdef ALTAIR_HAVE_CHARGES_TOML
+    {
+        std::vector<ChargeSchedule> schedules;
+        const auto rep = load_charges_file(ALTAIR_CHARGES_TOML, schedules);
+        const ChargeSchedule* sch = nullptr;
+        if (rep) {
+            for (const ChargeSchedule& c : schedules) {
+                if (sch == nullptr || sch->valid_from < c.valid_from) {
+                    sch = &c;
+                }
+            }
+        }
+        if (sch == nullptr) {
+            s += QStringLiteral(
+                "――― 3. PARITY, THE BOX, AND THE FUTURES CALENDAR ―――\n\n"
+                "  COSTED SCANNERS UNAVAILABLE. config/charges.toml did not\n"
+                "  load. Rule 5 says every signal is priced\n"
+                "  net of full cost before it exists, so these three report\n"
+                "  nothing rather than a number costed against a guess.\n\n");
+        } else {
+            // BROKERAGE IS COMMERCIAL, NOT REGULATORY, and is deliberately
+            // not in charges.toml -- it changes without a circular. It is the
+            // one literal on this page and is named as such, the same way the
+            // cost panel names it. Options are a FLAT Rs 20 per order: the
+            // "Rs 20 or 0.03 per cent, whichever lower" rule is the
+            // intraday-equity and futures term, and applying it to options
+            // understates the bill by a factor of five in the direction that
+            // makes an options strategy look viable.
+            BrokerageRule opt_br{};
+            opt_br.flat_per_order = Notional{2'000};
+            opt_br.pct = 0;
+            opt_br.take_lower = false;
+
+            // Inside the chosen schedule's own window, by construction.
+            const Timestamp ts = sch->valid_from;
+            const QString eff =
+                QDateTime::fromSecsSinceEpoch(
+                    ts.ns_since_epoch() / 1'000'000'000, QTimeZone::utc())
+                    .toString(QStringLiteral("yyyy-MM-dd"));
+            const Qty lot{75};        // the spec store's NIFTY lot
+            const double T = 30.0 / 365.0, vol = 0.14, rate = 0.065;
+            const double F = 2'400'000.0;
+
+            const auto opt_fair = [&](OptionRight w, std::int64_t K,
+                                      double t) -> std::int64_t {
+                const auto g = black76(w, Price{static_cast<std::int64_t>(F)},
+                                       Price{K}, Years{t}, Vol{vol}, rate);
+                return g ? static_cast<std::int64_t>(g->price + 0.5) : 0;
+            };
+            const auto wide = [](std::int64_t fairp, std::int64_t half) {
+                return Touch{Price{fairp - half}, Price{fairp + half}};
+            };
+
+            // ── 3. parity at the touch vs at the mid ──
+            s += QStringLiteral(
+                "――― 3. PARITY AT THE TOUCH IS NOT PARITY AT THE MID ―――\n\n"
+                "  A 24000 straddle priced off a flat 14-vol chain, both\n"
+                "  options quoted Rs 2.00 wide and the future Rs 0.50 wide.\n"
+                "  Parity therefore holds EXACTLY at the mid and there is no\n"
+                "  opportunity in the chain by construction.\n\n");
+            {
+                ParityQuote q{};
+                const std::int64_t K = 2'400'000;
+                const std::int64_t cf = opt_fair(OptionRight::Call, K, T);
+                q.call = wide(cf, 200);
+                q.put = wide(opt_fair(OptionRight::Put, K, T), 200);
+                q.hedge = wide(static_cast<std::int64_t>(F), 50);
+                q.hedge_leg = HedgeLeg::Future;
+                q.strike = Price{K};
+                q.t = Years{T};
+                q.rate = rate;
+                ShortCashCapability cap{};
+                const auto o = scan_parity(q, lot, Exchange::NSE, ts, cap,
+                                           *sch, opt_br);
+                if (o) {
+                    s += QStringLiteral(
+                        "    deviation at the MID    %1 paise/unit\n"
+                        "    deviation at the TOUCH  %2 paise/unit\n"
+                        "    charges, four legs      Rs %3\n"
+                        "    net on one lot of %4    Rs %5\n\n"
+                        "  The mid number is what a screen shows. The touch\n"
+                        "  number is the one that can be traded, and it is\n"
+                        "  the spread that separates them. There is no mid\n"
+                        "  accessor anywhere in strategies/parity.hpp,\n"
+                        "  deliberately: a mid cannot be traded.\n\n")
+                             .arg(o->mid_deviation, 10, 'f', 2)
+                             .arg(o->touch_deviation, 10, 'f', 2)
+                             .arg(static_cast<double>(o->cost.raw()) / 100.0,
+                                  0, 'f', 2)
+                             .arg(lot.raw())
+                             .arg(static_cast<double>(o->net.raw()) / 100.0,
+                                  0, 'f', 2);
+                }
+                // THE ASYMMETRY, ON A QUOTE THAT ACTUALLY REACHES IT.
+                //
+                // The fair chain above makes the CONVERSION the better side,
+                // and a conversion sells the synthetic and BUYS the hedge --
+                // no short anywhere, so it is reachable whatever the hedge
+                // is. Asking that quote about short cash proves nothing: the
+                // branch is never taken. The future is therefore quoted 100
+                // points RICH against the options' own forward, which makes
+                // the synthetic cheap and the REVERSAL the chosen side. Now
+                // the trade sells the hedge, and whether that is possible is
+                // the whole question.
+                ParityQuote rich = q;
+                rich.hedge = wide(static_cast<std::int64_t>(F) + 10'000, 50);
+                const auto rf = scan_parity(rich, lot, Exchange::NSE, ts, cap,
+                                            *sch, opt_br);
+                ParityQuote rich_spot = rich;
+                rich_spot.hedge_leg = HedgeLeg::Spot;
+                const auto rs = scan_parity(rich_spot, lot, Exchange::NSE, ts,
+                                            cap, *sch, opt_br);
+                const auto unnamed = scan_parity(
+                    [&] { ParityQuote u = q; u.hedge_leg = HedgeLeg::Unknown;
+                          return u; }(),
+                    lot, Exchange::NSE, ts, cap, *sch, opt_br);
+                s += QStringLiteral(
+                    "  THE HEDGE IS NOT A DETAIL. Quote the hedge 100 points\n"
+                    "  rich against the options' own forward and the\n"
+                    "  synthetic is cheap, so the chosen side becomes the\n"
+                    "  REVERSAL — which SELLS the hedge.\n\n"
+                    "    hedged with a FUTURE  %1\n"
+                    "    hedged with SPOT      %2\n\n"
+                    "  A future shorts freely. The underlying does not: there\n"
+                    "  is no short cash delivery in India, so the identical\n"
+                    "  arithmetic is unreachable through one instrument and\n"
+                    "  reachable through the other.\n\n"
+                    "  And a caller who does not say which hedge it is: %3.\n"
+                    "  The hedge decides both the segment the bill is\n"
+                    "  computed under and whether the trade exists at all, so\n"
+                    "  there is no default that is not a guess.\n\n")
+                         .arg(rf && rf->trade == ParityTrade::Reversal
+                                  ? (rf->executability
+                                             == Executability::Executable
+                                         ? QStringLiteral("reversal, EXECUTABLE")
+                                         : QStringLiteral("reversal, blocked"))
+                                  : QStringLiteral("no reversal reached"), -24)
+                         .arg(rs && rs->executability
+                                        == Executability::ShortCashUnavailable
+                                  ? QStringLiteral("reversal, BLOCKED — no "
+                                                   "short cash")
+                                  : QStringLiteral("reachable — WHICH IS A "
+                                                   "BUG"), -24)
+                         .arg(unnamed.has_value()
+                                  ? QStringLiteral("accepted — WHICH IS A BUG")
+                                  : QStringLiteral("REFUSED"));
+            }
+
+            // ── 4. the box ──
+            s += QStringLiteral(
+                "――― 4. A BOX IS A LOAN, AND ITS RATE IS THE NUMBER ―――\n\n"
+                "  24000/24200, priced off the same chain at a %1 per cent\n"
+                "  discount rate. Each tenor is quoted twice: once with NO\n"
+                "  spread at all, and once with every one of the four legs\n"
+                "  Rs 1.00 wide.\n\n"
+                "  The zero-width row is not a trade — it is the fair price\n"
+                "  asked of the SAME function, so the comparison needs no mid\n"
+                "  computed anywhere. strategies/parity.hpp has no mid\n"
+                "  accessor on purpose, and a page that reintroduced one in\n"
+                "  the UI would have undone that on the only screen anyone\n"
+                "  reads.\n\n"
+                "    tenor    spread     touch cost     implied rate\n")
+                     .arg(100.0 * rate, 0, 'f', 1);
+            {
+                struct Tenor { const char* label; double t; };
+                const Tenor tenors[] = {{"30 days", 30.0 / 365.0},
+                                        {" 6 days", 6.0 / 365.0}};
+                double fair_rate = 0.0, crossed_rate = 0.0;
+                for (const Tenor& tn : tenors) {
+                    for (const std::int64_t half : {0LL, 100LL}) {
+                        BoxQuote q{};
+                        q.k1 = Price{2'400'000};
+                        q.k2 = Price{2'420'000};
+                        q.c1 = wide(opt_fair(OptionRight::Call, 2'400'000, tn.t),
+                                    half);
+                        q.c2 = wide(opt_fair(OptionRight::Call, 2'420'000, tn.t),
+                                    half);
+                        q.p1 = wide(opt_fair(OptionRight::Put, 2'400'000, tn.t),
+                                    half);
+                        q.p2 = wide(opt_fair(OptionRight::Put, 2'420'000, tn.t),
+                                    half);
+                        q.t = Years{tn.t};
+                        q.rate = rate;
+                        const auto o = scan_box(q, lot, Exchange::NSE, ts, *sch,
+                                                opt_br);
+                        if (!o) { continue; }
+                        if (tn.t > 0.05) {
+                            (half == 0 ? fair_rate : crossed_rate) =
+                                o->implied_rate;
+                        }
+                        s += QStringLiteral("    %1  %2  %3      %4 per cent\n")
+                                 .arg(QString::fromLatin1(tn.label))
+                                 .arg(half == 0 ? QStringLiteral("none   ")
+                                                : QStringLiteral("Rs 1.00"))
+                                 .arg(o->touch_cost / 100.0, 12, 'f', 2)
+                                 .arg(o->implied_rate * 100.0, 10, 'f', 2);
+                    }
+                }
+                s += QStringLiteral(
+                    "\n  Uncrossed, the 30-day box recovers %1 per cent —\n"
+                    "  the rate the chain was priced with, read back out of\n"
+                    "  four quotes. Crossing four Rs 1.00 spreads costs\n"
+                    "  Rs 4.00 and turns it into %2 per cent: a swing of\n"
+                    "  %3 percentage points of annualised rate out of four\n"
+                    "  rupees.\n\n"
+                    "  The SAME Rs 4.00 at six days does several times the\n"
+                    "  damage, because a rate divides by tenor and identical\n"
+                    "  rupees are not identical rates.\n\n"
+                    "  Which is why the scanner ranks on implied RATE and\n"
+                    "  not on the rupee gap: the two order a chain\n"
+                    "  differently, and only one of them is comparable\n"
+                    "  across tenors.\n\n")
+                         .arg(fair_rate * 100.0, 0, 'f', 2)
+                         .arg(crossed_rate * 100.0, 0, 'f', 2)
+                         .arg(fair_rate * 100.0 - crossed_rate * 100.0,
+                              0, 'f', 1);
+            }
+
+            // ── 5. the futures calendar ──
+            s += QStringLiteral(
+                "――― 5. THE FUTURES CALENDAR ―――\n\n"
+                "  Both legs are futures, so both short freely and this is\n"
+                "  the second structure in Phase 5 with no executability\n"
+                "  caveat — the box being the first.\n\n"
+                "  What it DOES depend on is the two legs having been seen\n"
+                "  at the same instant. The far month is thinner and its\n"
+                "  last print is routinely older, which biases a naive\n"
+                "  spread toward whatever the near month has done since, so\n"
+                "  the scanner takes a skew limit and REFUSES rather than\n"
+                "  quietly comparing two different moments.\n\n");
+            {
+                BrokerageRule fut_br{};
+                fut_br.flat_per_order = Notional{2'000};
+                fut_br.pct = rate_from(0.0003L);
+                fut_br.take_lower = true;
+
+                // THE FAR LEG IS PRICED AT ITS OWN CARRY, NOT TYPED.
+                //
+                // An earlier version typed 24040 against a near 24000 while
+                // carry over the same month says about 24105, and the scan
+                // duly reported Rs 2,617 of net edge -- a fabricated
+                // arbitrage, on a page whose whole argument is that these
+                // trades do not survive their costs. Priced fairly, the
+                // question becomes the real one: what do two crossed spreads
+                // and four brokerage legs do to a calendar that is quoted
+                // right?
+                FuturesCalendarQuote q{};
+                const double near_px = 2'400'000.0;
+                const double dt = (60.0 - 30.0) / 365.0;
+                const double div_y = 0.012;
+                const std::int64_t far_px = static_cast<std::int64_t>(
+                    near_px * std::exp((rate - div_y) * dt) + 0.5);
+                q.near_leg = wide(static_cast<std::int64_t>(near_px), 50);
+                q.near_ts = ts;
+                q.near_t = Years{30.0 / 365.0};
+                q.far_leg = wide(far_px, 100);
+                q.far_ts = ts;
+                q.far_t = Years{60.0 / 365.0};
+                q.rate = rate;
+                q.dividend_yield = div_y;
+
+                const auto o = scan_futures_calendar(
+                    q, lot, Exchange::NSE, Duration{2'000'000'000}, *sch,
+                    fut_br);
+                if (o) {
+                    s += QStringLiteral(
+                        "    touch spread     %1 paise\n"
+                        "    fair from carry  %2 paise\n"
+                        "    implied carry    %3 per cent per year\n"
+                        "    charges          Rs %4\n"
+                        "    net on one lot   Rs %5\n\n"
+                        "  Quoted at its own carry, the spread is fair and\n"
+                        "  the net is what the two crossed spreads and four\n"
+                        "  brokerage legs cost. That is the answer this page\n"
+                        "  exists to give.\n\n"
+                        "  The implied carry comes back at the rate the pair\n"
+                        "  was priced with — the scanner recovers %6 per cent\n"
+                        "  from two quotes, the same round trip the box makes.\n"
+                        "  It adds the dividend yield back, so what it reports\n"
+                        "  is comparable to a repo rate rather than to the\n"
+                        "  net-of-dividend drift.\n\n"
+                        "  The implied carry is the comparable number: a\n"
+                        "  40-point spread over one month and over three are\n"
+                        "  different carries, exactly as in the basis. A point\n"
+                        "  spread is not.\n\n")
+                             .arg(o->touch_spread, 10, 'f', 2)
+                             .arg(o->fair_spread, 10, 'f', 2)
+                             .arg(o->implied_carry * 100.0, 8, 'f', 3)
+                             .arg(static_cast<double>(o->cost.raw()) / 100.0,
+                                  0, 'f', 2)
+                             .arg(static_cast<double>(o->net.raw()) / 100.0,
+                                  0, 'f', 2)
+                             .arg(100.0 * rate, 0, 'f', 1);
+                }
+                // The staleness refusal, shown rather than described.
+                FuturesCalendarQuote stale = q;
+                stale.far_ts = ts + Duration{5'000'000'000};
+                const auto sr = scan_futures_calendar(
+                    stale, lot, Exchange::NSE, Duration{2'000'000'000}, *sch,
+                    fut_br);
+                s += QStringLiteral(
+                    "  A far leg five seconds older than the near one,\n"
+                    "  against a two-second limit: %1\n\n")
+                         .arg(!sr && sr.error() == CalendarSpreadError::StaleLeg
+                                  ? QStringLiteral("REFUSED as a stale leg.")
+                                  : QStringLiteral("accepted — WHICH IS A BUG"));
+            }
+
+            s += QStringLiteral(
+                "  Charges above are the effective-dated rates from\n"
+                "  config/charges.toml, taken from the schedule CURRENTLY IN\n"
+                "  FORCE — effective %1 — rather than from a date typed on\n"
+                "  this page. A typed date goes stale the moment a circular\n"
+                "  is added to the file, and the page would then disagree\n"
+                "  with the engine with nothing to say why.%2\n\n"
+                "  Brokerage is the one literal here. It is commercial\n"
+                "  rather than regulatory and changes without a circular, so\n"
+                "  it does not belong in an effective-dated schedule.\n")
+                     .arg(eff)
+                     .arg(sch->verified
+                              ? QString()
+                              : QStringLiteral(
+                                    "\n\n  THAT SCHEDULE IS UNVERIFIED: it has "
+                                    "never been checked\n  against a broker "
+                                    "contract note, so every rupee above\n"
+                                    "  inherits that."));
+        }
+    }
+#else
+    s += QStringLiteral(
+        "――― 3-5. PARITY, THE BOX, AND THE FUTURES CALENDAR ―――\n\n"
+        "  COSTED SCANNERS UNAVAILABLE in this build, and deliberately not\n"
+        "  worked around.\n\n"
+        "  These three scanners each price a bill: four option legs for a\n"
+        "  box, two options and a hedge in and out for parity, two futures\n"
+        "  legs for a calendar. Rule 5 says every signal is priced net of\n"
+        "  full cost BEFORE IT EXISTS, and rule 1 says the rates come from\n"
+        "  config/charges.toml rather than from a literal.\n\n"
+        "  This build has no charges.toml loader: it needs toml++, which\n"
+        "  arrives with the `vcpkg` preset (and with `net`, which inherits\n"
+        "  it). Configure with one of those and this section computes.\n\n"
+        "  The alternative would be a schedule hard-coded here, which is\n"
+        "  worse than an empty section: an invented charge is not a\n"
+        "  conservative approximation, it is a number the rest of the\n"
+        "  system would trust.\n\n"
+        "  Sections 1 and 2 above are unaffected. Neither of them prices\n"
+        "  anything: a convexity margin is a property of three quotes and a\n"
+        "  calendar margin is a difference of two total variances, and\n"
+        "  neither has a brokerage.\n");
+#endif
+
     return s;
 }
 

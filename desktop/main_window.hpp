@@ -143,7 +143,11 @@ namespace altair::ui {
             QStringLiteral("Neural"),
             // P26-04. The registry populated, and the derivative
             // estimator with its error bar.
-            QStringLiteral("Features")};
+            QStringLiteral("Features"),
+            // P31-01. The last two large blocks of engine code with no page:
+            // P5-06's parity/box/butterfly scanner and P5-07's calendar
+            // scanner. Appended, so no existing --page index moves.
+            QStringLiteral("Parity & Calendar")};
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -1058,6 +1062,14 @@ private:
         connect(feat_page->button(), &QPushButton::clicked, this,
                 [feat_page, ds] { feat_page->set_text(features_report(ds)); });
         pages_->addWidget(feat_page);
+
+        auto* arb_page = new ComputePage(
+            QStringLiteral("PARITY AND CALENDAR — P5-06 / P5-07"),
+            QStringLiteral("Butterfly, parity, box, and the two alignments"),
+            this);
+        connect(arb_page->button(), &QPushButton::clicked, this,
+                [arb_page] { arb_page->set_text(arbitrage_scans_report()); });
+        pages_->addWidget(arb_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

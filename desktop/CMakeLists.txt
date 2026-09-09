@@ -194,8 +194,9 @@ foreach(_lib IN LISTS _altair_ui_links)
 endforeach()
 
 # Header-only engine code the UI includes without linking -- models/markov.hpp,
-# models/markov_eval.hpp, backtest/validation.hpp, and as of P21-03
-# strategies/momentum.hpp and strategies/meanrev.hpp -- is reached through the
+# models/markov_eval.hpp, backtest/validation.hpp, as of P21-03
+# strategies/momentum.hpp and strategies/meanrev.hpp, and as of P31-01
+# strategies/parity.hpp and strategies/calendar.hpp -- is reached through the
 # include path above and so never appears in LINK_LIBRARIES. It is pure
 # computation with no order-placing vocabulary, which is the same test the list
 # applies; noted here because the audit cannot see it and a reader will wonder.
@@ -342,6 +343,22 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_pages_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    # P31-01. THE COSTED HALF OF THE PARITY PAGE HAD NEVER RUN IN A TEST.
+    #
+    # altair_desktop links the charges loader and this test did not, so under
+    # the `net` and `vcpkg` presets the WINDOW computed parity, the box and
+    # the futures calendar while the TEST took the blocked branch and passed.
+    # Three scanners live in the shipped UI with no coverage, and the test
+    # reported green -- which is the failure mode a test exists to prevent.
+    #
+    # Given to the test on the same condition the window gets it, so the two
+    # take the same branch in the same preset.
+    if(TARGET altair_charges_toml)
+        target_link_libraries(altair_pages_test PRIVATE altair_charges_toml)
+        target_compile_definitions(altair_pages_test PRIVATE
+            ALTAIR_HAVE_CHARGES_TOML=1
+            ALTAIR_CHARGES_TOML="${CMAKE_SOURCE_DIR}/config/charges.toml")
+    endif()
     set_target_properties(altair_pages_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_pages COMMAND altair_pages_test)
 

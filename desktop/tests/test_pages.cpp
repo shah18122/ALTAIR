@@ -355,6 +355,66 @@ int main(int argc, char** argv)
     }
 
     // -----------------------------------------------------------------------
+    // 4h. P31-01 -- the parity and calendar scanners.
+    //
+    // Sections 1 and 2 price nothing and must ALWAYS compute: a convexity
+    // margin is a property of three quotes and a calendar margin is a
+    // difference of two total variances. Sections 3-5 price a bill and are
+    // blocked where config/charges.toml has no loader, which is the `default`
+    // preset -- so what is asserted here is that the page says WHICH, rather
+    // than that a particular number appears.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4h] parity and calendar\n");
+    {
+        const QString ar = arbitrage_scans_report();
+        check(ar.contains(QStringLiteral("There is no option chain")),
+              "the page says there is no chain before it shows any number");
+        check(ar.contains(QStringLiteral("EVEN LADDER")),
+              "the butterfly section is present");
+        check(ar.contains(QStringLiteral("FREE MONEY")),
+              "and it reports the fictional arbitrage the textbook form finds "
+              "on an arbitrage-free chain, which is the whole card");
+        check(ar.contains(QStringLiteral("DO NOT SHARE A FORWARD")),
+              "the calendar section is present");
+        check(ar.contains(QStringLiteral("VIOLATIONS HIDDEN")),
+              "and it reports violations HIDDEN by the strike-aligned scan -- "
+              "concealing, not inventing, which is the worse failure");
+        check(!ar.contains(QStringLiteral("WHICH IS A BUG")),
+              "no refusal that the page checks has stopped refusing");
+
+        // Exactly one of the two branches, never both and never neither.
+        //
+        // The marker is a whole phrase that appears nowhere else. The first
+        // version looked for the word "BLOCKED", which a later edit then
+        // introduced into the short-cash line three paragraphs away, and the
+        // check went red for a reason that had nothing to do with it. A
+        // sentinel unrelated prose can switch on is not a sentinel.
+        const bool costed = ar.contains(QStringLiteral("implied carry"));
+        const bool blocked =
+            ar.contains(QStringLiteral("COSTED SCANNERS UNAVAILABLE"));
+        check(costed != blocked,
+              costed ? "charges.toml loaded, so the costed scanners computed"
+                     : "no charges.toml loader in this build, and the page "
+                       "names that blocker instead of costing against a "
+                       "literal -- rule 5 is what everything downstream "
+                       "trusts");
+        if (costed) {
+            // The short-cash asymmetry only means something when a REVERSAL
+            // is the chosen side; on a fair chain the conversion wins and the
+            // branch is never taken. The page quotes the hedge rich to reach
+            // it, and this is the assertion that it did.
+            check(ar.contains(QStringLiteral("reversal, BLOCKED")),
+                  "a spot-hedged REVERSAL is blocked for want of short cash, "
+                  "which is P5-05's asymmetry reaching the option book");
+            check(!ar.contains(QStringLiteral("no reversal reached")),
+                  "and the quote used to show it really does select a "
+                  "reversal -- otherwise the branch under test is never taken "
+                  "and the line means nothing");
+        }
+        std::printf("%s", ar.toUtf8().constData());
+    }
+
+    // -----------------------------------------------------------------------
     // 5. Print them.
     // -----------------------------------------------------------------------
     std::printf("\n[5] excerpts\n");
