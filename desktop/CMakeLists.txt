@@ -254,10 +254,16 @@ if(ALTAIR_BUILD_TESTS)
 
     # candles.hpp has no Q_OBJECT, so this one needs no moc and no Qt at all
     # beyond the engine types it already uses.
-    add_executable(altair_desktop_chart_test tests/test_chart.cpp)
-    # Qt6::Core for format.hpp's QString formatting in the axis regression.
+    # P32-05. Now builds the WIDGET as well as candles.hpp, because zoom is a
+    # property of the widget: qt_add_executable and the Q_OBJECT header, and
+    # Gui/Widgets rather than Core alone.
+    qt_add_executable(altair_desktop_chart_test
+        tests/test_chart.cpp
+        chart/chart_widget.hpp)
     target_link_libraries(altair_desktop_chart_test PRIVATE
-        altair_types altair_time altair_feed Qt6::Core)
+        altair_types altair_time altair_feed Qt6::Core Qt6::Gui Qt6::Widgets)
+    set_target_properties(altair_desktop_chart_test
+        PROPERTIES WIN32_EXECUTABLE OFF)
     target_include_directories(altair_desktop_chart_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME desktop_chart COMMAND altair_desktop_chart_test)

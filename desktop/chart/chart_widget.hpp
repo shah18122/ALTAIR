@@ -40,11 +40,14 @@
 
 #include <QFontMetrics>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
 #include <QWidget>
 
+#include <algorithm>
+#include <cstddef>
 #include <vector>
 
 namespace altair::ui {
@@ -74,25 +77,127 @@ public:
     }
 
     /// Replace the series. Recomputes both axes from the data, per series.
+    ///
+    /// A NEW SERIES RESETS THE ZOOM. Keeping a window across a change of
+    /// instrument means index 400..500 of a different series, which is a
+    /// different span of a different thing and would look like a chart that
+    /// simply moved.
     void set_candles(std::vector<Candle> c, const Conservation& k) {
         candles_ = std::move(c);
         conservation_ = k;
-        if (!candles_.empty()) {
-            domain_.origin_ns = candles_.front().start_ns;
-            const std::int64_t span =
-                candles_.back().end_ns - candles_.front().start_ns;
-            domain_.span_ns = span > 0 ? span : 1;
-            axis_ = price_axis(candles_);
-        }
+        first_ = 0;
+        count_ = candles_.size();
+        recompute_view();
         update();
     }
+
+    // ── Zoom and pan. P32-05. ────────────────────────────────────────────
+    //
+    // WHY THE CHART NEEDED THIS AT ALL. It drew every candle across the
+    // width, always. On the daily NIFTY series that is 8,755 candles in about
+    // 1,500 pixels -- five candles a pixel, so the wick, body and colour of
+    // every one of them are a lie by the time they reach the screen. The
+    // conservation line at the top was reconciling volume for a picture in
+    // which no individual bar was legible.
+    //
+    // ZOOM CHANGES THE WINDOW, NOT THE DATA. `candles_` stays whole and
+    // `first_`/`count_` say what is drawn, so the price axis and the domain
+    // are recomputed from the VISIBLE slice -- which is the point: a zoomed
+    // chart whose price axis still spans 35 years is a chart with a flat line
+    // in the middle of it.
+
+    void zoom_in() { rescale(0.7); }
+    void zoom_out() { rescale(1.0 / 0.7); }
+
+    void zoom_reset() {
+        first_ = 0;
+        count_ = candles_.size();
+        recompute_view();
+        update();
+    }
+
+    /// Pan by a fraction of the visible window. Negative is back in time.
+    void pan(double fraction) {
+        if (candles_.empty()) { return; }
+        const auto step = static_cast<std::ptrdiff_t>(
+            static_cast<double>(count_) * fraction);
+        auto f = static_cast<std::ptrdiff_t>(first_) + step;
+        const auto maxf =
+            static_cast<std::ptrdiff_t>(candles_.size() - count_);
+        if (f < 0) { f = 0; }
+        if (f > maxf) { f = maxf; }
+        first_ = static_cast<std::size_t>(f);
+        recompute_view();
+        update();
+    }
+
+    [[nodiscard]] std::size_t visible_first() const noexcept { return first_; }
+    [[nodiscard]] std::size_t visible_count() const noexcept { return count_; }
 
     [[nodiscard]] const Domain& domain() const noexcept { return domain_; }
     [[nodiscard]] const PriceAxis& axis() const noexcept { return axis_; }
 
+private:
+    /// Scale the window about its CENTRE, floored at a window nobody can
+    /// misread. Eight candles is the floor: below that the price axis is
+    /// derived from so few bars that one wick sets the whole scale.
+    void rescale(double factor) {
+        if (candles_.empty()) { return; }
+        const std::size_t total = candles_.size();
+        const double want = static_cast<double>(count_) * factor;
+        std::size_t next = static_cast<std::size_t>(want + 0.5);
+        if (next < 8) { next = 8; }
+        if (next > total) { next = total; }
+        // Anchor on the centre so zooming does not walk the view sideways.
+        const double centre =
+            static_cast<double>(first_) + static_cast<double>(count_) / 2.0;
+        double nf = centre - static_cast<double>(next) / 2.0;
+        if (nf < 0.0) { nf = 0.0; }
+        if (nf > static_cast<double>(total - next)) {
+            nf = static_cast<double>(total - next);
+        }
+        first_ = static_cast<std::size_t>(nf);
+        count_ = next;
+        recompute_view();
+        update();
+    }
+
+    /// The domain and the price axis come from the VISIBLE candles.
+    void recompute_view() {
+        if (candles_.empty() || count_ == 0) {
+            view_.clear();
+            return;
+        }
+        if (first_ + count_ > candles_.size()) {
+            count_ = candles_.size() - first_;
+        }
+        view_.assign(candles_.begin()
+                         + static_cast<std::ptrdiff_t>(first_),
+                     candles_.begin()
+                         + static_cast<std::ptrdiff_t>(first_ + count_));
+        domain_.origin_ns = view_.front().start_ns;
+        const std::int64_t span = view_.back().end_ns - view_.front().start_ns;
+        domain_.span_ns = span > 0 ? span : 1;
+        axis_ = price_axis(view_);
+    }
+
+public:
+
 protected:
     void mouseMoveEvent(QMouseEvent* e) override {
-        hover_x_ = e->position().x();
+        const int x = static_cast<int>(e->position().x());
+        if (dragging_ && count_ > 0 && width() > 1) {
+            // Drag moves the window by the fraction of the width dragged, so
+            // the candle under the cursor stays roughly under the cursor.
+            const double frac = static_cast<double>(drag_x_ - x)
+                              / static_cast<double>(width());
+            if (std::abs(frac) > 0.002) {
+                pan(frac);
+                drag_x_ = x;
+            }
+        }
+        hover_x_ = static_cast<float>(x);
+        hover_y_ = static_cast<float>(e->position().y());
         has_hover_ = true;
         update();
     }
@@ -101,6 +206,23 @@ protected:
         has_hover_ = false;
         update();
     }
+
+    /// Wheel zooms. Ctrl is not required, because on a chart the wheel has no
+    /// other job -- there is nothing to scroll.
+    void wheelEvent(QWheelEvent* e) override {
+        if (e->angleDelta().y() == 0) { return; }
+        if (e->angleDelta().y() > 0) { zoom_in(); } else { zoom_out(); }
+        e->accept();
+    }
+
+    void mousePressEvent(QMouseEvent* e) override {
+        if (e->button() == Qt::LeftButton) {
+            drag_x_ = static_cast<int>(e->position().x());
+            dragging_ = true;
+        }
+    }
+
+    void mouseReleaseEvent(QMouseEvent*) override { dragging_ = false; }
 
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
@@ -115,7 +237,7 @@ protected:
 
         draw_title(p);
 
-        if (candles_.empty() || right <= left || bottom <= top) {
+        if (view_.empty() || right <= left || bottom <= top) {
             p.setPen(QColor(0x7F, 0x8C, 0x8D));
             p.drawText(rect(), Qt::AlignCenter,
                        QStringLiteral("no candles yet"));
@@ -190,20 +312,20 @@ private:
 
     void draw_candles(QPainter& p, int left, int right, int top, int bottom,
                       int volume_h) {
-        const int n = static_cast<int>(candles_.size());
+        const int n = static_cast<int>(view_.size());
         const int span = right - left;
         // At least one pixel per candle, and a gap only when there is room.
         const double slot = static_cast<double>(span) / n;
         const int body = std::max(1, static_cast<int>(slot * 0.68));
 
         std::int64_t max_vol = 1;
-        for (const Candle& c : candles_) {
+        for (const Candle& c : view_) {
             if (c.volume_known && c.volume > max_vol) max_vol = c.volume;
         }
         const int vol_top = bottom + 8;
 
         for (int i = 0; i < n; ++i) {
-            const Candle& c = candles_[static_cast<std::size_t>(i)];
+            const Candle& c = view_[static_cast<std::size_t>(i)];
             // THROUGH THE float32 STAGE, rebased in int64 first.
             const Vertex hi{to_x(c.start_ns, domain_), to_y(c.high, axis_)};
             const Vertex lo{to_x(c.start_ns, domain_), to_y(c.low, axis_)};
@@ -255,35 +377,68 @@ private:
     }
 
     void draw_crosshair(QPainter& p, int left, int right, int top, int bottom) {
-        if (!has_hover_ || candles_.empty()) {
+        if (!has_hover_ || view_.empty()) {
             return;
         }
-        const int cx = std::clamp(hover_x_, left, right);
+        const int cx = std::clamp(static_cast<int>(hover_x_), left, right);
+        const int cy = std::clamp(static_cast<int>(hover_y_), top, bottom);
         const float nx = static_cast<float>(cx - left)
                        / static_cast<float>(std::max(1, right - left));
         const auto at_ns = domain_.origin_ns
                          + static_cast<std::int64_t>(
                                static_cast<double>(domain_.span_ns) * nx);
 
-        const Crosshair h = snap_crosshair(candles_, at_ns);
+        const Crosshair h = snap_crosshair(view_, at_ns);
         if (!h.valid) {
             return;
         }
-        const Candle& c = candles_[h.index];
+        const Candle& c = view_[h.index];
 
-        p.setPen(QPen(QColor(0x7F, 0x8C, 0x8D), 1, Qt::DotLine));
+        const QColor line(0x8A, 0x9B, 0xA8);
+        p.setPen(QPen(line, 1, Qt::DotLine));
         const int snap_x =
             px_x(to_x(c.start_ns, domain_), left, right)
             + static_cast<int>((static_cast<double>(right - left)
-                                / static_cast<double>(candles_.size())) / 2);
+                                / static_cast<double>(view_.size())) / 2);
         p.drawLine(snap_x, top, snap_x, bottom);
+
+        // THE HORIZONTAL ARM, AND THE PRICE AT IT. P32-05.
+        //
+        // The vertical arm snaps to a candle and the horizontal one does NOT,
+        // deliberately: the y position is a price the cursor is pointing at,
+        // and it is read off the axis rather than off any candle. So it is
+        // labelled on the price scale, in the same units the scale uses, and
+        // it is the one number on this chart that is an interpolation --
+        // which is fine, because it is answering "what price is my cursor
+        // on", not "what did this candle do".
+        p.drawLine(left, cy, right, cy);
+
+        const double ny = static_cast<double>(bottom - cy)
+                        / static_cast<double>(std::max(1, bottom - top));
+        const std::int64_t at_price =
+            axis_.origin_paise
+            + static_cast<std::int64_t>(
+                  static_cast<double>(axis_.span_paise) * ny);
+        const QString plab = format_paise(at_price);
+        QFontMetrics fm(p.font());
+        const int pw = fm.horizontalAdvance(plab) + 8;
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x2C, 0x3E, 0x50));
+        p.drawRect(right + 2, cy - 9, pw, 18);
+        p.setPen(QColor(0xEC, 0xF0, 0xF1));
+        p.drawText(right + 6, cy + 4, plab);
 
         // THE CANDLE'S OWN VALUES, not an interpolation at the pixel.
         const QString text =
-            QStringLiteral("O %1   H %2   L %3   C %4   V %5%6")
+            QStringLiteral("O %1   H %2   L %3   C %4   %5%6")
                 .arg(format_paise(c.open), format_paise(c.high),
                      format_paise(c.low), format_paise(c.close))
-                .arg(c.volume)
+                // ABSENT VOLUME IS NOT ZERO VOLUME. 1,408 daily NIFTY bars
+                // report no turnover at all and the market was open on every
+                // one of them; printing "V 0" for those says something false.
+                .arg(c.volume_known
+                         ? QStringLiteral("V %1").arg(c.volume)
+                         : QStringLiteral("V —  (not published)"))
                 .arg(c.complete ? QString()
                                 : QStringLiteral("   (still forming)"));
         p.setPen(QColor(0xEC, 0xF0, 0xF1));
@@ -295,20 +450,35 @@ private:
 
     void draw_legend(QPainter& p) {
         p.setPen(QColor(0x7F, 0x8C, 0x8D));
+        // WHAT IS SHOWN OUT OF WHAT EXISTS. A zoomed chart that says only
+        // "180 candles" is indistinguishable from a series that has 180.
+        const QString what =
+            count_ == candles_.size()
+                ? QStringLiteral("%1 candles").arg(candles_.size())
+                : QStringLiteral("%1 of %2 candles (%3–%4)")
+                      .arg(count_).arg(candles_.size())
+                      .arg(first_ + 1).arg(first_ + count_);
         p.drawText(10, height() - 8 - 16,
-                   QStringLiteral("%1 candles · dashed = still forming · "
-                                  "hover for that candle's own OHLC")
-                       .arg(candles_.size()));
+                   QStringLiteral("%1 · dashed = still forming · hover for "
+                                  "that candle's own OHLC · wheel or +/− to "
+                                  "zoom, drag to pan")
+                       .arg(what));
     }
 
     QString title_;
     QString note_;
-    std::vector<Candle> candles_;
+    std::vector<Candle> candles_;   ///< everything loaded
+    std::vector<Candle> view_;      ///< the slice actually drawn
+    std::size_t first_ = 0;
+    std::size_t count_ = 0;
     Conservation conservation_;
     Domain domain_;
     PriceAxis axis_;
-    int hover_x_ = 0;
+    float hover_x_ = 0.0f;
+    float hover_y_ = 0.0f;
     bool has_hover_ = false;
+    bool dragging_ = false;
+    int drag_x_ = 0;
 };
 
 } // namespace altair::ui

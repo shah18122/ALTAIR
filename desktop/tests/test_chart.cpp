@@ -16,7 +16,10 @@
 // No check description here may contain the substring FAIL.
 
 #include "../chart/candles.hpp"
+#include "../chart/chart_widget.hpp"
 #include "../format.hpp"
+
+#include <QApplication>
 
 #include <cstdio>
 #include <set>
@@ -283,13 +286,92 @@ static void test_forming_gaps_and_crosshair()
           " price, so only the low end needs the clamp");
 }
 
-int main()
+
+// ── 5. P32-05: zoom is a window over the data, and it rescales the price axis
+//
+// THE FAILURE THIS MUST NOT HAVE is a zoom that narrows the candle count and
+// leaves the price axis spanning the whole series. The visible bars would then
+// occupy a sliver of the height and the chart would look like a flat line that
+// somebody had zoomed into -- which is exactly what a broken zoom looks like
+// to a reader, and exactly what a real one must not.
+//
+// So this asserts BOTH: fewer candles drawn, AND a price axis derived from the
+// ones that are.
+void test_zoom_windows_the_data()
 {
+    std::printf("\n5 zoom_windows_the_data\n");
+
+    // A series that RISES steadily, so a window near one end has a genuinely
+    // different price range from the whole. A flat series would pass a broken
+    // implementation.
+    std::vector<Candle> c;
+    for (int i = 0; i < 400; ++i) {
+        const std::int64_t px = 2'000'000 + static_cast<std::int64_t>(i) * 1000;
+        c.push_back(Candle{static_cast<std::int64_t>(i) * 60'000'000'000LL,
+                           static_cast<std::int64_t>(i + 1) * 60'000'000'000LL,
+                           px, px + 500, px - 500, px, 10, 1, true});
+    }
+
+    ChartWidget w;
+    w.set_candles(c, Conservation{});
+    check(w.visible_count() == c.size(),
+          "a fresh series shows every candle -- the zoom starts fitted");
+    const PriceAxis full = w.axis();
+
+    w.zoom_in();
+    const std::size_t after_one = w.visible_count();
+    std::printf("    %zu candles -> %zu after one zoom\n",
+                c.size(), after_one);
+    check(after_one < c.size(), "zooming in shows FEWER candles");
+
+    for (int i = 0; i < 12; ++i) { w.zoom_in(); }
+    const PriceAxis tight = w.axis();
+    std::printf("    price span %s -> %s\n",
+                format_paise(full.span_paise).toUtf8().constData(),
+                format_paise(tight.span_paise).toUtf8().constData());
+    check(tight.span_paise < full.span_paise,
+          "and the PRICE AXIS narrows with it -- a zoom that keeps the whole "
+          "series' range draws the visible bars as a flat line in the middle "
+          "of the height, which is what a broken zoom looks like");
+
+    check(w.visible_count() >= 8,
+          "there is a floor on the window: below a handful of candles one wick "
+          "sets the entire price scale");
+
+    // Pan must stay inside the series. An off-by-one here reads past the end
+    // of the vector in a process that is holding positions.
+    w.pan(-100.0);
+    check(w.visible_first() == 0, "panning back past the start clamps at 0");
+    w.pan(100.0);
+    check(w.visible_first() + w.visible_count() <= c.size(),
+          "and panning forward past the end clamps at the last candle");
+
+    w.zoom_reset();
+    check(w.visible_count() == c.size() && w.visible_first() == 0,
+          "Fit returns to the whole series");
+
+    // A NEW SERIES RESETS THE WINDOW. Keeping indices 300..320 across an
+    // instrument change means a different span of a different thing, and it
+    // would look like a chart that simply moved.
+    for (int i = 0; i < 6; ++i) { w.zoom_in(); }
+    std::vector<Candle> other(c.begin(), c.begin() + 50);
+    w.set_candles(other, Conservation{});
+    check(w.visible_count() == other.size() && w.visible_first() == 0,
+          "and loading a different series resets the window rather than "
+          "keeping an index range that means nothing in the new one");
+}
+
+int main(int argc, char** argv)
+{
+    // A QApplication, because test 5 constructs a widget. QCoreApplication is
+    // not enough: ChartWidget is a QWidget and needs the GUI application.
+    QApplication app(argc, argv);
     std::printf("P11Q-04 -- candles, and the float32 boundary\n");
     test_float32_timestamps();
     test_price_is_fine_notional_is_not();
     test_bucket_boundaries_and_conservation();
     test_forming_gaps_and_crosshair();
+    test_zoom_windows_the_data();
 
     std::printf("\n%s\n", failures == 0 ? "all checks passed"
                                         : "checks did not pass");

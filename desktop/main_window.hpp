@@ -43,6 +43,7 @@
 #include "order_ticket.hpp"
 #include "data/bar_csv.hpp"
 #include "broker_status.hpp"
+#include <QDir>
 #include "kite_panel.hpp"
 #include "terminal.hpp"
 #include "quant_pages.hpp"
@@ -607,16 +608,54 @@ private:
         // bucketed live, the other is bars that were already aggregated by
         // whoever produced the file -- so they are separate entries rather
         // than one list with a hidden mode.
+        // P32-05. FIVE ENTRIES FOR A TREE THAT HOLDS TWENTY SERIES.
+        //
+        // BANKNIFTY arrived at P25 and India VIX got its full intraday set at
+        // P30, and this list still offered NIFTY at three intervals plus one
+        // VIX daily. The Data Flow page's inventory listed everything on disk
+        // while the chart could draw a quarter of it.
+        //
+        // BUILT FROM THE SAME PARTITION TABLE THE INVENTORY WALKS, so the two
+        // cannot drift: a series that appears in one appears in the other, and
+        // an entry here for a directory that does not exist is impossible
+        // rather than merely unlikely.
         source_ = new QComboBox;
         source_->addItem(QStringLiteral("Synthetic replay"), QString());
-        source_->addItem(QStringLiteral("NIFTY 1-minute (real)"),
-                         QStringLiteral("spot/nifty/1m|60"));
-        source_->addItem(QStringLiteral("NIFTY 60-minute (real)"),
-                         QStringLiteral("spot/nifty/60m|3600"));
-        source_->addItem(QStringLiteral("NIFTY daily (real, 35 years)"),
-                         QStringLiteral("spot/nifty/1d|86400"));
-        source_->addItem(QStringLiteral("India VIX daily (real)"),
-                         QStringLiteral("spot/indiavix/1d|86400"));
+        {
+            struct Iv { const char* dir; const char* label; long long secs; };
+            const Iv ivs[] = {{"1m", "1-minute", 60},
+                              {"5m", "5-minute", 300},
+                              {"15m", "15-minute", 900},
+                              {"60m", "60-minute", 3600},
+                              {"1d", "daily", 86400}};
+            std::size_t nsym = 0;
+            const QuantSymbol* syms = quant_symbols(nsym);
+            for (std::size_t i = 0; i < nsym; ++i) {
+                for (const Iv& iv : ivs) {
+                    const QString rel = QStringLiteral("spot/%1/%2")
+                                            .arg(QLatin1String(syms[i].dir),
+                                                 QLatin1String(iv.dir));
+                    // ONLY WHAT IS ACTUALLY THERE. An entry that selects to an
+                    // empty chart is worse than a shorter list: it reads as a
+                    // broken chart rather than as absent data.
+                    if (!QDir(QStringLiteral(ALTAIR_DATASET_DIR "/") + rel)
+                             .exists()) {
+                        continue;
+                    }
+                    source_->addItem(
+                        QStringLiteral("%1 %2")
+                            .arg(QLatin1String(syms[i].label),
+                                 QLatin1String(iv.label)),
+                        QStringLiteral("%1|%2").arg(rel).arg(iv.secs));
+                }
+            }
+            // The near future, which is neither spot nor selectable above.
+            if (QDir(QStringLiteral(ALTAIR_DATASET_DIR "/fut/nifty/1d"))
+                    .exists()) {
+                source_->addItem(QStringLiteral("NIFTY future daily"),
+                                 QStringLiteral("fut/nifty/1d|86400"));
+            }
+        }
         connect(source_, &QComboBox::currentIndexChanged, this,
                 [this](int) { rebuild_chart(); });
 
@@ -643,6 +682,41 @@ private:
         controls->addWidget(new QLabel(QStringLiteral("Bucket")));
         controls->addWidget(bucket_);
         controls->addStretch();
+
+        // P32-05. ZOOM, AS BUTTONS AS WELL AS A WHEEL.
+        //
+        // The wheel and the drag are discoverable only by trying them. A
+        // chart of 8,755 daily candles in 1,500 pixels is five candles a
+        // pixel, so every wick, body and colour on it is a lie -- and a
+        // reader who does not know the wheel does anything has no way to see
+        // an individual bar at all.
+        auto* zoom_out = new QPushButton(QStringLiteral("\u2212"));
+        auto* zoom_in = new QPushButton(QStringLiteral("+"));
+        auto* zoom_all = new QPushButton(QStringLiteral("Fit"));
+        for (QPushButton* b : {zoom_out, zoom_in}) {
+            b->setFixedWidth(34);
+            b->setStyleSheet(QStringLiteral(
+                "QPushButton{background:#21262D;color:#C9D1D9;"
+                "border:1px solid #30363D;padding:4px;font-size:15px;"
+                "font-weight:600;}"
+                "QPushButton:hover{background:#30363D;}"));
+        }
+        zoom_all->setStyleSheet(QStringLiteral(
+            "QPushButton{background:#21262D;color:#C9D1D9;"
+            "border:1px solid #30363D;padding:4px 10px;}"
+            "QPushButton:hover{background:#30363D;}"));
+        zoom_out->setToolTip(QStringLiteral("Zoom out  (wheel down)"));
+        zoom_in->setToolTip(QStringLiteral("Zoom in  (wheel up)"));
+        zoom_all->setToolTip(QStringLiteral("Show the whole series"));
+        controls->addWidget(zoom_out);
+        controls->addWidget(zoom_in);
+        controls->addWidget(zoom_all);
+        connect(zoom_in, &QPushButton::clicked, this,
+                [this] { chart_->zoom_in(); });
+        connect(zoom_out, &QPushButton::clicked, this,
+                [this] { chart_->zoom_out(); });
+        connect(zoom_all, &QPushButton::clicked, this,
+                [this] { chart_->zoom_reset(); });
 
         auto* page = new QWidget;
         auto* v = new QVBoxLayout(page);
