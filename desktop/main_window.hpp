@@ -862,11 +862,16 @@ private:
             QStringLiteral("AGGREGATOR — P8-11 / P8-12"),
             QStringLiteral("Combine six real members, and price the interval"),
             this);
+        (void)agg_page->add_symbols();
         connect(agg_page->button(), &QPushButton::clicked, this,
                 [agg_page] {
+                    const QString sym = agg_page->symbol();
                     agg_page->set_text(aggregator_report(
                         QStringLiteral(ALTAIR_DATASET_DIR),
-                        QStringLiteral("/spot/nifty/1d/"), "NIFTY daily"));
+                        QStringLiteral("/spot/%1/1d/").arg(sym),
+                        QStringLiteral("%1 daily")
+                            .arg(quant_symbol_by_dir(sym).label)
+                            .toUtf8().constData()));
                 });
         pages_->addWidget(agg_page);
 
@@ -902,8 +907,9 @@ private:
                 [vol_page, ds] {
                     vol_page->set_text(QStringLiteral("Fitting..."));
                     QApplication::processEvents();
-                    vol_page->set_text(volatility_report(ds));
+                    vol_page->set_text(volatility_report(ds, vol_page->symbol()));
                 });
+        (void)vol_page->add_symbols();
         pages_->addWidget(vol_page);
 
         auto* var_page = new ComputePage(
@@ -911,7 +917,11 @@ private:
             QStringLiteral("Compute VaR and Expected Shortfall three ways"),
             this);
         connect(var_page->button(), &QPushButton::clicked, this,
-                [var_page, ds] { var_page->set_text(risk_report(ds)); });
+                [var_page, ds] {
+                    var_page->set_text(
+                        risk_report(ds, var_page->symbol()));
+                });
+        (void)var_page->add_symbols();
         pages_->addWidget(var_page);
 
         auto* port_page = new ComputePage(
@@ -948,8 +958,9 @@ private:
                 [reg_page, ds] {
                     reg_page->set_text(QStringLiteral("Fitting..."));
                     QApplication::processEvents();
-                    reg_page->set_text(regime_report(ds));
+                    reg_page->set_text(regime_report(ds, reg_page->symbol()));
                 });
+        (void)reg_page->add_symbols();
         pages_->addWidget(reg_page);
 
         // P19-07. ONE horizon per press, not all four. The 5-minute fit is
@@ -976,25 +987,36 @@ private:
         auto* b15 = spot_page->add_button(
             QStringLiteral("15-minute  (~10 s)"));
 
-        auto run_spot = [spot_page, ds](const QString& sub, const char* label) {
+        // P32-04. THE PATH IS BUILT FROM THE SELECTION, NOT PASSED IN.
+        //
+        // The three buttons choose a SAMPLING RATE and the combo chooses an
+        // INSTRUMENT; they are independent, and building the path here is what
+        // keeps them from having to be kept in step at nine call sites.
+        auto run_spot = [spot_page, ds](const char* interval,
+                                        const char* label) {
+            const QString sym = spot_page->symbol();
+            const QString sub = QStringLiteral("/spot/%1/%2/")
+                                    .arg(sym, QLatin1String(interval));
+            const QString what =
+                QStringLiteral("%1 %2")
+                    .arg(quant_symbol_by_dir(sym).label,
+                         QLatin1String(label));
             spot_page->set_text(
                 QStringLiteral("Fitting %1...\n\nWalk-forward, five folds, "
                                "level-wise and leaf-wise on identical folds.\n"
                                "The window is busy until this finishes.")
-                    .arg(QLatin1String(label)));
+                    .arg(what));
             QApplication::processEvents();
-            spot_page->set_text(spot_forecast_report(ds, sub, label));
+            spot_page->set_text(spot_forecast_report(
+                ds, sub, what.toUtf8().constData()));
         };
+        (void)spot_page->add_symbols();
         connect(spot_page->button(), &QPushButton::clicked, this,
-                [run_spot] {
-                    run_spot(QStringLiteral("/spot/nifty/1d/"), "daily");
-                });
-        connect(b5, &QPushButton::clicked, this, [run_spot] {
-            run_spot(QStringLiteral("/spot/nifty/5m/"), "5-minute");
-        });
-        connect(b15, &QPushButton::clicked, this, [run_spot] {
-            run_spot(QStringLiteral("/spot/nifty/15m/"), "15-minute");
-        });
+                [run_spot] { run_spot("1d", "daily"); });
+        connect(b5, &QPushButton::clicked, this,
+                [run_spot] { run_spot("5m", "5-minute"); });
+        connect(b15, &QPushButton::clicked, this,
+                [run_spot] { run_spot("15m", "15-minute"); });
         pages_->addWidget(spot_page);
 
         // P21-03. Momentum and mean reversion. The button label says what
@@ -1010,8 +1032,9 @@ private:
                         "Computing...\n\n20 noise paths, then a lookback "
                         "sweep and a dead-band\nsweep on real daily NIFTY."));
                     QApplication::processEvents();
-                    strat_page->set_text(strategies_report(ds));
+                    strat_page->set_text(strategies_report(ds, strat_page->symbol()));
                 });
+        (void)strat_page->add_symbols();
         pages_->addWidget(strat_page);
 
         // P22-03. Reads 140 monthly files to rebuild 2,873 sessions, so it
@@ -1025,8 +1048,9 @@ private:
                     on_page->set_text(QStringLiteral(
                         "Rebuilding sessions from the 5-minute partition..."));
                     QApplication::processEvents();
-                    on_page->set_text(overnight_report(ds));
+                    on_page->set_text(overnight_report(ds, on_page->symbol()));
                 });
+        (void)on_page->add_symbols();
         pages_->addWidget(on_page);
 
         // P23-01. Cheap enough to run on press without a warning.
@@ -1053,7 +1077,11 @@ private:
                            "Page-Hinkley, ADWIN"),
             this);
         connect(flag_page->button(), &QPushButton::clicked, this,
-                [flag_page, ds] { flag_page->set_text(flagging_report(ds)); });
+                [flag_page, ds] {
+                    flag_page->set_text(
+                        flagging_report(ds, flag_page->symbol()));
+                });
+        (void)flag_page->add_symbols();
         pages_->addWidget(flag_page);
 
         auto* micro_page = new ComputePage(
@@ -1080,8 +1108,10 @@ private:
             this);
         connect(coint_page->button(), &QPushButton::clicked, this,
                 [coint_page, ds] {
-                    coint_page->set_text(cointegration_report(ds));
+                    coint_page->set_text(
+                        cointegration_report(ds, coint_page->symbol()));
                 });
+        (void)coint_page->add_symbols();
         pages_->addWidget(coint_page);
 
         auto* mem_page = new ComputePage(
@@ -1089,7 +1119,11 @@ private:
             QStringLiteral("Hurst and EWMA, with their error bars"),
             this);
         connect(mem_page->button(), &QPushButton::clicked, this,
-                [mem_page, ds] { mem_page->set_text(memory_report(ds)); });
+                [mem_page, ds] {
+                    mem_page->set_text(
+                        memory_report(ds, mem_page->symbol()));
+                });
+        (void)mem_page->add_symbols();
         pages_->addWidget(mem_page);
 
         // The callback repaints the pill the instant a session is written,
@@ -1119,7 +1153,11 @@ private:
             QStringLiteral("Seal a registry, then measure a velocity"),
             this);
         connect(feat_page->button(), &QPushButton::clicked, this,
-                [feat_page, ds] { feat_page->set_text(features_report(ds)); });
+                [feat_page, ds] {
+                    feat_page->set_text(
+                        features_report(ds, feat_page->symbol()));
+                });
+        (void)feat_page->add_symbols();
         pages_->addWidget(feat_page);
 
         auto* arb_page = new ComputePage(

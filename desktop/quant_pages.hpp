@@ -77,6 +77,8 @@
 
 #include <QDateTime>
 #include <QTimeZone>
+#include <QComboBox>
+#include <QLabel>
 #include <QDir>
 #include <QTextStream>
 #include <QProcess>
@@ -203,6 +205,77 @@ ui_load_dated_closes(const QString& path) {
     return r;
 }
 
+/// Which instrument a dataset-backed page is looking at.
+///
+/// P32-04. Smit asked for every model to offer NIFTY, BANKNIFTY or INDIA VIX
+/// rather than being silently about NIFTY.
+///
+/// IT IS A DIRECTORY NAME, AND THAT IS THE WHOLE POINT OF THE LAYOUT.
+///
+/// CLAUDE.md's dataset/ section says the partition IS the definition: "a model
+/// trained on NIFTY spot reads exactly one directory, so its training set is
+/// defined by a path rather than by a filter someone has to get right." So
+/// switching instrument is switching one path segment, and there is nothing
+/// else to keep in step -- no filter, no symbol column, no join.
+///
+/// THE THIRD ONE IS NOT LIKE THE OTHER TWO, AND THE PAGES SAY SO.
+///
+/// INDIA VIX is an index of implied volatility, not a tradeable price series.
+/// A momentum rule on it is a momentum rule on a volatility level; a cost
+/// model on it is meaningless, because there is no instrument to pay the cost
+/// on. Every page that charges a cost states that when VIX is selected rather
+/// than quietly reporting a net figure for a trade nobody can make.
+struct QuantSymbol {
+    const char* dir;      ///< the dataset/ directory: nifty, banknifty, ...
+    const char* label;    ///< what to call it on screen
+    bool tradeable;       ///< false for an index of implied vol
+};
+
+[[nodiscard]] inline const QuantSymbol* quant_symbols(std::size_t& n) {
+    static const QuantSymbol kSyms[] = {
+        {"nifty",     "NIFTY 50",   true},
+        {"banknifty", "NIFTY BANK", true},
+        {"indiavix",  "INDIA VIX",  false},
+    };
+    n = sizeof(kSyms) / sizeof(kSyms[0]);
+    return kSyms;
+}
+
+[[nodiscard]] inline QuantSymbol quant_symbol_by_dir(const QString& dir) {
+    std::size_t n = 0;
+    const QuantSymbol* v = quant_symbols(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (dir == QLatin1String(v[i].dir)) { return v[i]; }
+    }
+    return v[0];
+}
+
+/// `<root>/spot/<sym>/<interval>/` -- one place, so a page cannot invent a
+/// path shape that does not exist on disk.
+[[nodiscard]] inline QString spot_path(const QString& root, const QString& sym,
+                                       const char* interval,
+                                       const char* file = "all.csv") {
+    return QStringLiteral("%1/spot/%2/%3/%4")
+        .arg(root, sym, QLatin1String(interval), QLatin1String(file));
+}
+
+/// A banner naming what the page is looking at, and what that costs.
+[[nodiscard]] inline QString symbol_banner(const QString& sym) {
+    const QuantSymbol q = quant_symbol_by_dir(sym);
+    QString s = QStringLiteral("  INSTRUMENT: %1  (dataset/spot/%2/)\n")
+                    .arg(QLatin1String(q.label), sym);
+    if (!q.tradeable) {
+        s += QStringLiteral(
+            "\n  INDIA VIX IS NOT A TRADEABLE SERIES. It is an index of\n"
+            "  implied volatility, so any figure below that is NET OF COST\n"
+            "  is net of a cost nobody can pay: there is no instrument here\n"
+            "  to buy. Read the gross numbers and the error bars; treat the\n"
+            "  net ones as arithmetic rather than as a strategy.\n");
+    }
+    s += QStringLiteral("\n");
+    return s;
+}
+
 /// A page that computes on demand rather than at startup.
 ///
 /// P11Q's hard-won lesson: `expanding_states` ran O(n^2 log n) on the UI
@@ -251,11 +324,58 @@ public:
         return b;
     }
 
-    void set_text(const QString& s) { out_->setPlainText(s); }
+    /// The instrument this page is about. P32-04.
+    ///
+    /// IN THE BUTTON ROW, NOT IN A SETTINGS DIALOG. The instrument is part of
+    /// the question being asked, so it belongs beside the button that asks it
+    /// -- and it is deliberately NOT applied on change: the pages behind these
+    /// buttons take seconds to minutes, and a combo that silently re-ran a
+    /// 214,000-row walk-forward because somebody scrolled over it would be a
+    /// UI that punishes curiosity.
+    ///
+    /// Changing it therefore says the shown result is stale, and leaves the
+    /// result on screen. Nothing is worse here than blanking the pane: the
+    /// reader loses the number they were comparing against.
+    [[nodiscard]] QComboBox* add_symbols() {
+        symbols_ = new QComboBox(this);
+        std::size_t k = 0;
+        const QuantSymbol* v = quant_symbols(k);
+        for (std::size_t i = 0; i < k; ++i) {
+            symbols_->addItem(QLatin1String(v[i].label),
+                              QLatin1String(v[i].dir));
+        }
+        row_->insertWidget(0, new QLabel(QStringLiteral("Instrument"), this));
+        row_->insertWidget(1, symbols_);
+        stale_ = new QLabel(this);
+        stale_->setStyleSheet(QStringLiteral("color:#B9770B;"));
+        row_->addWidget(stale_);
+        connect(symbols_, &QComboBox::currentIndexChanged, this, [this] {
+            if (ran_) {
+                stale_->setText(QStringLiteral(
+                    "instrument changed — press the button to re-run"));
+            }
+        });
+        return symbols_;
+    }
+
+    /// Which instrument is selected, as its dataset directory name.
+    [[nodiscard]] QString symbol() const {
+        return symbols_ == nullptr ? QStringLiteral("nifty")
+                                   : symbols_->currentData().toString();
+    }
+
+    void set_text(const QString& s) {
+        out_->setPlainText(s);
+        ran_ = true;
+        if (stale_ != nullptr) { stale_->clear(); }
+    }
     void append(const QString& s) { out_->appendPlainText(s); }
 
 private:
     QPushButton* run_ = nullptr;
+    QComboBox* symbols_ = nullptr;
+    QLabel* stale_ = nullptr;
+    bool ran_ = false;
     QHBoxLayout* row_ = nullptr;
     QPlainTextEdit* out_ = nullptr;
 };
@@ -315,9 +435,11 @@ private:
 // P19-02 — Volatility
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] inline QString volatility_report(const QString& dataset_root) {
+[[nodiscard]] inline QString volatility_report(const QString& dataset_root,
+                                                  const QString& sym
+                                                      = QStringLiteral("nifty")) {
     const auto closes =
-        ui_load_closes(dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+        ui_load_closes(spot_path(dataset_root, sym, "1d"));
     if (closes.size() < 2000) {
         return QStringLiteral("VOLATILITY — P14\n\nNo dataset: %1 has %2 "
                               "closes.\ndataset/ is gitignored and "
@@ -330,6 +452,7 @@ private:
     const std::vector<double> te(r.begin() + static_cast<long>(split), r.end());
 
     QString s = QStringLiteral("VOLATILITY HORSE RACE — P14-01/02/03\n\n");
+    s += symbol_banner(sym);
     s += QStringLiteral("%1 daily returns, fitted on the first %2,\n"
                         "scored OUT OF SAMPLE on the last %3.\n\n")
              .arg(r.size()).arg(tr.size()).arg(te.size());
@@ -395,15 +518,18 @@ private:
 // P19-03 — Risk
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] inline QString risk_report(const QString& dataset_root) {
+[[nodiscard]] inline QString risk_report(const QString& dataset_root,
+                                            const QString& sym
+                                                = QStringLiteral("nifty")) {
     const auto closes =
-        ui_load_closes(dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+        ui_load_closes(spot_path(dataset_root, sym, "1d"));
     if (closes.size() < 2000) {
         return QStringLiteral("RISK — P15\n\nNo dataset.");
     }
     const auto r = ui_log_returns(closes);
     QString s = QStringLiteral("VALUE AT RISK — P15-01/02\n\n%1 daily NIFTY "
                                "returns\n").arg(r.size());
+    s += symbol_banner(sym);
 
     for (const double conf : {0.95, 0.99}) {
         const auto h = historical_var(r, conf);
@@ -745,14 +871,17 @@ private:
 // P19-06 — the model catalogue, rebuilt
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] inline QString regime_report(const QString& dataset_root) {
+[[nodiscard]] inline QString regime_report(const QString& dataset_root,
+                                              const QString& sym
+                                                  = QStringLiteral("nifty")) {
     const auto closes =
-        ui_load_closes(dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+        ui_load_closes(spot_path(dataset_root, sym, "1d"));
     if (closes.size() < 2000) {
         return QStringLiteral("REGIMES — P14-06 / P18\n\nNo dataset.");
     }
     const auto r = ui_log_returns(closes);
     QString s = QStringLiteral("HIDDEN MARKOV REGIMES — P14-06\n\n");
+    s += symbol_banner(sym);
 
     // The noise baseline FIRST, because the real number is meaningless
     // without it.
@@ -865,7 +994,9 @@ private:
 ///
 /// A page that showed the NIFTY Sharpe first and the caveats underneath would
 /// be read in exactly the wrong order.
-[[nodiscard]] inline QString strategies_report(const QString& dataset_root) {
+[[nodiscard]] inline QString strategies_report(const QString& dataset_root,
+                                                  const QString& sym
+                                                      = QStringLiteral("nifty")) {
     constexpr double kCost = 5.5;       // bps per unit of turnover
     constexpr double kBars = 250.0;
 
@@ -880,6 +1011,7 @@ private:
         "Round trip is charged at %1 bps per unit of turnover. A full flip\n"
         "from long to short is TWO units, so it costs %2 bps.\n\n")
         .arg(kCost, 0, 'f', 1).arg(2.0 * kCost, 0, 'f', 1);
+    s += symbol_banner(sym);
 
     s += QStringLiteral("  turnover/bar    gross bps/bar needed to break even\n");
     for (const double to : {0.05, 0.10, 0.25, 0.50, 1.00}) {
@@ -944,10 +1076,10 @@ private:
     // ――― 3. the real series ―――
     s += QStringLiteral("――― 3. REAL DAILY NIFTY ―――\n\n");
     const auto closes =
-        ui_load_closes(dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+        ui_load_closes(spot_path(dataset_root, sym, "1d"));
     if (closes.size() < 2000) {
         s += QStringLiteral(
-            "  No dataset at dataset/spot/nifty/1d/all.csv.\n\n"
+            "  No dataset at dataset/spot/%1/1d/all.csv.\n\n"
             "  This section is EMPTY rather than filled with the synthetic\n"
             "  series from section 2. Absence is not zero, and a synthetic\n"
             "  number sitting under a heading that says REAL is the exact\n"
@@ -969,7 +1101,7 @@ private:
     // daily files disagree about the same day's close by about 8 bps of
     // unbiased noise, which is why the subtraction is NOT done across them.)
     const auto fine = ui_load_partitioned(
-        dataset_root + QStringLiteral("/spot/nifty/5m"));
+        spot_path(dataset_root, sym, "5m", ""));
     if (fine.size() > 1000) {
         double session_sum = 0.0, overnight_sum = 0.0;
         std::size_t gaps = 0, sessions = 1;
@@ -1003,7 +1135,7 @@ private:
         }
     } else {
         s += QStringLiteral(
-            "  No 5-minute partition at dataset/spot/nifty/5m, so the\n"
+            "  No 5-minute partition at dataset/spot/%1/5m, so the\n"
             "  session-versus-overnight split is NOT SHOWN rather than\n"
             "  guessed.\n\n");
     }
@@ -1145,7 +1277,9 @@ private:
 /// is a price a retail account can simply take. Five minutes of slippage
 /// removes most of it, and that five minutes is measured here rather than
 /// estimated.
-[[nodiscard]] inline QString overnight_report(const QString& dataset_root) {
+[[nodiscard]] inline QString overnight_report(const QString& dataset_root,
+                                                 const QString& sym
+                                                     = QStringLiteral("nifty")) {
     QString s = QStringLiteral(
         "OVERNIGHT GAP — P22-01 / P22-02\n"
         "Hold the index from the close to the open. Sit out the session.\n\n"
@@ -1159,12 +1293,14 @@ private:
         "  So both exits are computed below. The gap between them is the\n"
         "  risk, not a footnote about the risk.\n\n");
 
+    s += symbol_banner(sym);
+
     const auto bars = ui_load_sessions(
-        dataset_root + QStringLiteral("/spot/nifty/5m"));
+        spot_path(dataset_root, sym, "5m", ""));
     if (bars.size() < 2000) {
         return s + QStringLiteral(
             "――― NO DATA ―――\n\n"
-            "  dataset/spot/nifty/5m is missing or too short. Nothing is\n"
+            "  dataset/spot/%1/5m is missing or too short. Nothing is\n"
             "  shown rather than something synthetic under a heading that\n"
             "  says NIFTY.\n");
     }
@@ -1673,8 +1809,14 @@ private:
 
     const auto fut = ui_load_dated_closes(
         dataset_root + QStringLiteral("/fut/nifty/1d/all.csv"));
+    // NIFTY BY CONSTRUCTION, NOT BY OVERSIGHT. This page differences a
+    // future against its own spot, and dataset/fut/ holds nifty and nothing
+    // else -- so there is no BankNifty basis to compute and no instrument
+    // selector on this page. Stated here because a page without the selector,
+    // sitting beside eight that have one, otherwise reads as one somebody
+    // forgot.
     const auto spot = ui_load_dated_closes(
-        dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+        spot_path(dataset_root, QStringLiteral("nifty"), "1d"));
     if (fut.size() < 500 || spot.size() < 500) {
         return s + QStringLiteral(
             "  Missing dataset/fut/nifty/1d/all.csv or its spot counterpart.\n"
@@ -1825,13 +1967,17 @@ private:
 /// change can leave the distribution intact and destroy the mapping. That is
 /// why the scorecard exists beside the detector, and why an alarm here is a
 /// reason to LOOK rather than a reason to roll back.
-[[nodiscard]] inline QString flagging_report(const QString& dataset_root) {
+[[nodiscard]] inline QString flagging_report(const QString& dataset_root,
+                                                const QString& sym
+                                                    = QStringLiteral("nifty")) {
     QString s = QStringLiteral("FLAGGING — drift detection\n\n");
+    s += symbol_banner(sym);
 
     const auto closes =
-        ui_load_closes(dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+        ui_load_closes(spot_path(dataset_root, sym, "1d"));
     if (closes.size() < 3000) {
-        return s + QStringLiteral("  No dataset at dataset/spot/nifty/1d/.\n");
+        return s + QStringLiteral("  No dataset at dataset/spot/%1/1d/.\n")
+                       .arg(sym);
     }
     std::vector<double> r = ui_log_returns(closes);
     for (double& v : r) { v *= 10000.0; }          // bps
@@ -2434,13 +2580,16 @@ private:
 /// Two independent random walks are the textbook spurious regression: high R2,
 /// no cointegration. A test that cannot tell those apart is a test that will
 /// pair anything with anything.
-[[nodiscard]] inline QString cointegration_report(const QString& dataset_root) {
+[[nodiscard]] inline QString cointegration_report(const QString& dataset_root,
+                                                     const QString& sym
+                                                         = QStringLiteral("nifty")) {
     QString s = QStringLiteral("COINTEGRATION AND VALIDATION — P24-02\n\n");
+    s += symbol_banner(sym);
 
     const auto fut = ui_load_dated_closes(
         dataset_root + QStringLiteral("/fut/nifty/1d/all.csv"));
     const auto spot = ui_load_dated_closes(
-        dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+        spot_path(dataset_root, sym, "1d"));
     if (fut.size() < 600 || spot.size() < 600) {
         return s + QStringLiteral("  No dataset for the futures/spot pair.\n");
     }
@@ -2619,13 +2768,17 @@ private:
 /// separate them. That is a negative result this page does not overturn; it
 /// shows where the exponent sits and how wide the bar is, so the negative
 /// result is legible rather than remembered.
-[[nodiscard]] inline QString memory_report(const QString& dataset_root) {
+[[nodiscard]] inline QString memory_report(const QString& dataset_root,
+                                              const QString& sym
+                                                  = QStringLiteral("nifty")) {
     QString s = QStringLiteral("MEMORY — Hurst and EWMA — P24-03\n\n");
+    s += symbol_banner(sym);
 
     const auto closes =
-        ui_load_closes(dataset_root + QStringLiteral("/spot/nifty/1d/all.csv"));
+        ui_load_closes(spot_path(dataset_root, sym, "1d"));
     if (closes.size() < 2000) {
-        return s + QStringLiteral("  No dataset at dataset/spot/nifty/1d/.\n");
+        return s + QStringLiteral("  No dataset at dataset/spot/%1/1d/.\n")
+                       .arg(sym);
     }
     std::vector<double> r = ui_log_returns(closes);
     for (double& v : r) { v *= 10000.0; }
@@ -3001,8 +3154,11 @@ private:
 /// the estimator, its window, its order and above all its ERROR PROPAGATION
 /// work on any timed series, and a velocity smaller than its own standard
 /// error is not a velocity at any sampling rate. That is worth showing.
-[[nodiscard]] inline QString features_report(const QString& dataset_root) {
+[[nodiscard]] inline QString features_report(const QString& dataset_root,
+                                                const QString& sym
+                                                    = QStringLiteral("nifty")) {
     QString s = QStringLiteral("FEATURES AND KINEMATICS — P26-04\n\n");
+    s += symbol_banner(sym);
 
     // ――― 1. the registry ―――
     s += QStringLiteral(
@@ -3079,7 +3235,7 @@ private:
         "  survive the sampling rate is the error propagation, and that is\n"
         "  what this section is for.\n\n");
     const auto closes = ui_load_closes(
-        dataset_root + QStringLiteral("/spot/nifty/1m/2026-09.csv"));
+        spot_path(dataset_root, sym, "1m", "2026-09.csv"));
     if (closes.size() < 200) {
         s += QStringLiteral("  No recent 1-minute file to read.\n");
         return s;

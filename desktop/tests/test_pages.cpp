@@ -443,6 +443,49 @@ int main(int argc, char** argv)
     }
 
     // -----------------------------------------------------------------------
+    // 4j. P32-04 -- the instrument selector actually selects.
+    //
+    // A combo box that changes a label and not the data is the worst outcome
+    // here: the page would report NIFTY numbers under a BankNifty heading and
+    // there is nothing on screen to catch it. So this asserts the reports
+    // DIFFER between instruments, which they cannot do unless a different
+    // directory was read.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4j] the instrument selector\n");
+    {
+        const QString nif = QStringLiteral("nifty");
+        const QString bnf = QStringLiteral("banknifty");
+        const QString vix = QStringLiteral("indiavix");
+
+        const QString v_n = volatility_report(ds, nif);
+        const QString v_b = volatility_report(ds, bnf);
+        const QString v_v = volatility_report(ds, vix);
+        check(v_n != v_b,
+              "volatility on BankNifty is not the NIFTY page with a different "
+              "title -- the numbers move, so a different directory was read");
+        check(v_b.contains(QStringLiteral("NIFTY BANK")),
+              "and the page names the instrument in its own text, not only in "
+              "the combo box -- text gets copied and screenshotted");
+        check(v_v.contains(QStringLiteral("NOT A TRADEABLE SERIES")),
+              "India VIX carries its caveat: it is an index of implied vol, "
+              "so a figure net of trading cost is net of a cost nobody can "
+              "pay");
+
+        const QString m_n = memory_report(ds, nif);
+        const QString m_b = memory_report(ds, bnf);
+        check(m_n != m_b, "the memory page moves with the instrument too");
+
+        const QString r_n = regime_report(ds, nif);
+        const QString r_b = regime_report(ds, bnf);
+        check(r_n != r_b, "and so does the regime page");
+
+        check(!v_b.contains(QStringLiteral("dataset/spot/nifty")),
+              "a BankNifty page that cannot find its data names the BANKNIFTY "
+              "path -- pointing the reader at a nifty directory that is fine "
+              "is worse than saying nothing");
+    }
+
+    // -----------------------------------------------------------------------
     // 5. Print them.
     // -----------------------------------------------------------------------
     std::printf("\n[5] excerpts\n");
