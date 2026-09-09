@@ -140,6 +140,20 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_calibration_test PRIVATE altair_models altair_flags)
     add_test(NAME models_calibration COMMAND altair_calibration_test)
 
+    # P35-02b. The same calibration on the REAL NIFTY daily series.
+    #
+    # A weak gate and a loud report, on purpose. Asserting "conformal must beat
+    # the RMSE band on NIFTY" would be asserting a market fact, and the day it
+    # stopped being true the right response would be to read the number rather
+    # than to edit the threshold until the build went green. So it asserts only
+    # what must hold for any sane run and PRINTS the comparison.
+    add_executable(altair_calibration_real_test tests/test_calibration_real.cpp)
+    target_link_libraries(altair_calibration_real_test
+        PRIVATE altair_models altair_flags)
+    target_compile_definitions(altair_calibration_real_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME models_calibration_real COMMAND altair_calibration_real_test)
+
     # P8-15. Horizon forecast net of cost, on the real 60-minute series.
     add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
     target_link_libraries(altair_horizon_test

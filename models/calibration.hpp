@@ -125,6 +125,21 @@ struct CalibrationReport {
     [[nodiscard]] double deviation_pp() const noexcept {
         return 100.0 * (exceedance - target);
     }
+
+    /// The offsets that apply to the NEXT bar -- the one that has not happened.
+    ///
+    /// Every other field here describes the past. These two are the only
+    /// forward-looking numbers in the report, and they are what a page
+    /// publishes as the live band. They are produced by one further calibration
+    /// step after the whole record has been observed, so they use every score
+    /// available and none that is not.
+    ///
+    /// `next_ready` is false when there was not enough history to calibrate at
+    /// all. A caller must then publish the model's own uncalibrated band and
+    /// SAY it is uncalibrated -- zeros here would read as a band of zero width.
+    double next_up = 0.0;
+    double next_lo = 0.0;
+    bool next_ready = false;
 };
 
 namespace detail {
@@ -325,10 +340,32 @@ calibrate_band(const std::vector<ForecastPoint>& pts,
         (void)down.observe(pts[i].predicted - pts[i].actual, z);
     }
 
+    // ONE MORE STEP, FOR THE BAR THAT HAS NOT HAPPENED.
+    //
+    // The loop above always calibrated before observing, so after it ends the
+    // calibrators hold every score and have published nothing for the next bar.
+    // This is that publication, and it uses the most recent regime because that
+    // is the one the next bar will be drawn from.
+    CalibrationReport head;
+    if (!pts.empty()) {
+        const double raw = vol.back() >= 0.0 ? vol.back() : 0.0;
+        scaler.transform(std::span(&raw, 1), z);
+        const auto a = up.calibrate(z);
+        const auto b = down.calibrate(z);
+        if (a && b) {
+            head.next_up = std::max(0.0, a->buffer);
+            head.next_lo = std::max(0.0, b->buffer);
+            head.next_ready = true;
+        }
+    }
+
     auto scored = score_calibration(out, spec.conformal.alpha, spec.vol_window);
     if (!scored) { return std::unexpected(scored.error()); }
 
     CalibrationReport final_rep = *scored;
+    final_rep.next_up = head.next_up;
+    final_rep.next_lo = head.next_lo;
+    final_rep.next_ready = head.next_ready;
     final_rep.uncalibrated = rep.uncalibrated;
     final_rep.mean_n_eff = steps > 0 ? neff_sum / static_cast<double>(steps) : 0.0;
     final_rep.mean_memory = steps > 0 ? mem_sum / static_cast<double>(steps) : 0.0;
