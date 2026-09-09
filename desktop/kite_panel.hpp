@@ -44,8 +44,11 @@
 
 #pragma once
 
+#include "account_widgets.hpp"
 #include "feed_status.hpp"
 
+#include <QApplication>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QFile>
 #include <QGridLayout>
@@ -53,7 +56,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QFileInfo>
 #include <QPlainTextEdit>
+#include <QProcess>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QTabWidget>
@@ -184,23 +189,87 @@ public:
         head_->setContentsMargins(14, 12, 14, 8);
         v->addWidget(head_);
 
-        auto* refresh = new QPushButton(
-            QStringLiteral("Re-read snapshot   (the UI has no network — see "
-                           "the note)"));
-        refresh->setContentsMargins(14, 0, 14, 0);
-        connect(refresh, &QPushButton::clicked, this, [this] { reload(); });
-        v->addWidget(refresh);
+        // ---- THE ACTION BAR ------------------------------------------
+        //
+        // P32-02. "Refresh" used to PRINT THE COMMAND TO RUN. That was honest
+        // about the boundary and useless at it: the operator read a command
+        // off a window, switched to a shell, and typed it. The boundary is
+        // that desktop/ may not LINK broker/ -- not that it may not start a
+        // process -- and P26-01 and P29-02 had already established the shape,
+        // which is to launch the read-only fetcher and re-read what it wrote.
+        //
+        // The credential still never enters this address space. The subprocess
+        // reads data/kite_session.json; this window does not, and cannot.
+        auto* bar = new QWidget;
+        auto* bl = new QHBoxLayout(bar);
+        bl->setContentsMargins(14, 4, 14, 8);
+        bl->setSpacing(8);
+
+        fetch_ = new QPushButton(QStringLiteral("Fetch from Kite"));
+        fetch_->setStyleSheet(action_button_css(true));
+        fetch_->setToolTip(QStringLiteral(
+            "Runs altair_kite_account --go as a subprocess and re-reads the "
+            "snapshot it writes. Read-only: no endpoint it calls can place, "
+            "modify or cancel anything."));
+
+        reread_ = new QPushButton(QStringLiteral("Re-read file"));
+        reread_->setStyleSheet(action_button_css(false));
+        reread_->setToolTip(QStringLiteral(
+            "Re-reads the snapshot already on disk. Makes no network call."));
+
+        status_ = new QLabel;
+        status_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+
+        bl->addWidget(fetch_);
+        bl->addWidget(reread_);
+        bl->addWidget(status_, 1);
+        v->addWidget(bar);
+
+        connect(reread_, &QPushButton::clicked, this, [this] { reload(); });
+        connect(fetch_, &QPushButton::clicked, this, [this] { fetch(); });
 
         tabs_ = new QTabWidget;
-        funds_ = make_pane();
-        positions_ = make_pane();
-        holdings_ = make_pane();
-        orders_ = make_pane();
+
+        // Funds is CARDS. It is the tab that gets opened to read one number.
+        funds_page_ = new QWidget;
+        auto* fv = new QVBoxLayout(funds_page_);
+        fv->setContentsMargins(14, 14, 14, 14);
+        funds_cards_ = new CardGrid(4, funds_page_);
+        fv->addWidget(funds_cards_);
+        funds_note_ = new QLabel(funds_page_);
+        funds_note_->setWordWrap(true);
+        funds_note_->setStyleSheet(QStringLiteral(
+            "color:#7F8C8D;font-size:11px;"));
+        fv->addWidget(funds_note_);
+        fv->addStretch(1);
+
+        positions_t_ = account_table({QStringLiteral("Symbol"),
+                                      QStringLiteral("Qty"),
+                                      QStringLiteral("Avg"),
+                                      QStringLiteral("Last"),
+                                      QStringLiteral("P&L"),
+                                      QStringLiteral("Product")});
+        holdings_t_ = account_table({QStringLiteral("Symbol"),
+                                     QStringLiteral("Qty"),
+                                     QStringLiteral("Avg cost"),
+                                     QStringLiteral("Last"),
+                                     QStringLiteral("P&L")});
+        orders_t_ = account_table({QStringLiteral("Time"),
+                                   QStringLiteral("Symbol"),
+                                   QStringLiteral("Side"),
+                                   QStringLiteral("Qty"),
+                                   QStringLiteral("Price"),
+                                   QStringLiteral("Status")});
+
+        positions_page_ = wrap_table(positions_t_, &positions_note_);
+        holdings_page_ = wrap_table(holdings_t_, &holdings_note_);
+        orders_page_ = wrap_table(orders_t_, &orders_note_);
+
         catalogue_ = make_pane();
-        tabs_->addTab(funds_, QStringLiteral("Funds"));
-        tabs_->addTab(positions_, QStringLiteral("Positions"));
-        tabs_->addTab(holdings_, QStringLiteral("Holdings"));
-        tabs_->addTab(orders_, QStringLiteral("Orders"));
+        tabs_->addTab(funds_page_, QStringLiteral("Funds"));
+        tabs_->addTab(positions_page_, QStringLiteral("Positions"));
+        tabs_->addTab(holdings_page_, QStringLiteral("Holdings"));
+        tabs_->addTab(orders_page_, QStringLiteral("Orders"));
         tabs_->addTab(catalogue_, QStringLiteral("API surface"));
         v->addWidget(tabs_, 1);
 
@@ -209,6 +278,101 @@ public:
     }
 
 private:
+    /// A table plus the note under it that says what an empty one MEANS.
+    ///
+    /// The note is not decoration. An empty positions table and an unfetched
+    /// positions table look identical, and the difference is the difference
+    /// between "I am flat" and "I do not know". Every list on this page
+    /// carries one.
+    [[nodiscard]] QWidget* wrap_table(QTableWidget* t, QLabel** note_out) {
+        auto* page = new QWidget;
+        auto* v = new QVBoxLayout(page);
+        v->setContentsMargins(0, 0, 0, 0);
+        v->setSpacing(0);
+        auto* note = new QLabel(page);
+        note->setWordWrap(true);
+        note->setContentsMargins(14, 10, 14, 10);
+        note->setStyleSheet(QStringLiteral(
+            "color:#9FB3C8;background:#161C22;font-size:11px;"
+            "border-bottom:1px solid #2C3E50;"));
+        v->addWidget(note);
+        v->addWidget(t, 1);
+        *note_out = note;
+        return page;
+    }
+
+    /// Run the READ-ONLY account fetcher, then re-read what it wrote.
+    ///
+    /// Same shape as the watchlist's quote refresh and Link Kite's login: a
+    /// subprocess, with the working directory pinned. P26-02b is why the pin
+    /// is here and not assumed -- a subprocess launched from a desktop
+    /// shortcut writes its relative output path into the build folder, where
+    /// nothing reads it, while reporting success.
+    void fetch() {
+        QString exe =
+#if defined(_WIN32)
+            QStringLiteral("altair_kite_account.exe");
+#else
+            QStringLiteral("altair_kite_account");
+#endif
+        QStringList tried;
+        tried << QCoreApplication::applicationDirPath()
+                     + QStringLiteral("/../app/") + exe;
+        tried << QCoreApplication::applicationDirPath()
+                     + QStringLiteral("/../../net/app/") + exe;
+#ifdef ALTAIR_SOURCE_DIR
+        tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+#endif
+        QString found;
+        for (const QString& c : tried) {
+            if (QFileInfo(c).isFile()) {
+                found = QFileInfo(c).canonicalFilePath();
+                break;
+            }
+        }
+        if (found.isEmpty()) {
+            // NAMED, not "failed". The fetcher only exists in a preset with
+            // networking, and "not built here" is a different problem from
+            // "the token expired" -- they need different actions.
+            status_->setText(QStringLiteral(
+                "altair_kite_account is not in this build. It needs the "
+                "`net` preset: build.bat net"));
+            return;
+        }
+
+        fetch_->setEnabled(false);
+        status_->setText(QStringLiteral("fetching..."));
+        QApplication::processEvents();
+
+        QProcess proc;
+        proc.setProgram(found);
+        proc.setArguments({QStringLiteral("--go")});
+        proc.setProcessChannelMode(QProcess::MergedChannels);
+#ifdef ALTAIR_SOURCE_DIR
+        proc.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
+#endif
+        proc.start();
+        const bool ok = proc.waitForStarted(5000)
+                        && proc.waitForFinished(45000);
+        fetch_->setEnabled(true);
+        if (!ok) {
+            proc.kill();
+            status_->setText(QStringLiteral("the fetcher did not finish"));
+            return;
+        }
+        if (proc.exitCode() != 0) {
+            // Kite's own words. A token that expired daily and a network that
+            // is down are different problems and read differently.
+            status_->setText(
+                QStringLiteral("fetch failed: %1")
+                    .arg(QString::fromUtf8(proc.readAll()).trimmed()
+                             .section(QChar('\n'), -2)));
+            return;
+        }
+        status_->setText(QString());
+        reload();
+    }
+
     [[nodiscard]] QPlainTextEdit* make_pane() {
         auto* p = new QPlainTextEdit;
         p->setReadOnly(true);
@@ -234,11 +398,18 @@ private:
                 "Run this, then press the button above:<br>"
                 "<code>&nbsp;&nbsp;.\\build\\net\\app\\altair_kite_account.exe "
                 "--go</code>").arg(snapshot_));
-            for (auto* p : {funds_, positions_, holdings_, orders_}) {
-                p->setPlainText(
-                    QStringLiteral("Not fetched.\n\nThis is ABSENT, not "
-                                   "empty — it does not mean you hold "
-                                   "nothing."));
+            funds_cards_->clear();
+            funds_cards_->add_wide(new StatCard(
+                QStringLiteral("funds"), QStringLiteral("not fetched"), 0,
+                QStringLiteral("ABSENT, not zero. Press Fetch from Kite.")));
+            funds_note_->setText(QString());
+            for (auto* t : {positions_t_, holdings_t_, orders_t_}) {
+                t->setRowCount(0);
+            }
+            for (auto* nt : {positions_note_, holdings_note_, orders_note_}) {
+                nt->setText(QStringLiteral(
+                    "<b>NOT FETCHED.</b> This is ABSENT, not empty — it does "
+                    "not mean you hold nothing."));
             }
             return;
         }
@@ -296,16 +467,19 @@ private:
     }
 
     void render_funds(const QJsonObject& o) {
+        funds_cards_->clear();
         if (!fetched(o, "margins")) {
-            funds_->setPlainText(QStringLiteral(
-                "margins: NOT FETCHED (HTTP %1)\n\nAbsent, not zero.")
-                    .arg(o.value(QStringLiteral("margins_status")).toInt()));
+            funds_cards_->add_wide(new StatCard(
+                QStringLiteral("margins"), QStringLiteral("NOT FETCHED"), 0,
+                QStringLiteral("HTTP %1. Absent, not zero.")
+                    .arg(o.value(QStringLiteral("margins_status")).toInt())));
+            funds_note_->setText(QString());
             return;
         }
         const QJsonObject d =
             o.value(QStringLiteral("margins")).toObject()
              .value(QStringLiteral("data")).toObject();
-        QString s;
+
         for (const QString& seg : {QStringLiteral("equity"),
                                    QStringLiteral("commodity")}) {
             if (!d.contains(seg)) { continue; }
@@ -314,15 +488,21 @@ private:
                 m.value(QStringLiteral("available")).toObject();
             const QJsonObject us =
                 m.value(QStringLiteral("utilised")).toObject();
-            s += QStringLiteral("%1  (%2)\n")
-                     .arg(seg.toUpper())
-                     .arg(m.value(QStringLiteral("enabled")).toBool()
-                              ? QStringLiteral("enabled")
-                              : QStringLiteral("NOT ENABLED"));
-            s += QStringLiteral("  %1 %2\n\n")
-                     .arg(QStringLiteral("NET"), -22)
-                     .arg(rupees(m.value(QStringLiteral("net")).toDouble()), 18);
-            s += QStringLiteral("  available\n");
+            const bool on = m.value(QStringLiteral("enabled")).toBool();
+            const double net = m.value(QStringLiteral("net")).toDouble();
+
+            // NET IS THE HEADLINE AND IS NOT CASH. It is the one number a
+            // sizing decision starts from, so it gets the wide card and the
+            // sentence -- the text version buried that sentence at the bottom
+            // of a wall of aligned digits.
+            funds_cards_->add_wide(new StatCard(
+                QStringLiteral("%1 — net available").arg(seg),
+                rupees(net), 2,
+                on ? QStringLiteral(
+                         "What Kite will let you deploy. NOT cash: it includes "
+                         "collateral and is reduced by everything utilised.")
+                   : QStringLiteral("SEGMENT NOT ENABLED on this account.")));
+
             for (const auto& [k, label] : {
                      std::pair{"cash", "cash"},
                      {"opening_balance", "opening balance"},
@@ -330,89 +510,99 @@ private:
                      {"collateral", "collateral"},
                      {"intraday_payin", "intraday payin"},
                      {"adhoc_margin", "adhoc margin"}}) {
-                s += QStringLiteral("    %1 %2\n")
-                         .arg(QLatin1String(label), -20)
-                         .arg(rupees(av.value(QLatin1String(k)).toDouble()), 18);
+                funds_cards_->add(new StatCard(
+                    QLatin1String(label),
+                    rupees(av.value(QLatin1String(k)).toDouble())));
             }
-            s += QStringLiteral("\n  utilised\n");
             for (const auto& [k, label] : {
-                     std::pair{"debits", "debits"},
-                     {"span", "SPAN"},
-                     {"exposure", "exposure"},
-                     {"option_premium", "option premium"},
-                     {"m2m_realised", "M2M realised"},
-                     {"m2m_unrealised", "M2M unrealised"},
-                     {"delivery", "delivery"},
-                     {"payout", "payout"},
-                     {"turnover", "turnover"}}) {
-                s += QStringLiteral("    %1 %2\n")
-                         .arg(QLatin1String(label), -20)
-                         .arg(rupees(us.value(QLatin1String(k)).toDouble()), 18);
+                     std::pair{"debits", "utilised — debits"},
+                     {"span", "utilised — SPAN"},
+                     {"exposure", "utilised — exposure"},
+                     {"option_premium", "utilised — option premium"},
+                     {"delivery", "utilised — delivery"},
+                     {"payout", "utilised — payout"},
+                     {"turnover", "utilised — turnover"}}) {
+                funds_cards_->add(new StatCard(
+                    QLatin1String(label),
+                    rupees(us.value(QLatin1String(k)).toDouble())));
             }
-            s += QStringLiteral("\n");
+            // M2M is SIGNED and is the one pair here where colour means
+            // something. The rest are magnitudes.
+            for (const auto& [k, label] : {
+                     std::pair{"m2m_realised", "M2M realised"},
+                     {"m2m_unrealised", "M2M unrealised"}}) {
+                const double x = us.value(QLatin1String(k)).toDouble();
+                funds_cards_->add(new StatCard(
+                    QLatin1String(label), rupees(x),
+                    x > 0.0 ? 1 : (x < 0.0 ? -1 : 0)));
+            }
         }
-        s += QStringLiteral(
-            "\nNET is what Kite will let you deploy. It is NOT cash: it\n"
-            "includes collateral and is reduced by everything under\n"
-            "utilised. Sizing off `cash` alone overstates on a book with\n"
-            "pledged holdings and understates one with open F&O.\n");
-        funds_->setPlainText(s);
+        funds_note_->setText(QStringLiteral(
+            "Sizing off <b>cash</b> alone overstates on a book with pledged "
+            "holdings and understates one with open F&amp;O. The number to "
+            "size from is <b>net</b>."));
     }
 
     void render_positions(const QJsonObject& o) {
+        positions_t_->setRowCount(0);
         if (!fetched(o, "positions")) {
-            positions_->setPlainText(QStringLiteral(
-                "positions: NOT FETCHED (HTTP %1)\n\nAbsent, not flat.")
+            positions_note_->setText(QStringLiteral(
+                "<b>NOT FETCHED</b> (HTTP %1). Absent, not flat.")
                     .arg(o.value(QStringLiteral("positions_status")).toInt()));
             return;
         }
-        const QJsonObject d =
+        const QJsonArray net =
             o.value(QStringLiteral("positions")).toObject()
-             .value(QStringLiteral("data")).toObject();
-        const QJsonArray net = d.value(QStringLiteral("net")).toArray();
+             .value(QStringLiteral("data")).toObject()
+             .value(QStringLiteral("net")).toArray();
         if (net.isEmpty()) {
-            positions_->setPlainText(QStringLiteral(
-                "No open positions.\n\nThis is EMPTY, which is different "
-                "from not fetched — the call\nsucceeded and the book is "
+            positions_note_->setText(QStringLiteral(
+                "<b>No open positions.</b> This is EMPTY, which is different "
+                "from not fetched — the call succeeded and the book is "
                 "genuinely flat."));
             return;
         }
-        QString s = QStringLiteral("%1 %2 %3 %4 %5 %6\n")
-                        .arg(QStringLiteral("symbol"), -22)
-                        .arg(QStringLiteral("qty"), 8)
-                        .arg(QStringLiteral("avg"), 12)
-                        .arg(QStringLiteral("last"), 12)
-                        .arg(QStringLiteral("P&L"), 14)
-                        .arg(QStringLiteral("product"), 8);
+        positions_t_->setSortingEnabled(false);
         double total = 0.0;
+        int r = 0;
         for (const auto& v : net) {
-            const QJsonObject p = v.toObject();
-            const double pnl = p.value(QStringLiteral("pnl")).toDouble();
+            const QJsonObject q = v.toObject();
+            const double pnl = q.value(QStringLiteral("pnl")).toDouble();
             total += pnl;
-            s += QStringLiteral("%1 %2 %3 %4 %5 %6\n")
-                     .arg(p.value(QStringLiteral("tradingsymbol")).toString(), -22)
-                     .arg(p.value(QStringLiteral("quantity")).toInt(), 8)
-                     .arg(p.value(QStringLiteral("average_price")).toDouble(),
-                          12, 'f', 2)
-                     .arg(p.value(QStringLiteral("last_price")).toDouble(),
-                          12, 'f', 2)
-                     .arg(rupees(pnl), 14)
-                     .arg(p.value(QStringLiteral("product")).toString(), 8);
+            positions_t_->insertRow(r);
+            account_cell(positions_t_, r, 0,
+                         q.value(QStringLiteral("tradingsymbol")).toString());
+            account_cell(positions_t_, r, 1,
+                         QString::number(
+                             q.value(QStringLiteral("quantity")).toInt()),
+                         true);
+            account_cell(positions_t_, r, 2,
+                         QString::number(
+                             q.value(QStringLiteral("average_price")).toDouble(),
+                             'f', 2), true);
+            account_cell(positions_t_, r, 3,
+                         QString::number(
+                             q.value(QStringLiteral("last_price")).toDouble(),
+                             'f', 2), true);
+            account_cell(positions_t_, r, 4, rupees(pnl), true, pnl, true);
+            account_cell(positions_t_, r, 5,
+                         q.value(QStringLiteral("product")).toString());
+            ++r;
         }
-        s += QStringLiteral("\n%1 %2\n").arg(QStringLiteral("TOTAL P&L"), -22)
-                 .arg(rupees(total), 46);
-        s += QStringLiteral(
-            "\nP&L here is the BROKER's number, at the snapshot instant.\n"
-            "The engine's own is in the Audit Trail, and P12-04 exists to\n"
-            "reconcile the two — if they disagree, one of them is wrong and\n"
-            "neither knows which.\n");
-        positions_->setPlainText(s);
+        positions_t_->setSortingEnabled(true);
+        positions_note_->setText(QStringLiteral(
+            "<b>Total P&amp;L %1</b> across %2 position(s). This is the "
+            "BROKER's number at the snapshot instant; the engine's own is in "
+            "the Audit Trail, and P12-04 exists to reconcile the two — if they "
+            "disagree, one is wrong and neither knows which.")
+                .arg(rupees(total)).arg(net.size()));
     }
 
     void render_holdings(const QJsonObject& o) {
+        holdings_t_->setRowCount(0);
         if (!fetched(o, "holdings")) {
-            holdings_->setPlainText(QStringLiteral(
-                "holdings: NOT FETCHED (HTTP %1)")
+            holdings_note_->setText(QStringLiteral(
+                "<b>NOT FETCHED</b> (HTTP %1). Absent, not empty.")
                     .arg(o.value(QStringLiteral("holdings_status")).toInt()));
             return;
         }
@@ -420,33 +610,46 @@ private:
             o.value(QStringLiteral("holdings")).toObject()
              .value(QStringLiteral("data")).toArray();
         if (h.isEmpty()) {
-            holdings_->setPlainText(QStringLiteral("No holdings."));
+            holdings_note_->setText(QStringLiteral(
+                "<b>No holdings.</b> Empty, and the call succeeded."));
             return;
         }
-        QString s = QStringLiteral("%1 %2 %3 %4 %5\n")
-                        .arg(QStringLiteral("symbol"), -22)
-                        .arg(QStringLiteral("qty"), 8)
-                        .arg(QStringLiteral("avg cost"), 12)
-                        .arg(QStringLiteral("last"), 12)
-                        .arg(QStringLiteral("P&L"), 14);
+        holdings_t_->setSortingEnabled(false);
+        double total = 0.0;
+        int r = 0;
         for (const auto& v : h) {
-            const QJsonObject p = v.toObject();
-            s += QStringLiteral("%1 %2 %3 %4 %5\n")
-                     .arg(p.value(QStringLiteral("tradingsymbol")).toString(), -22)
-                     .arg(p.value(QStringLiteral("quantity")).toInt(), 8)
-                     .arg(p.value(QStringLiteral("average_price")).toDouble(),
-                          12, 'f', 2)
-                     .arg(p.value(QStringLiteral("last_price")).toDouble(),
-                          12, 'f', 2)
-                     .arg(rupees(p.value(QStringLiteral("pnl")).toDouble()), 14);
+            const QJsonObject q = v.toObject();
+            const double pnl = q.value(QStringLiteral("pnl")).toDouble();
+            total += pnl;
+            holdings_t_->insertRow(r);
+            account_cell(holdings_t_, r, 0,
+                         q.value(QStringLiteral("tradingsymbol")).toString());
+            account_cell(holdings_t_, r, 1,
+                         QString::number(
+                             q.value(QStringLiteral("quantity")).toInt()),
+                         true);
+            account_cell(holdings_t_, r, 2,
+                         QString::number(
+                             q.value(QStringLiteral("average_price")).toDouble(),
+                             'f', 2), true);
+            account_cell(holdings_t_, r, 3,
+                         QString::number(
+                             q.value(QStringLiteral("last_price")).toDouble(),
+                             'f', 2), true);
+            account_cell(holdings_t_, r, 4, rupees(pnl), true, pnl, true);
+            ++r;
         }
-        holdings_->setPlainText(s);
+        holdings_t_->setSortingEnabled(true);
+        holdings_note_->setText(QStringLiteral(
+            "<b>Total P&amp;L %1</b> across %2 holding(s).")
+                .arg(rupees(total)).arg(h.size()));
     }
 
     void render_orders(const QJsonObject& o) {
+        orders_t_->setRowCount(0);
         if (!fetched(o, "orders")) {
-            orders_->setPlainText(QStringLiteral(
-                "orders: NOT FETCHED (HTTP %1)")
+            orders_note_->setText(QStringLiteral(
+                "<b>NOT FETCHED</b> (HTTP %1). Absent, not none.")
                     .arg(o.value(QStringLiteral("orders_status")).toInt()));
             return;
         }
@@ -454,37 +657,62 @@ private:
             o.value(QStringLiteral("orders")).toObject()
              .value(QStringLiteral("data")).toArray();
         if (a.isEmpty()) {
-            orders_->setPlainText(QStringLiteral(
-                "No orders today.\n\nEmpty, and the call succeeded."));
+            orders_note_->setText(QStringLiteral(
+                "<b>No orders today.</b> Empty, and the call succeeded. "
+                "Read-only: there is no cancel button and there will not be "
+                "one — cancelling is a MUTATION and <code>oms/</code> is the "
+                "only directory permitted to send one."));
             return;
         }
-        QString s = QStringLiteral("%1 %2 %3 %4 %5 %6\n")
-                        .arg(QStringLiteral("time"), -10)
-                        .arg(QStringLiteral("symbol"), -20)
-                        .arg(QStringLiteral("side"), -5)
-                        .arg(QStringLiteral("qty/filled"), 12)
-                        .arg(QStringLiteral("price"), 11)
-                        .arg(QStringLiteral("status"), -12);
+        orders_t_->setSortingEnabled(false);
+        int r = 0;
+        int open = 0;
         for (const auto& v : a) {
-            const QJsonObject p = v.toObject();
-            const QString ts =
-                p.value(QStringLiteral("order_timestamp")).toString();
-            s += QStringLiteral("%1 %2 %3 %4 %5 %6\n")
-                     .arg(ts.right(8), -10)
-                     .arg(p.value(QStringLiteral("tradingsymbol")).toString(), -20)
-                     .arg(p.value(QStringLiteral("transaction_type")).toString(), -5)
-                     .arg(QStringLiteral("%1/%2")
-                              .arg(p.value(QStringLiteral("quantity")).toInt())
-                              .arg(p.value(QStringLiteral("filled_quantity")).toInt()), 12)
-                     .arg(p.value(QStringLiteral("average_price")).toDouble(),
-                          11, 'f', 2)
-                     .arg(p.value(QStringLiteral("status")).toString(), -12);
+            const QJsonObject q = v.toObject();
+            const QString st = q.value(QStringLiteral("status")).toString();
+            const int qty = q.value(QStringLiteral("quantity")).toInt();
+            const int fil =
+                q.value(QStringLiteral("filled_quantity")).toInt();
+            const QString side =
+                q.value(QStringLiteral("transaction_type")).toString();
+            if (st != QStringLiteral("COMPLETE")
+                && st != QStringLiteral("CANCELLED")
+                && st != QStringLiteral("REJECTED")) {
+                ++open;
+            }
+            orders_t_->insertRow(r);
+            account_cell(orders_t_, r, 0,
+                         q.value(QStringLiteral("order_timestamp"))
+                             .toString().right(8));
+            account_cell(orders_t_, r, 1,
+                         q.value(QStringLiteral("tradingsymbol")).toString());
+            // SIDE is tinted; BUY green, SELL red. That is a direction, not a
+            // profit, and it is the one place on this page where the two
+            // colours mean something other than P&L -- which is exactly why
+            // the quantity column beside it is NOT tinted: a negative
+            // quantity is a short, not a loss.
+            account_cell(orders_t_, r, 2, side, false,
+                         side == QStringLiteral("BUY") ? 1.0 : -1.0, true);
+            account_cell(orders_t_, r, 3,
+                         QStringLiteral("%1 / %2").arg(fil).arg(qty), true);
+            account_cell(orders_t_, r, 4,
+                         QString::number(
+                             q.value(QStringLiteral("average_price")).toDouble(),
+                             'f', 2), true);
+            account_cell(orders_t_, r, 5, st, false,
+                         st == QStringLiteral("COMPLETE")   ? 1.0
+                         : st == QStringLiteral("REJECTED") ? -1.0
+                                                            : 0.0,
+                         true);
+            ++r;
         }
-        s += QStringLiteral(
-            "\nRead-only. There is no cancel button and there will not be\n"
-            "one: cancelling is a MUTATION, and oms/ is the only directory\n"
-            "permitted to send one. See the API surface tab.\n");
-        orders_->setPlainText(s);
+        orders_t_->setSortingEnabled(true);
+        orders_note_->setText(QStringLiteral(
+            "%1 order(s) today, <b>%2 still working</b>. Read-only: there is "
+            "no cancel button and there will not be one — cancelling is a "
+            "MUTATION and <code>oms/</code> is the only directory permitted "
+            "to send one. See the API surface tab.")
+                .arg(a.size()).arg(open));
     }
 
     [[nodiscard]] static QString catalogue_text() {
@@ -525,10 +753,30 @@ private:
     QString snapshot_, session_;
     QLabel* head_ = nullptr;
     QTabWidget* tabs_ = nullptr;
-    QPlainTextEdit* funds_ = nullptr;
-    QPlainTextEdit* positions_ = nullptr;
-    QPlainTextEdit* holdings_ = nullptr;
-    QPlainTextEdit* orders_ = nullptr;
+    QPushButton* fetch_ = nullptr;
+    QPushButton* reread_ = nullptr;
+    QLabel* status_ = nullptr;
+
+    QWidget* funds_page_ = nullptr;
+    CardGrid* funds_cards_ = nullptr;
+    QLabel* funds_note_ = nullptr;
+
+    QWidget* positions_page_ = nullptr;
+    QTableWidget* positions_t_ = nullptr;
+    QLabel* positions_note_ = nullptr;
+
+    QWidget* holdings_page_ = nullptr;
+    QTableWidget* holdings_t_ = nullptr;
+    QLabel* holdings_note_ = nullptr;
+
+    QWidget* orders_page_ = nullptr;
+    QTableWidget* orders_t_ = nullptr;
+    QLabel* orders_note_ = nullptr;
+
+    /// The endpoint catalogue stays TEXT. It is a reference document read
+    /// once end to end, not a page scanned for one number, and a table of
+    /// 49 rows with a prose "where this has to live" column would be less
+    /// readable than the aligned list it already is.
     QPlainTextEdit* catalogue_ = nullptr;
 };
 

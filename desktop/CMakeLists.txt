@@ -50,6 +50,7 @@ qt_add_executable(altair_desktop
     audit_panel.hpp
     quant_pages.hpp
     kite_panel.hpp
+    account_widgets.hpp
     depth_ladder.hpp
     kill_switch.hpp
     order_ticket.hpp
