@@ -159,7 +159,7 @@ void an_aggregate_destroys_the_facts_it_averages()
 
     // A regime that is not fully decided is refused, exactly as P6-03 refuses.
     check(sc.observe(0, 0, MarketRegime{}, 1.0, 1.0).error()
-          == ScoreError::RegimeIncomplete,
+          == ScorecardError::RegimeIncomplete,
           "an undecided regime cannot be scored, rather than being filed under"
           " a default cell that would then accumulate every uncertain moment"
           " in the session");
@@ -384,7 +384,7 @@ void the_weight_update_is_shrunk_by_sample_size()
           " never seen");
 
     UpdatePolicy bare{};
-    check(update_weight(0.5, thick, bare).error() == ScoreError::NoShrinkage,
+    check(update_weight(0.5, thick, bare).error() == ScorecardError::NoShrinkage,
           "and a policy with no shrinkage constant is refused, because how"
           " much evidence is enough depends on how expensive being wrong is");
 }

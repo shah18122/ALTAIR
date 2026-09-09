@@ -845,13 +845,30 @@ private:
                 [dcf_page] { dcf_page->set_text(dcf_report()); });
         pages_->addWidget(dcf_page);
 
-        pages_->addWidget(blocked_page(
-            QStringLiteral("Aggregator"), QStringLiteral("P11Q-05"),
-            QStringLiteral(
-                "models/aggregator.hpp combines member signals and sizes on the "
-                "LOWER confidence bound of edge, with n_eff correcting for "
-                "correlated members. It has no members to combine until the "
-                "Models page above has something in it.")));
+        // P32-03. WAS A BLOCKED PAGE, AND HAD STOPPED BEING TRUE.
+        //
+        // Its text said the aggregator "has no members to combine until the
+        // Models page above has something in it". That was right when it was
+        // written and wrong from P16 onward: the gradient-boosted spot
+        // forecast fits on real closes at several lag counts under two growth
+        // strategies, and every one of those produces a net edge and a
+        // standard error. They were simply never combined.
+        //
+        // A blocked page that is no longer blocked is worse than a wrong
+        // number: it says the machinery is untested while the machinery sits
+        // there, and it removes the one page that would show what P8-11 and
+        // P8-12 exist to show.
+        auto* agg_page = new ComputePage(
+            QStringLiteral("AGGREGATOR — P8-11 / P8-12"),
+            QStringLiteral("Combine six real members, and price the interval"),
+            this);
+        connect(agg_page->button(), &QPushButton::clicked, this,
+                [agg_page] {
+                    agg_page->set_text(aggregator_report(
+                        QStringLiteral(ALTAIR_DATASET_DIR),
+                        QStringLiteral("/spot/nifty/1d/"), "NIFTY daily"));
+                });
+        pages_->addWidget(agg_page);
 
         audit_panel_ = new AuditPanel;
         pages_->addWidget(audit_panel_);

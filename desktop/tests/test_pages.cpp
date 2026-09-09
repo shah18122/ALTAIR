@@ -415,6 +415,34 @@ int main(int argc, char** argv)
     }
 
     // -----------------------------------------------------------------------
+    // 4i. P32-03 -- the aggregator, on members that exist.
+    //
+    // The page it replaced was a BLOCKED page whose text said there was
+    // nothing to combine. What is asserted here is that there IS: that six
+    // members were built from real walk-forward runs, that the two malformed
+    // ensembles are refused, and that the correlation sweep is present rather
+    // than a single flattering rho.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4i] aggregator\n");
+    {
+        const QString ag = aggregator_report(
+            ds, QStringLiteral("/spot/nifty/1d/"), "NIFTY daily");
+        check(!ag.contains(QStringLiteral("NO MEMBERS")),
+              "the aggregator has members to combine -- the page it replaced "
+              "said it did not, and that stopped being true at P16");
+        check(ag.contains(QStringLiteral("level-wise")),
+              "and they are named, with their own error bars");
+        check(!ag.contains(QStringLiteral("WHICH IS A BUG")),
+              "a mismatched horizon and a mismatched feature registry are "
+              "both still REFUSED -- combining across horizons estimates "
+              "neither quantity");
+        check(ag.contains(QStringLiteral("n_eff")),
+              "the correlation sweep is shown rather than one rho that "
+              "suits the answer");
+        std::printf("%s", ag.toUtf8().constData());
+    }
+
+    // -----------------------------------------------------------------------
     // 5. Print them.
     // -----------------------------------------------------------------------
     std::printf("\n[5] excerpts\n");

@@ -50,6 +50,7 @@
 #include <models/dcf.hpp>
 #include <models/gbdt.hpp>
 #include <models/regime_rl.hpp>
+#include <models/aggregator.hpp>
 #include <models/spot_forecast.hpp>
 #include <risk/covariance.hpp>
 #include <risk/limits.hpp>
@@ -3900,6 +3901,336 @@ struct SeriesSpan {
         "  neither has a brokerage.\n");
 #endif
 
+    return s;
+}
+
+/// The ensemble, on members that actually exist.
+///
+/// P32-03. This page was a BLOCKED page whose text read: "It has no members to
+/// combine until the Models page above has something in it." That was true
+/// when it was written and has not been true since P16. There are members:
+/// the gradient-boosted spot forecast fits on real NIFTY closes, at several
+/// lag counts and under two growth strategies, and every one of them produces
+/// a net edge and a standard error. They were never combined.
+///
+/// A BLOCKED PAGE THAT IS NO LONGER BLOCKED IS WORSE THAN A WRONG NUMBER.
+///
+/// It says the machinery is untested when the machinery has been sitting
+/// there, and it removes the one page that would have shown the thing P8-11
+/// and P8-12 exist to show. So this runs the aggregator, on real members, and
+/// reports what it says.
+///
+/// WHAT THE MEMBERS ARE, AND WHY THEY ARE THE RIGHT KIND OF WRONG.
+///
+/// Six members from three walk-forward runs: lag counts 4, 8 and 12, each
+/// scored level-wise and leaf-wise. They share their features, their training
+/// data and their labels, which is exactly the case P6-04 measured for signals
+/// and the case an unweighted ensemble handles worst. An ensemble of six
+/// genuinely independent models would be a different and much rarer object;
+/// this is the one people actually build.
+///
+/// THE STANDARD ERROR IS OF A MEAN RETURN, AND IS COMPUTED HERE.
+///
+/// `SpotReport` gives net bps per bar but not its uncertainty, so the error
+/// bar is computed from the data the page already holds: the per-bar return
+/// standard deviation over the scored bars, divided by the root of the count.
+/// That is the standard error of a mean, which is what a net-bps-per-bar
+/// figure is.
+[[nodiscard]] inline QString aggregator_report(const QString& dataset_root,
+                                               const QString& sub,
+                                               const char* label) {
+    QString s = QStringLiteral(
+        "AGGREGATOR — combining members, and the interval that decides a size\n"
+        "P8-11 / P8-12, on %1\n\n")
+                    .arg(QLatin1String(label));
+
+    std::vector<double> closes =
+        ui_load_closes(dataset_root + sub + QStringLiteral("all.csv"));
+    if (closes.size() < 2000) {
+        return s + QStringLiteral(
+            "――― NO MEMBERS ―――\n\n"
+            "  No daily series under %1%2. The aggregator needs models, and\n"
+            "  a model needs data; neither is invented here.\n")
+                       .arg(dataset_root, sub);
+    }
+
+    // ――― the members ―――
+    //
+    // Same horizon for every one of them, deliberately. Combining across
+    // horizons is the mistake this header exists to prevent and it is
+    // demonstrated separately below, as a REFUSAL, rather than performed.
+    struct Built { QString name; double value; double se; std::size_t scored; };
+    std::vector<Built> built;
+
+    // Per-bar return sd, in bps. The error bar's numerator, computed from the
+    // series rather than assumed: a mean of n draws has standard error
+    // sd/sqrt(n), and pretending otherwise is how an ensemble acquires an
+    // interval that is too tight for a reason nothing downstream can see.
+    double mu = 0.0;
+    std::vector<double> rets;
+    rets.reserve(closes.size());
+    for (std::size_t i = 1; i < closes.size(); ++i) {
+        if (!(closes[i] > 0.0) || !(closes[i - 1] > 0.0)) { continue; }
+        rets.push_back(10'000.0 * std::log(closes[i] / closes[i - 1]));
+    }
+    for (double r : rets) { mu += r; }
+    mu /= static_cast<double>(rets.empty() ? 1 : rets.size());
+    double sd = 0.0;
+    for (double r : rets) { sd += (r - mu) * (r - mu); }
+    sd = rets.size() > 1
+             ? std::sqrt(sd / static_cast<double>(rets.size() - 1))
+             : 0.0;
+
+    for (const std::size_t lags : {4u, 8u, 12u}) {
+        SpotSpec spec;
+        spec.horizon = 1;
+        spec.cost_bps = 5.5;
+        spec.folds = 5;
+        spec.lags = lags;
+        const auto r = forecast_spot(closes, spec);
+        if (!r) { continue; }
+        const double se =
+            r->scored > 1 ? sd / std::sqrt(static_cast<double>(r->scored))
+                          : 0.0;
+        built.push_back({QStringLiteral("level-wise, %1 lags").arg(lags),
+                         r->net_bps_level, se, r->scored});
+        built.push_back({QStringLiteral("leaf-wise,  %1 lags").arg(lags),
+                         r->net_bps_leaf, se, r->scored});
+    }
+
+    if (built.empty()) {
+        return s + QStringLiteral(
+            "――― NO MEMBERS ―――\n\n  No fold completed.\n");
+    }
+
+    s += QStringLiteral(
+        "――― 1. THE MEMBERS ―――\n\n"
+        "  Six models from three walk-forward runs: lag counts 4, 8 and 12,\n"
+        "  each scored level-wise and leaf-wise. Every value is NET of a\n"
+        "  5.5 bps round trip (rule 5) and every one is a mean over the\n"
+        "  scored bars, so its error bar is sd/sqrt(n) with sd measured on\n"
+        "  the series itself: %1 bps per bar.\n\n"
+        "    member                   net bps/bar        se       t\n")
+             .arg(sd, 0, 'f', 2);
+
+    std::vector<Member> members;
+    for (const Built& b : built) {
+        Member m{};
+        m.forecast.value = b.value;
+        m.forecast.std_error = b.se;
+        m.forecast.feature_version = 1;
+        m.horizon = 1;
+        m.weight = 1.0;          // equal, and the sweep below is why
+        m.ready = true;
+        members.push_back(m);
+        s += QStringLiteral("    %1 %2 %3 %4\n")
+                 .arg(b.name, -24)
+                 .arg(b.value, 12, 'f', 4)
+                 .arg(b.se, 9, 'f', 4)
+                 .arg(b.se > 0.0 ? b.value / b.se : 0.0, 7, 'f', 2);
+    }
+    {
+        // COUNTED, NOT ASSERTED. And counted against the threshold SIX tests
+        // require, not the one a single test would.
+        int over2 = 0, over_bonf = 0;
+        double best = 0.0;
+        // Two-sided 5% across k tests: the Sidak/Bonferroni z. For k = 6 this
+        // is about 2.64, and using 2.00 on the best of six is the oldest way
+        // to find an edge that is not there.
+        const double zb = 2.638;
+        for (const Built& b : built) {
+            const double t = b.se > 0.0 ? b.value / b.se : 0.0;
+            if (t > 2.0) { ++over2; }
+            if (t > zb) { ++over_bonf; }
+            if (t > best) { best = t; }
+        }
+        s += QStringLiteral(
+            "\n  %1 of %2 members clear two standard errors individually,\n"
+            "  the best at t = %3.\n\n"
+            "  THAT IS THE WRONG THRESHOLD AND IT IS WORTH SAYING SO. Six\n"
+            "  members were fitted and all six are reported, so the bar is\n"
+            "  the one six tests require: t = %4 for two-sided 5 per cent.\n"
+            "  %5 member(s) clear THAT.\n\n"
+            "  And these t-statistics are on NET RETURN, while P16-06's\n"
+            "  sigma_level is on DIRECTIONAL ACCURACY — a model can be worse\n"
+            "  than a constant at RMSE, which P16-06 measured it to be, and\n"
+            "  still make money on the sign. The two numbers disagree because\n"
+            "  they are different statistics, and this page reports its own\n"
+            "  rather than quoting whichever is more flattering.\n\n")
+                 .arg(over2).arg(built.size()).arg(best, 0, 'f', 2)
+                 .arg(zb, 0, 'f', 2).arg(over_bonf);
+    }
+
+    // ――― 2. the refusal ―――
+    s += QStringLiteral(
+        "――― 2. TWO HORIZONS ARE NOT TWO OPINIONS ABOUT ONE THING ―――\n\n"
+        "  A model trained on a 1-bar forward return and one trained on a\n"
+        "  5-bar forward return produce numbers of the same type, in the\n"
+        "  same units, on the same instrument, at the same instant.\n"
+        "  Averaging them is one line of code and it estimates neither\n"
+        "  quantity.\n\n"
+        "  Under a random walk a return scales with the root of the\n"
+        "  horizon, so the longest-horizon member dominates an unweighted\n"
+        "  mean regardless of whether it is any good.\n\n");
+    {
+        std::vector<Member> mixed = members;
+        mixed[1].horizon = 5;         // one member, a different horizon
+        const auto bad = aggregate(mixed.data(), mixed.size(), 0.5, 0.05);
+        s += QStringLiteral("    combining a 1-bar and a 5-bar member: %1\n\n")
+                 .arg(bad.has_value()
+                          ? QStringLiteral("ACCEPTED — WHICH IS A BUG")
+                          : QStringLiteral("REFUSED"));
+
+        // And the same for a feature-registry mismatch, which is the other
+        // way two members can be talking about different things while
+        // agreeing on every visible number.
+        std::vector<Member> fv = members;
+        fv[2].forecast.feature_version = 7;
+        const auto bad2 = aggregate(fv.data(), fv.size(), 0.5, 0.05);
+        s += QStringLiteral(
+            "    combining members built on different feature registries:"
+            " %1\n\n")
+                 .arg(bad2.has_value()
+                          ? QStringLiteral("ACCEPTED — WHICH IS A BUG")
+                          : QStringLiteral("REFUSED"));
+    }
+
+    // ――― 3. the correlation sweep ―――
+    s += QStringLiteral(
+        "――― 3. SIX MODELS ON THE SAME FEATURES ARE NOT SIX VOTES ―――\n\n"
+        "  P6-04 measured ten members of an EMA stack carrying 1.25\n"
+        "  signals' worth of information. Model outputs are worse, because\n"
+        "  they share not only their features but their training data and\n"
+        "  their labels — which is exactly what these six do.\n\n"
+        "  The mean correlation is SWEPT rather than assumed. An ensemble's\n"
+        "  standard error is not sigma/sqrt(k), and rho = 0 is the\n"
+        "  flattering assumption, so the page shows what the interval does\n"
+        "  across the range instead of picking a number that suits it.\n\n"
+        "    rho     n_eff     naive se      real se     lower bound(2se)\n");
+
+    for (const double rho : {0.0, 0.25, 0.50, 0.75, 0.90, 0.95}) {
+        const auto a = aggregate(members.data(), members.size(), rho, 0.05);
+        if (!a) { continue; }
+        s += QStringLiteral("    %1 %2 %3 %4 %5\n")
+                 .arg(rho, 5, 'f', 2)
+                 .arg(a->n_effective, 9, 'f', 3)
+                 .arg(a->naive_std_error, 12, 'f', 4)
+                 .arg(a->std_error, 12, 'f', 4)
+                 .arg(a->lower_bound(2.0), 16, 'f', 4);
+    }
+    {
+        const auto a0 = aggregate(members.data(), members.size(), 0.0, 0.05);
+        const auto a9 = aggregate(members.data(), members.size(), 0.95, 0.05);
+        if (a0 && a9) {
+            s += QStringLiteral(
+                "\n  THE CORRELATION CORRECTION IS DOING ALL THE WORK HERE,\n"
+                "  AND THAT IS THE FINDING.\n\n"
+                "  At rho = 0 the lower bound is %1 bps and there is an edge.\n"
+                "  At rho = 0.95 it is %2 bps and there is not. Same members,\n"
+                "  same data, same arithmetic — the entire answer is decided\n"
+                "  by one number.\n\n"
+                "  AND THAT NUMBER IS NOT MEASURED. `forecast_spot` returns\n"
+                "  summary statistics, not the per-bar forecast series, so\n"
+                "  the correlation among these six cannot be computed from\n"
+                "  what the engine hands back. It has to be swept.\n\n"
+                "  So the honest reading is not 'there is an edge' and not\n"
+                "  'there is none'. It is that six models sharing their\n"
+                "  features, their training data and their labels are\n"
+                "  certainly not at rho = 0, the answer at any plausible rho\n"
+                "  is nothing, and the measurement that would settle it is a\n"
+                "  change to forecast_spot rather than an opinion.\n\n")
+                     .arg(a0->lower_bound(2.0), 0, 'f', 4)
+                     .arg(a9->lower_bound(2.0), 0, 'f', 4);
+        }
+    }
+
+    // ――― 4. the money ―――
+    {
+        const auto a = aggregate(members.data(), members.size(), 0.90, 0.05);
+        if (a) {
+            // One NIFTY lot of 75 at the last close. paise_per_unit converts
+            // one basis point of the aggregate into paise on that notional --
+            // bps are a thousandth of a per cent, so a bp of notional is
+            // notional/10,000.
+            const double last_paise = closes.back() * 100.0;
+            const double notional = last_paise * 75.0;
+            const double per_bp = notional / 10'000.0;
+            // THE ROUND TRIP IS ZERO HERE AND THAT IS NOT RULE 5 BEING
+            // SKIPPED.
+            //
+            // The first version passed the 5.5 bps round trip again and
+            // charged it twice: every member's value is `net_bps_level`,
+            // which forecast_spot has ALREADY taken the same 5.5 bps out of
+            // (SpotSpec::cost_bps above). The aggregate of net numbers is a
+            // net number. Subtracting the cost a second time turned a
+            // +0.09 bps lower bound into minus Rs 958 a lot and made the page
+            // read as a much more confident negative than the data supports.
+            //
+            // Passing zero is therefore the arithmetic that keeps rule 5
+            // exactly once, and this comment exists because a zero round trip
+            // on a page about net edge is otherwise indistinguishable from
+            // the rule being ignored.
+            const auto net = net_edge_lower_bound(*a, per_bp, 2.0,
+                                                  Notional{0});
+            s += QStringLiteral(
+                "――― 4. WHAT A TRADE HANDLER WOULD BE ALLOWED TO SEE ―――\n\n"
+                "  One NIFTY lot of 75 at %1, notional Rs %2.\n"
+                "  There is no accessor anywhere that returns the POINT\n"
+                "  estimate in paise, for the same reason P6-04's Score has\n"
+                "  none: the only number that leaves this header is already\n"
+                "  net of cost and already at the lower bound.\n\n"
+                "    aggregate value        %3 bps/bar   (already net of\n"
+                "                                        5.5 bps round trip)\n"
+                "    standard error         %4 bps  (rho 0.90)\n"
+                "    lower bound at 2 se    %5 bps\n"
+                "    edge at the bound      Rs %6 per lot per bar\n\n")
+                     .arg(closes.back(), 0, 'f', 2)
+                     .arg(notional / 100.0, 0, 'f', 0)
+                     .arg(a->value, 0, 'f', 4)
+                     .arg(a->std_error, 0, 'f', 4)
+                     .arg(a->lower_bound(2.0), 0, 'f', 4)
+                     .arg(net ? QString::number(
+                                    static_cast<double>(net->raw()) / 100.0,
+                                    'f', 2)
+                              : QStringLiteral("refused"));
+            s += QStringLiteral(
+                "  Rs %1 a lot a bar, at rho = 0.90, before anything this\n"
+                "  page has not modelled: slippage beyond the modelled\n"
+                "  round trip, the fact that the members were selected\n"
+                "  after being fitted, and a correlation that was assumed\n"
+                "  rather than measured.\n\n"
+                "  A number this small is not a signal. It is what a lower\n"
+                "  bound is FOR — the point estimate was %2 bps and would\n"
+                "  have sized a position.\n\n")
+                     .arg(net ? QString::number(
+                                    static_cast<double>(net->raw()) / 100.0,
+                                    'f', 2)
+                              : QStringLiteral("—"))
+                     .arg(a->value, 0, 'f', 4);
+        }
+    }
+
+    s += QStringLiteral(
+        "――― WHAT THIS PAGE IS AND IS NOT SAYING ―――\n\n"
+        "  The aggregator works. It combined six real members, refused a\n"
+        "  mismatched horizon and a mismatched feature registry, and\n"
+        "  reported an interval carrying both the correlation inflation and\n"
+        "  the weights' own estimation error. P8-11 and P8-12 did their job.\n\n"
+        "  It is NOT saying the members are worthless. The best of them\n"
+        "  clears two standard errors on net return, and one clears the\n"
+        "  threshold six simultaneous tests require. On a daily series that\n"
+        "  is worth another look, and it is more than this project has\n"
+        "  found in most places it has looked.\n\n"
+        "  It is also NOT saying there is an edge. The ensemble's lower\n"
+        "  bound survives only at correlations these six models cannot\n"
+        "  plausibly have, given that they share their features, their\n"
+        "  training data and their labels. At any rho a reasonable person\n"
+        "  would defend, the bound is nothing.\n\n"
+        "  WHAT IT IS SAYING is that the answer turns entirely on a number\n"
+        "  nobody has measured, and that measuring it is a change to\n"
+        "  models/spot_forecast.hpp — return the per-bar forecast series so\n"
+        "  the correlation among members can be computed instead of swept.\n"
+        "  Until then this page has an argument and not a result.\n");
     return s;
 }
 

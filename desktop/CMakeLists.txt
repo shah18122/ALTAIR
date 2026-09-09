@@ -16,6 +16,32 @@
 
 find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Svg Widgets)
 
+# P32-03. QT DEFINES `signals`, `slots` AND `emit` AS MACROS, AND THE ENGINE
+# IS NOT ALLOWED TO CARE.
+#
+# `strategies/score.hpp` names a parameter `signals` -- which is the right name
+# for the array of signals a score is combined from. Qt's qobjectdefs.h has
+# `#define signals public`, so the moment a Qt translation unit included that
+# header the declaration became
+#
+#     combine(const Signal* public, std::size_t n, ...)
+#
+# and the error MSVC prints is "missing ')' before 'public'" in a file that has
+# no Qt in it and no `public` on that line. Nothing had included both until the
+# Aggregator page pulled models/aggregator.hpp, and it in turn score.hpp, into
+# a window.
+#
+# The fix belongs on THIS side of the boundary. CLAUDE.md's in-process decision
+# lets desktop/ include read-side engine headers; it does not licence Qt to
+# reserve three ordinary English words across the whole engine. QT_NO_KEYWORDS
+# turns the lowercase macros off and leaves Q_SIGNALS / Q_SLOTS / Q_EMIT, which
+# is what every file in desktop/ already uses.
+#
+# It also fixes the ones nobody has hit yet: `emit` and `slots` appear as
+# ordinary words in feature and book headers, and would have failed the same
+# way on the day some page happened to include them together.
+add_compile_definitions(QT_NO_KEYWORDS)
+
 if(NOT Qt6_FOUND)
     message(STATUS "desktop/: Qt6 not found — UI target skipped. "
                    "Set ALTAIR_QT_ROOT or CMAKE_PREFIX_PATH to a Qt 6.8+ "

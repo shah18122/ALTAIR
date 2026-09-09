@@ -67,7 +67,24 @@ inline constexpr std::size_t kMaxHorizons = 4;
 /// hundred observations into cells of eight.
 inline constexpr std::size_t kScoreRegimes = 16;
 
-enum class ScoreError : std::uint8_t {
+/// P32-03. NAMED `Scorecard`, NOT `Score`, AND THAT IS NOT A STYLE CHOICE.
+///
+/// This was `altair::ScoreError` and so is the one in strategies/score.hpp --
+/// same name, same namespace, different enumerators. Any translation unit
+/// including both failed to compile, and none ever did until the Aggregator
+/// page put the flagging scorecard beside models/aggregator.hpp, which pulls
+/// strategies/score.hpp in.
+///
+/// That is the second time this exact collision has happened in this tree:
+/// P23-08 was `kMaxBins`, declared 64 in models/gbdt.hpp and 32 in
+/// flagging/drift.hpp. Both times the two declarations sat there for months
+/// because nothing had reason to include both, and both times the thing that
+/// found it was a UI page putting two unrelated subsystems on one screen.
+///
+/// The rule that resolves it, applied both times: the MORE SPECIFIC user
+/// takes the qualified name. strategies/score.hpp scores signals in general;
+/// this file is one scorecard.
+enum class ScorecardError : std::uint8_t {
     /// The model or horizon index is out of range.
     OutOfRange,
     /// The regime was not fully decided -- P6-03 refuses to guess and so does
@@ -113,14 +130,14 @@ struct ScoreCell {
     /// Refuses below four observations rather than returning the +/-1 that two
     /// points always produce -- a correlation from two points is a line through
     /// two points, exactly as P5-04 says of a beta.
-    [[nodiscard]] std::expected<double, ScoreError> ic() const noexcept {
-        if (n < 4) { return std::unexpected(ScoreError::TooFewObservations); }
+    [[nodiscard]] std::expected<double, ScorecardError> ic() const noexcept {
+        if (n < 4) { return std::unexpected(ScorecardError::TooFewObservations); }
         const double dn = static_cast<double>(n);
         const double cov = sum_fr / dn - (sum_f / dn) * (sum_r / dn);
         const double vf = sum_ff / dn - (sum_f / dn) * (sum_f / dn);
         const double vr = sum_rr / dn - (sum_r / dn) * (sum_r / dn);
         if (!(vf > 0.0) || !(vr > 0.0)) {
-            return std::unexpected(ScoreError::TooFewObservations);
+            return std::unexpected(ScorecardError::TooFewObservations);
         }
         return cov / std::sqrt(vf * vr);
     }
@@ -132,17 +149,17 @@ struct ScoreCell {
     [[nodiscard]] double ic_std_error() const noexcept {
         return n < 2 ? 1.0 : 1.0 / std::sqrt(static_cast<double>(n) - 1.0);
     }
-    [[nodiscard]] std::expected<double, ScoreError> hit_rate() const noexcept {
-        if (n == 0) { return std::unexpected(ScoreError::TooFewObservations); }
+    [[nodiscard]] std::expected<double, ScorecardError> hit_rate() const noexcept {
+        if (n == 0) { return std::unexpected(ScorecardError::TooFewObservations); }
         return static_cast<double>(hits) / static_cast<double>(n);
     }
 };
 
 /// Which cell a (regime) pair maps to. Trend x vol, both from P6-03.
-[[nodiscard]] inline std::expected<std::size_t, ScoreError>
+[[nodiscard]] inline std::expected<std::size_t, ScorecardError>
 regime_cell(const MarketRegime& r) noexcept {
     if (r.trend == TrendRegime::Unknown || r.vol == VolRegime::Unknown) {
-        return std::unexpected(ScoreError::RegimeIncomplete);
+        return std::unexpected(ScorecardError::RegimeIncomplete);
     }
     return static_cast<std::size_t>(r.trend) * 4u
          + static_cast<std::size_t>(r.vol);
@@ -153,11 +170,11 @@ regime_cell(const MarketRegime& r) noexcept {
 /// Fixed size, no allocation, and indexed by (model, horizon, regime cell).
 class Scorecards {
 public:
-    [[nodiscard]] std::expected<void, ScoreError>
+    [[nodiscard]] std::expected<void, ScorecardError>
     observe(std::size_t model, std::size_t horizon, const MarketRegime& r,
             double forecast, double realised) noexcept {
         if (model >= kMaxScoredModels || horizon >= kMaxHorizons) {
-            return std::unexpected(ScoreError::OutOfRange);
+            return std::unexpected(ScorecardError::OutOfRange);
         }
         const auto cell = regime_cell(r);
         if (!cell) { return std::unexpected(cell.error()); }
@@ -211,7 +228,7 @@ public:
     /// model with +0.6 and -0.6 has a spread of 1.2 and an aggregate near
     /// zero; a model that is uniformly mediocre has a small spread and the
     /// same aggregate.
-    [[nodiscard]] std::expected<double, ScoreError>
+    [[nodiscard]] std::expected<double, ScorecardError>
     ic_spread(std::size_t model, std::size_t horizon) const noexcept {
         double lo = 1e308, hi = -1e308;
         std::size_t found = 0;
@@ -223,7 +240,7 @@ public:
             ++found;
         }
         if (found < 2) {
-            return std::unexpected(ScoreError::TooFewObservations);
+            return std::unexpected(ScorecardError::TooFewObservations);
         }
         return hi - lo;
     }
@@ -264,10 +281,10 @@ struct UpdatePolicy {
 /// step is exactly zero; at n=k it is half; it approaches the full rate only
 /// as the cell fills. That is what stops the first three observations of a new
 /// regime from halving a weight.
-[[nodiscard]] inline std::expected<double, ScoreError>
+[[nodiscard]] inline std::expected<double, ScorecardError>
 update_weight(double current, const ScoreCell& cell,
               const UpdatePolicy& p) noexcept {
-    if (!p.valid()) { return std::unexpected(ScoreError::NoShrinkage); }
+    if (!p.valid()) { return std::unexpected(ScorecardError::NoShrinkage); }
     const auto ic = cell.ic();
     // No usable IC means NO UPDATE. Not a downward one: an absence of evidence
     // is not evidence of failure, and treating it as such de-weights every
