@@ -70,6 +70,7 @@
 #include <strategies/momentum.hpp>
 
 #include <QDir>
+#include <QTextStream>
 #include <QProcess>
 #include <QHBoxLayout>
 #include <QPlainTextEdit>
@@ -3113,6 +3114,155 @@ private:
         "  table shows both moving at once rather than one in isolation.\n\n"
         "  `scale` is carried on every result so two measurements from\n"
         "  different windows cannot be compared by accident.\n");
+    return s;
+}
+
+/// What is on disk under `dataset/`, counted rather than remembered.
+///
+/// P30-03. The Data Flow page drew the feed path and said nothing about what
+/// had come through it. A reader could watch every stage light up and still
+/// not know whether the tree held a week or eleven years, or which
+/// instruments.
+///
+/// COUNTED FROM DISK, NOT TYPED. A hand-maintained inventory is the first
+/// thing to go stale: NIFTY BANK was ingested and a typed list would not have
+/// mentioned it until somebody remembered to. This walks the partitions and
+/// reports the first and last bar it finds, so the page is wrong only if the
+/// files are.
+/// Is this the leading field of a bar row, or the header that precedes it?
+///
+/// The tail-window read below can land on a header when a file holds nothing
+/// but one, and "timestamp" sorts ABOVE every date -- so an unvalidated stamp
+/// would not just be wrong, it would win the max and pin the whole series to
+/// a word. Shape-checked rather than parsed: this decides what to display,
+/// and a display must not depend on a locale-sensitive date parser.
+[[nodiscard]] inline bool is_stamp(const QString& v) {
+    return v.size() == 10 && v[4] == QLatin1Char('-') && v[7] == QLatin1Char('-')
+           && v[0].isDigit() && v[1].isDigit() && v[2].isDigit()
+           && v[3].isDigit() && v[5].isDigit() && v[6].isDigit()
+           && v[8].isDigit() && v[9].isDigit();
+}
+
+/// How much history one series directory actually holds.
+///
+/// P30-03. Split out of dataset_inventory so it can be pointed at a directory
+/// built by a test. The bug this replaced was invisible against a synthetic
+/// tree and appeared only against the real one, which is the worst place to
+/// find out that a page has been reporting a wrong date.
+struct SeriesSpan {
+    int files = 0;
+    QString first;      ///< empty when nothing in the directory parsed
+    QString last;
+};
+
+[[nodiscard]] inline SeriesSpan series_span(const QString& dir) {
+    SeriesSpan sp;
+    QDir d(dir);
+    if (!d.exists()) { return sp; }
+    const QStringList files = d.entryList(QStringList{QStringLiteral("*.csv")},
+                                          QDir::Files, QDir::Name);
+    if (files.isEmpty()) { return sp; }
+    sp.files = static_cast<int>(files.size());
+
+    // EVERY FILE, NOT THE FIRST AND LAST BY NAME.
+    //
+    // The first version read files.first() and files.last() and
+    // assumed name order was date order. That holds for YYYY-MM.csv
+    // and breaks the moment a directory holds anything else:
+    // spot/banknifty/1d has all.csv AND vendor_pre2015.csv, and the
+    // vendor file sorts LAST, so the page reported BankNifty daily as
+    // ending 2015-01-08 when all.csv runs to 2026-09-08.
+    //
+    // A wrong "last" on a data-inventory page is the worst kind of
+    // wrong: it is the number somebody checks before deciding whether
+    // a backfill is needed.
+    //
+    // AND IT DOES NOT READ THE FILES. The obvious correct version --
+    // stream every file, keep the min and max stamp -- is 240 MB of
+    // CSV on the GUI thread every time this page is built. Both
+    // stamps live at a known end of the file, so both are seeks: the
+    // first data line is one readLine past the header, and the last
+    // is the last newline-terminated run in a 4 KB tail window.
+    QString first, last;
+    for (const QString& fn : files) {
+        QFile f(d.filePath(fn));
+        if (!f.open(QIODevice::ReadOnly)) { continue; }
+
+        {   // first data row: header, then one line.
+            QTextStream ts(&f);
+            ts.readLine();
+            const QString a =
+                ts.readLine().section(QLatin1Char(','), 0, 0).left(10);
+            if (is_stamp(a) && (first.isEmpty() || a < first)) {
+                first = a;
+            }
+        }
+
+        // last data row: a tail window, widened until it holds a
+        // newline. A bar row is ~60 bytes; 4 KB is ~65 rows of slack,
+        // and the loop means a pathological row still resolves rather
+        // than silently reporting the wrong date.
+        const qint64 sz = f.size();
+        for (qint64 win = 4096; win <= 1 << 20; win *= 4) {
+            const qint64 from = sz > win ? sz - win : 0;
+            if (!f.seek(from)) { break; }
+            const QByteArray tail = f.readAll();
+            if (tail.size() < 2) { break; }
+            const int nl =
+                tail.lastIndexOf('\n', tail.size() - 2);
+            if (nl < 0 && from > 0) { continue; }   // widen
+            const QByteArray lastLine =
+                tail.mid(nl + 1).trimmed();
+            const QString b = QString::fromLatin1(lastLine)
+                                  .section(QLatin1Char(','), 0, 0)
+                                  .left(10);
+            if (is_stamp(b) && (last.isEmpty() || b > last)) {
+                last = b;
+            }
+            break;
+        }
+    }
+    sp.first = first;
+    sp.last = last;
+    return sp;
+}
+
+[[nodiscard]] inline QString dataset_inventory() {
+    const QString root = QStringLiteral(ALTAIR_DATASET_DIR);
+    QString s;
+    s += QStringLiteral("  %1  %2  %3  %4\n")
+             .arg(QStringLiteral("series"), -26)
+             .arg(QStringLiteral("files"), 6)
+             .arg(QStringLiteral("first"), -12)
+             .arg(QStringLiteral("last"), -12);
+
+    struct Part { const char* seg; const char* sym; };
+    const Part parts[] = {
+        {"spot", "nifty"}, {"spot", "banknifty"}, {"spot", "indiavix"},
+        {"fut", "nifty"}, {"opt", "nifty"},
+    };
+    const char* intervals[] = {"1m", "5m", "15m", "60m", "1d"};
+
+    for (const Part& pt : parts) {
+        for (const char* iv : intervals) {
+            const QString dir = QStringLiteral("%1/%2/%3/%4")
+                                    .arg(root, QLatin1String(pt.seg),
+                                         QLatin1String(pt.sym),
+                                         QLatin1String(iv));
+            const SeriesSpan sp = series_span(dir);
+            if (sp.files == 0) { continue; }
+            s += QStringLiteral("  %1  %2  %3  %4\n")
+                     .arg(QStringLiteral("%1/%2/%3")
+                              .arg(QLatin1String(pt.seg), QLatin1String(pt.sym),
+                                   QLatin1String(iv)), -26)
+                     .arg(sp.files, 6)
+                     .arg(sp.first, -12).arg(sp.last, -12);
+        }
+    }
+    s += QStringLiteral(
+        "\n  dataset/ is gitignored and regenerable. Counted from disk on\n"
+        "  every open, because a typed inventory goes stale the first time\n"
+        "  something is ingested and nobody edits the list.\n");
     return s;
 }
 

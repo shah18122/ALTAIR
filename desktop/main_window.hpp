@@ -748,6 +748,25 @@ private:
             note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
             v->addWidget(note);
             v->addWidget(new DataflowWidget(feed_.source()), 1);
+
+            // P30-03. THE DIAGRAM SHOWS THE PIPE AND SAID NOTHING ABOUT WHAT
+            // IS IN IT.
+            //
+            // A reader could see every stage light up and still not know
+            // whether the tree holds a week of data or eleven years, or which
+            // instruments. The inventory is COUNTED FROM DISK on each build
+            // of this page rather than typed, because a hand-maintained list
+            // of what has been ingested is the first thing to go stale --
+            // NIFTY BANK arrived and this page would not have mentioned it.
+            v->addWidget(new QLabel(QStringLiteral(
+                "<h3>What is actually in dataset/</h3>")));
+            auto* inv = new QLabel(page);
+            inv->setStyleSheet(QStringLiteral(
+                "font-family:Consolas,monospace;color:#D6DBDF;"
+                "background:#11171C;padding:8px;"));
+            inv->setText(dataset_inventory());
+            v->addWidget(inv);
+
             pages_->addWidget(page);
         }
 

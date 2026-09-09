@@ -163,11 +163,35 @@ struct ModelRow {
          QStringLiteral("170,000 scored 5-min predictions, real NIFTY spot"),
          QStringLiteral("NIFTY spot")},
 
-        {QStringLiteral("GRU / LSTM"), QStringLiteral("P8-06 / P8-16"),
+        {QStringLiteral("GRU / LSTM"), QStringLiteral("P8-06 / P8-16 / P30-02"),
          QStringLiteral("models/recurrent.hpp"),
          ModelState::TrainedNoEdge,
          QStringLiteral("long intraday sequences"),
-         QStringLiteral("170,000 scored 5-min predictions, real NIFTY spot"),
+         QStringLiteral("170,000 scored 5-min predictions on real NIFTY spot; "
+                        "P30-02 emits the next bar as a PRICE with a band from "
+                        "the walk-forward RMSE — and the band straddles the "
+                        "last close, which is what an RMSE ratio above 1.0 "
+                        "means once it is written in rupees"),
+         QStringLiteral("NIFTY spot")},
+
+        // P30-01. THE MOST-EXERCISED MODEL IN THE TREE WAS NOT ON THIS PAGE.
+        //
+        // Gradient-boosted trees carry the spot forecast at four horizons,
+        // the meta-labelling test and the leaf-wise-vs-level-wise comparison,
+        // and the catalogue listed neither. A page whose job is "the honest
+        // state of every model" that omits the one with the most measurements
+        // is worse than a short page: it reads as complete.
+        {QStringLiteral("Gradient-boosted trees / spot forecast"),
+         QStringLiteral("P16-01..06 / P30-01"),
+         QStringLiteral("models/gbdt.hpp, models/spot_forecast.hpp"),
+         ModelState::TrainedNoEdge,
+         QStringLiteral("nothing — it runs on the daily and intraday closes "
+                        "already in dataset/"),
+         QStringLiteral("walk-forward at 5m, 15m, 60m and daily. RMSE WORSE "
+                        "than a constant at every horizon; net -5.42, -5.41, "
+                        "-4.82 bps and +4.48 daily at +1.57 sigma, which is "
+                        "not significant. P30-01 emits the next bar as a "
+                        "PRICE with an out-of-sample band, and it straddles."),
          QStringLiteral("NIFTY spot")},
 
         // NOT `TrainedNoEdge`, and the distinction is the row's whole point:

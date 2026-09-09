@@ -23,6 +23,7 @@
 #include "../quant_pages.hpp"
 
 #include <QCoreApplication>
+#include <QTemporaryDir>
 #include <QString>
 #include <QStringList>
 
@@ -265,6 +266,93 @@ int main(int argc, char** argv)
           "aggregate hides");
     check(fl.contains(QStringLiteral("nothing here has traded")),
           "and it says plainly that this is a backtest, not a track record");
+
+    // -----------------------------------------------------------------------
+    // 4g. P30-03 -- the dataset inventory, against a directory built HERE.
+    //
+    // The first version of series_span read the first and last filename and
+    // assumed name order was date order. Against dataset/spot/nifty/1m, which
+    // holds nothing but YYYY-MM.csv, it was right. Against
+    // dataset/spot/banknifty/1d, which holds all.csv AND vendor_pre2015.csv,
+    // it reported the series as ending 2015-01-08 when all.csv runs to
+    // 2026-09-08 -- because "vendor_pre2015.csv" sorts after "all.csv".
+    //
+    // That shape is reconstructed here rather than read off this box, for two
+    // reasons: dataset/ is gitignored and regenerable, so a test that depends
+    // on it passes or fails for reasons that have nothing to do with the code;
+    // and the adversarial case has to be guaranteed present, not hoped for.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4g] dataset inventory\n");
+    {
+        QTemporaryDir td;
+        check(td.isValid(), "a temporary directory for the inventory case");
+
+        const auto put = [&](const char* name, const QStringList& rows) {
+            QFile f(td.filePath(QLatin1String(name)));
+            const bool ok = f.open(QIODevice::WriteOnly | QIODevice::Text);
+            if (!ok) { return; }
+            QTextStream ts(&f);
+            ts << "time,open,high,low,close,volume\n";
+            for (const QString& r : rows) { ts << r << "\n"; }
+        };
+
+        // all.csv covers the modern history; the vendor file covers the old
+        // history and sorts LAST. This is the exact shape that broke.
+        put("all.csv", {QStringLiteral("2000-01-01,1,1,1,1,"),
+                        QStringLiteral("2020-06-15,2,2,2,2,"),
+                        QStringLiteral("2026-09-08,3,3,3,3,")});
+        put("vendor_pre2015.csv", {QStringLiteral("1990-07-03,4,4,4,4,"),
+                                   QStringLiteral("2015-01-08,5,5,5,5,")});
+
+        const SeriesSpan sp = series_span(td.path());
+        check(sp.files == 2, "both csv files are counted");
+        check(sp.first == QStringLiteral("1990-07-03"),
+              "first is the OLDEST stamp across every file -- it is in the "
+              "file that sorts SECOND");
+        check(sp.last == QStringLiteral("2026-09-08"),
+              "and last is the NEWEST stamp across every file -- it is in the "
+              "file that sorts FIRST, which is what the name-order version "
+              "got wrong");
+
+        // A header with no rows under it must contribute NOTHING. Without the
+        // shape check, "time" sorts above every date and would win `last`
+        // outright, pinning the whole series to a word.
+        QTemporaryDir th;
+        if (th.isValid()) {
+            QFile f(th.filePath(QStringLiteral("empty.csv")));
+            if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                QTextStream ts(&f);
+                ts << "time,open,high,low,close,volume\n";
+            }
+            f.close();
+            const SeriesSpan e = series_span(th.path());
+            check(e.files == 1, "a header-only file is still a file");
+            check(e.first.isEmpty() && e.last.isEmpty(),
+                  "but it reports NO span -- a header is not a bar, and the "
+                  "word 'time' sorts above every date it would otherwise "
+                  "beat outright");
+        }
+
+        // Absence is not zero here either: a directory with no csv at all is
+        // reported as zero files, and the page skips it rather than drawing a
+        // row of blanks that reads like a series with no data in it.
+        QTemporaryDir tn;
+        if (tn.isValid()) {
+            const SeriesSpan n = series_span(tn.path());
+            check(n.files == 0, "an empty directory is zero files, not a row");
+        }
+
+        const QString inv = dataset_inventory();
+        // Printed for the same reason the page excerpts below are: a table
+        // nobody reads is a table whose columns do not line up, and this one
+        // is the first place a missing backfill shows.
+        std::printf("%s", inv.toUtf8().constData());
+        check(inv.contains(QStringLiteral("series")),
+              "the inventory renders a header");
+        check(inv.contains(QStringLiteral("gitignored and regenerable")),
+              "and says what dataset/ is, so the page is not read as a "
+              "manifest of things that must exist");
+    }
 
     // -----------------------------------------------------------------------
     // 5. Print them.
