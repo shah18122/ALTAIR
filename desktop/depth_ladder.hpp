@@ -103,6 +103,12 @@ struct LadderView {
     // off a five-element array -- and the clamp is silent here on purpose:
     // this is a renderer, and the place to raise about a bad level count is
     // the decoder that produced it.
+    //
+    // RULE 11: safe-side clamp, and deliberately silent. Drawing FEWER levels
+    // than a corrupt count claims understates the book; drawing more reads
+    // past the array. Of the two directions this is the one that cannot show
+    // liquidity that does not exist. feed/kite_decoder.hpp is where a bad
+    // level count is refused.
     const std::size_t na =
         b->ask_levels < kDepthLevels ? b->ask_levels : kDepthLevels;
     const std::size_t nb =

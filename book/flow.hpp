@@ -93,6 +93,11 @@ public:
         std::int64_t left = volume.raw();
         while (left > 0) {
             const std::int64_t room = cfg_.bucket_volume - cur_volume_;
+            // RULE 11: not a capacity clamp. The remainder is CARRIED -- the
+            // loop continues with `left -= take` until the trade is fully
+            // placed -- so no volume is dropped and the conservation the
+            // bucket count rests on still holds. Chunking arithmetic that
+            // happens to be spelled as a min.
             const std::int64_t take = left < room ? left : room;
             // A trade larger than one bucket is SPLIT across buckets rather
             // than dropped or counted whole. A block print is exactly when

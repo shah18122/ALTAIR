@@ -275,6 +275,9 @@ apply_print_to_limit(LimitOrder& o, Price px, Qty size) noexcept {
         if (available <= 0) { return Qty{0}; }
     }
     const std::int64_t want = o.qty.raw() - o.filled.raw();
+    // RULE 11: not a bound being exceeded -- this IS a partial fill. You get
+    // the lesser of what is on the book and what you asked for, and the
+    // unfilled remainder stays on the order rather than being discarded.
     const std::int64_t got = available < want ? available : want;
     o.filled = Qty{o.filled.raw() + got};
     if (o.filled.raw() >= o.qty.raw()) { o.active = false; }

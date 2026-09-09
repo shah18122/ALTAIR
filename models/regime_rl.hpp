@@ -286,6 +286,15 @@ public:
                                               double rel_price) noexcept {
         auto b = [](double v, std::size_t n) {
             const auto i = static_cast<std::size_t>(v * static_cast<double>(n));
+            // RULE 11: a boundary, not a truncation. v * n equals n exactly
+            // when v is 1.0, and a fraction of 1.0 belongs in the LAST
+            // bucket -- so the clamp is the correct answer rather than a
+            // salvaged one.
+            //
+            // It does also absorb v > 1.0, which would be a caller error.
+            // Left absorbing rather than refused because state_of is a
+            // noexcept bucketiser on a hot path; the callers clamp their
+            // inputs to [0, 1] before this sees them.
             return i < n ? i : n - 1;
         };
         const std::size_t t = b(frac_time_left < 0.0 ? 0.0

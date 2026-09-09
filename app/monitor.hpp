@@ -193,6 +193,11 @@ public:
         const std::uint64_t base = std::uint64_t{1} << k;
         const auto sub = static_cast<std::size_t>(((u - base) * 4U) / base);
         const std::size_t idx = k * 4 + sub;
+        // RULE 11: saturation, and it is what a histogram's top bucket MEANS.
+        // The last bucket is "this long or longer", so a latency past the end
+        // of the table belongs in it -- the count stays exact and only the
+        // resolution is lost, which is the trade a log-spaced histogram makes
+        // everywhere else too. Nothing is dropped.
         return idx < kBuckets ? idx : kBuckets - 1;
     }
 

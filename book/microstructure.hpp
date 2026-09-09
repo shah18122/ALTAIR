@@ -45,6 +45,11 @@ sum_side(const DepthLevel* lv, std::uint8_t populated,
     if (levels == 0 || populated == 0) {
         return std::nullopt;
     }
+    // RULE 11: this clamp is the safety, not a shortcut past it. Kite
+    // always sends five depth slots and zero-pads the unused ones (D6), so
+    // summing past `populated` counts zeroed slots as resting liquidity --
+    // a thin book rendered as a deep one. Taking the smaller of what the
+    // caller asked for and what is REAL is the whole point of the argument.
     const std::uint8_t n = levels < populated ? levels : populated;
     std::int64_t total = 0;
     for (std::uint8_t k = 0; k < n; ++k) {

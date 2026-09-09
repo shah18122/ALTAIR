@@ -175,6 +175,18 @@ include(cmake/NamespaceAudit.cmake)
 altair_audit_namespace()
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Hard rule 11: a fixed bound must refuse what exceeds it. P33-06.
+#
+# The rule was written after the same bug was found five times and enforced by
+# review -- which is what had failed five times. This finds the SHAPE (a
+# clamp) and requires that somebody wrote down which arm of the rule it takes.
+# It cannot decide whether a bound is safe; it can decide whether anyone said
+# so. See the header of the module for what it deliberately does not catch.
+# ─────────────────────────────────────────────────────────────────────────────
+include(cmake/BoundsAudit.cmake)
+altair_audit_bounds()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Subdirectories — uncommented as each phase's cards land.
 # The order below mirrors ROADMAP.md §12.
 # ─────────────────────────────────────────────────────────────────────────────

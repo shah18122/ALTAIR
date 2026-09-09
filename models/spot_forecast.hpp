@@ -291,6 +291,11 @@ forecast_next(const std::vector<double>& closes, const SpotSpec& spec,
         // a series can change: NIFTY daily starts in 1990 and the modern part
         // is what a forecast for the next bar is about.
         std::vector<std::int64_t> gaps;
+        // RULE 11: a WINDOW, not a truncation of the caller's data. Every
+        // stamp is available; this deliberately looks at the recent tail
+        // because the sampling rate of a series can change and the bar width
+        // that matters is the current one. Nothing is dropped -- the gaps
+        // outside the window are not wanted.
         const std::size_t look = stamps.size() < 200 ? stamps.size() : 200;
         for (std::size_t i = stamps.size() - look + 1; i < stamps.size(); ++i) {
             const std::int64_t g = stamps[i] - stamps[i - 1];
