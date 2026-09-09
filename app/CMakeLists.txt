@@ -48,6 +48,16 @@ if(ALTAIR_HAVE_NET)
     add_executable(altair_kite_account kite_account_main.cpp)
     target_link_libraries(altair_kite_account PRIVATE
         altair_broker_net altair_flags)
+
+    # P29-01. Snapshots /quote for the watchlist. broker/kite_quote.hpp has
+    # PARSED a quote since P20-03 with twenty-two green checks and nothing had
+    # ever FETCHED one, so the watchlist showed a replay price and no bid, no
+    # ask, no depth and no spread. The parser was written first deliberately --
+    # fetching is a socket and a header, parsing is where the bugs are -- and
+    # this is the other half. /quote is a GET; it has no order vocabulary.
+    add_executable(altair_kite_quote kite_quote_main.cpp)
+    target_link_libraries(altair_kite_quote PRIVATE
+        altair_broker_net altair_flags)
 endif()
 
 # P12-02. Warm restart from state. Header-only and testable without a broker:

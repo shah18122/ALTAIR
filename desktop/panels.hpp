@@ -32,6 +32,15 @@
 #include "model_status.hpp"
 #include "watchlist.hpp"
 
+#include <QCoreApplication>
+#include <QFileInfo>
+#include <QProcess>
+#include <QFile>
+#include <QHash>
+#include <QJsonParseError>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
 #include <QComboBox>
 #include <QDateTime>
 #include <QTimeZone>
@@ -716,6 +725,100 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// P29-02 — the quote snapshot the watchlist reads
+//
+// `altair_kite_quote` writes it; this window reads it and never calls the API.
+// Same shape as the account snapshot and for the same reason: desktop/ does
+// not link broker/, so the network half lives in a separate process and the
+// UI reads a file.
+//
+// AN INDEX HAS NO BOOK, AND THAT IS NOT THE SAME AS NO SNAPSHOT.
+//
+// NIFTY 50 is computed from things that trade; it does not trade itself, so
+// there is nothing to bid for. `broker/kite_quote.hpp` says so in its own
+// tests -- "an index does not trade ... `has_touch()` says so rather than
+// returning zeros" -- and the watchlist must render that differently from a
+// row it simply has no data for. Blank in both cases would collapse two facts
+// into one.
+// ---------------------------------------------------------------------------
+
+struct QuoteRow {
+    std::int64_t last_paise = 0;
+    std::int64_t bid_paise = 0;
+    std::int64_t ask_paise = 0;
+    bool has_touch = false;
+    bool present = false;      ///< the snapshot carried this token at all
+};
+
+struct QuoteSnapshot {
+    QHash<std::uint32_t, QuoteRow> by_token;
+    qint64 fetched_at_unix = 0;
+    bool loaded = false;
+    QString error;
+
+    /// Age in words. A bid with no age gets believed.
+    [[nodiscard]] QString age_text() const {
+        if (!loaded) { return error.isEmpty()
+                              ? QStringLiteral("no quote snapshot") : error; }
+        const qint64 secs =
+            QDateTime::currentSecsSinceEpoch() - fetched_at_unix;
+        if (secs < 0) { return QStringLiteral("timestamped in the FUTURE"); }
+        if (secs < 90) { return QStringLiteral("%1 s old").arg(secs); }
+        if (secs < 5400) { return QStringLiteral("%1 min old").arg(secs / 60); }
+        return QStringLiteral("%1 h old — STALE").arg(secs / 3600);
+    }
+};
+
+[[nodiscard]] inline QuoteSnapshot load_quotes(const QString& path) {
+    QuoteSnapshot s;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        s.error = QStringLiteral("no quote snapshot — run altair_kite_quote");
+        return s;
+    }
+    QJsonParseError err{};
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+    if (doc.isNull() || !doc.isObject()) {
+        // A malformed snapshot is NOT "no snapshot": one means nobody has
+        // fetched, the other means something wrote a broken file, and only
+        // the second is a bug.
+        s.error = QStringLiteral("quote snapshot is malformed: %1")
+                      .arg(err.errorString());
+        return s;
+    }
+    const QJsonObject o = doc.object();
+    s.fetched_at_unix =
+        static_cast<qint64>(o.value(QStringLiteral("fetched_at_unix")).toDouble());
+    const QJsonObject qs = o.value(QStringLiteral("quotes")).toObject();
+    for (auto it = qs.begin(); it != qs.end(); ++it) {
+        if (!it.value().isObject()) { continue; }   // null = not quoted
+        const QJsonObject q = it.value().toObject();
+        QuoteRow r;
+        r.present = true;
+        r.last_paise = static_cast<std::int64_t>(
+            q.value(QStringLiteral("last_paise")).toDouble());
+        r.has_touch = q.value(QStringLiteral("has_touch")).toBool();
+        const QJsonArray buy = q.value(QStringLiteral("buy")).toArray();
+        const QJsonArray sell = q.value(QStringLiteral("sell")).toArray();
+        if (!buy.isEmpty()) {
+            r.bid_paise = static_cast<std::int64_t>(
+                buy.at(0).toObject().value(QStringLiteral("price_paise"))
+                    .toDouble());
+        }
+        if (!sell.isEmpty()) {
+            r.ask_paise = static_cast<std::int64_t>(
+                sell.at(0).toObject().value(QStringLiteral("price_paise"))
+                    .toDouble());
+        }
+        const auto token = static_cast<std::uint32_t>(
+            q.value(QStringLiteral("token")).toDouble());
+        if (token != 0) { s.by_token.insert(token, r); }
+    }
+    s.loaded = true;
+    return s;
+}
+
+// ---------------------------------------------------------------------------
 // Watchlist
 // ---------------------------------------------------------------------------
 
@@ -758,6 +861,11 @@ public:
         add_row->addWidget(symbol_, 1);
         add_row->addWidget(add_);
         add_row->addWidget(remove_);
+        // P29-02. Runs altair_kite_quote as a SUBPROCESS. desktop/ does not
+        // link broker/ and this button does not change that -- it launches a
+        // read-only fetcher and then re-reads the file it wrote.
+        quotes_ = new QPushButton(QStringLiteral("Refresh quotes"), this);
+        add_row->addWidget(quotes_);
         v->addLayout(add_row);
 
         message_ = new QLabel(this);
@@ -772,10 +880,16 @@ public:
                              QStringLiteral("Seg"), QStringLiteral("Expiry"),
                              QStringLiteral("Strike"), QStringLiteral("Type"),
                              QStringLiteral("Lot"), QStringLiteral("Tick"),
-                             QStringLiteral("Bid"), QStringLiteral("Ask"),
+                             QStringLiteral("LTP"), QStringLiteral("Bid"),
+                             QStringLiteral("Ask"), QStringLiteral("Spread"),
                              QStringLiteral("Spec"), QStringLiteral("Note")},
                             this);
         v->addWidget(table_, 1);
+
+        quote_age_ = new QLabel(this);
+        quote_age_->setWordWrap(true);
+        quote_age_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        v->addWidget(quote_age_);
 
         summary_ = new QLabel(this);
         summary_->setWordWrap(true);
@@ -802,6 +916,8 @@ public:
             (void)list_.add(sd.token, QString::fromUtf8(sd.name));
         }
 
+        connect(quotes_, &QPushButton::clicked, this,
+                [this] { on_refresh_quotes(); });
         connect(add_, &QPushButton::clicked, this, &WatchlistPanel::on_add);
         connect(remove_, &QPushButton::clicked, this,
                 &WatchlistPanel::on_remove);
@@ -814,6 +930,18 @@ public:
     MasterIndex master_;
 
     [[nodiscard]] const Watchlist& list() const noexcept { return list_; }
+
+private:
+    QPushButton* quotes_ = nullptr;
+    QLabel* quote_age_ = nullptr;
+    QuoteSnapshot quotes_snap_{};
+#ifdef ALTAIR_QUOTE_FILE
+    QString quote_path_ = QStringLiteral(ALTAIR_QUOTE_FILE);
+#else
+    QString quote_path_ = QStringLiteral("data/kite_quotes.json");
+#endif
+
+public:
 
 private Q_SLOTS:
     void on_add() {
@@ -841,7 +969,98 @@ private Q_SLOTS:
     }
 
 private:
+    /// Run the read-only quote fetcher, then re-read what it wrote.
+    ///
+    /// The working directory is pinned for the same reason P26-02b had to pin
+    /// it for the login: the fetcher writes a RELATIVE path, and a subprocess
+    /// launched from a desktop shortcut would otherwise drop the snapshot in
+    /// the build folder where nothing reads it, while reporting success.
+    void on_refresh_quotes() {
+        QString exe =
+#if defined(_WIN32)
+            QStringLiteral("altair_kite_quote.exe");
+#else
+            QStringLiteral("altair_kite_quote");
+#endif
+        QStringList tried;
+        tried << QCoreApplication::applicationDirPath()
+                     + QStringLiteral("/../app/") + exe;
+        tried << QCoreApplication::applicationDirPath()
+                     + QStringLiteral("/../../net/app/") + exe;
+#ifdef ALTAIR_SOURCE_DIR
+        tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+#endif
+        QString found;
+        for (const QString& c : tried) {
+            if (QFileInfo(c).isFile()) {
+                found = QFileInfo(c).canonicalFilePath();
+                break;
+            }
+        }
+        if (found.isEmpty()) {
+            quote_age_->setText(QStringLiteral(
+                "altair_kite_quote was not found. It needs an HTTPS client "
+                "and is built by the `net` preset only."));
+            return;
+        }
+        // FETCH WHAT THE WATCHLIST ACTUALLY HOLDS, not a fixed default.
+        //
+        // The fetcher's default --keys is the three indices the live grid
+        // carries. A watchlist with a future and an option in it then showed
+        // two populated rows and two blank ones, which reads as "those two
+        // are not quoting" rather than "nobody asked about them".
+        //
+        // The exchange comes from the SEGMENT, not from a guess: cash is NSE,
+        // futures and options are NFO. A future sent to NSE is a 400 from
+        // Kite, and a row that silently asks the wrong venue looks exactly
+        // like a row that does not trade.
+        QStringList keys;
+        for (const WatchRow& r : list_.rows()) {
+            const InstrumentProfile p = master_.find(r.token);
+            const QString sym = p.found ? p.symbol : r.symbol;
+            if (sym.isEmpty()) { continue; }
+            const QString ex =
+                (p.segment == QStringLiteral("FUT")
+                 || p.segment == QStringLiteral("OPT"))
+                    ? QStringLiteral("NFO") : QStringLiteral("NSE");
+            keys << (ex + QLatin1Char(':') + sym);
+        }
+        if (keys.isEmpty()) {
+            quote_age_->setText(QStringLiteral("nothing on the watchlist to "
+                                               "quote"));
+            return;
+        }
+
+        quote_age_->setText(QStringLiteral("fetching %1 instruments...")
+                                .arg(keys.size()));
+        QProcess proc;
+        proc.setProgram(found);
+        proc.setArguments({QStringLiteral("--keys"), keys.join(QLatin1Char(',')),
+                           QStringLiteral("--go")});
+        proc.setProcessChannelMode(QProcess::MergedChannels);
+#ifdef ALTAIR_SOURCE_DIR
+        proc.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
+#endif
+        proc.start();
+        if (!proc.waitForStarted(5000) || !proc.waitForFinished(30000)) {
+            proc.kill();
+            quote_age_->setText(QStringLiteral("the fetcher did not finish"));
+            return;
+        }
+        if (proc.exitCode() != 0) {
+            // Kite's own words, not a paraphrase. A daily token that expired
+            // and a symbol Kite does not know are different problems.
+            quote_age_->setText(
+                QStringLiteral("fetch failed: %1")
+                    .arg(QString::fromUtf8(proc.readAll()).trimmed()
+                             .section(QChar('\n'), -3)));
+            return;
+        }
+        refresh();
+    }
+
     void refresh() {
+        quotes_snap_ = load_quotes(quote_path_);
         const auto& rows = list_.rows();
         table_->setRowCount(static_cast<int>(rows.size()));
         for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
@@ -890,30 +1109,89 @@ private:
             put(table_, i, 6, lot > 0 ? QString::number(lot) : QString());
             put(table_, i, 7, tick > 0 ? format_paise(tick) : QString());
 
-            // BID AND ASK ARE EMPTY, AND THAT IS THE HONEST STATE.
+            // LTP, BID, ASK AND SPREAD, FROM THE QUOTE SNAPSHOT. P29-02.
             //
-            // The master is reference data: it carries no quote. A live
-            // subscription is what fills these -- P2-02's decoder is built and
-            // tested against vectors and nothing subscribes yet. Rendering
-            // 0.00 would be a price; an empty cell is the absence of one, the
-            // same rule the tick grid follows for a bar that has not arrived.
-            auto* bid = new QTableWidgetItem(QString());
-            bid->setToolTip(QStringLiteral(
-                "No quote. The instrument master is reference data and "
-                "carries no bid or ask; a live Kite subscription (P2-02) is "
-                "what fills this."));
-            table_->setItem(i, 8, bid);
-            auto* ask = new QTableWidgetItem(QString());
-            ask->setToolTip(bid->toolTip());
-            table_->setItem(i, 9, ask);
+            // These were empty until now, deliberately -- the master is
+            // reference data and carries no quote. `altair_kite_quote` fetches
+            // one and this reads the file it writes.
+            //
+            // THREE STATES, RENDERED DIFFERENTLY, BECAUSE THEY ARE THREE
+            // DIFFERENT FACTS:
+            //
+            //   no snapshot        blank, and the age line says why
+            //   quoted, no book    "index" -- NIFTY 50 does not trade, it is
+            //                      computed from things that do, so there is
+            //                      nothing to bid for. Blank here would be
+            //                      indistinguishable from "not fetched".
+            //   quoted with a book the numbers
+            //
+            // Rendering 0.00 in any of them would be a price, which is the one
+            // thing none of these is.
+            const auto qit = quotes_snap_.by_token.constFind(r.token);
+            const bool have_q = qit != quotes_snap_.by_token.constEnd();
+            {
+                QString ltp, bidt, askt, spr, tip;
+                if (!quotes_snap_.loaded) {
+                    tip = quotes_snap_.age_text();
+                } else if (!have_q) {
+                    tip = QStringLiteral(
+                        "The last quote snapshot did not carry this "
+                        "instrument. Add it to --keys and refresh.");
+                } else {
+                    ltp = qit->last_paise > 0 ? format_paise(qit->last_paise)
+                                              : QString();
+                    if (qit->has_touch) {
+                        bidt = format_paise(qit->bid_paise);
+                        askt = format_paise(qit->ask_paise);
+                        spr = format_paise(qit->ask_paise - qit->bid_paise);
+                        tip = QStringLiteral("quote %1")
+                                  .arg(quotes_snap_.age_text());
+                    } else {
+                        // "no book", NOT "index".
+                        //
+                        // The first version of this said "index", which was
+                        // wrong for half its rows: NIFTY26SEPFUT is a FUTURE
+                        // and does trade, and it showed "index" at 08:50
+                        // simply because the market opens at 09:15. Two
+                        // different facts wear the same empty touch --
+                        //
+                        //   an index NEVER has a book: it is computed from
+                        //   things that trade and does not trade itself;
+                        //   a tradeable instrument has no book WHILE CLOSED.
+                        //
+                        // The snapshot cannot tell them apart -- `has_touch`
+                        // is false in both -- and the instrument master's
+                        // INDICES flag does not survive into the segment this
+                        // panel sees. So the cell states what is observed and
+                        // the tooltip names both readings, rather than the
+                        // cell asserting the one that happened to be true for
+                        // the row somebody looked at first.
+                        bidt = askt = QStringLiteral("no book");
+                        tip = QStringLiteral(
+                            "Quoted, but the book is empty. Either this is an "
+                            "index -- computed from things that trade, so it "
+                            "never has a bid -- or it is tradeable and the "
+                            "market is closed. This snapshot cannot tell the "
+                            "two apart, and it is not a missing quote.");
+                    }
+                }
+                put(table_, i, 8, ltp);
+                auto* bid = new QTableWidgetItem(bidt);
+                bid->setToolTip(tip);
+                table_->setItem(i, 9, bid);
+                auto* ask = new QTableWidgetItem(askt);
+                ask->setToolTip(tip);
+                table_->setItem(i, 10, ask);
+                put(table_, i, 11, spr);
+            }
 
             const QColor c = r.spec == SpecState::Resolved
                                ? QColor(0x1B, 0x8A, 0x4B)
                              : r.spec == SpecState::Blocked
                                ? QColor(0xC0, 0x39, 0x2B)
                                : QColor(0xB9, 0x77, 0x0B);
-            put(table_, i, 10, spec_state_label(r.spec), c);
-            put(table_, i, 11,
+            put(table_, i, 12, spec_state_label(r.spec), c);
+            put(table_, i, 13,
                 p.found ? r.note
                         : (r.note.isEmpty()
                                ? QStringLiteral("not in the instrument master")
@@ -927,6 +1205,11 @@ private:
         // expiry". A panel that renders the same thing for "no data" and "no
         // value" is the failure this project keeps finding, so the load says
         // so itself.
+        quote_age_->setText(
+            QStringLiteral("Quotes: %1.  altair_kite_quote writes the "
+                           "snapshot; this window reads it and never calls "
+                           "the API.").arg(quotes_snap_.age_text()));
+
         summary_->setText(
             QStringLiteral("%1 instruments watched · %2 tradeable · %3")
                 .arg(list_.size())

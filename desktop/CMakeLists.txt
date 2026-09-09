@@ -107,6 +107,7 @@ target_compile_definitions(altair_desktop PRIVATE
 # "no session" from one shortcut and "session" from another, with nothing on
 # screen explaining the difference.
 target_compile_definitions(altair_desktop PRIVATE
+    ALTAIR_QUOTE_FILE="${CMAKE_SOURCE_DIR}/data/kite_quotes.json"
     ALTAIR_INTENT_FILE="${CMAKE_SOURCE_DIR}/data/order_intents.jsonl"
     ALTAIR_SESSION_FILE="${CMAKE_SOURCE_DIR}/data/kite_session.json"
     ALTAIR_ACCOUNT_FILE="${CMAKE_SOURCE_DIR}/data/kite_account.json"

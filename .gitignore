@@ -95,3 +95,10 @@ node_modules/
 
 # P2-12e: the Kite instrument master, 8.8 MB and regenerable in one call.
 data/instruments.csv
+
+# Account and quote snapshots hold live account state and market data
+# pulled with a credential. Same rule as kite_session.json: they are
+# regenerable from the API and must never enter git.
+**/kite_account.json
+**/kite_quotes.json
+
