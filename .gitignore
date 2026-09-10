@@ -109,5 +109,22 @@ data/instruments.csv
 # directory on every click. Same rule as every other file on this list: it is
 # market data pulled with a credential and regenerable from the API.
 data/live_forecast_scratch/
+
+# P36 hygiene. OPERATIONAL STATE, NOT SOURCE -- and git must not be able to
+# DELIVER either of these.
+#
+# data/order_intents.jsonl is the queue oms/ drains. It was tracked, so an
+# intent written by clicking around a dev machine's Terminal page could be
+# committed, checked out somewhere else, and drained as though somebody had
+# asked for it there. The UI cannot place an order by design (gate 3); a
+# tracked queue would have routed around that with version control.
+#
+# data/kill_request.json is the same shape in the other direction: a committed
+# halt request would trip a kill switch on whatever machine checked it out.
+#
+# Both are written by the running window, both are per-machine, and neither
+# belongs in history.
+data/order_intents.jsonl
+data/kill_request.json
 **/*.altick
 
