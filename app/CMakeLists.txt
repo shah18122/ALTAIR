@@ -77,6 +77,30 @@ if(ALTAIR_HAVE_NET)
     add_executable(altair_kite_quote kite_quote_main.cpp)
     target_link_libraries(altair_kite_quote PRIVATE
         altair_broker_net altair_flags)
+
+    # P37-03. THE PRICE SERVICE. One process owns the Kite connection and
+    # republishes every tick on a loopback port as protocol frames, so the
+    # window, the chain and the trainers stop each spawning their own fetcher.
+    #
+    # Needs Boost BY NAME: it uses asio for the socket and no TLS at all.
+    # broker/ compiles Beast without ever naming Boost -- it links OpenSSL,
+    # whose imported target adds the vcpkg include directory, and Boost's
+    # headers happen to live there too. That works for a reason unrelated to
+    # Boost and would break the day the two were packaged apart.
+    find_package(Boost CONFIG QUIET COMPONENTS headers)
+    if(Boost_FOUND)
+        add_executable(altair_price_service price_service_main.cpp)
+        target_link_libraries(altair_price_service PRIVATE
+            altair_server altair_broker_net altair_feed altair_instruments
+            altair_flags Boost::headers)
+        target_compile_definitions(altair_price_service PRIVATE
+            ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+        if(WIN32)
+            target_link_libraries(altair_price_service PRIVATE ws2_32 mswsock)
+        endif()
+    else()
+        message(STATUS "altair: price service skipped (no Boost)")
+    endif()
 endif()
 
 # P12-02. Warm restart from state. Header-only and testable without a broker:
