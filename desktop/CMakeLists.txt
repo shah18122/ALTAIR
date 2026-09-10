@@ -14,7 +14,7 @@
 # them. `altair_desktop_link_audit` below makes that a build error rather than
 # a thing a reviewer has to notice.
 
-find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Svg Widgets)
+find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Network Svg Widgets)
 
 # P32-03. QT DEFINES `signals`, `slots` AND `emit` AS MACROS, AND THE ENGINE
 # IS NOT ALLOWED TO CARE.
@@ -84,6 +84,9 @@ qt_add_executable(altair_desktop
     # generated for a different target and fails with unresolved vtable
     # symbols rather than anything that names the cause.
     terminal.hpp
+    # P37-04. Q_OBJECT: it is a QObject with signals, so AUTOMOC must see it
+    # in THIS target'''s list or the link fails on an unresolved vtable.
+    price_client.hpp
     live_feed.hpp
     live_forecast.hpp
     kite_link.hpp
@@ -142,6 +145,11 @@ endif()
 target_link_libraries(altair_desktop PRIVATE
     altair_types
     altair_time
+    # P37-04. The price codec (protocol + payload). altair_server depends on
+    # altair_types and altair_time and NOTHING else -- it is a byte layout, not
+    # a transport. Gate 3 is unaffected: still no altair_oms, still no
+    # altair_broker, and the client vocabulary has no word for an order.
+    altair_server
     altair_feed
     altair_analytics
     altair_models
@@ -149,6 +157,7 @@ target_link_libraries(altair_desktop PRIVATE
     altair_backtest
     Qt6::Core
     Qt6::Gui
+    Qt6::Network
     Qt6::Svg
     Qt6::Widgets
 )
@@ -239,6 +248,36 @@ set(_altair_ui_permitted
     altair_models
     altair_risk
     altair_backtest
+    # P37-04. The price codec: protocol.hpp's frame header and
+    # price_payload.hpp's byte layout. altair_server links altair_types and
+    # altair_time and NOTHING else -- it is a wire format, not a transport,
+    # and the client vocabulary protocol.hpp defines is Subscribe,
+    # Unsubscribe, SnapshotRequest and KillSwitch. There is no word in it for
+    # placing an order and there must never be one.
+    altair_server
+    # Qt6::Network, AND THIS ONE IS A REAL WIDENING. SAY SO.
+    #
+    # Until now the UI process had no socket at all. It could not open a
+    # connection even in principle, because nothing that could was linked into
+    # it. That was a genuine property and this line spends it: the window can
+    # now open TCP connections, and a bad cast or a bad index in a chart is
+    # running in a process that has that capability.
+    #
+    # What is bought: the price service. Smit asked for one process to own the
+    # feed on a port with everything else reading from it, which necessarily
+    # means the reader opens a socket. The alternative is the subprocess-plus-
+    # file pattern, which he explicitly rejected, and which is why the depth
+    # ladder has been fed a null book since the day it was written.
+    #
+    # What is NOT bought, and is still enforced here: the UI holds no
+    # credential, links no broker/ and no oms/, has no TLS client and no API
+    # key, and connects to 127.0.0.1 only. It cannot reach Kite. The thing
+    # gate 3 exists to prevent -- the UI placing an order -- is unchanged.
+    #
+    # This paragraph exists for the same reason the in-process decision's does
+    # in CLAUDE.md: so nobody later reads the line and assumes it was an
+    # oversight.
+    Qt6::Network
 )
 get_target_property(_altair_ui_links altair_desktop LINK_LIBRARIES)
 foreach(_lib IN LISTS _altair_ui_links)
@@ -462,6 +501,29 @@ if(ALTAIR_BUILD_TESTS)
     # search matches across all four columns, and that "Hide absent" removes
     # exactly the absent rows. An off-by-one there would quietly delete a real
     # model from the reader's picture of the engine.
+    # P37-04. The REAL bus against the REAL client, over a real socket.
+    # Neither side mocked: the bug class this catches is the one where both
+    # ends are self-consistently wrong. Needs Boost for the bus and Qt Network
+    # for the client.
+    find_package(Boost CONFIG QUIET COMPONENTS headers)
+    if(Boost_FOUND)
+        qt_add_executable(altair_price_client_test
+            tests/test_price_client.cpp
+            price_client.hpp)
+        target_link_libraries(altair_price_client_test PRIVATE
+            altair_types altair_time altair_server Boost::headers
+            Qt6::Core Qt6::Network)
+        target_include_directories(altair_price_client_test
+            PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        set_target_properties(altair_price_client_test
+            PROPERTIES WIN32_EXECUTABLE OFF)
+        if(WIN32)
+            target_link_libraries(altair_price_client_test
+                PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME desktop_price_client COMMAND altair_price_client_test)
+    endif()
+
     qt_add_executable(altair_atlas_test
         tests/test_atlas.cpp
         atlas.hpp

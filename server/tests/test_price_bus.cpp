@@ -188,7 +188,7 @@ int main()
     std::vector<std::uint8_t> tail(8u * 1024u * 1024u);
     std::size_t got = 0;
     int quiet = 0;
-    for (int spin = 0; spin < 20000 && got < tail.size(); ++spin) {
+    for (int spin = 0; spin < 200000 && got < tail.size(); ++spin) {
         boost::system::error_code rec;
         const std::size_t n = client.read_some(
             boost::asio::buffer(tail.data() + got, tail.size() - got), rec);
@@ -198,10 +198,32 @@ int main()
             && rec != boost::asio::error::try_again) {
             break;                                   // closed or a real error
         }
-        // The bus refills the socket on poll(), so "nothing this time" is not
-        // "nothing left". Stop only after several consecutive empty reads.
-        quiet = (n == 0) ? quiet + 1 : 0;
-        if (quiet > 50) { break; }
+        // THERE ARE TWO PLACES DATA CAN BE WAITING, AND BOTH MUST BE EMPTY.
+        //
+        // Version one stopped after 50 consecutive empty reads: three runs in
+        // four passed, the fourth drained 6,295 of 32,786 frames, because
+        // "nothing arrived this instant" is not "nothing is left".
+        //
+        // Version two asked bus.pending(), which counts the OUTBOX -- and
+        // still failed one run in eight, 512 frames short, because those had
+        // already been written into the kernel's buffer where the bus can no
+        // longer see them. pending() was honestly zero and the data was
+        // honestly in flight.
+        //
+        // So: the bus's queue AND the socket's receive queue, and a real yield
+        // rather than a spin, because busy-waiting starves the very thread
+        // that would move the bytes. A flaky test is worse than no test -- it
+        // teaches you to re-run rather than to look.
+        if (n == 0) {
+            boost::system::error_code ae;
+            const std::size_t waiting = client.available(ae);
+            if (bus.pending() == 0 && waiting == 0) {
+                if (++quiet > 200) { break; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        } else {
+            quiet = 0;
+        }
     }
 
     bool wellformed = got >= frame_bytes;

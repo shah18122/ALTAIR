@@ -115,6 +115,19 @@ public:
         return gone_;
     }
 
+    /// Bytes still queued across every subscriber.
+    ///
+    /// Observability, and the only way to know the bus has actually finished.
+    /// A reader cannot tell "nothing right now" from "nothing ever again" --
+    /// a test that stopped after N consecutive empty reads passed three times
+    /// in four and failed the fourth with 6,295 of 32,786 frames still
+    /// waiting. This is the question it should have been asking.
+    [[nodiscard]] std::size_t pending() const noexcept {
+        std::size_t n = 0;
+        for (const auto& c : clients_) { n += c->bytes - c->head; }
+        return n;
+    }
+
     /// Accept anything waiting and push whatever each outbox will take.
     /// Non-blocking throughout; call it often.
     void poll() {
