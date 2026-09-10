@@ -28,6 +28,44 @@ if(ALTAIR_BUILD_TESTS)
     # allowed to read out of this directory. It is a data file, not a header:
     # the client still links nothing here. Checked in, so client/ can be
     # tested without a C++ build present.
+    # P37-01. The first payload the protocol ever carried. protocol.hpp
+    # defines the envelope and named "quotes, greeks, book levels" as things
+    # the State channel would hold; none of them had a byte layout until now.
+    #
+    # Its first check is a hand-written hex vector rather than a round trip,
+    # because a round trip passes even when both directions are wrong in the
+    # same way.
+    add_executable(altair_price_payload_test tests/test_price_payload.cpp)
+    target_link_libraries(altair_price_payload_test PRIVATE altair_server)
+    add_test(NAME price_payload COMMAND altair_price_payload_test)
+
+    # P37-02. The bus, over a real loopback socket.
+    #
+    # BOOST IS ASKED FOR BY NAME HERE, and that is a correction rather than a
+    # preference. broker/ compiles Beast without ever naming Boost: it links
+    # OpenSSL::SSL, whose imported target adds the vcpkg include directory,
+    # and Boost's headers happen to live in that same directory. It works, and
+    # it works for a reason unrelated to Boost -- so a build without OpenSSL,
+    # or a vcpkg layout that split the two, would fail with a missing
+    # boost/asio header and no clue why. The bus has no use for TLS, so it
+    # says what it actually needs.
+    find_package(Boost CONFIG QUIET COMPONENTS headers)
+    if(Boost_FOUND)
+        add_executable(altair_price_bus_test tests/test_price_bus.cpp)
+        target_link_libraries(altair_price_bus_test
+            PRIVATE altair_server Boost::headers)
+        if(WIN32)
+            # Boost.Asio auto-links ws2_32 on MSVC via a pragma, but mswsock
+            # is needed for the overlapped path and is not always pulled in.
+            target_link_libraries(altair_price_bus_test PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME price_bus COMMAND altair_price_bus_test)
+        message(STATUS "altair: price bus ENABLED (Boost ${Boost_VERSION})")
+    else()
+        message(STATUS "altair: price bus test skipped -- no Boost. It needs "
+                       "the `net` preset (build.bat net).")
+    endif()
+
     add_executable(altair_emit_vectors tests/emit_vectors.cpp)
     target_link_libraries(altair_emit_vectors PRIVATE altair_server)
     target_compile_definitions(altair_emit_vectors PRIVATE
