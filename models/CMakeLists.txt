@@ -140,6 +140,22 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_calibration_test PRIVATE altair_models altair_flags)
     add_test(NAME models_calibration COMMAND altair_calibration_test)
 
+    # P41. Richer features, and whether the paired t moves.
+    #
+    # Its first check is hard rule 7 with a planted violation: detonate r[i],
+    # the first element of the LABEL, and require the feature row to come back
+    # bit-identical. The first draft of append_row() read r[i] and would have
+    # scored magnificently on its own answer.
+    #
+    # The experiment is a WEAK gate and a LOUD report: asserting that rich
+    # features must beat plain ones on NIFTY would be asserting a market fact.
+    add_executable(altair_rich_features_test tests/test_rich_features.cpp)
+    target_link_libraries(altair_rich_features_test
+        PRIVATE altair_models altair_flags)
+    target_compile_definitions(altair_rich_features_test PRIVATE
+        ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+    add_test(NAME models_rich_features COMMAND altair_rich_features_test)
+
     # P35-02b. The same calibration on the REAL NIFTY daily series.
     #
     # A weak gate and a loud report, on purpose. Asserting "conformal must beat

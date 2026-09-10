@@ -338,17 +338,24 @@ backtest_forecasts(const std::vector<double>& closes,
         // Row i uses returns r[i-lags .. i) and is labelled with the forward
         // window starting at r[i], so a row is only admissible when its whole
         // label window closed strictly before `block`.
+        //
+        // P41. THE SAME BUILDER spot_forecast.hpp USES, and that is not a
+        // tidy-up. There were FOUR copies of this construction -- two here,
+        // two there -- agreeing only because each was four lines long. The
+        // Forecast page takes its RECORD from this function and its PRICE
+        // from forecast_next; the moment the two builders differed, the
+        // record would have described a different model from the number
+        // printed beside it, and nothing would have looked wrong.
         Frame f;
-        f.p = spec.lags;
+        f.p = feature_width(spec);
         std::vector<double> y;
         const std::size_t train_end = block > 1 ? block - 1 : 0;   // in r-space
-        for (std::size_t i = spec.lags; i + spec.horizon <= train_end; ++i) {
-            for (std::size_t k = 0; k < spec.lags; ++k) {
-                f.x.push_back(r[i - spec.lags + k]);
-            }
+        for (std::size_t i = first_row_index(spec);
+             i + spec.horizon <= train_end; ++i) {
+            append_row(r, i, spec, f.x);
             double fwd = 0.0;
             for (std::size_t h = 0; h < spec.horizon; ++h) { fwd += r[i + h]; }
-            y.push_back(fwd);
+            y.push_back(fwd / label_scale(r, i, spec));
             ++f.rows;
         }
         if (f.rows < 500) { continue; }
@@ -388,20 +395,24 @@ backtest_forecasts(const std::vector<double>& closes,
         // Predicting is one tree traversal.
         const std::size_t stop =
             std::min(block + bt.refit_every, closes.size() - spec.horizon + 1);
-        std::vector<double> row(spec.lags, 0.0);
+        std::vector<double> row;
+        row.reserve(feature_width(spec));
         for (std::size_t i = block; i < stop; ++i) {
             // The bar being predicted is closes[i]; its anchor is closes[i-1].
-            // The features are the `lags` returns ending at r[i-2] -- that is,
-            // every return fully observed BEFORE closes[i-1] was the last
-            // close. r[j] is the move from closes[j] to closes[j+1], so the
-            // newest usable return is r[i-2].
-            if (i < spec.lags + 1) { continue; }
-            const std::size_t r_end = i - 1;          // exclusive
-            if (r_end < spec.lags) { continue; }
-            for (std::size_t k = 0; k < spec.lags; ++k) {
-                row[k] = r[r_end - spec.lags + k];
-            }
-            const double move = model->predict_row(row.data());
+            // The features are the returns ending at r[i-2] -- every return
+            // fully observed BEFORE closes[i-1] was the last close. r[j] is
+            // the move from closes[j] to closes[j+1], so the newest usable
+            // return is r[i-2], and append_row's label index is therefore
+            // i-1: it reads up to r[i-2] and no further.
+            if (i < first_row_index(spec) + 1) { continue; }
+            const std::size_t r_end = i - 1;          // label index
+            if (r_end < first_row_index(spec)) { continue; }
+            row.clear();
+            append_row(r, r_end, spec, row);
+            // AND THE SCALE COMES BACK OFF. Trained on return/volatility, so
+            // the raw output is in those units.
+            const double move = model->predict_row(row.data())
+                                * label_scale(r, r_end, spec);
 
             ForecastPoint p{};
             p.anchor = closes[i - 1];

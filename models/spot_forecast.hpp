@@ -64,10 +64,158 @@ struct SpotSpec {
     /// Lagged returns used as features.
     std::size_t lags = 8;
 
+    /// P41. Beyond lagged returns: realised volatility at three scales,
+    /// momentum at two, the absolute move, a z-score and a vol ratio.
+    ///
+    /// OFF BY DEFAULT so every number this project has already published
+    /// stays reproducible. Turning it on changes the model, and a model that
+    /// silently changed under a stored result would make the stored result a
+    /// lie.
+    bool rich = false;
+
+    /// Divide the label by trailing realised volatility, and multiply the
+    /// prediction back by it.
+    ///
+    /// THE POINT IS STATIONARITY, NOT SCALE. Trees do not care about units --
+    /// a monotone rescaling of a FEATURE cannot change a single split, so
+    /// standardising the inputs of a GBDT is arithmetic with no effect. The
+    /// LABEL is different. A daily NIFTY return is drawn from a distribution
+    /// whose width moves by a factor of four between calm and stress, so one
+    /// model is being asked to fit two very different targets at once.
+    /// Dividing by the volatility KNOWN AT THE TIME turns it into roughly one
+    /// target, and multiplying back afterwards returns a real return.
+    ///
+    /// This is the honest version of "scale down, predict, upscale": it is
+    /// worth doing to the thing being predicted, and pointless on the inputs
+    /// of a tree.
+    bool vol_scaled_label = false;
+
     [[nodiscard]] bool valid() const noexcept {
         return horizon >= 1 && folds >= 2 && lags >= 2 && cost_bps >= 0.0;
     }
 };
+
+/// Bars of history a row needs before it can be built.
+///
+/// The longest window any rich feature reads. Rows before this cannot be
+/// built at all -- and are DROPPED rather than filled with a zero, because a
+/// realised volatility of zero is a specific, wrong, and very confident claim.
+inline constexpr std::size_t kRichWarmup = 60;
+
+/// Feature columns a spec produces.
+[[nodiscard]] inline std::size_t feature_width(const SpotSpec& s) noexcept {
+    return s.rich ? s.lags + 8 : s.lags;
+}
+
+/// First index at which a row can be built.
+///
+/// THE LABEL'S WINDOW COUNTS TOO, and leaving it out was a real bug with a
+/// spectacular symptom. vol_scaled_label divides by a 20-bar volatility, which
+/// needs 19 bars of history; before that window_sd returns 0 and the floor in
+/// label_scale turns it into 1.0. So with `rich` off, rows 8..18 carried
+/// UNSCALED labels of roughly +/-100 bps while every later row carried a
+/// standardised one of roughly +/-1 -- a handful of rows a hundred times
+/// larger than the rest, which trees fit enthusiastically. Measured RMSE was
+/// 625 bps against a naive 140, and it looked like the method failing rather
+/// than eleven poisoned rows.
+[[nodiscard]] inline std::size_t first_row_index(const SpotSpec& s) noexcept {
+    std::size_t need = s.lags;
+    if (s.rich && kRichWarmup > need) { need = kRichWarmup; }
+    // window_sd(j, 20) with j = i-1 requires i-1 >= 19, so i >= 20.
+    if (s.vol_scaled_label && need < 20) { need = 20; }
+    return need;
+}
+
+namespace detail {
+
+/// Standard deviation of r[i-w+1 .. i]. Reads NOTHING past i.
+[[nodiscard]] inline double window_sd(const std::vector<double>& r,
+                                      std::size_t i, std::size_t w) noexcept {
+    if (w < 2 || i + 1 < w) { return 0.0; }
+    const std::size_t from = i + 1 - w;
+    double m = 0.0;
+    for (std::size_t k = from; k <= i; ++k) { m += r[k]; }
+    m /= static_cast<double>(w);
+    double v = 0.0;
+    for (std::size_t k = from; k <= i; ++k) {
+        const double e = r[k] - m;
+        v += e * e;
+    }
+    return std::sqrt(v / static_cast<double>(w - 1));
+}
+
+[[nodiscard]] inline double window_sum(const std::vector<double>& r,
+                                       std::size_t i, std::size_t w) noexcept {
+    if (i + 1 < w) { return 0.0; }
+    double t = 0.0;
+    for (std::size_t k = i + 1 - w; k <= i; ++k) { t += r[k]; }
+    return t;
+}
+
+}  // namespace detail
+
+/// THE ONE FEATURE BUILDER.
+///
+/// P41. There were two, in forecast_spot and forecast_next, and the comment
+/// beside the second one said "a second feature construction here would be a
+/// second thing to keep in step" -- while being exactly that. They agreed only
+/// because both were four lines long. Adding a ninth column to one and not the
+/// other would have made the model that was EVALUATED different from the model
+/// that PREDICTS, and every score on the page would have described a different
+/// thing from the number beside it.
+///
+/// `i` is the index at which the LABEL BEGINS, matching the loops that call
+/// this: the label is the sum of r[i .. i+horizon-1]. So the last return this
+/// may read is r[i-1], and r[i] is already part of the answer.
+///
+/// GETTING THAT OFF BY ONE WOULD BE INVISIBLE AND FATAL. The first draft of
+/// this function used r[i] as the most recent feature, which puts the first
+/// element of the label into the inputs. The model would have scored
+/// magnificently, the walk-forward would still have been honest about fold
+/// boundaries, and every number on the page would have been fiction. It is
+/// checked by a test that detonates r[i] and requires the row to come back
+/// bit-identical.
+///
+/// Appends `feature_width(spec)` values to `out`.
+inline void append_row(const std::vector<double>& r, std::size_t i,
+                       const SpotSpec& spec, std::vector<double>& out) {
+    for (std::size_t k = 0; k < spec.lags; ++k) {
+        out.push_back(r[i - spec.lags + k]);
+    }
+    if (!spec.rich) { return; }
+
+    // Everything below is anchored at i-1, the last bar the model has seen.
+    const std::size_t j = i - 1;
+    const double rv5 = detail::window_sd(r, j, 5);
+    const double rv20 = detail::window_sd(r, j, 20);
+    const double rv60 = detail::window_sd(r, j, 60);
+    out.push_back(rv5);
+    out.push_back(rv20);
+    out.push_back(rv60);
+    out.push_back(detail::window_sum(r, j, 5));
+    out.push_back(detail::window_sum(r, j, 20));
+    out.push_back(std::fabs(r[j]));
+    // A z-score and a vol ratio, both guarded: a flat window gives rv 0 and
+    // the ratio is undefined. Zero is the right answer for "no information"
+    // here precisely because it is the mean of a z-score, not a fabricated
+    // measurement.
+    out.push_back(rv20 > 1e-9 ? r[j] / rv20 : 0.0);
+    out.push_back(rv20 > 1e-9 ? rv5 / rv20 : 1.0);
+}
+
+/// The volatility a vol-scaled label is divided by.
+///
+/// `i` is where the label begins, so this is anchored at i-1 like the features
+/// -- the scale must be knowable at prediction time, and r[i] is not.
+[[nodiscard]] inline double label_scale(const std::vector<double>& r,
+                                        std::size_t i,
+                                        const SpotSpec& spec) noexcept {
+    if (!spec.vol_scaled_label || i == 0) { return 1.0; }
+    const double sd = detail::window_sd(r, i - 1, 20);
+    // A floor, not a clamp toward danger: dividing by a near-zero volatility
+    // would manufacture an enormous label out of a quiet week.
+    return sd > 1.0 ? sd : 1.0;
+}
 
 struct SpotReport {
     std::size_t rows = 0;
@@ -224,15 +372,27 @@ forecast_next(const std::vector<double>& closes, const SpotSpec& spec,
     // the model that was evaluated. A second feature construction here would
     // be a second thing to keep in step.
     Frame f;
-    f.p = spec.lags;
-    std::vector<double> y;
-    for (std::size_t i = spec.lags; i + spec.horizon < r.size(); ++i) {
-        for (std::size_t k = 0; k < spec.lags; ++k) {
-            f.x.push_back(r[i - spec.lags + k]);
-        }
+    f.p = feature_width(spec);
+    // TWO LABEL VECTORS, AND THE DISTINCTION MATTERS.
+    //
+    // `y` is what the model is FITTED on -- divided by trailing volatility
+    // when vol_scaled_label is set, so the target is roughly stationary.
+    // `y_bps` is the real forward return, and it is what everything is SCORED
+    // against. Scoring in scaled units would make the RMSE incomparable
+    // between runs and would make the net-bps figure fictional: "profit" would
+    // be measured in units of a volatility that changes every bar.
+    //
+    // When the flag is off the two are identical and `scale` is all ones.
+    std::vector<double> y, y_bps, scale;
+    for (std::size_t i = first_row_index(spec); i + spec.horizon < r.size();
+         ++i) {
+        append_row(r, i, spec, f.x);
         double fwd = 0.0;
         for (std::size_t h = 0; h < spec.horizon; ++h) { fwd += r[i + h]; }
-        y.push_back(fwd);
+        const double sc = label_scale(r, i, spec);
+        y.push_back(fwd / sc);
+        y_bps.push_back(fwd);
+        scale.push_back(sc);
         ++f.rows;
     }
     if (f.rows < 500) { return std::unexpected(SpotError::TooFewSamples); }
@@ -248,19 +408,26 @@ forecast_next(const std::vector<double>& closes, const SpotSpec& spec,
     const auto model = fit_gbdt(f, y, pr);
     if (!model) { return std::unexpected(SpotError::TooFewSamples); }
 
-    // The feature row for the NEXT bar is the last `lags` returns available.
-    // It is deliberately NOT a row from `f`: every row in f has a label, which
-    // means every row in f is far enough from the end that its forward window
-    // closed. The row we want is the one that has no label yet.
-    std::vector<double> last_row(spec.lags, 0.0);
-    for (std::size_t k = 0; k < spec.lags; ++k) {
-        last_row[k] = r[r.size() - spec.lags + k];
-    }
+    // The feature row for the NEXT bar, built by THE SAME function that built
+    // every training row. It is deliberately NOT a row from `f`: every row in
+    // f has a label, which means every row in f is far enough from the end
+    // that its forward window closed. The row we want is the one that has no
+    // label yet -- so its label index is r.size(), one past the last return,
+    // and append_row reads up to r.size()-1 exactly as it should.
+    std::vector<double> last_row;
+    last_row.reserve(feature_width(spec));
+    append_row(r, r.size(), spec, last_row);
 
     SpotForecast out;
     out.fitted_on = f.rows;
     out.last_price = closes.back();
-    out.move_bps = model->predict_row(last_row.data());
+    // AND THE SCALE COMES BACK OFF HERE. The model was trained on
+    // return/volatility, so its output is in those units and multiplying by
+    // the volatility known at this bar is what turns it back into basis
+    // points. Forgetting this would produce a forecast roughly a hundred
+    // times too small and entirely plausible.
+    out.move_bps = model->predict_row(last_row.data())
+                   * label_scale(r, r.size(), spec);
     out.price = out.last_price * std::exp(out.move_bps / 10000.0);
     out.band_bps = oos_rmse_bps;
     out.lo = out.last_price * std::exp((out.move_bps - oos_rmse_bps) / 10000.0);
@@ -326,15 +493,27 @@ forecast_spot(const std::vector<double>& closes, const SpotSpec& spec) {
 
     // Rows: lags features, label is the SUM of the next `horizon` returns.
     Frame f;
-    f.p = spec.lags;
-    std::vector<double> y;
-    for (std::size_t i = spec.lags; i + spec.horizon < r.size(); ++i) {
-        for (std::size_t k = 0; k < spec.lags; ++k) {
-            f.x.push_back(r[i - spec.lags + k]);
-        }
+    f.p = feature_width(spec);
+    // TWO LABEL VECTORS, AND THE DISTINCTION MATTERS.
+    //
+    // `y` is what the model is FITTED on -- divided by trailing volatility
+    // when vol_scaled_label is set, so the target is roughly stationary.
+    // `y_bps` is the real forward return, and it is what everything is SCORED
+    // against. Scoring in scaled units would make the RMSE incomparable
+    // between runs and would make the net-bps figure fictional: "profit" would
+    // be measured in units of a volatility that changes every bar.
+    //
+    // When the flag is off the two are identical and `scale` is all ones.
+    std::vector<double> y, y_bps, scale;
+    for (std::size_t i = first_row_index(spec); i + spec.horizon < r.size();
+         ++i) {
+        append_row(r, i, spec, f.x);
         double fwd = 0.0;
         for (std::size_t h = 0; h < spec.horizon; ++h) { fwd += r[i + h]; }
-        y.push_back(fwd);
+        const double sc = label_scale(r, i, spec);
+        y.push_back(fwd / sc);
+        y_bps.push_back(fwd);
+        scale.push_back(sc);
         ++f.rows;
     }
     if (f.rows < 500) { return std::unexpected(SpotError::TooFewSamples); }
@@ -382,12 +561,19 @@ forecast_spot(const std::vector<double>& closes, const SpotSpec& spec) {
         const std::vector<double> ytr(y.begin(),
                                       y.begin() + static_cast<long>(tr_end));
 
+        // THE CONSTANT BENCHMARK IS IN BPS, not in scaled units. It is
+        // supposed to be "predict the average move and never change your
+        // mind"; a constant in scaled space un-scales to a prediction that
+        // moves with volatility, which is a different and better forecaster
+        // and would quietly raise the bar the model is measured against.
         double mean = 0.0;
-        for (const double v : ytr) { mean += v; }
-        mean /= static_cast<double>(ytr.size());
+        for (std::size_t k = 0; k < tr_end; ++k) { mean += y_bps[k]; }
+        mean /= static_cast<double>(tr_end);
         std::size_t up = 0;
-        for (const double v : ytr) { if (v > 0.0) { ++up; } }
-        const bool const_up = up * 2 > ytr.size();
+        for (std::size_t k = 0; k < tr_end; ++k) {
+            if (y_bps[k] > 0.0) { ++up; }
+        }
+        const bool const_up = up * 2 > tr_end;
 
         GbdtParams lvl;
         lvl.trees = 120;
@@ -405,9 +591,11 @@ forecast_spot(const std::vector<double>& closes, const SpotSpec& spec) {
         if (!m_l || !m_f) { continue; }
 
         for (std::size_t i = te_start; i < te_end; ++i) {
-            const double truth = y[i];
-            const double pl = m_l->predict_row(&f.x[i * f.p]);
-            const double pf = m_f->predict_row(&f.x[i * f.p]);
+            // Back into basis points before anything is measured.
+            const double sc = scale[i];
+            const double truth = y_bps[i];
+            const double pl = m_l->predict_row(&f.x[i * f.p]) * sc;
+            const double pf = m_f->predict_row(&f.x[i * f.p]) * sc;
             sse_c += (mean - truth) * (mean - truth);
             sse_l += (pl - truth) * (pl - truth);
             sse_f += (pf - truth) * (pf - truth);
