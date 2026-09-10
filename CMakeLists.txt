@@ -187,6 +187,17 @@ include(cmake/BoundsAudit.cmake)
 altair_audit_bounds()
 
 # ─────────────────────────────────────────────────────────────────────────────
+# P36-02. THE MODEL ATLAS MAY NOT DESCRIBE A TREE THAT HAS MOVED.
+#
+# desktop/atlas_data.hpp names the header every model lives in, and those paths
+# are the page's whole value -- they are what turns a definition into something
+# a reader can go and open. A renamed file turns the sentence into a lie that
+# nothing else in the build would catch, because a table of strings compiles
+# whatever the strings say.
+# ─────────────────────────────────────────────────────────────────────────────
+include(cmake/AtlasAudit.cmake)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Subdirectories — uncommented as each phase's cards land.
 # The order below mirrors ROADMAP.md §12.
 # ─────────────────────────────────────────────────────────────────────────────
