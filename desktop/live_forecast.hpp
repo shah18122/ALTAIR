@@ -60,6 +60,7 @@
 #include <QProcess>
 #include <QTimeZone>
 
+#include <models/calibration.hpp>
 #include <models/forecast_scorecard.hpp>
 
 namespace altair::ui {
@@ -376,13 +377,47 @@ live_forecast_report(const QString& dataset_root, const QString& sym,
                                   hist.stamps_ns);
     if (!fc) { return s + QStringLiteral("  The forecast could not run.\n"); }
 
+    // ---- 5b. CALIBRATE THE BAND (P35) -------------------------------------
+    //
+    // Everything above publishes a band of one realised RMSE, which claims
+    // 68.27% coverage on the assumption the errors are normal. They are not.
+    // The conformal wrapper replaces that assumption with the record: a
+    // weighted quantile of how wrong this forecaster has actually been, taken
+    // separately above and below because the two tails are not the same size.
+    //
+    // The uncalibrated band is scored too, and both are shown. The comparison
+    // is the point -- a calibrated band with no "before" beside it is a claim
+    // rather than a result.
+    CalibrationSpec cal;
+    cal.conformal.alpha = 1.0 - 0.6827;   // match what the RMSE band claims,
+    cal.conformal.mode = ConformalMode::TimeWeighted;  // so the two compare
+    cal.warmup = 250;
+    cal.vol_window = 20;
+
+    const auto before_cal = score_calibration(*pts, cal.conformal.alpha,
+                                              cal.vol_window);
+    const auto calibrated = calibrate_band(*pts, cal);
+
+    // The band that gets published is the CALIBRATED one when there is
+    // enough record to earn it, and the raw RMSE band when there is not --
+    // labelled either way, because a reader cannot tell them apart by looking.
+    double pub_lo = fc->lo, pub_hi = fc->hi;
+    QString band_label = QStringLiteral("band (1 realised RMSE, UNCALIBRATED)");
+    if (calibrated && calibrated->second.next_ready) {
+        pub_lo = fc->price - calibrated->second.next_lo;
+        pub_hi = fc->price + calibrated->second.next_up;
+        band_label = QStringLiteral("band (CONFORMAL, %1% target)")
+                         .arg(100.0 * (1.0 - cal.conformal.alpha), 0, 'f', 1);
+    }
+
     s += QStringLiteral("――― THE NEXT CANDLE ―――\n\n");
     s += QStringLiteral(
         "  Anchor  — last COMPLETED bar   %1\n"
         "            its close                        %2\n"
         "  Forecast is for                %3\n\n"
         "    forecast price               %4\n"
-        "    band (1 realised RMSE)       %5  ..  %6\n"
+        "    %8\n"
+        "                                 %5  ..  %6\n"
         "    implied move                 %7 bps\n\n")
              .arg(fc->stamped()
                       ? ui_ist(fc->last_ts_ns, iv_ns < 86'400'000'000'000LL)
@@ -392,8 +427,62 @@ live_forecast_report(const QString& dataset_root, const QString& sym,
                       ? ui_ist(fc->for_ts_ns, iv_ns < 86'400'000'000'000LL)
                       : QStringLiteral("—"), -22)
              .arg(fc->price, 12, 'f', 2)
-             .arg(fc->lo, 0, 'f', 2).arg(fc->hi, 0, 'f', 2)
-             .arg(fc->move_bps, 0, 'f', 3);
+             .arg(pub_lo, 0, 'f', 2).arg(pub_hi, 0, 'f', 2)
+             .arg(fc->move_bps, 0, 'f', 3)
+             .arg(band_label);
+
+    // ---- 5c. IS THE BAND HONEST? -----------------------------------------
+    if (before_cal && calibrated) {
+        const auto& b4 = *before_cal;
+        const auto& af = calibrated->second;
+        s += QStringLiteral(
+            "――― IS THE BAND HONEST? ―――\n\n"
+            "  A band is a claim about how often the truth lands inside it.\n"
+            "  Both are scored against the same %1 forecasts, so the only\n"
+            "  difference between the rows is the band itself.\n\n"
+            "                     covered   target    per-regime error\n"
+            "    RMSE band        %2    %3      %4 pp\n"
+            "    conformal band   %5    %6      %7 pp\n\n")
+                 .arg(b4.n)
+                 .arg(b4.coverage, 7, 'f', 4)
+                 .arg(1.0 - b4.target, 6, 'f', 4)
+                 .arg(b4.reg_mae_pp, 6, 'f', 2)
+                 .arg(af.coverage, 7, 'f', 4)
+                 .arg(1.0 - af.target, 6, 'f', 4)
+                 .arg(af.reg_mae_pp, 6, 'f', 2);
+
+        // THE BREAKDOWN, because the average is the number that lies. A band
+        // covering 95% in quiet markets and 85% in loud ones averages to a
+        // figure that describes neither, and the loud one is when it matters.
+        s += QStringLiteral(
+            "  BY VOLATILITY QUINTILE — an average can hide a band that is\n"
+            "  right on quiet days and wrong on the days that cost money.\n\n"
+            "              realised vol      RMSE band    conformal\n");
+        // `qi`, not `q` -- the QuantSymbol at the top of this function is
+        // already called q, and shadowing it here is a warning at /W4 and a
+        // trap for whoever edits this loop next.
+        for (std::size_t qi = 0; qi < kVolBuckets; ++qi) {
+            if (b4.by_vol[qi].n == 0) { continue; }
+            s += QStringLiteral("    q%1  %2 bps        %3       %4\n")
+                     .arg(qi)
+                     .arg(b4.by_vol[qi].mean_vol_bps, 8, 'f', 1)
+                     .arg(1.0 - b4.by_vol[qi].exceedance, 8, 'f', 4)
+                     .arg(1.0 - af.by_vol[qi].exceedance, 8, 'f', 4);
+        }
+        s += QStringLiteral(
+            "\n"
+            "  effective memory %1 bars, effective sample %2 of the record.\n"
+            "  %3 forecast(s) passed through uncalibrated during warmup.\n\n")
+                 .arg(af.mean_memory, 0, 'f', 0)
+                 .arg(af.mean_n_eff, 0, 'f', 0)
+                 .arg(af.uncalibrated);
+        if (af.fallbacks > 0) {
+            s += QStringLiteral(
+                "  %1 step(s) fell back to time-only weights because the\n"
+                "  regime was unlike anything in the buffer.\n\n")
+                     .arg(af.fallbacks);
+        }
+    }
 
     // ---- 6. the record ----------------------------------------------------
     s += QStringLiteral(
