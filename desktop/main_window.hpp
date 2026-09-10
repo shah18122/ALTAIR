@@ -34,6 +34,7 @@
 
 #include "chart/chart_widget.hpp"
 #include "analytics_panel.hpp"
+#include "atlas.hpp"
 #include "audit_panel.hpp"
 #include "cost_panel.hpp"
 #include "depth_ladder.hpp"
@@ -159,7 +160,11 @@ namespace altair::ui {
             // P31-01. The last two large blocks of engine code with no page:
             // P5-06's parity/box/butterfly scanner and P5-07's calendar
             // scanner. Appended, so no existing --page index moves.
-            QStringLiteral("Parity & Calendar")};
+            QStringLiteral("Parity & Calendar"),
+            // P36-01. The Model Atlas: the ten families from the roadmap
+            // against what this tree actually has, absences included.
+            // APPENDED, so every index from 0 to 31 keeps its meaning.
+            QStringLiteral("Model Atlas")};
     // P35-03b. "Live Forecast" is gone from the end and "Spot Forecast" at
     // index 18 is now "Forecast". They were two pages asking two questions
     // about ONE model on two separately-loaded copies of one series, and only
@@ -1323,9 +1328,12 @@ private:
                 [arb_page] { arb_page->set_text(arbitrage_scans_report()); });
         pages_->addWidget(arb_page);
 
-        // P33-01. Two buttons because they are two different actions: one
-        // reaches the network and one does not, and a single button that
-        // sometimes made a network call would hide which just happened.
+        // P36-01. THE MODEL ATLAS.
+        //
+        // It takes a callback that opens a nav page, so a row can be
+        // double-clicked to run the thing it describes. The panel does not
+        // know this window exists -- same contract as KiteLinkPanel.
+        pages_->addWidget(new AtlasPanel([this](int page) { show_page(page); }));
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
@@ -1350,6 +1358,31 @@ private:
                     "page construction below it.")
                     .arg(nav_page_names().size()).arg(pages_->count()));
             std::abort();
+        }
+
+        // P36-01. AND EVERY ATLAS ROW MUST POINT AT A REAL PAGE.
+        //
+        // The atlas carries a nav index per model so a row can be
+        // double-clicked to run the thing it describes. cmake/AtlasAudit.cmake
+        // checks the FILE paths but cannot know how many nav pages exist, and
+        // this is the one place that holds both facts.
+        //
+        // A stale index is worse than a missing one: -1 politely does nothing,
+        // while an index left behind by a nav change opens the WRONG page and
+        // looks like it worked. Same failure the check above exists for.
+        for (const auto& r : kAtlasRows) {
+            if (r.page < -1 || r.page >= nav_page_names().size()) {
+                QMessageBox::critical(
+                    nullptr, QStringLiteral("Altair — atlas page out of range"),
+                    QStringLiteral(
+                        "Model Atlas row \"%1\" names page %2, but there are "
+                        "%3 pages.\n\nFix the `page` field in "
+                        "desktop/atlas_data.hpp.")
+                        .arg(QString::fromUtf8(r.model))
+                        .arg(r.page)
+                        .arg(nav_page_names().size()));
+                std::abort();
+            }
         }
     }
 

@@ -89,6 +89,10 @@ qt_add_executable(altair_desktop
     kite_link.hpp
     chain_panel.hpp
     analytics_panel.hpp
+    # P36-01. The Model Atlas. atlas.hpp has no Q_OBJECT, but listing both
+    # keeps the target's source list a true statement of what it builds.
+    atlas_data.hpp
+    atlas.hpp
 )
 
 # P34-02. THE ICON RESOURCE WAS NEVER COMPILED, AND NOTHING SAID SO.
@@ -453,6 +457,22 @@ if(ALTAIR_BUILD_TESTS)
     # component nobody deploys fails at RUN time with 0xC0000135 and no
     # message naming it. Needs a real QApplication rather than a
     # QCoreApplication, because QTableWidget is a widget.
+    # P36-01. The Model Atlas page. The CMake audit checks every path in the
+    # table; this checks the PAGE -- that the tree shows every row, that the
+    # search matches across all four columns, and that "Hide absent" removes
+    # exactly the absent rows. An off-by-one there would quietly delete a real
+    # model from the reader's picture of the engine.
+    qt_add_executable(altair_atlas_test
+        tests/test_atlas.cpp
+        atlas.hpp
+        atlas_data.hpp)
+    target_link_libraries(altair_atlas_test PRIVATE
+        altair_types Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_atlas_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_atlas_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_atlas COMMAND altair_atlas_test)
+
     qt_add_executable(altair_terminal_test
         tests/test_terminal.cpp
         terminal.hpp
