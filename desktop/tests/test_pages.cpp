@@ -525,9 +525,14 @@ int main(int argc, char** argv)
         // the fold and no screenshot reaches it. Printing it here makes the
         // numbers a record that survives in ctest output rather than
         // something only a person scrolling can see.
-        const int rule = sf.indexOf(QStringLiteral("AS A TRADING RULE"));
-        if (rule >= 0) {
-            std::printf("\n%s\n", sf.mid(rule - 4).toUtf8().constData());
+        // From the RECORD onward, which includes the verdict. Printing only
+        // from "AS A TRADING RULE" left out the one line a reader actually
+        // wants -- whether the forecaster beats a random walk -- and that is
+        // the headline of the whole page.
+        int from = sf.indexOf(QStringLiteral("HOW THIS FORECASTER"));
+        if (from < 0) { from = sf.indexOf(QStringLiteral("AS A TRADING RULE")); }
+        if (from >= 0) {
+            std::printf("\n%s\n", sf.mid(from - 4).toUtf8().constData());
         }
     }
 
