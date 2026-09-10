@@ -119,7 +119,7 @@ namespace altair::ui {
             QStringLiteral("Execution"),   QStringLiteral("Volatility"),
             QStringLiteral("Risk — VaR"),  QStringLiteral("Portfolio"),
             QStringLiteral("ML — Trees"),  QStringLiteral("Regimes"),
-            QStringLiteral("Spot Forecast"),
+            QStringLiteral("Forecast"),
             // P21-03. The Stage 3 hole from ROADMAP_GAP.md, now
             // filled: momentum and mean reversion. Appended, so no
             // existing --page index moves.
@@ -159,10 +159,15 @@ namespace altair::ui {
             // P31-01. The last two large blocks of engine code with no page:
             // P5-06's parity/box/butterfly scanner and P5-07's calendar
             // scanner. Appended, so no existing --page index moves.
-            QStringLiteral("Parity & Calendar"),
-            // P33-01. The next candle from the last COMPLETED one, pulled
-            // live, plus the record that says whether to believe it.
-            QStringLiteral("Live Forecast")};
+            QStringLiteral("Parity & Calendar")};
+    // P35-03b. "Live Forecast" is gone from the end and "Spot Forecast" at
+    // index 18 is now "Forecast". They were two pages asking two questions
+    // about ONE model on two separately-loaded copies of one series, and only
+    // one of those copies dropped the unfinished bar.
+    //
+    // Removing the LAST row and renaming an existing one is deliberate: every
+    // index from 0 to 31 keeps its meaning, so no shortcut and no capture
+    // script pinned to a number breaks. Only the count changes.
 }
 
 /// Index of a nav page by name, case- and space-insensitively; -1 if no match.
@@ -1120,56 +1125,44 @@ private:
         // tens of seconds -- a page that ran every horizon on open would
         // freeze the window exactly the way P11Q's startup fit did, and the
         // freeze would arrive late enough to read as a different bug.
-        auto* spot_page = new ComputePage(
-            QStringLiteral("SPOT FORECAST — P16-06"),
-            QStringLiteral("Daily  (fast)"),
+        // P35-03b. ONE FORECAST PAGE.
+        //
+        // This was two: SPOT FORECAST here and LIVE FORECAST at the end of the
+        // nav. Same features, same horizon, same level-wise hyperparameters --
+        // what differed was the question, and the merged report asks both in
+        // order: as a forecast against the random walk, then as a trading rule
+        // against the cost hurdle.
+        //
+        // The sampling rate was three hard-wired buttons on the old page and a
+        // combo on the new one; the combo wins, because the rate and the
+        // instrument are independent choices and nine call sites had to be
+        // kept in step to pretend otherwise.
+        auto* fc_page = new ComputePage(
+            QStringLiteral("FORECAST — P16-06 + P33-01 + P35"),
+            QStringLiteral("Fetch latest from Kite, then forecast"),
             this);
-        // THREE HORIZONS ON ONE PAGE, one per button.
-        //
-        // They are the same analysis at different sampling rates and the
-        // comparison IS the finding -- the model is net negative at 5, 15 and
-        // 60 minutes and only turns positive daily, where 95% of moves
-        // already clear the cost. A reader who has to change page to see the
-        // 5-minute number cannot hold it next to the daily one.
-        //
-        // The wait is named in the label rather than discovered: 5-minute is
-        // 214,000 rows across five folds and two growth strategies.
-        auto* b5 = spot_page->add_button(
-            QStringLiteral("5-minute  (~30 s, 214k rows)"));
-        auto* b15 = spot_page->add_button(
-            QStringLiteral("15-minute  (~10 s)"));
-
-        // P32-04. THE PATH IS BUILT FROM THE SELECTION, NOT PASSED IN.
-        //
-        // The three buttons choose a SAMPLING RATE and the combo chooses an
-        // INSTRUMENT; they are independent, and building the path here is what
-        // keeps them from having to be kept in step at nine call sites.
-        auto run_spot = [spot_page, ds](const char* interval,
-                                        const char* label) {
-            const QString sym = spot_page->symbol();
-            const QString sub = QStringLiteral("/spot/%1/%2/")
-                                    .arg(sym, QLatin1String(interval));
-            const QString what =
-                QStringLiteral("%1 %2")
-                    .arg(quant_symbol_by_dir(sym).label,
-                         QLatin1String(label));
-            spot_page->set_text(
-                QStringLiteral("Fitting %1...\n\nWalk-forward, five folds, "
-                               "level-wise and leaf-wise on identical folds.\n"
-                               "The window is busy until this finishes.")
-                    .arg(what));
+        (void)fc_page->add_symbols();
+        auto* fc_off = fc_page->add_button(
+            QStringLiteral("Offline (history on disk)"));
+        auto* fc_iv = fc_page->add_interval();
+        auto run_fc = [fc_page, fc_iv](bool live) {
+            fc_page->set_text(QStringLiteral(
+                "%1\n\nWalk-forward with a refit every hundred bars, the "
+                "next candle,\nits calibrated band, and the same model priced "
+                "as a trading rule.\nThe window is busy until this finishes.")
+                    .arg(live ? QStringLiteral("Fetching from Kite...")
+                              : QStringLiteral("Backtesting...")));
             QApplication::processEvents();
-            spot_page->set_text(spot_forecast_report(
-                ds, sub, what.toUtf8().constData()));
+            fc_page->set_text(forecast_report(
+                QStringLiteral(ALTAIR_DATASET_DIR), fc_page->symbol(),
+                fc_iv->currentData().toString(), live));
         };
-        (void)spot_page->add_symbols();
-        connect(spot_page->button(), &QPushButton::clicked, this,
-                [run_spot] { run_spot("1d", "daily"); });
-        connect(b5, &QPushButton::clicked, this,
-                [run_spot] { run_spot("5m", "5-minute"); });
-        connect(b15, &QPushButton::clicked, this,
-                [run_spot] { run_spot("15m", "15-minute"); });
-        pages_->addWidget(spot_page);
+        connect(fc_page->button(), &QPushButton::clicked, this,
+                [run_fc] { run_fc(true); });
+        connect(fc_off, &QPushButton::clicked, this,
+                [run_fc] { run_fc(false); });
+        pages_->addWidget(fc_page);
+
 
         // P21-03. Momentum and mean reversion. The button label says what
         // will be computed rather than "Run", because the order of this page
@@ -1333,31 +1326,6 @@ private:
         // P33-01. Two buttons because they are two different actions: one
         // reaches the network and one does not, and a single button that
         // sometimes made a network call would hide which just happened.
-        auto* lf_page = new ComputePage(
-            QStringLiteral("LIVE FORECAST — P33-01"),
-            QStringLiteral("Fetch latest from Kite, then forecast"),
-            this);
-        (void)lf_page->add_symbols();
-        auto* lf_off = lf_page->add_button(
-            QStringLiteral("Offline (history on disk)"));
-        auto* lf_iv = lf_page->add_interval();
-        auto run_lf = [lf_page, lf_iv](bool live) {
-            lf_page->set_text(QStringLiteral(
-                "%1\n\nWalk-forward with a refit every hundred bars, "
-                "then the next candle.\nThe window is busy until this "
-                "finishes.")
-                    .arg(live ? QStringLiteral("Fetching from Kite...")
-                              : QStringLiteral("Backtesting...")));
-            QApplication::processEvents();
-            lf_page->set_text(live_forecast_report(
-                QStringLiteral(ALTAIR_DATASET_DIR), lf_page->symbol(),
-                lf_iv->currentData().toString(), live));
-        };
-        connect(lf_page->button(), &QPushButton::clicked, this,
-                [run_lf] { run_lf(true); });
-        connect(lf_off, &QPushButton::clicked, this,
-                [run_lf] { run_lf(false); });
-        pages_->addWidget(lf_page);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

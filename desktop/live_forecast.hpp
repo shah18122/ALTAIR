@@ -210,15 +210,40 @@ fetch_recent(std::uint32_t token, const QString& interval_dir, int days) {
 ///
 /// `live` decides whether Kite is asked. Everything else is identical, so the
 /// offline path is the same code and not a second implementation.
+/// THE forecast page. One page, one engine path, two questions.
+///
+/// P35-03b. This was two pages -- Spot Forecast (P16-06) and Live Forecast
+/// (P33-01) -- and Smit asked for them to be the same. They were already
+/// closer than they looked: identical features (eight lagged log-returns),
+/// identical horizon, identical level-wise GBDT hyperparameters. What differed
+/// was the QUESTION each asked, and merging them wrongly would have thrown
+/// that away.
+///
+/// The two questions are both worth asking and they have different nulls:
+///
+///   AS A FORECAST   -- is the predicted price closer than "no change"? The
+///                      control is the random walk, cost is zero, and the
+///                      verdict is a paired t-test.
+///   AS A TRADING RULE -- does acting on the sign clear the round trip? The
+///                      control is the cost hurdle and a perfect oracle, and
+///                      the number is basis points per bar.
+///
+/// So both are here, in that order, on ONE cleaned history. That last part is
+/// the merge's real content and it fixes a defect rather than tidying a menu:
+/// spot_forecast_report loaded its own copy of the series with NO partial-bar
+/// guard, so while the session was open it anchored on today's unfinished
+/// candle -- a close that is still moving. Everything below runs on the
+/// history this function has already cleaned.
 [[nodiscard]] inline QString
-live_forecast_report(const QString& dataset_root, const QString& sym,
-                     const QString& interval, bool live) {
+forecast_report(const QString& dataset_root, const QString& sym,
+                const QString& interval, bool live) {
     const QuantSymbol q = quant_symbol_by_dir(sym);
     const std::int64_t iv_ns = interval_ns_for(interval);
 
     QString s = QStringLiteral(
-        "LIVE FORECAST — the next candle, and whether to believe it\n"
-        "P33-01\n\n");
+        "FORECAST — the next candle, whether to believe it, and whether\n"
+        "acting on it would pay\n"
+        "P16-06 + P33-01 + P35, merged\n\n");
     s += QStringLiteral("  INSTRUMENT: %1   INTERVAL: %2\n\n")
              .arg(QLatin1String(q.label), interval);
 
@@ -431,6 +456,32 @@ live_forecast_report(const QString& dataset_root, const QString& sym,
              .arg(fc->move_bps, 0, 'f', 3)
              .arg(band_label);
 
+    // DOES THE BAND STRADDLE THE LAST CLOSE? THIS IS THE ANSWER.
+    //
+    // Carried over from the Spot Forecast page, which is the one thing on it
+    // that was worth more than everything above it. A band containing the
+    // anchor does not say which side of today the next bar lands on, and the
+    // point estimate sitting inside it is not a direction -- it is the centre
+    // of an interval that includes "unchanged".
+    //
+    // Published without the band, the same number reads as a forecast. That
+    // asymmetry is the entire reason this line exists, and it is why the band
+    // is printed beside the price rather than below the fold.
+    if (pub_lo <= fc->last_price && fc->last_price <= pub_hi) {
+        s += QStringLiteral(
+            "    THE BAND STRADDLES THE LAST CLOSE (%1). It does not say\n"
+            "    which side of it the next bar lands on, and the price above\n"
+            "    is the middle of an interval that includes \"unchanged\".\n\n")
+                 .arg(fc->last_price, 0, 'f', 2);
+    } else {
+        s += QStringLiteral(
+            "    The band EXCLUDES the last close (%1), so it does commit to\n"
+            "    a direction — %2.\n\n")
+                 .arg(fc->last_price, 0, 'f', 2)
+                 .arg(fc->price > fc->last_price ? QStringLiteral("up")
+                                                 : QStringLiteral("down"));
+    }
+
     // ---- 5c. IS THE BAND HONEST? -----------------------------------------
     if (before_cal && calibrated) {
         const auto& b4 = *before_cal;
@@ -611,6 +662,101 @@ live_forecast_report(const QString& dataset_root, const QString& sym,
             "  still a mis-stated interval.\n")
                  .arg(sc->coverage, 0, 'f', 3)
                  .arg(sc->nominal_coverage, 0, 'f', 3);
+    }
+
+    // ---- 7. THE SAME MODEL, ASKED THE OTHER QUESTION ----------------------
+    //
+    // Everything above scores a FORECAST against the random walk at zero cost,
+    // because a forecast is not a trade. This section scores the same model as
+    // a TRADING RULE: take the sign, pay the round trip, report basis points
+    // per bar. Different question, different null, and the cost hurdle comes
+    // first because it is computed from the return distribution BEFORE any
+    // model is fitted -- if a perfect oracle cannot clear it, nothing below
+    // can.
+    //
+    // Run on `hist.closes`, which has had the live tail merged and the
+    // unfinished bar dropped. The page this replaced did neither.
+    SpotSpec trade = spec;
+    trade.cost_bps = 5.5;
+    if (const auto r = forecast_spot(hist.closes, trade); r) {
+        s += QStringLiteral(
+            "\n"
+            "――― THE SAME MODEL, AS A TRADING RULE ―――\n\n"
+            "  Above is a forecast scored against the random walk at zero\n"
+            "  cost. Here it is a RULE: take the sign, pay the %1 bps round\n"
+            "  trip, and see what is left. %2 rows, %3 scored out of sample.\n\n")
+                 .arg(trade.cost_bps, 0, 'f', 1)
+                 .arg(r->rows).arg(r->scored);
+
+        s += QStringLiteral(
+            "  THE COST HURDLE, BEFORE ANY MODEL\n"
+            "    moves exceeding the %1 bps round trip : %2%\n"
+            "    PERFECT ORACLE, every bar            : %3 bps/bar\n"
+            "    PERFECT ORACLE, selective            : %4 bps/bar\n\n")
+                 .arg(trade.cost_bps, 0, 'f', 1)
+                 .arg(100.0 * r->frac_exceeding_cost, 0, 'f', 1)
+                 .arg(r->oracle_net_bps, 0, 'f', 3)
+                 .arg(r->oracle_selective_net_bps, 0, 'f', 3);
+
+        if (r->oracle_net_bps < 0.0) {
+            s += QStringLiteral(
+                "  A PERFECT ORACLE LOSES MONEY here. No model can clear a\n"
+                "  bar an oracle cannot, so nothing below matters.\n\n");
+        }
+
+        s += QStringLiteral("  %1 %2 %3 %4\n")
+                 .arg(QStringLiteral(""), -28)
+                 .arg(QStringLiteral("RMSE bps"), 10)
+                 .arg(QStringLiteral("dir"), 9)
+                 .arg(QStringLiteral("net bps"), 11);
+        s += QStringLiteral("  %1 %2 %3 %4\n")
+                 .arg(QStringLiteral("constant (train mean)"), -28)
+                 .arg(r->rmse_constant, 10, 'f', 3)
+                 .arg(r->dir_constant, 9, 'f', 4)
+                 .arg(QStringLiteral("-"), 11);
+        s += QStringLiteral("  %1 %2 %3 %4\n")
+                 .arg(QStringLiteral("GBDT level-wise"), -28)
+                 .arg(r->rmse_level, 10, 'f', 3)
+                 .arg(r->dir_level, 9, 'f', 4)
+                 .arg(r->net_bps_level, 11, 'f', 3);
+        s += QStringLiteral("  %1 %2 %3 %4\n\n")
+                 .arg(QStringLiteral("GBDT leaf-wise (LightGBM)"), -28)
+                 .arg(r->rmse_leaf, 10, 'f', 3)
+                 .arg(r->dir_leaf, 9, 'f', 4)
+                 .arg(r->net_bps_leaf, 11, 'f', 3);
+        s += QStringLiteral(
+            "  directional edge over the constant:\n"
+            "    level-wise %1 sigma    leaf-wise %2 sigma\n\n")
+                 .arg(r->sigma_level(), 0, 'f', 2)
+                 .arg(r->sigma_leaf(), 0, 'f', 2);
+
+        if (r->rmse_level > r->rmse_constant) {
+            s += QStringLiteral(
+                "  RMSE is WORSE than a constant. Whatever directional skill\n"
+                "  is above did not come with better MAGNITUDE — and position\n"
+                "  size is a function of magnitude.\n\n");
+        }
+        s += r->net_bps_level > r->net_bps_leaf
+            ? QStringLiteral("  Level-wise beats leaf-wise by %1 bps/bar.\n")
+                  .arg(r->net_bps_level - r->net_bps_leaf, 0, 'f', 3)
+            : QStringLiteral("  Leaf-wise beats level-wise by %1 bps/bar.\n")
+                  .arg(r->net_bps_leaf - r->net_bps_level, 0, 'f', 3);
+
+        if (r->net_bps_level > 0.0) {
+            s += QStringLiteral(
+                "\n"
+                "  NET POSITIVE at %1 bps/bar — read the two numbers beside\n"
+                "  it before this is anything. The directional edge is %2\n"
+                "  sigma%3, and %4% of moves already clear the cost at this\n"
+                "  horizon, so ANY skill above a coin flip turns positive\n"
+                "  here. That makes the HURDLE low, not the model good.\n")
+                     .arg(r->net_bps_level, 0, 'f', 3)
+                     .arg(r->sigma_level(), 0, 'f', 2)
+                     .arg(std::fabs(r->sigma_level()) > 2.0
+                              ? QString()
+                              : QStringLiteral(" (NOT significant)"))
+                     .arg(100.0 * r->frac_exceeding_cost, 0, 'f', 1);
+        }
     }
     return s;
 }

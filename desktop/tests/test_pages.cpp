@@ -491,19 +491,43 @@ int main(int argc, char** argv)
     // -----------------------------------------------------------------------
     std::printf("\n[4k] the forecast timestamp\n");
     {
-        const QString sf = spot_forecast_report(
-            ds, QStringLiteral("/spot/nifty/1d/"), "NIFTY daily");
-        check(sf.contains(QStringLiteral("Last bar SEEN")),
-              "the forecast names the last bar it was given");
-        check(sf.contains(QStringLiteral("Forecast IS ABOUT")),
+        // P35-03b. Repointed from spot_forecast_report, which is gone: the
+        // two forecast pages are one, and the stamps it checked now come from
+        // the merged report. The property is unchanged -- two stamps, because
+        // one is an observation and the other is a claim.
+        const QString sf = forecast_report(
+            ds, QStringLiteral("nifty"), QStringLiteral("1d"), false);
+        check(sf.contains(QStringLiteral("last COMPLETED bar")),
+              "the forecast names the last bar it was given, and says it had "
+              "closed");
+        check(sf.contains(QStringLiteral("Forecast is for")),
               "and the bar it is about -- two stamps, because one is an "
               "observation and the other is a claim");
-        check(!sf.contains(QStringLiteral("UNSTAMPED")),
+        check(!sf.contains(QStringLiteral("unstamped")),
               "and the daily file's time column parsed, so both are real "
               "dates rather than an absence");
-        const int at = sf.indexOf(QStringLiteral("Last bar SEEN"));
+        // The merge's own content: both questions on one page.
+        check(sf.contains(QStringLiteral("AS A TRADING RULE")),
+              "the merged page also prices the same model as a trading rule");
+        check(sf.contains(QStringLiteral("THE COST HURDLE")),
+              "with the cost hurdle that comes before any model");
+        check(sf.contains(QStringLiteral("IS THE BAND HONEST?")),
+              "and the calibration the band is judged by");
+        const int at = sf.indexOf(QStringLiteral("last COMPLETED bar"));
         if (at >= 0) {
             std::printf("%s", sf.mid(at, 420).toUtf8().constData());
+        }
+        // P35-03b. AND THE MERGED-IN HALF, PRINTED IN FULL.
+        //
+        // Not decoration. A Qt text view draws its own scrollbars, so
+        // WM_VSCROLL does nothing to it and the capture scripts can only
+        // photograph the first screenful -- the trading-rule block is below
+        // the fold and no screenshot reaches it. Printing it here makes the
+        // numbers a record that survives in ctest output rather than
+        // something only a person scrolling can see.
+        const int rule = sf.indexOf(QStringLiteral("AS A TRADING RULE"));
+        if (rule >= 0) {
+            std::printf("\n%s\n", sf.mid(rule - 4).toUtf8().constData());
         }
     }
 
