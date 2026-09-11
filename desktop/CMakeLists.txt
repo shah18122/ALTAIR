@@ -85,8 +85,11 @@ qt_add_executable(altair_desktop
     # symbols rather than anything that names the cause.
     terminal.hpp
     # P37-04. Q_OBJECT: it is a QObject with signals, so AUTOMOC must see it
-    # in THIS target'''s list or the link fails on an unresolved vtable.
+    # in THIS target's list or the link fails on an unresolved vtable.
     price_client.hpp
+    # P39. The option chain (Q_OBJECT) and the light series loader.
+    option_chain.hpp
+    data/series_io.hpp
     live_feed.hpp
     live_forecast.hpp
     kite_link.hpp
@@ -547,10 +550,15 @@ if(ALTAIR_BUILD_TESTS)
         # moc generated for a different target and fails with three unresolved
         # vtable symbols rather than anything that says "add the header".
         live_feed.hpp
-        watchlist.hpp)
+        watchlist.hpp
+        # P39. Same reason, twice more: both declare a Q_OBJECT and terminal.hpp
+        # now includes them.
+        option_chain.hpp
+        price_client.hpp)
     target_link_libraries(altair_terminal_test PRIVATE
         altair_types altair_time altair_feed altair_instruments
-        Qt6::Core Qt6::Gui Qt6::Widgets)
+        altair_analytics altair_server
+        Qt6::Core Qt6::Gui Qt6::Network Qt6::Widgets)
     target_include_directories(altair_terminal_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_terminal_test PRIVATE

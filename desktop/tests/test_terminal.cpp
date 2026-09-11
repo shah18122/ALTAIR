@@ -124,6 +124,87 @@ int main(int argc, char** argv)
     table->setCurrentCell(table->rowCount() + 50, 0);
     check(true, "selecting past the last row returned without a read");
 
+    // ------------------------------------------------------------------
+    // [5] P39. THE OPTION CHAIN, AND EVERY PATH INTO THE TICKET CARRIES A SPEC.
+    //
+    // The chain's strikes, tokens, lots, ticks and expiries are the real ones
+    // from the instrument master. A click must load that exact contract, with
+    // its spec, and route it to NFO -- the old ticket routed every option to
+    // NSE, the cash segment, because it matched "FUT" in the symbol.
+    // ------------------------------------------------------------------
+    std::printf("\n[5] option chain -> ticket\n");
+    {
+        OptionChainPanel* chain = term.chain();
+        check(chain != nullptr, "the terminal carries an option chain");
+        const int rows = chain != nullptr ? chain->strikes_shown() : 0;
+        std::printf("    chain shows %d strikes\n", rows);
+        check(rows > 0,
+              "the chain prices strikes from the real master and the dataset");
+
+        if (rows > 0) {
+            const int mid = rows / 2;
+            chain->click_cell(mid, kC_Px);
+            const unsigned ce = term.ticket()->current_token();
+            std::printf("    clicked the CALL at %.0f -> token %u, exchange %s\n",
+                        chain->strike_at(mid) / 100.0, ce,
+                        term.ticket()->spec_exchange(ce).toUtf8().constData());
+            check(term.ticket()->has_spec(ce),
+                  "a click loads the contract WITH its lot, tick and exchange");
+            check(term.ticket()->spec_exchange(ce) == QStringLiteral("NFO"),
+                  "and an index option routes to NFO, not NSE -- the bug the "
+                  "symbol-suffix guess had for every option");
+
+            chain->click_cell(mid, kP_Px);
+            const unsigned pe = term.ticket()->current_token();
+            check(pe != 0 && pe != ce && term.ticket()->has_spec(pe),
+                  "the PUT on the same strike is a different contract, also "
+                  "with a spec");
+
+            // A MODEL PRICE NEVER SEEDS AN ORDER.
+            const int before = term.ticket()->limit_paise();
+            chain->click_cell(mid, kC_Px);
+            check(term.ticket()->limit_paise() == before,
+                  "clicking a MODEL price loads the contract but leaves the "
+                  "limit price alone");
+
+            // The strike column is neither side.
+            const unsigned held = term.ticket()->current_token();
+            chain->click_cell(mid, kStrike);
+            check(term.ticket()->current_token() == held,
+                  "clicking the strike itself picks nothing");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // [6] P39. set_price snaps DOWN to the tick, and a hotkey never submits.
+    // ------------------------------------------------------------------
+    std::printf("\n[6] tick snapping and hotkeys\n");
+    {
+        OrderTicket* t = term.ticket();
+        t->set_contract(99990001u, QStringLiteral("TESTOPT"), 65, 5,
+                        QStringLiteral("NFO"));
+        t->set_price(12'347);                 // not a multiple of 5
+        std::printf("    set_price(12347) with a 5-paise tick -> %d\n",
+                    t->limit_paise());
+        check(t->limit_paise() == 12'345,
+              "an off-tick price snaps DOWN to the tick -- a buy is never "
+              "priced above what was clicked");
+
+        QFile q(QStringLiteral(ALTAIR_INTENT_FILE));
+        const qint64 size_before = q.exists() ? q.size() : -1;
+        t->focus_side(true);
+        t->focus_side(false);
+        const qint64 size_after = q.exists() ? q.size() : -1;
+        check(size_before == size_after,
+              "F1 and F2 focus the ticket and write NOTHING to the intent "
+              "queue -- the typed confirmation is still the only way in");
+
+        // The seeded index is refused: it has no tradeable spec.
+        check(!t->has_spec(256265u),
+              "NIFTY 50 -- an index, which cannot be traded -- holds no spec, "
+              "so a request for it is refused at submit");
+    }
+
     std::printf("\n%s -- %d failing check(s)\n",
                 failures == 0 ? "PASS" : "FAILED", failures);
     return failures == 0 ? 0 : 1;

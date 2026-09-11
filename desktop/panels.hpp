@@ -970,6 +970,13 @@ Q_SIGNALS:
     /// reason the table shows the master's: the typed name is whatever
     /// somebody entered and the master's is what Kite calls the contract.
     void instrumentPicked(unsigned token, const QString& symbol);
+    /// P39. The same pick WITH the contract's spec, for the order ticket,
+    /// which now refuses any contract whose lot, tick and exchange it has not
+    /// been given. Emitted only for a row the master resolved: an unresolved
+    /// row still emits instrumentPicked, and the ticket then says plainly
+    /// that it cannot request it.
+    void contractPicked(unsigned token, const QString& symbol, qint64 lot,
+                        qint64 tick_paise, const QString& exchange);
 
 public:
 
@@ -1000,6 +1007,11 @@ private:
         const WatchRow& r = rows[static_cast<std::size_t>(row)];
         const InstrumentProfile p = master_.find(r.token);
         Q_EMIT instrumentPicked(r.token, p.found ? p.symbol : r.symbol);
+        if (p.found && p.lot_size > 0 && p.tick_paise > 0
+            && !p.kite_exchange.isEmpty()) {
+            Q_EMIT contractPicked(r.token, p.symbol, p.lot_size, p.tick_paise,
+                                  p.kite_exchange);
+        }
     }
 
 private Q_SLOTS:

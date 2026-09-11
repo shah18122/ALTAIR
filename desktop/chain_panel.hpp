@@ -51,6 +51,8 @@
 
 #include <algorithm>
 #include <fstream>
+#include "data/master_lookup.hpp"
+
 #include <map>
 #include <string>
 #include <vector>
@@ -64,6 +66,17 @@ struct ChainRow {
     std::int64_t tick = 0;
     bool has_ce = false;
     bool has_pe = false;
+    /// The broker tokens and trading symbols, so a click on a chain row can
+    /// load the REAL contract into the order ticket. Read from the master by
+    /// the same parser the engine uses -- never composed from strike and
+    /// expiry, which is how a ticket ends up naming a contract that does not
+    /// exist.
+    std::uint32_t ce_token = 0;
+    std::uint32_t pe_token = 0;
+    std::string ce_symbol;
+    std::string pe_symbol;
+    /// NFO or BFO, from the spec. Never inferred from the symbol.
+    QString exchange;
 };
 
 /// The chain for one underlying, grouped by expiry.
@@ -113,8 +126,19 @@ struct Chain {
         r.strike = s.strike.raw();
         r.lot = s.lot_size.raw();
         r.tick = s.tick_size.raw();
-        if (s.opt_type == OptionType::CE) { r.has_ce = true; }
-        if (s.opt_type == OptionType::PE) { r.has_pe = true; }
+        r.exchange = kite_exchange_name(s.exchange, s.segment);
+        const std::uint32_t tok =
+            s.token[static_cast<std::size_t>(FeedSource::Kite)];
+        if (s.opt_type == OptionType::CE) {
+            r.has_ce = true;
+            r.ce_token = tok;
+            r.ce_symbol = s.symbol;
+        }
+        if (s.opt_type == OptionType::PE) {
+            r.has_pe = true;
+            r.pe_token = tok;
+            r.pe_symbol = s.symbol;
+        }
         ++c.contracts;
         return true;
     };

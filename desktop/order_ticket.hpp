@@ -54,6 +54,8 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
+
+#include <map>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -198,6 +200,22 @@ public:
         form->addRow(QStringLiteral("Limit price"), price_);
         connect(market_, &QCheckBox::toggled, price_, &QSpinBox::setDisabled);
 
+        // P39. Which side the hotkey asked for, and whether the selected
+        // contract has a spec at all. Both shown, because an order ticket
+        // that silently refuses at submit is worse than one that says so
+        // while the operator is still typing.
+        side_hint_ = new QLabel(QStringLiteral("F1 buy  ·  F2 sell"), box);
+        side_hint_->setStyleSheet(QStringLiteral("color:#8A93A2;padding:4px;"));
+        form->addRow(QStringLiteral("Side"), side_hint_);
+        spec_line_ = new QLabel(box);
+        form->addRow(QString(), spec_line_);
+        connect(symbol_, &QComboBox::currentIndexChanged, this,
+                [this](int) { refresh_spec_line(); });
+        // And ONCE NOW. It was only refreshed on a change, so the ticket first
+        // opened with a blank spec line beside an index -- NIFTY 50 or NIFTY
+        // BANK -- which cannot be traded at all. Blank read as "fine".
+        refresh_spec_line();
+
         product_ = new QComboBox(box);
         product_->addItems({QStringLiteral("NRML"), QStringLiteral("MIS"),
                             QStringLiteral("CNC")});
@@ -283,10 +301,75 @@ public Q_SLOTS:
         symbol_->setCurrentIndex(symbol_->count() - 1);
     }
 
+    /// Load a contract together with its SPEC -- lot, tick and exchange.
+    ///
+    /// P39. set_instrument() above carries a token and a name and nothing
+    /// else, so a request could be written for a contract whose lot size and
+    /// tick size nobody had looked up. That is hard rule 1 and hard rule 9 in
+    /// one place: a lot size must come from the spec store, and ambiguity must
+    /// block. submit() now REFUSES any token that did not arrive through here.
+    void set_contract(unsigned token, const QString& name, qint64 lot,
+                      qint64 tick_paise, const QString& exchange) {
+        if (token == 0) { return; }
+        set_instrument(token, name);
+        specs_[token] = Spec{lot, tick_paise, exchange};
+        refresh_spec_line();
+    }
+
+    /// Put a price in the ticket. EXPLICIT, and only ever called because the
+    /// operator clicked a price.
+    ///
+    /// set_instrument() deliberately never touches the limit price, and that
+    /// rule stands: silently resetting it on a selection change is how
+    /// somebody sends the price they typed for a different contract. Clicking
+    /// a price in the chain is the operator choosing one, which is different
+    /// -- and it is snapped DOWN to the tick, never up, so a buy is never
+    /// priced higher than what was clicked.
+    void set_price(qint64 paise) {
+        if (paise <= 0) { return; }
+        qint64 v = paise;
+        const auto it = specs_.find(current_token());
+        if (it != specs_.end() && it->second.tick > 0) {
+            v -= v % it->second.tick;
+            if (v <= 0) { v = it->second.tick; }
+        }
+        market_->setChecked(false);
+        price_->setValue(static_cast<int>(v));
+    }
+
+    /// Hotkey entry: bring the ticket up on one side with the size selected.
+    ///
+    /// F1 / F2, as in ODIN. It FOCUSES; it does not submit. The typed
+    /// confirmation in submit() is the safety property from P11-14 and a
+    /// hotkey that routed around it would be a one-keystroke order.
+    void focus_side(bool buy) {
+        side_hint_->setText(buy ? QStringLiteral("BUY  —  F1")
+                                : QStringLiteral("SELL  —  F2"));
+        side_hint_->setStyleSheet(
+            buy ? QStringLiteral("color:#FFFFFF;background:#1B6E3A;"
+                                 "padding:4px;font-weight:bold;")
+                : QStringLiteral("color:#FFFFFF;background:#8E2020;"
+                                 "padding:4px;font-weight:bold;"));
+        lots_->setFocus();
+        lots_->selectAll();
+    }
+
     /// For tests and for the terminal: which token the ticket would request.
     [[nodiscard]] unsigned current_token() const {
         return symbol_->currentData().toUInt();
     }
+
+    /// For tests: does the ticket hold a spec for this token?
+    [[nodiscard]] bool has_spec(unsigned token) const {
+        return specs_.find(token) != specs_.end();
+    }
+    /// For tests: the exchange the spec will route to, empty if none.
+    [[nodiscard]] QString spec_exchange(unsigned token) const {
+        const auto it = specs_.find(token);
+        return it == specs_.end() ? QString() : it->second.exchange;
+    }
+    /// For tests: the limit price in paise.
+    [[nodiscard]] int limit_paise() const { return price_->value(); }
 
 private:
     /// The typed confirmation, deliberately different per side.
@@ -301,11 +384,33 @@ private:
         d.buy = buy;
         d.token = symbol_->currentData().toUInt();
         d.symbol = symbol_->currentText();
-        // The exchange follows the instrument, not a control: a future on NSE
-        // is a rejected order, and a person picking it from a dropdown is a
-        // person who can pick it wrongly.
-        d.exchange = d.symbol.endsWith(QStringLiteral("FUT"))
-                         ? QStringLiteral("NFO") : QStringLiteral("NSE");
+
+        // ---- VALIDATED AT REQUEST TIME (P39) ---------------------------
+        //
+        // A contract with no spec is REFUSED. Rule 1: lot and tick come from
+        // the spec store. Rule 9: ambiguity blocks rather than guessing.
+        const auto it = specs_.find(d.token);
+        if (it == specs_.end() || it->second.lot <= 0 || it->second.tick <= 0
+            || it->second.exchange.isEmpty()) {
+            log_->appendPlainText(QStringLiteral(
+                "  REFUSED — %1 has no resolved spec (lot, tick, exchange). "
+                "Pick it from the option chain or a resolved watchlist row.")
+                    .arg(d.symbol));
+            return;
+        }
+        // The exchange comes from the SPEC. It used to be
+        // `symbol.endsWith("FUT") ? "NFO" : "NSE"`, which sent every OPTION to
+        // the cash segment -- NIFTY2690824000CE ends in CE, not FUT.
+        d.exchange = it->second.exchange;
+        if (!market_->isChecked()
+            && price_->value() % it->second.tick != 0) {
+            log_->appendPlainText(QStringLiteral(
+                "  REFUSED — limit %1 paise is not a multiple of the %2-paise "
+                "tick. The exchange rejects an off-tick price; better to say "
+                "so here than to find out from a rejection.")
+                    .arg(price_->value()).arg(it->second.tick));
+            return;
+        }
         d.lots = lots_->value();
         d.market = market_->isChecked();
         d.limit_paise = d.market ? 0 : price_->value();
@@ -359,6 +464,32 @@ private:
     QSpinBox* lots_ = nullptr;
     QCheckBox* market_ = nullptr;
     QSpinBox* price_ = nullptr;
+
+    struct Spec {
+        qint64 lot = 0;
+        qint64 tick = 0;
+        QString exchange;
+    };
+    std::map<unsigned, Spec> specs_;
+    QLabel* side_hint_ = nullptr;
+    QLabel* spec_line_ = nullptr;
+
+    void refresh_spec_line() {
+        if (spec_line_ == nullptr) { return; }
+        const auto it = specs_.find(current_token());
+        if (it == specs_.end()) {
+            spec_line_->setText(QStringLiteral(
+                "spec: UNRESOLVED — this contract cannot be requested"));
+            spec_line_->setStyleSheet(QStringLiteral("color:#E06C5B;"));
+            return;
+        }
+        spec_line_->setText(
+            QStringLiteral("spec: %1  ·  lot %2  ·  tick %3 paise")
+                .arg(it->second.exchange)
+                .arg(it->second.lot)
+                .arg(it->second.tick));
+        spec_line_->setStyleSheet(QStringLiteral("color:#7FB77E;"));
+    }
     QComboBox* product_ = nullptr;
     QComboBox* validity_ = nullptr;
     QPushButton* buy_ = nullptr;

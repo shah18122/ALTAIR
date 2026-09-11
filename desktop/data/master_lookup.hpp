@@ -54,7 +54,34 @@ struct InstrumentProfile {
     std::int64_t lot_size = 0;
     std::int64_t tick_paise = 0;
     std::int64_t expiry_ns = 0;      ///< 0 when the contract has no expiry
+    /// The exchange an order for this contract is sent to: NSE, NFO, BSE, BFO,
+    /// CDS, BCD or MCX. Derived from the spec's exchange AND segment -- never
+    /// from the symbol's spelling. See kite_exchange_name().
+    QString kite_exchange;
 };
+
+/// The Kite exchange code for a contract.
+///
+/// THIS REPLACES A GUESS THAT WAS WRONG FOR EVERY OPTION. order_ticket.hpp
+/// decided the exchange with `symbol.endsWith("FUT") ? "NFO" : "NSE"`, so an
+/// option -- NIFTY2690824000CE ends in CE, not FUT -- was written to the
+/// intent queue as NSE, which is the cash segment. data/order_intents.jsonl
+/// already held one such line. oms/ would have routed it to a segment where
+/// the contract does not exist.
+///
+/// Exchange and segment both come from the master, so this is a lookup and
+/// not an inference.
+[[nodiscard]] inline QString kite_exchange_name(Exchange ex, Segment seg) {
+    const bool bse = ex == Exchange::BSE;
+    switch (seg) {
+    case Segment::Cash:      return bse ? QStringLiteral("BSE") : QStringLiteral("NSE");
+    case Segment::Fut:
+    case Segment::Opt:       return bse ? QStringLiteral("BFO") : QStringLiteral("NFO");
+    case Segment::Currency:  return bse ? QStringLiteral("BCD") : QStringLiteral("CDS");
+    case Segment::Commodity: return QStringLiteral("MCX");
+    }
+    return QString();   // unknown: empty, so a caller must refuse rather than send
+}
 
 [[nodiscard]] inline QString segment_name(Segment s) {
     switch (s) {
@@ -107,6 +134,7 @@ public:
             p.lot_size = s.lot_size.raw();
             p.tick_paise = s.tick_size.raw();
             p.expiry_ns = s.expiry.ns_since_epoch();
+            p.kite_exchange = kite_exchange_name(s.exchange, s.segment);
             // ---- QUALIFY THE ENUM. THERE ARE TWO OF THEM. ---------------
             //
             // `altair::FeedSource` (instruments/contract_spec.hpp) is
