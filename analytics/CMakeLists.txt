@@ -18,6 +18,14 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_greeks_test PRIVATE altair_analytics altair_flags)
     add_test(NAME greeks COMMAND altair_greeks_test)
 
+    # The option chain as structure-of-arrays, cache-line aligned, one expiry
+    # in L1D. Held to black76 on every strike and to put-call parity on every
+    # row, because it is a second implementation of the same model and second
+    # implementations drift.
+    add_executable(altair_chain_soa_test tests/test_chain_soa.cpp)
+    target_link_libraries(altair_chain_soa_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME chain_soa COMMAND altair_chain_soa_test)
+
     add_executable(altair_iv_test tests/test_iv.cpp)
     target_link_libraries(altair_iv_test PRIVATE altair_analytics altair_flags)
     add_test(NAME iv COMMAND altair_iv_test)
@@ -85,4 +93,12 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_surface_hmm_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME analytics_surface_hmm COMMAND altair_surface_hmm_test)
+endif()
+
+# SoA versus AoS at L1, L2, L3 and RAM working sets. An EXECUTABLE, not a test:
+# timing under a parallel ctest run is noise, and a latency number that fails
+# the build on a busy afternoon teaches everybody to ignore latency numbers.
+if(ALTAIR_BUILD_BENCH)
+    add_executable(altair_bench_chain bench/bench_chain.cpp)
+    target_link_libraries(altair_bench_chain PRIVATE altair_analytics altair_flags)
 endif()
