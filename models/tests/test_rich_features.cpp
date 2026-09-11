@@ -80,9 +80,21 @@ std::vector<double> load_closes(const std::string& dir)
 
 }  // namespace
 
-int main()
+int main(int argc, char** argv)
 {
     std::printf("P41 richer features\n\n");
+
+    // TWO JOBS, SPLIT BY A FLAG. The look-ahead check below is a safety
+    // property and runs everywhere, sanitizers included. The experiment is a
+    // MEASUREMENT -- eight walk-forwards and several hundred GBDT fits over
+    // 8,763 bars -- and under AddressSanitizer it ran for well over the
+    // 600-second test timeout while telling ASAN nothing the unit checks do
+    // not already exercise. So it is registered separately, labelled
+    // `experiment`, and the sanitizer presets skip that label.
+    bool experiment = false;
+    for (int a = 1; a < argc; ++a) {
+        if (std::string(argv[a]) == "--experiment") { experiment = true; }
+    }
 
     // ---- hard rule 7, planted --------------------------------------------
     {
@@ -130,6 +142,70 @@ int main()
         check(same_as_before,
               "and with rich off the row is byte-for-byte the eight lagged "
               "returns it has always been");
+    }
+
+    // ---- the boundaries, where out-of-bounds reads live -----------------
+    //
+    // The long experiment below was the only thing that walked append_row
+    // across the FIRST buildable row and the one-past-the-end row that
+    // forecast_next uses -- and under AddressSanitizer it ran for over twenty
+    // minutes. Those two indices are the entire risk: every read is r[i-k] for
+    // some k, so the first row is where k can underflow and the last is where
+    // i itself is past the data. Testing them directly is both faster and a
+    // stronger statement than hoping a big run happens to hit them.
+    {
+        std::mt19937 rng(99u);
+        std::normal_distribution<double> z(0.0, 90.0);
+        std::vector<double> r(200);
+        for (double& v : r) { v = z(rng); }
+
+        for (const bool rich : {false, true}) {
+            for (const bool vol : {false, true}) {
+                altair::SpotSpec spec;
+                spec.rich = rich;
+                spec.vol_scaled_label = vol;
+                const std::size_t first = altair::first_row_index(spec);
+
+                std::vector<double> lo, hi;
+                altair::append_row(r, first, spec, lo);
+                // r.size() is the label index of the bar that has NOT
+                // happened: forecast_next builds exactly this row.
+                altair::append_row(r, r.size(), spec, hi);
+                const double s_lo = altair::label_scale(r, first, spec);
+                const double s_hi = altair::label_scale(r, r.size(), spec);
+
+                bool finite = lo.size() == altair::feature_width(spec)
+                              && hi.size() == altair::feature_width(spec)
+                              && std::isfinite(s_lo) && std::isfinite(s_hi)
+                              && s_lo > 0.0 && s_hi > 0.0;
+                for (double v : lo) { finite = finite && std::isfinite(v); }
+                for (double v : hi) { finite = finite && std::isfinite(v); }
+                if (!finite) {
+                    std::printf("        rich=%d vol=%d first=%zu\n",
+                                rich ? 1 : 0, vol ? 1 : 0, first);
+                }
+                check(finite,
+                      "the first buildable row and the one-past-the-end row "
+                      "are both full-width and finite -- under ASAN an "
+                      "out-of-bounds read at either would abort right here");
+            }
+        }
+
+        // A warmup that is one short must NOT be usable. first_row_index is
+        // the contract; one before it is where the vol-label bug lived.
+        altair::SpotSpec v;
+        v.vol_scaled_label = true;
+        check(altair::first_row_index(v) >= 20,
+              "a vol-scaled label cannot start before its 20-bar window has "
+              "filled -- the eleven poisoned rows that produced RMSE 625");
+    }
+
+    if (!experiment) {
+        std::printf("\n  (the market experiment is `--experiment`; ctest runs it"
+                    " as\n   models_rich_features_experiment)\n");
+        std::printf("\n%s\n", failures == 0 ? "all checks passed"
+                                            : "THERE WERE FAILURES");
+        return failures == 0 ? 0 : 1;
     }
 
     // ---- the experiment ---------------------------------------------------

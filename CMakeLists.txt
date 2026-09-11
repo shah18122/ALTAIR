@@ -226,6 +226,14 @@ if(ALTAIR_BUILD_TESTS)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ASAN runtime next to every executable. AFTER every add_subdirectory, because
+# it walks the targets they declared -- called earlier it would see none and
+# stage nothing, which is the silent failure it exists to prevent.
+# ─────────────────────────────────────────────────────────────────────────────
+include(cmake/AsanRuntime.cmake)
+altair_stage_asan_runtime()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 message(STATUS "──────────────────────────────────────────────")

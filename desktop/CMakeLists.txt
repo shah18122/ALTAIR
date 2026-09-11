@@ -603,19 +603,32 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     set_target_properties(altair_fits_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_fits COMMAND altair_fits_test)
+    # THE QT BIN DIR IS PREPENDED AT TEST TIME, NOT FROZEN AT CONFIGURE TIME.
+    #
+    # These three used `ENVIRONMENT "PATH=${ALTAIR_QT_ROOT}/bin;$ENV{PATH}"`,
+    # and `$ENV{PATH}` in a CMake file is expanded when CMake CONFIGURES. So
+    # each test ran with a PATH snapshotted from whatever shell last ran
+    # cmake -- which REPLACED the live PATH ctest was given rather than adding
+    # to it.
+    #
+    # Under the asan preset that was fatal and invisible. build.bat runs
+    # vcvars, which puts the compiler's directory on PATH, and that directory
+    # is where clang_rt.asan_dynamic-x86_64.dll lives. Every other test
+    # inherited it and passed; these three threw it away with their frozen
+    # PATH and could not load. Windows then raised a hard-error dialog owned by
+    # csrss.exe -- not by the test, so it had no window to find -- and the
+    # process sat blocked on an invisible box until ctest killed it at 600 s.
+    #
+    # That is why the asan run reported exactly these three as "failures", and
+    # why a direct run from a shell passed them in under twelve seconds. It
+    # was never a memory bug.
+    #
+    # ENVIRONMENT_MODIFICATION (CMake 3.22) edits the PATH ctest actually
+    # hands the test, so the live PATH survives.
     if(WIN32)
-        set_tests_properties(desktop_fits PROPERTIES
-            ENVIRONMENT "PATH=${ALTAIR_QT_ROOT}/bin;$ENV{PATH}")
-    endif()
-    if(WIN32)
-        set_tests_properties(desktop_bar_csv PROPERTIES
-            ENVIRONMENT "PATH=${ALTAIR_QT_ROOT}/bin;$ENV{PATH}")
-    endif()
-    if(WIN32)
-        # The test needs the Qt DLLs on PATH; point ctest at the Qt bin dir
-        # rather than copying a second set next to the test binary.
-        set_tests_properties(desktop_filter PROPERTIES
-            ENVIRONMENT "PATH=${ALTAIR_QT_ROOT}/bin;$ENV{PATH}")
+        set_tests_properties(desktop_fits desktop_bar_csv desktop_filter
+            PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${ALTAIR_QT_ROOT}/bin")
     endif()
 endif()
 

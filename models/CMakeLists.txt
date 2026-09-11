@@ -155,6 +155,14 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_rich_features_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_rich_features COMMAND altair_rich_features_test)
+    # The market experiment, separately. Eight walk-forwards on real data is a
+    # MEASUREMENT, not a unit check: labelled so the sanitizer presets can skip
+    # it, and given its own timeout because under a plain Debug build it is
+    # already the slowest test in the tree.
+    add_test(NAME models_rich_features_experiment
+             COMMAND altair_rich_features_test --experiment)
+    set_tests_properties(models_rich_features_experiment PROPERTIES
+        LABELS experiment TIMEOUT 1800)
 
     # P35-02b. The same calibration on the REAL NIFTY daily series.
     #

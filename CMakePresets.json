@@ -170,6 +170,11 @@
       "execution": {
         "stopOnFailure": false,
         "timeout": 600
+      },
+      "filter": {
+        "exclude": {
+          "label": "experiment"
+        }
       }
     },
     {
@@ -181,6 +186,11 @@
       "execution": {
         "stopOnFailure": false,
         "timeout": 600
+      },
+      "filter": {
+        "exclude": {
+          "label": "experiment"
+        }
       }
     }
   ]
