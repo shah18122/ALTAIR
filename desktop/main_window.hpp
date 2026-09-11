@@ -1521,15 +1521,17 @@ private:
             QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
         const Liveness live = feed_.liveness(now_ns);
         const std::int64_t age = feed_.age_ns(now_ns);
+        // pill_text, not liveness_label: the pill said "LIVE · Replay" in
+        // green. See feed_status.hpp.
         pill_->setText(
-            QStringLiteral("  %1 · %2%3  ")
-                .arg(liveness_label(live), feed_name(feed_.source()),
+            QStringLiteral("  %1%2  ")
+                .arg(pill_text(live, feed_.source()),
                      age < 0 ? QString()
                              : QStringLiteral(" · last tick %1 ms ago")
                                    .arg(age / 1'000'000)));
         pill_->setStyleSheet(
             QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;")
-                .arg(liveness_colour(live).name()));
+                .arg(pill_colour(live, feed_.source()).name()));
         who_->setText(QStringLiteral(" %1 (%2) ")
                           .arg(user_, role_name(role_)));
 

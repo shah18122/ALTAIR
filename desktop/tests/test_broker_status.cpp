@@ -6,6 +6,7 @@
 // user id, and is DEAD. A presence check calls that connected.
 
 #include <desktop/broker_status.hpp>
+#include <desktop/feed_status.hpp>
 
 #include <QCoreApplication>
 #include <QDir>
@@ -175,6 +176,36 @@ int main(int argc, char** argv) {
         check(!b.usable() && b.detail.contains(QStringLiteral("FUTURE")),
               "a login_time in the future is called out rather than treated "
               "as fresh -- it is the input the daily rule depends on");
+    }
+
+    // ------------------------------------------------------------------
+    // P39-05. THE STATUS PILL NEVER SAYS LIVE OVER A REPLAY.
+    //
+    // It said "LIVE · Replay" in green -- true about arrival, and a claim
+    // about the market. It is the same mistake the Terminal's chain header
+    // made the same day, one widget over.
+    // ------------------------------------------------------------------
+    {
+        using altair::ui::FeedSource;
+        using altair::ui::Liveness;
+        using altair::ui::pill_colour;
+        using altair::ui::pill_text;
+        const QString rep = pill_text(Liveness::Live, FeedSource::Replay);
+        std::printf("    replay arriving -> \"%s\"\n", rep.toUtf8().constData());
+        check(rep == QStringLiteral("REPLAYING") && !rep.contains(QStringLiteral("LIVE")),
+              "a replay that is arriving says REPLAYING, never LIVE");
+        check(pill_colour(Liveness::Live, FeedSource::Replay)
+                  != pill_colour(Liveness::Live, FeedSource::Kite),
+              "and is not painted in live's green either");
+        check(pill_text(Liveness::Live, FeedSource::Kite)
+                  == QStringLiteral("LIVE · Kite"),
+              "a Kite feed that is arriving is LIVE");
+        check(!pill_text(Liveness::Live, FeedSource::Unspecified)
+                   .contains(QStringLiteral("LIVE")),
+              "a source nobody has named is never LIVE");
+        check(pill_text(Liveness::Stale, FeedSource::Replay)
+                  .startsWith(QStringLiteral("STALE")),
+              "stale is stale on every source");
     }
 
     std::printf("\n%s\n", failures == 0 ? "all checks passed" : "FAILURES");

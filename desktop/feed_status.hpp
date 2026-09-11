@@ -112,6 +112,36 @@ enum class Liveness : std::uint8_t {
     }
 }
 
+/// What the status-bar pill SAYS -- which depends on the source as well as
+/// on arrival.
+///
+/// Liveness answers "is data arriving". Printed bare, the answer for a replay
+/// was a green "LIVE · Replay": true about the socket, and a claim about the
+/// MARKET that nothing on the screen was making. So only a real venue can be
+/// LIVE. A replay that is arriving is REPLAYING, in the MODEL badge's gold;
+/// a source nobody has named is never LIVE. Stale, Disconnected and No data
+/// mean the same on every source and keep their words.
+[[nodiscard]] inline QString pill_text(Liveness l, FeedSource s) {
+    if (l == Liveness::Live) {
+        switch (s) {
+        case FeedSource::Kite:
+        case FeedSource::Xts:    return QStringLiteral("LIVE · ") + feed_name(s);
+        case FeedSource::Replay: return QStringLiteral("REPLAYING");
+        case FeedSource::Unspecified:
+        default:                 return QStringLiteral("ARRIVING · source unknown");
+        }
+    }
+    return liveness_label(l) + QStringLiteral(" · ") + feed_name(s);
+}
+
+[[nodiscard]] inline QColor pill_colour(Liveness l, FeedSource s) {
+    if (l == Liveness::Live && s != FeedSource::Kite && s != FeedSource::Xts) {
+        return s == FeedSource::Replay ? QColor(0x7A, 0x5C, 0x12)   // gold
+                                       : liveness_colour(Liveness::Stale);
+    }
+    return liveness_colour(l);
+}
+
 /// Tracks whether data is actually arriving.
 ///
 /// `transport_up` can only downgrade the answer. There is deliberately no way
