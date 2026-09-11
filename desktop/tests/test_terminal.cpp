@@ -18,9 +18,13 @@
 #include "../terminal.hpp"
 
 #include <QApplication>
+#include <QDateTime>
 #include <QTableWidget>
 
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <utility>
 
 namespace {
 
@@ -167,6 +171,19 @@ int main(int argc, char** argv)
                   "clicking a MODEL price loads the contract but leaves the "
                   "limit price alone");
 
+            // A REPLAYED price is never labelled LIVE. The first version did
+            // exactly that on screen, under a strip that correctly said REPLAY.
+            const std::int64_t now_ns =
+                QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
+            chain->set_spot(256265u, 2'400'000, true, now_ns);
+            check(chain->header_text().contains(QStringLiteral("REPLAY"))
+                      && !chain->header_text().contains(QStringLiteral("LIVE")),
+                  "a replayed spot is labelled REPLAY in the chain header, "
+                  "never LIVE");
+            chain->set_spot(256265u, 2'400'000, false, now_ns);
+            check(chain->header_text().contains(QStringLiteral("LIVE")),
+                  "and a live one is labelled LIVE");
+
             // The strike column is neither side.
             const unsigned held = term.ticket()->current_token();
             chain->click_cell(mid, kStrike);
@@ -203,6 +220,102 @@ int main(int argc, char** argv)
         check(!t->has_spec(256265u),
               "NIFTY 50 -- an index, which cannot be traded -- holds no spec, "
               "so a request for it is refused at submit");
+    }
+
+    // ------------------------------------------------------------------
+    // [7] TIME COMES OFF THE TICK -- through the terminal's own wiring.
+    //
+    // The first chain valued every spot at the wall clock, so a replayed
+    // 4 September spot was priced with 11 September's time to expiry. And
+    // the REPLAY label was first tested by calling the chain directly, which
+    // cannot catch the terminal passing the wrong flag. apply_price is the
+    // one entry the stream uses, so these go through it.
+    // ------------------------------------------------------------------
+    std::printf("\n[7] a price is valued at its own tick\n");
+    {
+        OptionChainPanel* chain = term.chain();
+        const std::int64_t now_ns =
+            QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
+        constexpr std::int64_t kWeek = 7LL * 86'400LL * 1'000'000'000LL;
+
+        term.apply_price(256265u, 2'400'000, false, now_ns);
+        const double live_dte = chain->days_to_expiry();
+        term.apply_price(256265u, 2'400'000, true, now_ns - kWeek);
+        const double replay_dte = chain->days_to_expiry();
+        std::printf("    live tick now        -> %.4f days to expiry\n"
+                    "    replayed, a week ago -> %.4f days to expiry\n",
+                    live_dte, replay_dte);
+        check(live_dte > 0.0 && std::fabs(replay_dte - live_dte - 7.0) < 1e-6,
+              "a tick from a week ago is valued with exactly a week MORE to "
+              "expiry -- the wall clock does not enter");
+        check(chain->header_text().contains(QStringLiteral("REPLAY"))
+                  && !chain->header_text().contains(QStringLiteral("LIVE")),
+              "through the terminal's wiring, the chain says REPLAY and never "
+              "LIVE");
+        check(term.tile_text(256265u).contains(QStringLiteral("replay")),
+              "and the NIFTY tile says replay");
+
+        term.apply_price(256265u, 2'400'000, true, 0);
+        check(chain->strikes_shown() == 0 && chain->days_to_expiry() == 0.0,
+              "a replayed price with NO timestamp is refused -- not quietly "
+              "valued at the wall clock");
+
+        term.apply_price(256265u, 2'400'000, false, now_ns);
+        check(chain->strikes_shown() > 0, "and a good price restores it");
+
+        // The longest header -- a replay, valued at a tick -- must not become
+        // the page's minimum width. On a 1920 px screen, less the nav column,
+        // the terminal has about 1730 px; the unwrapped header took 1964.
+        term.apply_price(256265u, 2'400'000, true, now_ns - kWeek);
+        const int min_w = term.minimumSizeHint().width();
+        std::printf("    terminal minimum width with the longest header: %d px\n",
+                    min_w);
+        check(min_w <= 1700,
+              "the longest chain header still fits a 1920 px screen beside the "
+              "nav -- it wraps rather than widening the window");
+        term.apply_price(256265u, 2'400'000, false, now_ns);
+    }
+
+    // ------------------------------------------------------------------
+    // [8] The day's change is against the TICK's previous day, in IST.
+    //
+    // The tile measured every price against the file's second-to-last row.
+    // That is right only when the last row is today; before the updater runs
+    // it is a day wrong, and for a replay it was a week wrong.
+    // ------------------------------------------------------------------
+    std::printf("\n[8] the change basis is the tick's previous IST day\n");
+    {
+        constexpr std::int64_t kSec = 1'000'000'000LL;
+        constexpr std::int64_t kDay = 86'400LL * kSec;
+        constexpr std::int64_t kIst = (5LL * 3600LL + 30LL * 60LL) * kSec;
+        const std::int64_t d1 = 20'000LL * kDay - kIst;   // IST midnight
+        const std::int64_t at_0915 = (9LL * 3600LL + 15LL * 60LL) * kSec;
+        const std::int64_t at_1000 = 10LL * 3600LL * kSec;
+
+        // Three trading days, stamped 09:15 IST -- one of the two stamp
+        // shapes on disk.
+        UiStamped s;
+        s.closes = {100.0, 110.0, 120.0};
+        s.stamps_ns = {d1 + at_0915, d1 + kDay + at_0915,
+                       d1 + 2 * kDay + at_0915};
+
+        check(prev_close_before(s, d1 + 2 * kDay + at_1000) == 110.0,
+              "a tick on day 3 is measured against day 2's close");
+        check(prev_close_before(s, d1 + 5 * kDay + at_1000) == 120.0,
+              "a tick after the file ends -- this morning, before the updater "
+              "ran -- is measured against the LAST close, not the "
+              "second-to-last");
+        check(prev_close_before(s, d1 + at_1000) == 0.0,
+              "a tick on the first day has no prior close, and says so");
+        // 00:30 IST on day 4 is 19:00 UTC on day 3, the same UTC day as day
+        // 3's 09:15 IST bar. A UTC day would exclude that bar and answer 110.
+        check(prev_close_before(s, d1 + 3 * kDay + 30LL * 60LL * kSec) == 120.0,
+              "00:30 IST on day 4 belongs to day 4 -- the day is IST, not UTC");
+
+        UiStamped back = s;
+        std::swap(back.stamps_ns[0], back.stamps_ns[2]);
+        check(stamps_ascending(s) && !stamps_ascending(back),
+              "a file out of date order is detected, so it gets no basis");
     }
 
     std::printf("\n%s -- %d failing check(s)\n",

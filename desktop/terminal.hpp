@@ -381,12 +381,41 @@ public:
     [[nodiscard]] LiveFeedPanel* feed() const noexcept { return feed_; }
     [[nodiscard]] OptionChainPanel* chain() const noexcept { return chain_; }
     [[nodiscard]] PriceClient* stream() const noexcept { return client_; }
+    /// For tests: what a strip tile currently SAYS.
+    [[nodiscard]] QString tile_text(unsigned tok) const {
+        return tok == 256265u ? nifty_.label->text()
+             : tok == 260105u ? bnf_.label->text()
+             : tok == 264969u ? vix_.label->text() : QString();
+    }
+
+    /// One price, from wherever it came. on_price feeds the stream through
+    /// here and a test feeds it directly, so the WIRING -- which flag goes to
+    /// which widget -- is under test, not just each end of it.
+    void apply_price(unsigned tok, qint64 paise, bool replay,
+                     std::int64_t tick_ns) {
+        if (paise <= 0) { return; }
+        const double px = static_cast<double>(paise) / 100.0;
+        // A frame with no exchange stamp is placed on today; only a LIVE one
+        // can be missing it, and live is today.
+        const std::int64_t ts = tick_ns > 0
+            ? tick_ns : QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
+        const TileTag tag = replay ? TileTag::Replay : TileTag::Live;
+        if (tok == 256265u) { move_tile(nifty_, px, ts, tag); }
+        else if (tok == 260105u) { move_tile(bnf_, px, ts, tag); }
+        else if (tok == 264969u) { move_tile(vix_, px, ts, tag); }
+        chain_->set_spot(tok, paise, replay, tick_ns);
+        refresh_stream();
+    }
 
 private:
+    enum class TileTag : std::uint8_t { Close, Live, Replay };
+
     struct Tile {
         QLabel* label = nullptr;
-        double close = 0.0;       ///< the last settled close, for the change
+        double close = 0.0;       ///< the change basis; 0 = none, shown as —
         QString name;
+        UiStamped daily;          ///< the settled closes the basis comes from
+        std::int64_t basis_day = -1;   ///< ist_day the basis was found for
     };
 
     static Tile make_tile(QWidget* parent, QHBoxLayout* h) {
@@ -397,24 +426,47 @@ private:
         return t;
     }
 
-    void paint_tile(Tile& t, double price, bool live) {
-        const double chg = t.close > 0.0 ? price - t.close : 0.0;
-        const double pct = t.close > 0.0 ? 100.0 * chg / t.close : 0.0;
-        const QString col = chg > 0 ? QStringLiteral("#7FD17F")
-                          : chg < 0 ? QStringLiteral("#F07A6A")
-                                    : QStringLiteral("#D0D6DE");
+    /// The change is against the last close BEFORE the tick's IST day, found
+    /// once per day rather than once per tick.
+    static void move_tile(Tile& t, double price, std::int64_t ts_ns, TileTag tag) {
+        const std::int64_t day = ist_day(ts_ns);
+        if (day != t.basis_day) {
+            t.close = prev_close_before(t.daily, ts_ns);
+            t.basis_day = day;
+        }
+        paint_tile(t, price, tag);
+    }
+
+    static void paint_tile(Tile& t, double price, TileTag tag) {
+        // ABSENCE IS NOT ZERO. With no prior close the change is unknown, and
+        // "+0.00 (0.00%)" -- what the first version printed -- is a claim
+        // that the market did not move.
+        QString move = QStringLiteral(
+            "<span style='color:#6B7380'>— no prior close</span>");
+        if (t.close > 0.0) {
+            const double chg = price - t.close;
+            const double pct = 100.0 * chg / t.close;
+            const QString col = chg > 0 ? QStringLiteral("#7FD17F")
+                              : chg < 0 ? QStringLiteral("#F07A6A")
+                                        : QStringLiteral("#D0D6DE");
+            move = QStringLiteral("<span style='color:%1'>%2%3 (%4%)</span>")
+                       .arg(col)
+                       .arg(chg >= 0 ? QStringLiteral("+") : QString())
+                       .arg(chg, 0, 'f', 2)
+                       .arg(pct, 0, 'f', 2);
+        }
+        const QString suffix =
+            tag == TileTag::Close
+                ? QStringLiteral(" <span style='color:#6B7380'>close</span>")
+            : tag == TileTag::Replay
+                ? QStringLiteral(" <span style='color:#F4C95D'>replay</span>")
+                : QString();
         t.label->setText(QStringLiteral(
             "<span style='color:#8A93A2'>%1</span> "
-            "<b style='font-family:Consolas'>%2</b> "
-            "<span style='color:%3'>%4%5 (%6%)</span>%7")
+            "<b style='font-family:Consolas'>%2</b> %3%4")
             .arg(t.name)
             .arg(price, 0, 'f', 2)
-            .arg(col)
-            .arg(chg >= 0 ? QStringLiteral("+") : QString())
-            .arg(chg, 0, 'f', 2)
-            .arg(pct, 0, 'f', 2)
-            .arg(live ? QString()
-                      : QStringLiteral(" <span style='color:#6B7380'>close</span>")));
+            .arg(move, suffix));
     }
 
     /// Never blank. The last settled close from dataset/ until the stream
@@ -423,29 +475,31 @@ private:
     void seed_strip_from_disk() {
         const auto seed = [](Tile& t, const char* name, const char* dir) {
             t.name = QString::fromLatin1(name);
-            const UiStamped s = ui_load_stamped(spot_path(
+            t.daily = ui_load_stamped(spot_path(
                 QStringLiteral(ALTAIR_DATASET_DIR), QString::fromLatin1(dir),
                 "1d"));
-            if (s.closes.size() >= 2) {
-                t.close = s.closes[s.closes.size() - 2];
-                return s.closes.back();
+            // prev_close_before scans from the end and needs ascending
+            // stamps. A file out of order gets NO basis -- the tile says
+            // "no prior close" -- rather than a change against the wrong day.
+            if (!stamps_ascending(t.daily)) {
+                t.daily = UiStamped{};
+                t.label->setToolTip(QStringLiteral(
+                    "The daily file's dates are out of order, so no change is "
+                    "shown."));
             }
-            return s.closes.empty() ? 0.0 : s.closes.back();
+            if (t.daily.closes.empty()) { return; }
+            const std::int64_t last = t.daily.stamps_ns.back();
+            move_tile(t, t.daily.closes.back(), last, TileTag::Close);
         };
-        paint_tile(nifty_, seed(nifty_, "NIFTY 50", "nifty"), false);
-        paint_tile(bnf_, seed(bnf_, "BANKNIFTY", "banknifty"), false);
-        paint_tile(vix_, seed(vix_, "INDIA VIX", "indiavix"), false);
+        seed(nifty_, "NIFTY 50", "nifty");
+        seed(bnf_, "BANKNIFTY", "banknifty");
+        seed(vix_, "INDIA VIX", "indiavix");
     }
 
     void on_price(unsigned tok) {
         const LivePrice* p = client_->price(tok);
-        if (p == nullptr || p->last_paise <= 0) { return; }
-        const double px = static_cast<double>(p->last_paise) / 100.0;
-        if (tok == 256265u) { paint_tile(nifty_, px, true); }
-        else if (tok == 260105u) { paint_tile(bnf_, px, true); }
-        else if (tok == 264969u) { paint_tile(vix_, px, true); }
-        chain_->set_spot(tok, p->last_paise);
-        refresh_stream();
+        if (p == nullptr) { return; }
+        apply_price(tok, p->last_paise, p->replay, p->exchange_ts_ns);
     }
 
     void refresh_stream() {

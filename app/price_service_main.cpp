@@ -67,7 +67,11 @@ void usage(const char* exe) {
         "  --port N            loopback port to publish on (default 7421)\n"
         "  --seconds N         stop after N seconds (default: run until\n"
         "                      interrupted; a replay always stops at the end)\n"
-        "  --rate N            replay bars per second (default 200)\n\n"
+        "  --rate N            replay bars per second (default 200)\n"
+        "  --tail N            replay only the most recent N bars. A\n"
+        "                      replay otherwise starts at the first bar on\n"
+        "                      disk -- 2015 for NIFTY 1-minute -- and would\n"
+        "                      price a 2026 chain around a 2015 spot.\n\n"
         "WITHOUT --go OR --replay THIS PRINTS THIS TEXT AND EXITS. The same\n"
         "dry-run guard every other network binary here has: a program that\n"
         "opens a credentialed socket because it was run with no arguments is\n"
@@ -209,6 +213,7 @@ int main(int argc, char** argv) {
     unsigned short port = 7421;
     int seconds = 0;
     int rate = 200;
+    std::size_t tail = 0;
     // NIFTY 50, NIFTY BANK, INDIA VIX -- the three the ticker has always
     // defaulted to. Overridable, because P38 needs an option chain here.
     std::vector<std::uint32_t> sub_tokens{256265u, 260105u, 264969u};
@@ -236,6 +241,9 @@ int main(int argc, char** argv) {
                         static_cast<std::uint32_t>(std::atoll(one.c_str())));
                 }
             }
+        } else if (a == "--tail" && i + 1 < argc) {
+            const long long t = std::atoll(argv[++i]);
+            tail = t > 0 ? static_cast<std::size_t>(t) : 0;
         } else if (a == "--rate" && i + 1 < argc) {
             rate = std::max(1, std::atoi(argv[++i]));
         } else if (a == "--help" || a == "-h") {
@@ -271,7 +279,11 @@ int main(int argc, char** argv) {
     if (mode == "replay") {
         const std::string dir =
             std::string(ALTAIR_DATASET_DIR) + "/spot/" + sym + "/" + iv;
-        const std::vector<Bar> bars = load_bars(dir);
+        std::vector<Bar> bars = load_bars(dir);
+        if (tail > 0 && bars.size() > tail) {
+            bars.erase(bars.begin(),
+                       bars.end() - static_cast<std::ptrdiff_t>(tail));
+        }
         if (bars.empty()) {
             std::printf("no bars under %s\n", dir.c_str());
             return 1;

@@ -377,6 +377,12 @@ int main(int argc, char** argv) {
         });
     }
 
+    // --stream connects the Terminal to altair_price_service on 7421. Same
+    // reason as --compute: a capture script cannot click the button.
+    if (args.contains(QStringLiteral("--stream"))) {
+        window.connect_stream();
+    }
+
     // --train runs the Models page's walk-forward, for the same reason
     // --page exists: a capture script cannot click a button, and synthesising
     // a click sends it to whatever window has focus. Standalone, so it is

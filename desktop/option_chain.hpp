@@ -104,6 +104,10 @@ public:
 
         head_ = new QLabel(this);
         head_->setTextFormat(Qt::RichText);
+        // WRAP, or the header's one long line becomes the page's MINIMUM
+        // width: adding "(valued at tick 13:04 04-Sep)" pushed the window to
+        // 1964 px on a 1920 screen and clipped the order ticket off the edge.
+        head_->setWordWrap(true);
         v->addWidget(head_);
 
         grid_ = new QTableWidget(0, kChainCols, this);
@@ -142,10 +146,22 @@ public:
 
     /// A live price for the underlying, from the price service. The chain
     /// re-prices around it; everything else stays as it was.
-    void set_spot(unsigned token, qint64 paise) {
+    ///
+    /// `replay` is the frame's own flag. It is carried rather than inferred
+    /// because the first version knew only "this came from the stream" and
+    /// labelled a REPLAYED price LIVE -- on a screen whose strip, two inches
+    /// above, correctly said REPLAY. A replay shown as live is the one mistake
+    /// this screen must not make.
+    ///
+    /// `tick_ns` is the frame's exchange timestamp, and the chain is VALUED
+    /// AT IT (see reprice). 0 means the frame carried none.
+    void set_spot(unsigned token, qint64 paise, bool replay,
+                  std::int64_t tick_ns) {
         if (paise <= 0 || token != spot_token_) { return; }
         spot_paise_ = static_cast<double>(paise);
+        spot_ts_ns_ = tick_ns;
         spot_live_ = true;
+        spot_replay_ = replay;
         reprice();
     }
 
@@ -153,6 +169,10 @@ public:
     /// For tests: drive a click without a window manager, the same way the
     /// terminal test drives watchlist selection.
     void click_cell(int row, int col) { on_click(row, col); }
+    /// For tests: the header line, so a test can check what it CLAIMS.
+    [[nodiscard]] QString header_text() const { return head_->text(); }
+    /// For tests: the days to expiry the last reprice USED; 0 if it refused.
+    [[nodiscard]] double days_to_expiry() const noexcept { return dte_; }
     /// For tests: the strike on a row, in paise; 0 past the end.
     [[nodiscard]] double strike_at(int row) const {
         return row >= 0 && static_cast<std::size_t>(row) < soa_.n
@@ -172,6 +192,7 @@ private:
         const bool bnf = dir == QStringLiteral("banknifty");
         spot_token_ = bnf ? 260105u : 256265u;   // looked up in P25-01 / P2-12e
         spot_live_ = false;
+        spot_replay_ = false;
 
         chain_ = load_chain(QStringLiteral(ALTAIR_SOURCE_DIR "/data/instruments.csv"),
                             bnf ? "BANKNIFTY" : "NIFTY");
@@ -231,6 +252,8 @@ private:
     void reprice() {
         grid_->setRowCount(0);
         rows_.clear();
+        soa_.n = 0;
+        dte_ = 0.0;
 
         if (!chain_.loaded) {
             head_->setText(QStringLiteral(
@@ -255,16 +278,39 @@ private:
         const auto it = chain_.by_expiry.find(exp_ns);
         if (it == chain_.by_expiry.end()) { return; }
 
-        // TIME TO EXPIRY, from now to 15:30 IST on the expiry date. The master
-        // stores IST midnight (instruments/kite_dump.hpp is explicit that
-        // reading it as UTC would land 5h30m early, which on expiry day is the
-        // difference between a live contract and a dead one).
-        const std::int64_t now_ns =
+        // THE VALUATION INSTANT IS THE PRICE'S OWN. A streamed spot is valued
+        // at its tick's timestamp -- for a replay, the replayed moment. The
+        // first version valued every spot at the wall clock and so priced a
+        // 4 September replayed spot with 11 September's time to expiry: a
+        // week of theta that did not exist (hard rule 7 -- time comes off the
+        // tick). A close from disk has no intraday instant; it is valued NOW,
+        // and the header says both "close dd-MMM" and "valued now".
+        const std::int64_t wall_ns =
             QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
+        if (spot_live_ && spot_replay_ && spot_ts_ns_ <= 0) {
+            head_->setText(QStringLiteral(
+                "<span style='color:#E06C5B'>A REPLAYED price arrived with no "
+                "timestamp, so its time to expiry is unknown. Not priced.</span>"));
+            return;
+        }
+        const bool from_tick = spot_live_ && spot_ts_ns_ > 0;
+        val_ns_ = from_tick ? spot_ts_ns_ : wall_ns;
+        val_from_tick_ = from_tick;
+
+        // TIME TO EXPIRY, to 15:30 IST on the expiry date. The master stores
+        // IST midnight (instruments/kite_dump.hpp is explicit that reading it
+        // as UTC would land 5h30m early, which on expiry day is the
+        // difference between a live contract and a dead one).
         const double years =
-            static_cast<double>(exp_ns + kExpiryClockNs - now_ns)
+            static_cast<double>(exp_ns + kExpiryClockNs - val_ns_)
             / (365.0 * 86'400.0 * 1e9);
-        if (!(years > 0.0)) { return; }
+        if (!(years > 0.0)) {
+            head_->setText(QStringLiteral(
+                "<span style='color:#E06C5B'>This expiry had settled by the "
+                "price's timestamp. Nothing to value.</span>"));
+            return;
+        }
+        dte_ = years * 365.0;
 
         // FORWARD, not spot: Black-76 prices off the future, which is what an
         // index option settles against. No dividend yield -- NIFTY pays one,
@@ -321,10 +367,13 @@ private:
         head_->setText(QStringLiteral(
             "<b>%1</b>&nbsp; spot <b>%2</b> <span style='color:#8A93A2'>(%3)</span>"
             " &nbsp;·&nbsp; forward <b>%4</b> &nbsp;·&nbsp; vol <b>%5</b>"
-            " &nbsp;·&nbsp; <b>%6</b> days to expiry &nbsp;·&nbsp; rate %7%")
+            " &nbsp;·&nbsp; <b>%6</b> days to expiry"
+            " <span style='color:#8A93A2'>(valued %8)</span>"
+            " &nbsp;·&nbsp; rate %7%")
             .arg(under_->currentText())
             .arg(spot_paise_ / 100.0, 0, 'f', 2)
-            .arg(spot_live_ ? QStringLiteral("LIVE")
+            .arg(spot_live_ ? (spot_replay_ ? QStringLiteral("REPLAY")
+                                            : QStringLiteral("LIVE"))
                             : QStringLiteral("close ")
                                   + QDateTime::fromMSecsSinceEpoch(
                                         spot_ts_ns_ / 1'000'000LL, ist)
@@ -332,7 +381,13 @@ private:
             .arg(F / 100.0, 0, 'f', 2)
             .arg(vol_src_.toHtmlEscaped())
             .arg(dte, 0, 'f', 2)
-            .arg(100.0 * kRate, 0, 'f', 2));
+            .arg(100.0 * kRate, 0, 'f', 2)
+            .arg(val_from_tick_
+                     ? QStringLiteral("at tick ")
+                           + QDateTime::fromMSecsSinceEpoch(
+                                 val_ns_ / 1'000'000LL, ist)
+                                 .toString(QStringLiteral("HH:mm dd-MMM"))
+                     : QStringLiteral("now")));
 
         badge_->setText(QStringLiteral(
             "<span style='background:#6B4A12;color:#F4C95D;padding:2px 8px;"
@@ -452,6 +507,10 @@ private:
     double spot_paise_ = 0.0;
     std::int64_t spot_ts_ns_ = 0;
     bool spot_live_ = false;
+    bool spot_replay_ = false;
+    std::int64_t val_ns_ = 0;          ///< the instant the chain is valued at
+    bool val_from_tick_ = false;       ///< ... and whether a tick supplied it
+    double dte_ = 0.0;
     unsigned spot_token_ = 0;
     double vol_ = 0.0;
     QString vol_src_;

@@ -360,6 +360,17 @@ public:
     /// Returns false when the current page has no compute button, which is
     /// most of them: the grid, the chart and the watchlist are live and have
     /// nothing to press.
+    /// Connect the Terminal's price stream, as its button would.
+    ///
+    /// For --stream, which exists for the reason --compute and --train do: a
+    /// capture script must not synthesise a click, because a synthesised click
+    /// goes to whatever window has focus.
+    void connect_stream() {
+        if (terminal_ != nullptr && terminal_->stream() != nullptr) {
+            terminal_->stream()->start(QStringLiteral("127.0.0.1"), 7421);
+        }
+    }
+
     bool compute_current() {
         // dynamic_cast, not qobject_cast: ComputePage is a plain QWidget
         // subclass with no Q_OBJECT macro, and adding one would put it in

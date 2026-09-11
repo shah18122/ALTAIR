@@ -80,6 +80,47 @@ struct UiStamped {
     return out;
 }
 
+/// The IST calendar day an instant falls on, as a day count from the epoch.
+///
+/// IST, not UTC: a tick at 00:30 IST on the 11th is 19:00 UTC on the 10th,
+/// and a UTC day would file it under the wrong session.
+[[nodiscard]] inline std::int64_t ist_day(std::int64_t ns) noexcept {
+    constexpr std::int64_t kIst = (5LL * 3600LL + 30LL * 60LL) * 1'000'000'000LL;
+    constexpr std::int64_t kDay = 86'400LL * 1'000'000'000LL;
+    const std::int64_t t = ns + kIst;
+    return t >= 0 ? t / kDay : (t - kDay + 1) / kDay;          // floor
+}
+
+/// True when the stamps never go backwards -- what prev_close_before needs.
+[[nodiscard]] inline bool stamps_ascending(const UiStamped& s) noexcept {
+    for (std::size_t i = 1; i < s.stamps_ns.size(); ++i) {
+        if (s.stamps_ns[i] < s.stamps_ns[i - 1]) { return false; }
+    }
+    return s.closes.size() == s.stamps_ns.size();
+}
+
+/// The last settled daily close STRICTLY BEFORE the IST day `ts_ns` falls on
+/// -- the reference a day's change is measured against. 0 when there is none,
+/// and a caller must show that as absent, never as a change of zero.
+///
+/// Keyed on the TICK's day, not on "the second-to-last row". Those agree only
+/// when the file's last row is today. When the file ends yesterday -- every
+/// morning before the updater runs -- the second-to-last row is the day
+/// BEFORE yesterday, and a live change printed against it is a day wrong. For
+/// a replay it is worse: a 4 September price was shown against 10 September's
+/// close, a +2.15% move that never happened.
+///
+/// Requires stamps_ascending(s); scans from the end, so a live tick finds its
+/// answer in one or two steps.
+[[nodiscard]] inline double prev_close_before(const UiStamped& s,
+                                              std::int64_t ts_ns) noexcept {
+    const std::int64_t day = ist_day(ts_ns);
+    for (std::size_t i = s.stamps_ns.size(); i > 0; --i) {
+        if (ist_day(s.stamps_ns[i - 1]) < day) { return s.closes[i - 1]; }
+    }
+    return 0.0;
+}
+
 /// `<root>/spot/<sym>/<interval>/` -- one place, so a page cannot invent a
 /// path shape that does not exist on disk.
 [[nodiscard]] inline QString spot_path(const QString& root, const QString& sym,
