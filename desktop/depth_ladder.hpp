@@ -206,13 +206,13 @@ public:
         head_->setText(
             v.crossed
                 ? QStringLiteral(
-                      "<b style='color:#C0392B'>CROSSED</b> — bid is at or "
+                      "<b style='color:#F85149'>CROSSED</b> — bid is at or "
                       "above ask. Legitimate during the pre-open auction, a "
                       "fault at any other time. Drawn rather than refused: a "
                       "ladder that blanks during pre-open is one nobody can "
                       "use when it matters.")
                 : (v.tradable
-                       ? QStringLiteral("<b style='color:#1B8A4B'>Tradable</b>"
+                       ? QStringLiteral("<b style='color:#3FB950'>Tradable</b>"
                                         " — both sides have liquidity.")
                        : QStringLiteral(
                              "<b style='color:#B9770B'>Not tradable</b> — one "
@@ -249,7 +249,7 @@ public:
                                   "no ratio to take)");
         if (v.rejects > 0) {
             f += QStringLiteral(
-                     "  ·  <b style='color:#C0392B'>%1 rejected updates since "
+                     "  ·  <b style='color:#F85149'>%1 rejected updates since "
                      "the last accepted one</b> — that is NOW, not a running "
                      "total").arg(v.rejects);
         }

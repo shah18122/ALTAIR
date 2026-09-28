@@ -145,13 +145,13 @@ private:
         constexpr qint64 kMaxSnapshotBytes = 8 * 1024 * 1024;
         const QByteArray raw = file.read(kMaxSnapshotBytes + 1);
         if (raw.size() > kMaxSnapshotBytes) {
-            clear(QStringLiteral("<b style='color:#C0392B'>FYERS SNAPSHOT TOO LARGE</b>"));
+            clear(QStringLiteral("<b style='color:#F85149'>FYERS SNAPSHOT TOO LARGE</b>"));
             return;
         }
         QJsonParseError error{};
         const QJsonDocument document = QJsonDocument::fromJson(raw, &error);
         if (error.error != QJsonParseError::NoError || !document.isObject()) {
-            clear(QStringLiteral("<b style='color:#C0392B'>INVALID FYERS SNAPSHOT</b> — %1")
+            clear(QStringLiteral("<b style='color:#F85149'>INVALID FYERS SNAPSHOT</b> — %1")
                       .arg(error.errorString().toHtmlEscaped()));
             return;
         }
@@ -160,7 +160,7 @@ private:
             || root.value(QStringLiteral("broker")).toString()
                    != QStringLiteral("FYERS")) {
             clear(QStringLiteral(
-                "<b style='color:#C0392B'>WRONG FYERS SNAPSHOT SCHEMA</b>"));
+                "<b style='color:#F85149'>WRONG FYERS SNAPSHOT SCHEMA</b>"));
             return;
         }
         const qint64 at = static_cast<qint64>(
@@ -172,7 +172,7 @@ private:
         const QString account = root.value(QStringLiteral("account_id")).toString();
         if (at <= 0 || account.isEmpty()) {
             clear(QStringLiteral(
-                "<b style='color:#C0392B'>FYERS SNAPSHOT IDENTITY MISSING</b>"));
+                "<b style='color:#F85149'>FYERS SNAPSHOT IDENTITY MISSING</b>"));
             return;
         }
         const bool complete = root.value(QStringLiteral("snapshot_complete")).toBool(false);

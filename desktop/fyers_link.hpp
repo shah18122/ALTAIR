@@ -102,7 +102,7 @@ public:
                 "<b>altair_fyers_login was not found.</b> Build the <code>net</code> "
                 "preset first; the default desktop preset intentionally has no "
                 "HTTPS credential transport."));
-            where->setStyleSheet(QStringLiteral("color:#C0392B;"));
+            where->setStyleSheet(QStringLiteral("color:#F85149;"));
         } else {
             where->setText(QStringLiteral("Using <code>%1</code>").arg(exe_));
             where->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
@@ -140,7 +140,7 @@ public:
         if (!allowed) {
             auto* no = new QLabel(QStringLiteral(
                 "Linking a broker account requires the admin role."), this);
-            no->setStyleSheet(QStringLiteral("color:#C0392B;"));
+            no->setStyleSheet(QStringLiteral("color:#F85149;"));
             v->addWidget(no);
         }
 

@@ -1,0 +1,313 @@
+SMIT.txt -- ALTAIR: final plan, verified status and change log
+==============================================================================
+Single planning document for the repository. Last updated 2026-09-28.
+
+It replaces final.md, remaining_work.md and the prompts/ folder (108 files),
+which were removed on request. Nothing was lost: every removed file can be
+read back from the commit before the removal:
+
+    git show 8f5d85b:final.md
+    git show 8f5d85b:remaining_work.md
+    git show 8f5d85b:prompts/<path>          (e.g. prompts/P2-08_l2_book.md)
+
+Code comments that say "Decisions D1..Dn are fixed in prompts/<card>.md" refer
+to those cards at commit 8f5d85b. change_by_codex.txt is kept as the running
+change ledger.
+
+Status words used below:
+  DONE      implemented and verified at the stated scope
+  LOCAL     implemented and tested locally; live/external evidence still open
+  OPEN      not done
+  GATED     blocked on hardware, an entitled account or licensed data
+  NEW       added in this session (2026-09-28)
+
+
+------------------------------------------------------------------------------
+1. WHAT ALTAIR IS
+------------------------------------------------------------------------------
+- C++23 trading engine + Qt 6.8 Widgets desktop, one process. The UI cannot
+  trade: desktop/ must never link altair_oms or altair_broker, and the link
+  line enforces it (altair_desktop_link_audit, "gate 3").
+- Broker roles:
+    FYERS  = PRIMARY market data (live stream + history) and read-only account.
+    Kite   = fallback market data and read-only account.
+    Orders = live submission DISABLED by design. Both FYERS and Kite order
+             translation sit behind one shared dispatch permit that re-checks
+             route, session, risk, transport and kill-switch state
+             (oms/tests/test_broker_dispatch_gate.cpp: "live-disabled refuses").
+    Paper  = isolated simulated ledger fed by real data where available.
+- Anything that touches a socket or a credential is a separate helper process
+  in app/ (altair_fyers_login / _account / _history / _webhook / _ticker,
+  altair_kite_*). They dry-run by default and need --go to touch the network.
+- Directory map (one component, one directory):
+    core/        strong units (paise, lots, time), clocks, memory, lock-free
+    instruments/ point-in-time contract spec store, NSE/BSE/FYERS masters
+    feed/        decoders (Kite, FYERS), normaliser, failover, tick store,
+                 source router, FYERS data-socket protocol (NEW)
+    book/        L2 book, microstructure, flow
+    features/ analytics/ models/ strategies/ risk/ backtest/ flagging/
+    oms/         order state, exit ladder, broker adapters behind the permit
+    broker/      OAuth, HTTPS client, account snapshots, WebSockets
+    app/         helper binaries (network + credentials live here only)
+    server/      price bus / price service
+    desktop/     the Qt UI
+    ops/         runbooks (fyers-webhook, phase8-acceptance, linux-deployment)
+    client/      RETIRED web client (kept for reference, not built into UI)
+
+
+------------------------------------------------------------------------------
+2. AGREED PRODUCT DIRECTION
+------------------------------------------------------------------------------
+- Keep the C++23 engine and Qt Widgets desktop. Keep the dark colours; improve
+  organisation, typography, tables, spacing and top navigation.
+- One "Brokers" destination holding FYERS and Zerodha Kite: app ID / API key,
+  masked secret and redirect URL entered in-app; browser OAuth; progress,
+  validation, connection state, account data and redacted logs shown there.
+- Market data preference: FYERS first, eligible Kite connection as fallback.
+  Data source and order destination are separate settings with provenance.
+- OPEN DECISION (blocks live orders only): the order route default. The request
+  said both "FYERS for orders" and "Kite for orders". Both routes exist and are
+  configurable; confirm the default before live submission is ever enabled.
+- Terminal = open positions across brokers + available funds (total and per
+  broker). Order history, credentials and diagnostics live in Brokers.
+- Live Grid and Chart removed as UI destinations (their ingestion, datasets,
+  replay and computation are kept). Layout button removed; the sidebar resizes
+  with the mouse and can be hidden/shown from the keyboard.
+- Pair Trading replaces Ratio Spread: choose instrument A and B freely.
+  Comparison formulas and entry/exit rules are still TO BE DISCUSSED; nothing
+  chooses a hedge ratio or z-score rule silently.
+- Every Atlas model has its own page; implementation, training, evaluation and
+  live readiness are shown as separate states.
+- Continuous cross-exchange and cash/futures opportunity scanning, monitored
+  signals and paper execution first. Retail broker streams and licensed MTBT
+  are different feeds.
+- Credentials are configuration, never source, logs or fixtures. The FYERS app
+  secret that was once shared in chat must be rotated before live use.
+
+
+------------------------------------------------------------------------------
+3. ENGINEERING RULES (a violation fails review)
+------------------------------------------------------------------------------
+ 1. No lot size, tick size, strike step or expiry as a literal -- all come from
+    the point-in-time spec store (instruments/).
+ 2. No double crossing a module boundary carrying money, quantity or time; use
+    core/types strong units. Price * Lots must not compile.
+ 3. All money is integer paise. Doubles only inside analytics.
+ 4. No heap allocation inside ALTAIR_HOT; no exceptions on the hot path --
+    return std::expected.
+ 5. Every signal is priced net of full cost before it exists.
+ 6. Backtest and live share one code path: replay and live feeds emit the same
+    struct into the same pipeline.
+ 7. No look-ahead: purged CV with embargo, point-in-time fundamentals,
+    strategies read time off the tick, never a wall clock.
+ 8. The tighter stop is checked before the original stop.
+ 9. Fail loud rather than trade wrong: ambiguity blocks the symbol and flags.
+10. Every live decision is reproducible from
+    {model_hash, feature_version, config_hash, spec_version, tick_seqno}.
+11. A fixed bound must REFUSE, PROVE unreachable, or TRUNCATE VISIBLY. Silent
+    clamps are banned; unavoidable clamps go to the safe side. Enforced at
+    configure time by cmake/BoundsAudit.cmake (annotate with "// RULE 11: ...").
+Build-time audits that also fail the configure:
+  - cmake/NamespaceAudit.cmake: one name per namespace across engine headers
+    (the more specific header renames, e.g. HsmError, not Error).
+  - desktop link audit: the UI may not link oms/ or broker/.
+Process: freeze a task card before coding, build + run acceptance tests after
+every change, record evidence (never claim a live result from a unit test).
+
+
+------------------------------------------------------------------------------
+4. BUILD AND RUN
+------------------------------------------------------------------------------
+Windows (primary host):
+    build.bat net            engine + helpers + desktop (vcpkg: Boost, OpenSSL)
+    ctest --preset net       full suite
+    Qt 6.8.3 msvc2022_64 (default D:/Qt/6.8.3/msvc2022_64 or ALTAIR_QT_ROOT)
+    Desktop: build/net/desktop/altair_desktop.exe
+Linux (first compiled here on 2026-09-28; engine + helpers + tests, no UI):
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DALTAIR_BUILD_BENCH=OFF -DALTAIR_NATIVE_ARCH=OFF
+    ninja -C build && ctest --test-dir build
+    needs: g++ 13+, libboost-dev, libssl-dev. The desktop needs Qt >= 6.8.
+
+FYERS end to end (run from the repo root):
+    1. altair_fyers_login          OAuth in the browser -> data/fyers_session.json
+    2. altair_fyers_account --go   profile, funds, positions, holdings, orders
+    3. altair_fyers_history --symbol NSE:NIFTY50-INDEX --from D --to D --go
+    4. altair_fyers_ticker --go [--symbols NSE:NIFTY50-INDEX,NSE:SBIN-EQ]
+           [--depth] [--lite] [--seconds 60] [--jsonl data/fyers.jsonl]
+           [--store data/fyers.ticks]      -> data/fyers_ticks.json
+    Desktop: Live Feed page -> "FYERS (primary)" -> Listen.
+
+
+------------------------------------------------------------------------------
+5. VERIFIED STATUS -- plan vs code (checked 2026-09-28)
+------------------------------------------------------------------------------
+Phase / card                         Status  Evidence
+-----------------------------------  ------  ---------------------------------
+P0-01..03 contracts, baseline, nav   DONE    desktop/navigation_registry.hpp:
+                                             35 page records, 30 in the visible
+                                             order; Live Grid/Chart kept only as
+                                             hidden records; "ratio spread" is an
+                                             alias of Pair Trading.
+P1-01..04 Mac portability            GATED   code present; needs Apple Silicon
+P1-05..06 MPS measurement, go/no-go  GATED   needs Apple GPU
+P2-01..08, P2-11 broker portal       DONE    FYERS OAuth + read-only account
+                                             live-verified on Windows 2026-09-26
+P2-09 publication bridge             LOCAL   needs an entitled live account run
+P3-01 FYERS identity (uint64 token,  DONE    instruments/fyers_identity.hpp
+      ISIN matching)
+P3-02 FYERS live data socket         LOCAL   NEW: native C++ client (section 7).
+                                             Waited on an "official C SDK" that
+                                             FYERS does not publish. Credentialed
+                                             socket run still open.
+P3-03 epoch-aware source router      LOCAL   live supervisor run still open
+P3-04                                DONE
+P3-05 FYERS history audit            DONE    live 2026-09-28: 750 NIFTY 1m bars,
+                                             588 overlapped, 4 close diffs,
+                                             max 0.15 points
+P4-01..02 account-first Terminal     DONE
+P5 Pair Trading selector             DONE    formulas deliberately not chosen
+P6-01..06 Atlas / models             DONE    85/85 numerical engines, 0 partial.
+                                             NOT market-trained or validated.
+P7 arbitrage scanner + paper         DONE    locally
+P7-06 MTBT feed                      GATED   licensed decoder + feed
+P8 Windows-local acceptance          DONE    ops/phase8-acceptance.md
+P8-01..04 external acceptance        GATED   entitled accounts, live feed, Mac
+Phase 9 (flagging/drift/deploy)      LOCAL   on disk, exit criteria not re-checked
+Phase 10 (DCF, cointegration, VIX)   LOCAL   on disk, exit criteria not re-checked
+P11Q-07 fit models on existing data  OPEN
+P11Q-08 walk-forward training harness OPEN   models/training.hpp exists, card open
+P12-01..06 Linux deploy, supervision OPEN    engine/helpers now compile on Linux
+Live order submission                OFF     by design (see section 1)
+
+Tests:
+  Windows record: complete net preset 204/204 (2026-09-28, 75.81 s).
+  Linux, this session, before any change: 161/169. The 8 failures are
+  environmental: 7 need dataset/ (not in git), and "smoke" rejects GCC 13's
+  C++23 __cplusplus value.
+  Linux, after this session's changes: 163/171. The same 8 environmental
+  failures; the 2 new tests (fyers_hsm, fyers_ticker_dry_run) pass.
+
+
+------------------------------------------------------------------------------
+6. NEXT STEPS (priority order)
+------------------------------------------------------------------------------
+ 1. FYERS live stream on your PC in market hours:
+        build.bat net
+        build\net\app\altair_fyers_ticker.exe --go --depth --seconds 60
+    Expect "Authentication done", "Subscribed", ticks > 0. If FYERS refuses
+    the socket token, re-run altair_fyers_login (tokens are daily). --source
+    changes the client name sent at auth if FYERS objects to it.
+ 2. Build the desktop on Windows (Qt 6.8) and check the new theme on every
+    page. All colours are tokens in desktop/theme.hpp.
+ 3. Put the FYERS ticker under the continuous supervisor / price service
+    (today it is a bounded sample, like the Kite ticker).
+ 4. P8-01..04 with entitled accounts (FYERS-only, Kite-only, both, reconnect,
+    stale session).
+ 5. Decide the live order-route default, then (and only then) review enabling
+    live submission.
+ 6. Mac tier P1-01..06 on Apple Silicon.
+ 7. Open audit findings: C22-002, C22-003 (no runtime C++ reads
+    config/altair.toml), C22-005, C22-006, C01-006, C01-008.
+ 8. Benchmark tier: find_package(benchmark) is commented out while
+    ALTAIR_BUILD_BENCH defaults ON; only analytics/bench builds.
+ 9. P11Q-07/08, Phase 12, and re-check Phase 9/10 exit criteria.
+10. The FYERS redirect URL must match the app registration exactly. Code uses
+    https://altair.thesmitshah.com/fyers/callback; an older plan named
+    https://www.thesmitshah.com/fyersredirect.
+11. Linux/Qt portability found here: int64_t -> QVariant is ambiguous in
+    desktop/arbitrage_workspace.hpp on Linux; the smoke test's C++23 check.
+
+
+------------------------------------------------------------------------------
+7. FYERS -- checked against the official API v3 docs and SDK (fyers-apiv3 3.1.18)
+------------------------------------------------------------------------------
+Capability          Endpoint                                   Status
+------------------  -----------------------------------------  -------------
+OAuth login         /api/v3/generate-authcode,                 DONE, live-verified
+                    /api/v3/validate-authcode (appIdHash),
+                    /api/v3/validate-refresh-token
+Account (read-only) /api/v3/profile, funds, positions,         DONE, live-verified
+                    holdings, orders
+History             /data/history (date_format=1, cont_flag;   DONE, live-verified
+                    100-day intraday / 366-day daily chunks)
+Live data socket    wss://socket.fyers.in/hsm/v1-5/prod        NEW, see below
+Order/trade socket  wss://socket.fyers.in/trade/v3             not built (orders off)
+TBT 50-level depth  wss://rtsocket-api.fyers.in/versova        not built (optional)
+Quotes/depth REST   /data/quotes, /data/depth                  not used (socket covers it)
+
+Live data socket, as the official SDK does it:
+  - hsm_key read from the access token (JWT) payload; expired token refused.
+  - POST /data/symbol-token turns symbols into topics:
+      sf|<segment>|<token>  quotes     dp|<segment>|<token>  5-level depth
+      if|<segment>|<index name>        (index names from the SDK's own table)
+  - Frames: auth (type 1), lite/full mode (12), subscribe/unsubscribe (4/5,
+    1500 topics per frame, 5000 per connection), channel pause/resume (7/8),
+    ack (3) every N feeds as the server asks, ping [0,1,11] every 10 s.
+  - Server data (type 6): snapshot (83), full update (85), lite update (76),
+    decoded into exactly the SDK's on_message JSON, then through the existing
+    feed/fyers_adapter.hpp into Tick / DepthUpdate, the tick store and
+    data/fyers_ticks.json. Bounded reconnect with backoff; Ctrl+C closes cleanly.
+  Verification:
+    feed/tests/test_fyers_hsm.cpp, 31/31: every frame builder matches the SDK
+    byte for byte, and every decoded frame equals the SDK's own output. Golden
+    vectors (feed/tests/fyers_hsm_golden.hpp) were produced by running the
+    official SDK. Also covered: truncated frames never over-read, and socket
+    JSON becomes a Tick at 612.35 through the adapter.
+    NOT verified here: a real connection. This cloud sandbox's network policy
+    blocks socket.fyers.in, and no FYERS login exists here. Step 1 of
+    section 6 closes this.
+  Deliberate differences from the SDK:
+    - An absent value (-2147483648) is never stored. The SDK stores it for
+      index updates because it compares against a string.
+    - An unknown topic is counted; the SDK aborts the whole frame.
+    - An index with prev_close 0 omits ch/chp; the SDK drops the message.
+    - The client name at auth is "AltairCpp-1.0" (override with --source).
+
+
+------------------------------------------------------------------------------
+8. UI REFRESH (NEW)
+------------------------------------------------------------------------------
+Problem: only the toolbar and some panels styled themselves; every other
+control used the platform's light default, so pages mixed a dark terminal with
+light Windows controls.
+Fix: desktop/theme.hpp is applied once in main(): Fusion style, a dark
+palette, and one web-style stylesheet from a few tokens.
+  canvas #0D1117  surface #161B22  border #30363D  text #E6EDF3
+  muted #8B949E   accent (Altair amber) #E3A34A    selection #493D2C
+  6-10 px radii, focus rings, underline tabs, card-style group boxes, slim
+  rounded scroll bars, quiet table headers, Inter / Segoe UI font stack.
+Also: the toolbar and menus use the same tokens; the PAPER and broker badges
+are now pills; error red and success green are brighter for dark backgrounds
+(#C0392B -> #F85149, #1B8A4B -> #3FB950; the kill-switch button uses #DA3633
+so white text stays readable). The Live Feed page is FYERS-first with a Kite
+option.
+Not touched: custom-painted chart, ladder and grid, and colours that carry
+meaning.
+Verified: theme.hpp and live_feed.hpp compile against Qt 6, and a preview
+window rendered with the real theme. The full desktop target needs Qt 6.8,
+so build it on Windows (section 6, step 2).
+
+
+------------------------------------------------------------------------------
+9. CHANGE LOG -- 2026-09-28
+------------------------------------------------------------------------------
+Added
+  SMIT.txt                         this file
+  feed/fyers_hsm.hpp               FYERS data-socket protocol (no socket)
+  feed/fyers_index_map.hpp         index names + segment table, generated from the SDK
+  feed/tests/test_fyers_hsm.cpp    31 checks against the official SDK
+  feed/tests/fyers_hsm_golden.hpp  golden vectors produced by the SDK
+  broker/fyers_data_socket.hpp     TLS WebSocket transport (ping, ack, close)
+  app/fyers_ticker_main.cpp        altair_fyers_ticker helper (dry run by default)
+  desktop/theme.hpp                application-wide theme
+Changed
+  broker/https_client.hpp          https_post_json takes an optional Authorization
+  feed/CMakeLists.txt              fyers_hsm test
+  app/CMakeLists.txt               altair_fyers_ticker target, install, dry-run test
+  desktop/main.cpp                 applies the theme
+  desktop/main_window.hpp          toolbar/menu tokens, pill badges
+  desktop/live_feed.hpp            FYERS (primary) / Kite selector
+  desktop/*.hpp (10 files)         brighter red/green for dark backgrounds
+Removed
+  final.md, remaining_work.md, prompts/ (recover from commit 8f5d85b)

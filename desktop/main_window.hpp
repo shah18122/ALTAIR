@@ -657,7 +657,7 @@ private:
         nav_location_->setMinimumWidth(0);
         nav_location_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
         nav_location_->setMaximumWidth(360);
-        nav_location_->setStyleSheet(QStringLiteral("color:#B5803F;font-weight:600;"));
+        nav_location_->setStyleSheet(QStringLiteral("color:#E3A34A;font-weight:600;padding:0 6px;"));
         bar->addWidget(nav_location_);
         auto* toolbar_spacer = new QWidget(bar);
         toolbar_spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -668,8 +668,8 @@ private:
         mode_badge_->setToolTip(QStringLiteral(
             "Paper mode. This desktop has no broker order transport linked."));
         mode_badge_->setStyleSheet(QStringLiteral(
-            "color:#D9EAF2;background:#263843;border:1px solid #46616E;"
-            "border-radius:3px;font-weight:700;padding:3px;"));
+            "color:#D9EAF2;background:#1C2B36;border:1px solid #2F4A5A;"
+            "border-radius:11px;font-weight:700;padding:3px 10px;"));
         bar->addWidget(mode_badge_);
         connection_badge_ = new QLabel(QStringLiteral("  FYERS —  ·  KITE —  "), bar);
         connection_badge_->setObjectName(QStringLiteral("brokerConnectionBadge"));
@@ -677,8 +677,8 @@ private:
         connection_badge_->setToolTip(QStringLiteral(
             "Only fresh, service-verified read-only evidence is shown as connected."));
         connection_badge_->setStyleSheet(QStringLiteral(
-            "color:#AFC0C9;background:#172229;border:1px solid #2F414B;"
-            "border-radius:3px;padding:3px;"));
+            "color:#AFC0C9;background:#161B22;border:1px solid #30363D;"
+            "border-radius:11px;padding:3px 10px;"));
         bar->addWidget(connection_badge_);
         nav_->on_state_changed = [this] {
             refresh_workspace_controls();
@@ -693,15 +693,19 @@ private:
             statusBar()->showMessage(QStringLiteral("Navigation preferences could not be saved."), 15000);
         // Scope chrome colours here; do not restyle Atlas or trading-widget internals.
         const auto chrome = QStringLiteral(
-            "QToolBar,QMenuBar,QMenu{background:#1B242C;color:#D5DEE5;border:0;}"
-            "QToolBar{spacing:3px;padding:3px;}"
-            "QToolButton{color:#D5DEE5;background:transparent;border:1px solid transparent;padding:4px;}"
-            "QToolButton:hover,QMenuBar::item:selected,QMenu::item:selected{background:#34434F;color:#FFBE67;}"
-            "QToolButton:focus{border:1px solid #DC9D4F;}"
-            "QToolButton:disabled{color:#68757F;}"
-            "QMenu::item{padding:6px 18px;}"
-            "QComboBox,QPushButton{color:#D5DEE5;background:#28343E;border:1px solid #46535F;padding:3px;}"
-            "QLabel{color:#D5DEE5;}");
+            "QToolBar,QMenuBar{background:#0D1117;color:#E6EDF3;border:0;border-bottom:1px solid #21262D;}"
+            "QMenu{background:#161B22;color:#E6EDF3;border:1px solid #30363D;border-radius:8px;padding:6px;}"
+            "QToolBar{spacing:6px;padding:6px 10px;}"
+            "QToolButton{color:#C9D1D9;background:transparent;border:1px solid transparent;border-radius:6px;padding:5px 10px;}"
+            "QToolButton:hover,QMenuBar::item:selected,QMenu::item:selected{background:#21262D;color:#F0B765;}"
+            "QToolButton:checked{background:#2D333B;color:#F0B765;}"
+            "QToolButton:focus{border:1px solid #E3A34A;}"
+            "QToolButton:disabled{color:#6E7681;}"
+            "QMenuBar::item{padding:6px 10px;border-radius:6px;}"
+            "QMenu::item{padding:7px 24px 7px 12px;border-radius:6px;}"
+            "QComboBox,QPushButton{color:#E6EDF3;background:#161B22;border:1px solid #30363D;border-radius:6px;padding:5px 10px;}"
+            "QComboBox:hover,QPushButton:hover{border-color:#484F58;}"
+            "QLabel{color:#E6EDF3;}");
         bar->setStyleSheet(chrome);
         if (replay_bar) replay_bar->setStyleSheet(chrome);
         menuBar()->setStyleSheet(chrome);
@@ -1770,7 +1774,7 @@ private:
                                  "ticks: %3 ")
                       .arg(applied_).arg(count_).arg(model_->unknown_ticks()));
         progress_->setStyleSheet(
-            tape_real_ ? QStringLiteral("color:#1B8A4B;")
+            tape_real_ ? QStringLiteral("color:#3FB950;")
                        : QStringLiteral("color:#B9770B;font-weight:bold;"));
         if (!tape_real_ && !tape_error_.isEmpty()) {
             progress_->setToolTip(

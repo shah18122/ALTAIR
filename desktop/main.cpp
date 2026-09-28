@@ -38,6 +38,7 @@
 #include "data/real_tape.hpp"
 #include "main_window.hpp"
 #include "panels.hpp"
+#include "theme.hpp"
 
 #include <QApplication>
 #include <QDebug>
@@ -132,6 +133,8 @@ std::vector<altair::ReplayTick> demo_session(std::size_t count,
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+    // One look for every window, dialog and control -- desktop/theme.hpp.
+    altair::ui::apply_app_theme(app);
     // Defer the cold-path probe until Qt has completed application setup. A
     // synchronous socket probe before the first event-loop turn can crash some
     // Windows/Qt runtime combinations during DLL/plugin initialization.

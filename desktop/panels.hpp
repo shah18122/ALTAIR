@@ -142,7 +142,7 @@ public:
                     "default account to fall back to."),
                 this);
             none->setWordWrap(true);
-            none->setStyleSheet(QStringLiteral("color:#C0392B;"));
+            none->setStyleSheet(QStringLiteral("color:#F85149;"));
             v->addWidget(none);
         }
 
@@ -155,7 +155,7 @@ public:
         v->addLayout(form);
 
         error_ = new QLabel(this);
-        error_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+        error_->setStyleSheet(QStringLiteral("color:#F85149;"));
         error_->setVisible(false);
         v->addWidget(error_);
 
@@ -289,7 +289,7 @@ public:
                      kite ? QStringLiteral("ready") : QStringLiteral("not ready")));
         verdict->setStyleSheet(
             QStringLiteral("color:%1;padding:6px;")
-                .arg(fyers && kite ? QStringLiteral("#1B8A4B")
+                .arg(fyers && kite ? QStringLiteral("#3FB950")
                                    : QStringLiteral("#B9770B")));
         v->addWidget(verdict);
     }
@@ -579,7 +579,7 @@ public:
         status_->setText(
             w.no_directional_edge
                 ? QStringLiteral(
-                      "<b style='color:#C0392B'>No directional edge under "
+                      "<b style='color:#F85149'>No directional edge under "
                       "either window.</b> The chain beats a constant on "
                       "distributional fit and loses to it on sign (%1 vs %2 "
                       "expanding, %3 vs %4 rolling). Usable as a REGIME "
@@ -1132,8 +1132,8 @@ private Q_SLOTS:
         message_->setText(add_result_label(r));
         message_->setStyleSheet(
             QStringLiteral("color:%1;")
-                .arg(r == AddResult::Added ? QStringLiteral("#1B8A4B")
-                                           : QStringLiteral("#C0392B")));
+                .arg(r == AddResult::Added ? QStringLiteral("#3FB950")
+                                           : QStringLiteral("#F85149")));
         if (r == AddResult::Added) {
             symbol_->clear();
         }
@@ -1398,7 +1398,7 @@ private:
                 .arg(master_.loaded()
                          ? QStringLiteral("instrument master: %1 contracts")
                                .arg(master_.size())
-                         : QStringLiteral("<b style='color:#C0392B'>instrument "
+                         : QStringLiteral("<b style='color:#F85149'>instrument "
                                           "master NOT loaded — every profile "
                                           "column below is blank for that "
                                           "reason, not because the field is "

@@ -157,7 +157,7 @@ public:
                 "client and is built by the <code>net</code> preset only. "
                 "Run <code>build.bat net</code>. This is not a broken install; "
                 "a default build simply has no transport to Kite."));
-            where->setStyleSheet(QStringLiteral("color:#C0392B;"));
+            where->setStyleSheet(QStringLiteral("color:#F85149;"));
         } else {
             where->setText(QStringLiteral("Using <code>%1</code>").arg(exe_));
             where->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
@@ -208,7 +208,7 @@ public:
             auto* no = new QLabel(
                 QStringLiteral("Linking a broker account requires the admin "
                                "role."), this);
-            no->setStyleSheet(QStringLiteral("color:#C0392B;"));
+            no->setStyleSheet(QStringLiteral("color:#F85149;"));
             v->addWidget(no);
         }
 

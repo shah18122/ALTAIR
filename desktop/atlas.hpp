@@ -67,7 +67,7 @@ public:
             QStringLiteral(
                 "<b>MODEL ATLAS</b> — the ten families, and what this engine "
                 "actually has.<br>"
-                "<span style='color:#1B8A4B'>%1 built</span> · "
+                "<span style='color:#3FB950'>%1 built</span> · "
                 "<span style='color:#B9770B'>%2 partial</span> · "
                 "<span style='color:#7F8C8D'>%3 absent</span> "
                 "&nbsp;of %4 entries. "
@@ -196,7 +196,7 @@ private:
 
             switch (r.status) {
             case AtlasStatus::Implemented:
-                it->setForeground(1, QColor(QStringLiteral("#1B8A4B")));
+                it->setForeground(1, QColor(QStringLiteral("#3FB950")));
                 break;
             case AtlasStatus::Partial:
                 it->setForeground(1, QColor(QStringLiteral("#B9770B")));

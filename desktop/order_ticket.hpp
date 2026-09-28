@@ -578,7 +578,7 @@ public:
                                "position and every number here and still "
                                "cannot ask for a trade."),
                 this);
-            no->setStyleSheet(QStringLiteral("color:#C0392B;"));
+            no->setStyleSheet(QStringLiteral("color:#F85149;"));
             no->setWordWrap(true);
             v->addWidget(no);
         }
