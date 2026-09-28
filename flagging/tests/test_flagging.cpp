@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 
 namespace {
 
@@ -561,6 +562,63 @@ void a_poisoned_model_is_detected_deweighted_and_rolled_back()
                 " CLAUDE.md\n       warns about.\n");
 }
 
+void canary_loss_is_hard_saturating_and_one_shot()
+{
+    std::printf("\n6 canary_loss_is_hard_saturating_and_one_shot\n");
+    const ModelKey candidate = key_of(0x3333);
+    const ModelKey fallback = key_of(0x1111);
+    ShadowRun shadow;
+    check(shadow.open(candidate, 1).has_value(), "the canary fixture shadow opens");
+    (void)shadow.observe(0.0, 0.0, 0.0);
+
+    RollbackTrigger trigger{};
+    trigger.min_ic = -1.0;
+    trigger.max_loss_paise = 100;
+    trigger.max_divergence = 10.0;
+    trigger.min_observations = 100;
+
+    CanaryController canary;
+    check(canary.arm(trigger).has_value(), "the loss trigger arms");
+    check(canary.open(shadow, fallback, 0.10).has_value(),
+          "the canary opens once against its explicit fallback");
+    check(!canary.open(shadow, fallback, 0.10)
+              && canary.open(shadow, fallback, 0.10).error()
+                     == DeployError::AlreadyOpened,
+          "a running canary cannot be reopened to reset its loss history");
+    const auto loss = canary.observe(0.0, 0.0, 0.0, -101, false);
+    check(loss && loss->rolled_back()
+              && loss->reason == RollbackReason::LossExceeded
+              && loss->observations == 1 && loss->observed_loss == 101,
+          "the hard loss cap fires before minimum sample size");
+    check(!canary.running()
+              && !canary.open(shadow, fallback, 0.10)
+              && canary.open(shadow, fallback, 0.10).error()
+                     == DeployError::AlreadyOpened,
+          "a rolled-back controller cannot erase loss by opening again");
+
+    RollbackTrigger extreme_trigger = trigger;
+    extreme_trigger.max_loss_paise =
+        std::numeric_limits<std::int64_t>::max() - 1;
+    CanaryController extreme;
+    (void)extreme.arm(extreme_trigger);
+    (void)extreme.open(shadow, fallback, 0.10);
+    const auto min_loss = extreme.observe(
+        0.0, 0.0, 0.0, std::numeric_limits<std::int64_t>::min(), false);
+    check(min_loss && min_loss->reason == RollbackReason::LossExceeded
+              && min_loss->observed_loss
+                     == std::numeric_limits<std::int64_t>::max(),
+          "INT64_MIN loss is measured without negation overflow and reports a safe saturation");
+
+    CanaryController invalid;
+    (void)invalid.arm(trigger);
+    (void)invalid.open(shadow, fallback, 0.10);
+    const auto nan = invalid.observe(
+        std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0, 0, false);
+    check(nan && nan->reason == RollbackReason::InvalidObservation
+              && !invalid.running(),
+          "a non-finite forecast rolls back instead of poisoning its scorecard");
+}
+
 } // namespace
 
 int main()
@@ -571,6 +629,7 @@ int main()
     page_hinkley_and_adwin_detect_different_things();
     the_weight_update_is_shrunk_by_sample_size();
     a_poisoned_model_is_detected_deweighted_and_rolled_back();
+    canary_loss_is_hard_saturating_and_one_shot();
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");
     return failures == 0 ? 0 : 1;

@@ -126,7 +126,7 @@ int main() {
               "delivery STT is BOTH sides");
     }
 
-    // ---- and it prices a real trade --------------------------------------
+    // ---- the real, unverified file refuses to price ----------------------
     if (apr01 != nullptr) {
         altair::Trade t{};
         t.segment = altair::Segment::Opt;
@@ -142,51 +142,80 @@ int main() {
         br.take_lower = true;
 
         const auto cb = altair::compute_cost(t, *apr01, br);
-        check(cb.has_value(), "a real option sell priced from the loaded file");
-        if (cb) {
-            std::printf("\n  75 x Rs 50 NIFTY option SELL, priced from "
-                        "charges.toml:\n");
-            std::printf("    turnover     %10lld paise\n",
-                        static_cast<long long>(cb->turnover.raw()));
-            std::printf("    brokerage    %10lld\n",
-                        static_cast<long long>(cb->brokerage.raw()));
-            std::printf("    STT          %10lld\n",
-                        static_cast<long long>(cb->stt.raw()));
-            std::printf("    exchange     %10lld\n",
-                        static_cast<long long>(cb->exchange_txn.raw()));
-            std::printf("    SEBI         %10lld\n",
-                        static_cast<long long>(cb->sebi.raw()));
-            std::printf("    stamp        %10lld\n",
-                        static_cast<long long>(cb->stamp.raw()));
-            std::printf("    IPFT         %10lld\n",
-                        static_cast<long long>(cb->ipft.raw()));
-            std::printf("    GST          %10lld\n",
-                        static_cast<long long>(cb->gst.raw()));
-            std::printf("    TOTAL        %10lld paise  = Rs %.2f\n",
-                        static_cast<long long>(cb->total.raw()),
-                        static_cast<double>(cb->total.raw()) / 100.0);
-            // Turnover is PREMIUM: 75 x Rs 50 = Rs 3,750 = 3,75,000 paise.
-            // Notional would be 75 x strike, which is not even in the Trade.
-            check(cb->turnover.raw() == 375'000,
-                  "turnover is premium (Rs 3,750), not notional");
-            check(!cb->schedule_verified,
-                  "the breakdown says its schedule is UNVERIFIED");
-            // Sum of parts equals the total, exactly, in integer paise.
-            const std::int64_t parts =
-                cb->brokerage.raw() + cb->stt.raw() + cb->exchange_txn.raw()
-                + cb->sebi.raw() + cb->stamp.raw() + cb->ipft.raw()
-                + cb->gst.raw() + cb->dp.raw();
-            check(parts == cb->total.raw(),
-                  "itemised components sum EXACTLY to the total");
-        }
+        check(!cb && cb.error() == altair::CostError::UnverifiedSchedule,
+              "the real UNVERIFIED charges.toml schedule cannot price a trade");
     }
 
-    // ---- refusals --------------------------------------------------------
+    // ---- mandatory policy refusals ---------------------------------------
+    std::vector<altair::ChargeSchedule> junk;
+    const char* missing_safety =
+        "[[schedule]]\nvalid_from=\"2020-01-01\"\n"
+        "valid_to=\"2030-01-01\"\n";
+    const auto no_safety = altair::load_charges(
+        missing_safety, std::char_traits<char>::length(missing_safety), junk);
+    check(!no_safety
+              && no_safety.error() == altair::ChargesError::UnsafeVerificationPolicy,
+          "a missing safety table is refused");
+
+    const char* missing_policy = "[safety]\n";
+    const auto no_policy = altair::load_charges(
+        missing_policy, std::char_traits<char>::length(missing_policy), junk);
+    check(!no_policy
+              && no_policy.error() == altair::ChargesError::UnsafeVerificationPolicy,
+          "a missing verification-policy key is refused");
+
+    const char* wrong_policy =
+        "[safety]\nblock_on_unverified_schedule=\"true\"\n";
+    const auto bad_policy_type = altair::load_charges(
+        wrong_policy, std::char_traits<char>::length(wrong_policy), junk);
+    check(!bad_policy_type
+              && bad_policy_type.error() == altair::ChargesError::UnsafeVerificationPolicy,
+          "a non-boolean verification policy is refused");
+
+    const char* disabled_policy =
+        "[safety]\nblock_on_unverified_schedule=false\n";
+    const auto unsafe_policy = altair::load_charges(
+        disabled_policy, std::char_traits<char>::length(disabled_policy), junk);
+    check(!unsafe_policy
+              && unsafe_policy.error() == altair::ChargesError::UnsafeVerificationPolicy,
+          "an explicitly disabled verification policy is refused");
+
+    const char* invalid_verification_date =
+        "last_verified=\"2026-02-31\"\nverified_by=\"test\"\n"
+        "[safety]\nblock_on_unverified_schedule=true\n"
+        "[[schedule]]\nvalid_from=\"2020-01-01\"\nvalid_to=\"2030-01-01\"\n";
+    const auto invalid_date = altair::load_charges(
+        invalid_verification_date,
+        std::char_traits<char>::length(invalid_verification_date), junk);
+    check(invalid_date && !invalid_date->verified && !junk[0].verified,
+          "an impossible ISO calendar date leaves schedules unverified");
+
+    const char* missing_verifier =
+        "last_verified=\"2026-09-19\"\n"
+        "[safety]\nblock_on_unverified_schedule=true\n"
+        "[[schedule]]\nvalid_from=\"2020-01-01\"\nvalid_to=\"2030-01-01\"\n";
+    const auto no_verifier = altair::load_charges(
+        missing_verifier, std::char_traits<char>::length(missing_verifier), junk);
+    check(no_verifier && !no_verifier->verified && !junk[0].verified,
+          "a valid date without a verifier leaves schedules unverified");
+
+    const char* blank_verifier =
+        "last_verified=\"2026-09-19\"\nverified_by=\"  \"\n"
+        "[safety]\nblock_on_unverified_schedule=true\n"
+        "[[schedule]]\nvalid_from=\"2020-01-01\"\nvalid_to=\"2030-01-01\"\n";
+    const auto whitespace_verifier = altair::load_charges(
+        blank_verifier, std::char_traits<char>::length(blank_verifier), junk);
+    check(whitespace_verifier && !whitespace_verifier->verified
+              && !junk[0].verified,
+          "a whitespace-only verifier leaves schedules unverified");
+
+    // ---- other refusals ---------------------------------------------------
     //
     // The safety argument of the whole file: a bad rate must not become zero.
-    std::vector<altair::ChargeSchedule> junk;
     const char* bad_rate =
-        "last_verified=\"UNVERIFIED\"\n[[schedule]]\n"
+        "last_verified=\"UNVERIFIED\"\n"
+        "[safety]\nblock_on_unverified_schedule=true\n"
+        "[[schedule]]\n"
         "valid_from=\"2020-01-01\"\nvalid_to=\"2030-01-01\"\n"
         "[schedule.equity_futures]\nstt_rate=\"not a number\"\n";
     const auto r1 = altair::load_charges(bad_rate,
@@ -196,6 +225,7 @@ int main() {
           "an unparseable rate is REFUSED, not treated as zero");
 
     const char* bad_side =
+        "[safety]\nblock_on_unverified_schedule=true\n"
         "[[schedule]]\nvalid_from=\"2020-01-01\"\nvalid_to=\"2030-01-01\"\n"
         "[schedule.equity_futures]\nstt_rate=0.0002\nstt_side=\"sometimes\"\n";
     const auto r2 = altair::load_charges(bad_side,
@@ -205,6 +235,7 @@ int main() {
           "an unrecognised side is REFUSED");
 
     const char* overlap =
+        "[safety]\nblock_on_unverified_schedule=true\n"
         "[[schedule]]\nvalid_from=\"2020-01-01\"\nvalid_to=\"2026-12-31\"\n"
         "[[schedule]]\nvalid_from=\"2026-01-01\"\nvalid_to=\"2030-12-31\"\n";
     const auto r3 = altair::load_charges(overlap,
@@ -215,6 +246,7 @@ int main() {
           "not silently pick a backtest's rates");
 
     const char* no_dates =
+        "[safety]\nblock_on_unverified_schedule=true\n"
         "[[schedule]]\n[schedule.equity_futures]\nstt_rate=0.0002\n";
     const auto r4 = altair::load_charges(no_dates,
                                          std::char_traits<char>::length(no_dates),
@@ -226,6 +258,8 @@ int main() {
     // such line", and compute_cost turns that into UnknownSegment rather than
     // a free trade. Distinct from a table that is present and malformed.
     const char* sparse =
+        "last_verified=\"2026-09-19\"\nverified_by=\"synthetic test\"\n"
+        "[safety]\nblock_on_unverified_schedule=true\n"
         "[[schedule]]\nvalid_from=\"2020-01-01\"\nvalid_to=\"2030-01-01\"\n"
         "[schedule.equity_futures]\nstt_rate=0.0002\nstt_side=\"sell\"\n";
     std::vector<altair::ChargeSchedule> one;

@@ -74,6 +74,14 @@ void test_tsc_clock_creation()
 {
     auto c = TscClock::create();
 
+#if defined(__APPLE__)
+    check(c.has_value(), "create() succeeds with the macOS monotonic clock");
+    if (c.has_value()) {
+        check(c->source() == ClockSource::AppleMonotonic,
+              "source() == AppleMonotonic on macOS");
+        check(!c->is_invariant_tsc(), "Apple monotonic source is not labelled TSC");
+    }
+#else
     if (cpu::has_invariant_tsc()) {
         check(c.has_value(), "create() succeeds on an invariant-TSC CPU");
         if (c.has_value()) {
@@ -87,6 +95,7 @@ void test_tsc_clock_creation()
                   "error() == NoInvariantTsc, never a silent fallback");
         }
     }
+#endif
 }
 
 void test_tsc_monotonic()

@@ -30,7 +30,8 @@ namespace altair {
 enum class ClockError : std::uint8_t {
     NotX86,               // target is not x86-64; RDTSC does not exist
     NoInvariantTsc,       // TSC exists but is not invariant (rate follows P-state)
-    CalibrationUnstable   // calibration samples disagreed beyond tolerance
+    CalibrationUnstable,  // calibration samples disagreed beyond tolerance
+    AppleClockUnavailable // mach_absolute_time timebase could not be established
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ enum class ClockError : std::uint8_t {
 // ─────────────────────────────────────────────────────────────────────────
 enum class ClockSource : std::uint8_t {
     InvariantTsc,    // RDTSC / RDTSCP. Single instruction, ~5-10 ns.
+    AppleMonotonic,  // mach_absolute_time on Apple Silicon / macOS.
     SteadyFallback   // std::chrono::steady_clock. Correct, ~20-30 ns, opt-in only.
 };
 
@@ -107,7 +109,8 @@ public:
     /// Detect, calibrate, and anchor against the system clock.
     /// FAILS LOUD: returns NoInvariantTsc rather than silently degrading.
     /// Costs roughly 50 ms — call once at startup, never on the hot path.
-    /// PRECONDITION: none. POSTCONDITION on success: source() == InvariantTsc.
+    /// PRECONDITION: none. On x86 success uses InvariantTsc; on macOS success
+    /// uses AppleMonotonic. Other non-x86 targets still fail explicitly.
     [[nodiscard]] static std::expected<TscClock, ClockError> create() noexcept;
 
     /// Explicitly opt in to a steady_clock-backed clock. For CI machines,

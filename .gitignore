@@ -34,9 +34,20 @@ vcpkg_installed/
 config/secrets.toml
 config/*.local.toml
 **/kite_session.json
+**/fyers_session.json
+**/fyers_login_state.txt
 **/mt_accounts.json
 **/*credentials*
 **/*api_key*
+# Found during the whole-project audit (2026-09-27). The FYERS webhook work
+# wrote these next to kite_session.json, and .gitignore did not cover them: a
+# live 53-byte webhook secret, the account snapshot, and the redacted-event
+# log were each one `git add -A` away from history. Same rule as every other
+# credential artifact on this list -- pulled with a credential, per-machine,
+# regenerable from the API, never in git.
+**/fyers_account.json
+**/fyers_webhook_secret.txt
+**/fyers_webhook_events.jsonl
 
 # ── DATA — large, regenerable, or licensed ───────────────────────────────
 dataset/
@@ -128,3 +139,8 @@ data/order_intents.jsonl
 data/kill_request.json
 **/*.altick
 
+# GETSClient is a read-only reference UI/installer distribution (~1.8 GB) that
+# lives in this folder. Quants/, RXT_trade/ and RXT_trade 2/ were already
+# excluded; this one was not, so the whole tree sat stageable. It is not Altair
+# source and must never enter the build or history.
+GETSClient_5.0.191022_64bit_040924/

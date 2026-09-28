@@ -74,8 +74,8 @@ void nested_tables_flatten_with_dots()
 }
 
 // ── 2 ────────────────────────────────────────────────────────────────────
-// D1. ConfigSnapshot rides a seqlock, so every entry is fixed-size and
-// trivially copyable. A string cannot go in one.
+// D1. ConfigSnapshot is a fixed-size scalar store; strings use a separate
+// configuration path rather than being silently inserted into the snapshot.
 void strings_are_skipped_and_counted()
 {
     std::printf("\n2 strings_are_skipped_and_counted\n");

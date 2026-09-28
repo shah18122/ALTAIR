@@ -35,8 +35,8 @@ namespace altair {
 enum class InstrumentId : std::uint32_t { Invalid = 0xFFFF'FFFFu };
 
 /// Which feed a broker token belongs to. UNIT: none.
-enum class FeedSource : std::uint8_t { Kite = 0, Xts = 1 };
-inline constexpr std::size_t kFeedSourceCount = 2;
+enum class FeedSource : std::uint8_t { Kite = 0, Xts = 1, Fyers = 2 };
+inline constexpr std::size_t kFeedSourceCount = 3;
 
 /// Which authority a spec's contract detail came from. UNIT: none.
 enum class SpecSource : std::uint8_t {

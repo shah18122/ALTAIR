@@ -48,7 +48,9 @@ Order of operations, and it is not negotiable:
    finds. **Expect real findings** — MSVC and GCC disagree most about narrowing
    conversions, and this codebase is full of `std::int64_t` paise flowing into
    `double` analytics.
-2. Get `ctest` green there. All 93 tests, same as MSVC.
+2. Get `ctest` green there. The same suite as MSVC — see the live baseline in
+   `remaining_work.md`. The "93 tests" this line used to name is from P12-01's
+   original writing and is long superseded.
 3. Confirm the conservation invariant still holds bit-for-bit. It is integer
    arithmetic, so it must; if it does not, something is undefined behaviour and
    the tuning below is irrelevant.

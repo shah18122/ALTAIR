@@ -48,14 +48,21 @@
 #include <QDir>
 #include "kite_panel.hpp"
 #include "live_forecast.hpp"
+#include "stream_forecast_page.hpp"
 #include "terminal.hpp"
 #include "quant_pages.hpp"
+#include "workspace_navigation.hpp"
+#include "workspace_pages.hpp"
+#include "workspace_layout.hpp"
 
 #include <QApplication>
 #include <QMessageBox>
 
 #include <cstdlib>
 #include "feed_status.hpp"
+#include "fyers_link.hpp"
+#include "broker_page.hpp"
+#include "arbitrage_workspace.hpp"
 #include "panels.hpp"
 #include "filter.hpp"
 #include "market_clock.hpp"
@@ -68,7 +75,11 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
-#include <QListWidget>
+#include <QMenuBar>
+#include <QSettings>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QTabWidget>
 #include <QMainWindow>
 #include <QMenu>
 #include <QPushButton>
@@ -87,109 +98,6 @@
 
 namespace altair::ui {
 
-/// The nav labels, in order. THE ONE PLACE THEY ARE WRITTEN.
-///
-/// `build_nav()` fills the list widget from here and `--page` validates
-/// against here, so the two cannot drift into disagreeing about what a page is
-/// called -- which is the failure that makes a validated flag worse than an
-/// unvalidated one, because it refuses a name that is genuinely on screen.
-[[nodiscard]] inline QStringList nav_page_names() {
-    return {QStringLiteral("Live Grid"),   QStringLiteral("Chart"),
-            // P32-01. Watchlist, Order Ticket and Trade Handler were three
-            // nav rows for one action: pick an instrument, size it, and be
-            // able to stop. They are now one page.
-            //
-            // THIS MOVES --page INDICES, which every addition since P19 has
-            // been careful not to do. It is a deliberate exception and not an
-            // oversight: three rows leave the list and one arrives, so
-            // everything after position 2 shifts. `--page` takes a NAME as
-            // well as an index and the name form is unaffected, which is the
-            // form anything durable should have been using -- the index form
-            // is what P11Q-07b already found fails silently.
-            QStringLiteral("Terminal"),    QStringLiteral("Models"),
-            QStringLiteral("Data Flow"),   QStringLiteral("Kite Account"),
-            QStringLiteral("Cost"),
-            QStringLiteral("Analytics"),
-            QStringLiteral("Ratio Spread"), QStringLiteral("Value — DCF"),
-            QStringLiteral("Aggregator"),
-            QStringLiteral("Audit Trail"),
-            // P19-01..06. Phases 13-18 each get a page, per Smit's standing
-            // rule that every model is visible in the UI. Appended rather
-            // than interleaved so no existing --page index moves: a script or
-            // a shortcut pinned to "page 7" must keep meaning what it meant.
-            QStringLiteral("Execution"),   QStringLiteral("Volatility"),
-            QStringLiteral("Risk — VaR"),  QStringLiteral("Portfolio"),
-            QStringLiteral("ML — Trees"),  QStringLiteral("Regimes"),
-            QStringLiteral("Forecast"),
-            // P21-03. The Stage 3 hole from ROADMAP_GAP.md, now
-            // filled: momentum and mean reversion. Appended, so no
-            // existing --page index moves.
-            QStringLiteral("Strategies"),
-            // P22-03. The overnight gap, which is where P21-03 said
-            // the whole of this index's return actually lives.
-            QStringLiteral("Overnight Gap"),
-            // P23-01. The largest block of engine code with no page:
-            // greeks, IV, the SVI surface and its arbitrage scan.
-            QStringLiteral("Options"),
-            // P23-03. Real futures-vs-spot, and an honest statement of
-            // the one field that blocks the rate.
-            QStringLiteral("Basis"),
-            // P23-06/07. The self-correction layer and the book
-            // measures, neither of which had a page.
-            QStringLiteral("Flagging"),
-            QStringLiteral("Microstructure"),
-            // P24-01. Sizing on the LOWER BOUND of edge, and the
-            // conservation invariant, neither of which was visible.
-            QStringLiteral("Sizing & Limits"),
-            // P24-02. A pair whose answer is known before the test,
-            // and the walk-forward every backtest passes through.
-            QStringLiteral("Cointegration"),
-            // P24-03. Hurst and EWMA, and the error bars without
-            // which neither number means anything.
-            QStringLiteral("Memory"),
-            // P26-01. Drives altair_kite_login as a SUBPROCESS, so
-            // no credential enters this address space and the UI
-            // links no broker code.
-            QStringLiteral("Link Kite"),
-            // P26-02. Runs the acceptance test rather than
-            // reimplementing its walk-forward.
-            QStringLiteral("Neural"),
-            // P26-04. The registry populated, and the derivative
-            // estimator with its error bar.
-            QStringLiteral("Features"),
-            // P31-01. The last two large blocks of engine code with no page:
-            // P5-06's parity/box/butterfly scanner and P5-07's calendar
-            // scanner. Appended, so no existing --page index moves.
-            QStringLiteral("Parity & Calendar"),
-            // P36-01. The Model Atlas: the ten families from the roadmap
-            // against what this tree actually has, absences included.
-            // APPENDED, so every index from 0 to 31 keeps its meaning.
-            QStringLiteral("Model Atlas")};
-    // P35-03b. "Live Forecast" is gone from the end and "Spot Forecast" at
-    // index 18 is now "Forecast". They were two pages asking two questions
-    // about ONE model on two separately-loaded copies of one series, and only
-    // one of those copies dropped the unfinished bar.
-    //
-    // Removing the LAST row and renaming an existing one is deliberate: every
-    // index from 0 to 31 keeps its meaning, so no shortcut and no capture
-    // script pinned to a number breaks. Only the count changes.
-}
-
-/// Index of a nav page by name, case- and space-insensitively; -1 if no match.
-///
-/// Callable BEFORE the window exists, which is the point: `--page` is checked
-/// before the login dialog opens, so a typo costs a message rather than a
-/// password entry that is then thrown away.
-[[nodiscard]] inline int nav_page_index(const QString& name) {
-    const QString want = name.simplified().toLower();
-    const QStringList names = nav_page_names();
-    for (int i = 0; i < names.size(); ++i) {
-        if (names[i].simplified().toLower() == want) {
-            return i;
-        }
-    }
-    return -1;
-}
 
 inline constexpr int kFrameIntervalMs = 16;
 
@@ -266,14 +174,15 @@ public:
         build_pages();
         build_toolbar();
         build_status();
+        build_workspace_controls();
 
         timer_ = new QTimer(this);
         timer_->setInterval(kFrameIntervalMs);
         connect(timer_, &QTimer::timeout, this, &MainWindow::pump);
-        timer_->start();
 
         auto* full = new QAction(this);
-        full->setShortcuts({QKeySequence(Qt::Key_F11), QKeySequence(Qt::Key_Escape)});
+        // Escape belongs to focused widgets/dialogs and the Terminal chain.
+        full->setShortcut(QKeySequence(Qt::Key_F11));
         connect(full, &QAction::triggered, this, &MainWindow::toggle_fullscreen);
         addAction(full);
 
@@ -285,8 +194,18 @@ public:
     /// Open on a given nav page. For screenshots and for launching straight
     /// into the panel you are working on; the nav is still the normal way in.
     void show_page(int index) {
-        if (index >= 0 && index < nav_->count()) {
-            nav_->setCurrentRow(index);
+        const int requested = index;
+        index = nav_destination(index);
+        if (index >= 0 && index < pages_->count()) {
+            const bool changed = pages_->currentIndex() != index;
+            pages_->setCurrentIndex(index);
+            nav_->select_page(index);
+            if (changed && index == 1) rebuild_chart();
+            refresh_workspace_controls();
+            if (requested != index) statusBar()->showMessage(
+                QStringLiteral("%1 moved to %2.")
+                    .arg(QString::fromUtf8(kNavigationPages[static_cast<std::size_t>(requested)].label),
+                         QString::fromUtf8(kNavigationPages[static_cast<std::size_t>(index)].label)), 10000);
         }
     }
 
@@ -328,10 +247,10 @@ public:
     /// screenshot reaches a review.
     bool show_page(const QString& name) {
         const int i = nav_page_index(name);
-        if (i < 0 || i >= nav_->count()) {
+        if (i < 0 || i >= pages_->count()) {
             return false;
         }
-        nav_->setCurrentRow(i);
+        show_page(i);
         return true;
     }
 
@@ -371,6 +290,14 @@ public:
         }
     }
 
+    /// Start replay after the first paint so startup remains responsive.
+    void start_replay() {
+        if (!timer_->isActive() && !replayer_.exhausted()) {
+            timer_->start();
+            play_->setText(QStringLiteral("❚❚  Pause"));
+        }
+    }
+
     bool compute_current() {
         // dynamic_cast, not qobject_cast: ComputePage is a plain QWidget
         // subclass with no Q_OBJECT macro, and adding one would put it in
@@ -381,6 +308,22 @@ public:
         auto* page = dynamic_cast<ComputePage*>(pages_->currentWidget());
         if (page == nullptr) { return false; }
         page->button()->click();
+        return true;
+    }
+
+    /// Route a stable Atlas identity to the workspace declared by its row.
+    [[nodiscard]] bool open_model(const QString& id) {
+        const AtlasRow* row = atlas_row_by_id(id);
+        if (row == nullptr) return false;
+        int page = row->page >= 0 ? nav_destination(row->page)
+                                  : nav_page_index(QStringLiteral("models.overview"));
+        if (page < 0 || page >= pages_->count()) return false;
+        if (page == nav_page_index(QStringLiteral("models.overview"))) {
+            if (models_panel_ == nullptr || !models_panel_->focus_atlas_model(id)) {
+                return false;
+            }
+        }
+        show_page(page);
         return true;
     }
 
@@ -596,26 +539,18 @@ private:
     DepthLadder* ladder_ = nullptr;
 
     void build_nav() {
-        nav_ = new QListWidget;
-        nav_->setFixedWidth(190);
-        nav_->setFrameShape(QFrame::NoFrame);
-        nav_->setStyleSheet(QStringLiteral(
-            "QListWidget{background:#20262B;color:#D6DBDF;border:none;}"
-            "QListWidget::item{padding:11px 14px;}"
-            "QListWidget::item:selected{background:#2C3E50;color:#FFFFFF;}"));
-        // Indented for the left gutter; the names themselves come from
-        // nav_page_names() so --page and the nav agree by construction.
-        for (const QString& name : nav_page_names()) {
-            nav_->addItem(QStringLiteral("  ") + name);
-        }
-        nav_->setCurrentRow(0);
-
-        pages_ = new QStackedWidget;
-        connect(nav_, &QListWidget::currentRowChanged, this, [this](int row) {
-            pages_->setCurrentIndex(row);
-            if (row == 1) {
-                rebuild_chart();   // draw at once rather than on the next tick
-            }
+        nav_ = new WorkspaceNavigation(this);
+        pages_ = new WorkspacePages;
+        nav_->activate = [this](int index) { show_page(index); };
+        auto* viewport = new QScrollArea;
+        viewport->setObjectName(QStringLiteral("workspaceViewport"));
+        viewport->setAccessibleName(QStringLiteral("Scrollable workspace"));
+        viewport->setWidgetResizable(true);
+        viewport->setFrameShape(QFrame::NoFrame);
+        viewport->setWidget(pages_);
+        connect(pages_, &QStackedWidget::currentChanged, viewport, [viewport] {
+            viewport->horizontalScrollBar()->setValue(0);
+            viewport->verticalScrollBar()->setValue(0);
         });
 
         auto* split = new QWidget;
@@ -623,8 +558,155 @@ private:
         h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(0);
         h->addWidget(nav_);
-        h->addWidget(pages_, 1);
+        h->addWidget(viewport, 1);
         setCentralWidget(split);
+    }
+
+    void refresh_workspace_controls() {
+        if (!nav_toggle_) return;
+        const auto label = nav_->mode() == NavigationMode::Hidden
+            ? QStringLiteral("Show navigation") : QStringLiteral("Hide navigation");
+        nav_toggle_->setText(label);
+        nav_toggle_->setToolTip(label + QStringLiteral("  Ctrl+Shift+B"));
+        nav_favourite_->setText(nav_->is_favourite()
+            ? QStringLiteral("★ Saved") : QStringLiteral("☆ Save page"));
+        const auto& page = kNavigationPages[static_cast<std::size_t>(nav_->current_page())];
+        nav_location_->setText(QStringLiteral("  %1  /  %2  ")
+            .arg(QString::fromUtf8(kNavigationGroups[static_cast<std::size_t>(page.group)].label),
+                 QString::fromUtf8(page.label)));
+    }
+
+    void build_workspace_controls() {
+        // Per-user presentation state. Hex encoding prevents settings path injection.
+        nav_settings_ = new QSettings(QSettings::defaultFormat(), QSettings::UserScope,
+                                     QStringLiteral("Altair"), QStringLiteral("Desktop"), this);
+        nav_settings_->beginGroup(QStringLiteral("workspace/v1/") +
+                                  QString::fromLatin1(user_.toUtf8().toHex()));
+        nav_->restore_state(*nav_settings_);
+        auto* replay_bar = findChild<QToolBar*>();
+        auto* bar = new QToolBar(QStringLiteral("Workspaces"), this);
+        bar->setObjectName(QStringLiteral("workspaceToolbar"));
+        bar->setMovable(false);
+        bar->setFloatable(false);
+        // Recovery controls must not be hidden through the toolbar context menu.
+        bar->toggleViewAction()->setEnabled(false);
+        if (replay_bar) {
+            insertToolBar(replay_bar, bar);
+            insertToolBarBreak(replay_bar);
+        } else addToolBar(bar);
+        nav_toggle_ = bar->addAction(QStringLiteral("Hide navigation"));
+        nav_toggle_->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")));
+        connect(nav_toggle_, &QAction::triggered, this, [this] { nav_->toggle_visibility(); });
+        // Resizing is on the sidebar edge. Keep presentation actions in the
+        // existing Workspaces menu so they remain reachable with navigation hidden.
+        auto* layout = new QMenu(QStringLiteral("Navigation appearance"), this);
+        for (const auto& entry : {std::pair{QStringLiteral("Expanded"), NavigationMode::Expanded},
+                                 std::pair{QStringLiteral("Compact"), NavigationMode::Compact},
+                                 std::pair{QStringLiteral("Hidden"), NavigationMode::Hidden}}) {
+            connect(layout->addAction(entry.first), &QAction::triggered, this,
+                    [this, value = entry.second] { nav_->set_mode(value); });
+        }
+        auto* terminal_split = terminal_->findChild<QSplitter*>(QString{}, Qt::FindDirectChildrenOnly);
+        if (terminal_split) {
+            terminal_split->setChildrenCollapsible(false);
+            if (!restore_terminal_layout(terminal_split, *nav_settings_))
+                statusBar()->showMessage(QStringLiteral("Saved terminal layout is invalid; defaults retained."), 15000);
+            connect(terminal_split, &QSplitter::splitterMoved, this, [this, terminal_split] {
+                if (!save_terminal_layout(terminal_split, *nav_settings_))
+                    statusBar()->showMessage(QStringLiteral("Terminal layout could not be saved."), 15000);
+            });
+        }
+        layout->addSeparator();
+        connect(layout->addAction(QStringLiteral("Reset layout only")), &QAction::triggered, this,
+                [this, terminal_split] {
+            nav_->set_expanded_width(258);
+            nav_->set_mode(NavigationMode::Expanded);
+            nav_settings_->remove(QStringLiteral("terminalLayout"));
+            if (terminal_split) terminal_split->setSizes({240, 500, 260});
+        });
+        // Keep the safety control next to the navigation toggle. The
+        // breadcrumb is allowed to elide on narrow laptop widths; placing
+        // Halt after it made the action fall into the toolbar overflow menu.
+        auto* halt = bar->addAction(QStringLiteral("Halt controls"));
+        connect(halt, &QAction::triggered, this, [this] {
+            show_page(2);
+            auto* panel = terminal_->halt();
+            terminal_->show_halt_controls();
+            panel->setFocus(Qt::ShortcutFocusReason);
+            QTimer::singleShot(0, this, [this, panel] {
+                if (pages_->currentIndex() != 2) return;
+                if (auto* viewport = findChild<QScrollArea*>(QStringLiteral("workspaceViewport")))
+                    viewport->ensureWidgetVisible(panel, 8, 8);
+            });
+        });
+        // Search has one visible home in the sidebar. Its shortcut remains
+        // global so hiding navigation never makes search unreachable.
+        auto* search = new QAction(QStringLiteral("Find workspace"), this);
+        search->setShortcut(QKeySequence(QStringLiteral("Ctrl+K")));
+        connect(search, &QAction::triggered, this, [this] { nav_->show_search(); });
+        addAction(search);
+        nav_favourite_ = bar->addAction(QStringLiteral("☆ Save page"));
+        connect(nav_favourite_, &QAction::triggered, this, [this] { nav_->toggle_favourite(); });
+        auto* menu = menuBar()->addMenu(QStringLiteral("Workspaces"));
+        connect(menu, &QMenu::aboutToShow, this, [this, menu, layout] {
+            nav_->populate_menu(menu);
+            menu->addSeparator();
+            menu->addMenu(layout);
+        });
+        nav_location_ = new QLabel(bar);
+        nav_location_->setMinimumWidth(0);
+        nav_location_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+        nav_location_->setMaximumWidth(360);
+        nav_location_->setStyleSheet(QStringLiteral("color:#B5803F;font-weight:600;"));
+        bar->addWidget(nav_location_);
+        auto* toolbar_spacer = new QWidget(bar);
+        toolbar_spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        bar->addWidget(toolbar_spacer);
+        mode_badge_ = new QLabel(QStringLiteral("  PAPER  "), bar);
+        mode_badge_->setObjectName(QStringLiteral("tradingModeBadge"));
+        mode_badge_->setAccessibleName(QStringLiteral("Trading mode: paper"));
+        mode_badge_->setToolTip(QStringLiteral(
+            "Paper mode. This desktop has no broker order transport linked."));
+        mode_badge_->setStyleSheet(QStringLiteral(
+            "color:#D9EAF2;background:#263843;border:1px solid #46616E;"
+            "border-radius:3px;font-weight:700;padding:3px;"));
+        bar->addWidget(mode_badge_);
+        connection_badge_ = new QLabel(QStringLiteral("  FYERS —  ·  KITE —  "), bar);
+        connection_badge_->setObjectName(QStringLiteral("brokerConnectionBadge"));
+        connection_badge_->setAccessibleName(QStringLiteral("Verified broker connections"));
+        connection_badge_->setToolTip(QStringLiteral(
+            "Only fresh, service-verified read-only evidence is shown as connected."));
+        connection_badge_->setStyleSheet(QStringLiteral(
+            "color:#AFC0C9;background:#172229;border:1px solid #2F414B;"
+            "border-radius:3px;padding:3px;"));
+        bar->addWidget(connection_badge_);
+        nav_->on_state_changed = [this] {
+            refresh_workspace_controls();
+            nav_->save_state(*nav_settings_);
+        };
+        show_page(nav_->current_page());
+        nav_->save_state(*nav_settings_);
+        nav_settings_->sync();
+        if (!nav_->recovery_notice().isEmpty())
+            statusBar()->showMessage(nav_->recovery_notice(), 15000);
+        if (nav_settings_->status() != QSettings::NoError)
+            statusBar()->showMessage(QStringLiteral("Navigation preferences could not be saved."), 15000);
+        // Scope chrome colours here; do not restyle Atlas or trading-widget internals.
+        const auto chrome = QStringLiteral(
+            "QToolBar,QMenuBar,QMenu{background:#1B242C;color:#D5DEE5;border:0;}"
+            "QToolBar{spacing:3px;padding:3px;}"
+            "QToolButton{color:#D5DEE5;background:transparent;border:1px solid transparent;padding:4px;}"
+            "QToolButton:hover,QMenuBar::item:selected,QMenu::item:selected{background:#34434F;color:#FFBE67;}"
+            "QToolButton:focus{border:1px solid #DC9D4F;}"
+            "QToolButton:disabled{color:#68757F;}"
+            "QMenu::item{padding:6px 18px;}"
+            "QComboBox,QPushButton{color:#D5DEE5;background:#28343E;border:1px solid #46535F;padding:3px;}"
+            "QLabel{color:#D5DEE5;}");
+        bar->setStyleSheet(chrome);
+        if (replay_bar) replay_bar->setStyleSheet(chrome);
+        menuBar()->setStyleSheet(chrome);
+        menu->setStyleSheet(chrome);
+        layout->setStyleSheet(chrome);
     }
 
     void build_watchlist() {
@@ -1039,12 +1121,19 @@ private:
         connect(agg_page->button(), &QPushButton::clicked, this,
                 [agg_page] {
                     const QString sym = agg_page->symbol();
-                    agg_page->set_text(aggregator_report(
-                        QStringLiteral(ALTAIR_DATASET_DIR),
-                        QStringLiteral("/spot/%1/1d/").arg(sym),
-                        QStringLiteral("%1 daily")
-                            .arg(quant_symbol_by_dir(sym).label)
-                            .toUtf8().constData()));
+                    const QString root = QStringLiteral(ALTAIR_DATASET_DIR);
+                    const QString sub = QStringLiteral("/spot/%1/1d/").arg(sym);
+                    const QByteArray label = QStringLiteral("%1 daily")
+                        .arg(quant_symbol_by_dir(sym).label).toUtf8();
+                    agg_page->run_async(
+                        QStringLiteral("family=ensemble; model=aggregator; symbol=%1; interval=1d")
+                            .arg(sym),
+                        [root, sub, label](const ModelJobContext& context) {
+                            context.progress(10, QStringLiteral("Loading members"));
+                            if (context.cancelled()) return QString{};
+                            context.progress(35, QStringLiteral("Fitting member forecasts"));
+                            return aggregator_report(root, sub, label.constData());
+                        });
                 });
         pages_->addWidget(agg_page);
 
@@ -1078,9 +1167,14 @@ private:
             this);
         connect(vol_page->button(), &QPushButton::clicked, this,
                 [vol_page, ds] {
-                    vol_page->set_text(QStringLiteral("Fitting..."));
-                    QApplication::processEvents();
-                    vol_page->set_text(volatility_report(ds, vol_page->symbol()));
+                    const QString sym = vol_page->symbol();
+                    vol_page->run_async(
+                        QStringLiteral("family=volatility; model=garch-vs-ewma; symbol=%1; interval=1d")
+                            .arg(sym),
+                        [ds, sym](const ModelJobContext& context) {
+                            context.progress(20, QStringLiteral("Loading returns"));
+                            return volatility_report(ds, sym);
+                        });
                 });
         (void)vol_page->add_symbols();
         pages_->addWidget(vol_page);
@@ -1091,8 +1185,14 @@ private:
             this);
         connect(var_page->button(), &QPushButton::clicked, this,
                 [var_page, ds] {
-                    var_page->set_text(
-                        risk_report(ds, var_page->symbol()));
+                    const QString sym = var_page->symbol();
+                    var_page->run_async(
+                        QStringLiteral("family=risk; model=var-es; symbol=%1; interval=1d")
+                            .arg(sym),
+                        [ds, sym](const ModelJobContext& context) {
+                            context.progress(25, QStringLiteral("Computing loss distribution"));
+                            return risk_report(ds, sym);
+                        });
                 });
         (void)var_page->add_symbols();
         pages_->addWidget(var_page);
@@ -1103,9 +1203,12 @@ private:
             this);
         connect(port_page->button(), &QPushButton::clicked, this,
                 [port_page] {
-                    port_page->set_text(QStringLiteral("Optimising..."));
-                    QApplication::processEvents();
-                    port_page->set_text(portfolio_report());
+                    port_page->run_async(
+                        QStringLiteral("family=risk; model=portfolio-optimisers; fixture=typed-demo"),
+                        [](const ModelJobContext& context) {
+                            context.progress(30, QStringLiteral("Solving constrained weights"));
+                            return portfolio_report();
+                        });
                 });
         pages_->addWidget(port_page);
 
@@ -1116,9 +1219,12 @@ private:
             this);
         connect(ml_page->button(), &QPushButton::clicked, this,
                 [ml_page] {
-                    ml_page->set_text(QStringLiteral("Boosting..."));
-                    QApplication::processEvents();
-                    ml_page->set_text(ml_report());
+                    ml_page->run_async(
+                        QStringLiteral("family=machine-learning; model=gbdt; fixture=typed-demo"),
+                        [](const ModelJobContext& context) {
+                            context.progress(25, QStringLiteral("Boosting trees"));
+                            return ml_report();
+                        });
                 });
         pages_->addWidget(ml_page);
 
@@ -1129,9 +1235,14 @@ private:
             this);
         connect(reg_page->button(), &QPushButton::clicked, this,
                 [reg_page, ds] {
-                    reg_page->set_text(QStringLiteral("Fitting..."));
-                    QApplication::processEvents();
-                    reg_page->set_text(regime_report(ds, reg_page->symbol()));
+                    const QString sym = reg_page->symbol();
+                    reg_page->run_async(
+                        QStringLiteral("family=regime; model=hmm-kmeans; symbol=%1; interval=1d")
+                            .arg(sym),
+                        [ds, sym](const ModelJobContext& context) {
+                            context.progress(20, QStringLiteral("Fitting regime models"));
+                            return regime_report(ds, sym);
+                        });
                 });
         (void)reg_page->add_symbols();
         pages_->addWidget(reg_page);
@@ -1141,43 +1252,10 @@ private:
         // tens of seconds -- a page that ran every horizon on open would
         // freeze the window exactly the way P11Q's startup fit did, and the
         // freeze would arrive late enough to read as a different bug.
-        // P35-03b. ONE FORECAST PAGE.
-        //
-        // This was two: SPOT FORECAST here and LIVE FORECAST at the end of the
-        // nav. Same features, same horizon, same level-wise hyperparameters --
-        // what differed was the question, and the merged report asks both in
-        // order: as a forecast against the random walk, then as a trading rule
-        // against the cost hurdle.
-        //
-        // The sampling rate was three hard-wired buttons on the old page and a
-        // combo on the new one; the combo wins, because the rate and the
-        // instrument are independent choices and nine call sites had to be
-        // kept in step to pretend otherwise.
-        auto* fc_page = new ComputePage(
-            QStringLiteral("FORECAST — P16-06 + P33-01 + P35"),
-            QStringLiteral("Fetch latest from Kite, then forecast"),
-            this);
-        (void)fc_page->add_symbols();
-        auto* fc_off = fc_page->add_button(
-            QStringLiteral("Offline (history on disk)"));
-        auto* fc_iv = fc_page->add_interval();
-        auto run_fc = [fc_page, fc_iv](bool live) {
-            fc_page->set_text(QStringLiteral(
-                "%1\n\nWalk-forward with a refit every hundred bars, the "
-                "next candle,\nits calibrated band, and the same model priced "
-                "as a trading rule.\nThe window is busy until this finishes.")
-                    .arg(live ? QStringLiteral("Fetching from Kite...")
-                              : QStringLiteral("Backtesting...")));
-            QApplication::processEvents();
-            fc_page->set_text(forecast_report(
-                QStringLiteral(ALTAIR_DATASET_DIR), fc_page->symbol(),
-                fc_iv->currentData().toString(), live));
-        };
-        connect(fc_page->button(), &QPushButton::clicked, this,
-                [run_fc] { run_fc(true); });
-        connect(fc_off, &QPushButton::clicked, this,
-                [run_fc] { run_fc(false); });
-        pages_->addWidget(fc_page);
+        // Fit off the UI thread. The retained terminal PriceClient provides
+        // read-only trade updates; each admitted trade runs cached inference.
+        pages_->addWidget(new StreamForecastPage(
+            terminal_->stream(), QStringLiteral(ALTAIR_DATASET_DIR), this));
 
 
         // P21-03. Momentum and mean reversion. The button label says what
@@ -1189,11 +1267,14 @@ private:
             this);
         connect(strat_page->button(), &QPushButton::clicked, this,
                 [strat_page, ds] {
-                    strat_page->set_text(QStringLiteral(
-                        "Computing...\n\n20 noise paths, then a lookback "
-                        "sweep and a dead-band\nsweep on real daily NIFTY."));
-                    QApplication::processEvents();
-                    strat_page->set_text(strategies_report(ds, strat_page->symbol()));
+                    const QString sym = strat_page->symbol();
+                    strat_page->run_async(
+                        QStringLiteral("family=statistical-alpha; model=momentum-mean-reversion; symbol=%1; interval=1d")
+                            .arg(sym),
+                        [ds, sym](const ModelJobContext& context) {
+                            context.progress(10, QStringLiteral("Running noise controls"));
+                            return strategies_report(ds, sym);
+                        });
                 });
         (void)strat_page->add_symbols();
         pages_->addWidget(strat_page);
@@ -1206,10 +1287,14 @@ private:
             this);
         connect(on_page->button(), &QPushButton::clicked, this,
                 [on_page, ds] {
-                    on_page->set_text(QStringLiteral(
-                        "Rebuilding sessions from the 5-minute partition..."));
-                    QApplication::processEvents();
-                    on_page->set_text(overnight_report(ds, on_page->symbol()));
+                    const QString sym = on_page->symbol();
+                    on_page->run_async(
+                        QStringLiteral("family=statistical-alpha; model=overnight-gap; symbol=%1; interval=5m")
+                            .arg(sym),
+                        [ds, sym](const ModelJobContext& context) {
+                            context.progress(15, QStringLiteral("Rebuilding sessions"));
+                            return overnight_report(ds, sym);
+                        });
                 });
         (void)on_page->add_symbols();
         pages_->addWidget(on_page);
@@ -1229,7 +1314,14 @@ private:
             QStringLiteral("Futures against spot, 11 years"),
             this);
         connect(basis_page->button(), &QPushButton::clicked, this,
-                [basis_page, ds] { basis_page->set_text(basis_report(ds)); });
+                [basis_page, ds] {
+                    basis_page->run_async(
+                        QStringLiteral("family=statistical-alpha; model=cash-futures-basis; dataset=nifty"),
+                        [ds](const ModelJobContext& context) {
+                            context.progress(20, QStringLiteral("Aligning cash and futures"));
+                            return basis_report(ds);
+                        });
+                });
         pages_->addWidget(basis_page);
 
         auto* flag_page = new ComputePage(
@@ -1239,8 +1331,14 @@ private:
             this);
         connect(flag_page->button(), &QPushButton::clicked, this,
                 [flag_page, ds] {
-                    flag_page->set_text(
-                        flagging_report(ds, flag_page->symbol()));
+                    const QString sym = flag_page->symbol();
+                    flag_page->run_async(
+                        QStringLiteral("family=model-governance; model=drift-detectors; symbol=%1; interval=1d")
+                            .arg(sym),
+                        [ds, sym](const ModelJobContext& context) {
+                            context.progress(20, QStringLiteral("Comparing distributions"));
+                            return flagging_report(ds, sym);
+                        });
                 });
         (void)flag_page->add_symbols();
         pages_->addWidget(flag_page);
@@ -1269,8 +1367,14 @@ private:
             this);
         connect(coint_page->button(), &QPushButton::clicked, this,
                 [coint_page, ds] {
-                    coint_page->set_text(
-                        cointegration_report(ds, coint_page->symbol()));
+                    const QString sym = coint_page->symbol();
+                    coint_page->run_async(
+                        QStringLiteral("family=statistical-alpha; model=cointegration; symbol=%1; interval=1d")
+                            .arg(sym),
+                        [ds, sym](const ModelJobContext& context) {
+                            context.progress(20, QStringLiteral("Estimating hedge ratio"));
+                            return cointegration_report(ds, sym);
+                        });
                 });
         (void)coint_page->add_symbols();
         pages_->addWidget(coint_page);
@@ -1281,8 +1385,14 @@ private:
             this);
         connect(mem_page->button(), &QPushButton::clicked, this,
                 [mem_page, ds] {
-                    mem_page->set_text(
-                        memory_report(ds, mem_page->symbol()));
+                    const QString sym = mem_page->symbol();
+                    mem_page->run_async(
+                        QStringLiteral("family=time-series; model=hurst-ewma; symbol=%1; interval=1d")
+                            .arg(sym),
+                        [ds, sym](const ModelJobContext& context) {
+                            context.progress(20, QStringLiteral("Estimating memory"));
+                            return memory_report(ds, sym);
+                        });
                 });
         (void)mem_page->add_symbols();
         pages_->addWidget(mem_page);
@@ -1298,6 +1408,7 @@ private:
         // invisible until it is rebuilt.
         pages_->addWidget(new KiteLinkPanel(role_, [this] {
             refresh_broker_pill();
+            if (broker_page_ != nullptr) broker_page_->refresh();
             rebuild_sources();
             // LAST, because it is the only one that can fail, and it reports
             // in the panel's own log rather than a box over it.
@@ -1310,12 +1421,12 @@ private:
             this);
         connect(neural_page->button(), &QPushButton::clicked, this,
                 [neural_page] {
-                    neural_page->set_text(QStringLiteral(
-                        "Running altair_neural_5m_test...\n\n"
-                        "211,000 five-minute returns, five folds. The window\n"
-                        "is busy until it finishes."));
-                    QApplication::processEvents();
-                    neural_page->set_text(neural_report());
+                    neural_page->run_async(
+                        QStringLiteral("family=machine-learning; model=neural-tier; interval=5m; folds=5"),
+                        [](const ModelJobContext& context) {
+                            context.progress(5, QStringLiteral("Starting neural evaluation process"));
+                            return neural_report();
+                        });
                 });
         pages_->addWidget(neural_page);
 
@@ -1325,18 +1436,29 @@ private:
             this);
         connect(feat_page->button(), &QPushButton::clicked, this,
                 [feat_page, ds] {
-                    feat_page->set_text(
-                        features_report(ds, feat_page->symbol()));
+                    const QString sym = feat_page->symbol();
+                    feat_page->run_async(
+                        QStringLiteral("family=features; model=registry-kinematics; symbol=%1; interval=1d")
+                            .arg(sym),
+                        [ds, sym](const ModelJobContext& context) {
+                            context.progress(25, QStringLiteral("Building feature measurements"));
+                            return features_report(ds, sym);
+                        });
                 });
         (void)feat_page->add_symbols();
         pages_->addWidget(feat_page);
 
-        auto* arb_page = new ComputePage(
+        auto* arb_page = new QTabWidget(this);
+        auto* live_arb = new ArbitrageWorkspace(arb_page);
+        live_arb->open_broker_diagnostics = [this] { show_page(34); };
+        arb_page->addTab(live_arb, QStringLiteral("Live opportunities"));
+        auto* parity_page = new ComputePage(
             QStringLiteral("PARITY AND CALENDAR — P5-06 / P5-07"),
             QStringLiteral("Butterfly, parity, box, and the two alignments"),
-            this);
-        connect(arb_page->button(), &QPushButton::clicked, this,
-                [arb_page] { arb_page->set_text(arbitrage_scans_report()); });
+            arb_page);
+        connect(parity_page->button(), &QPushButton::clicked, parity_page,
+                [parity_page] { parity_page->set_text(arbitrage_scans_report()); });
+        arb_page->addTab(parity_page, QStringLiteral("Parity & calendar"));
         pages_->addWidget(arb_page);
 
         // P36-01. THE MODEL ATLAS.
@@ -1344,7 +1466,27 @@ private:
         // It takes a callback that opens a nav page, so a row can be
         // double-clicked to run the thing it describes. The panel does not
         // know this window exists -- same contract as KiteLinkPanel.
-        pages_->addWidget(new AtlasPanel([this](int page) { show_page(page); }));
+        auto* atlas = new AtlasPanel([this](const QString& id) { (void)open_model(id); });
+        pages_->addWidget(atlas);
+        nav_->open_atlas_model = [this](const QString& model) { (void)open_model(model); };
+
+        // FYERS is the configured primary broker. Keep this page separate
+        // from Kite's legacy account/link panels so the operator can see the
+        // actual route priority immediately after launch.
+        pages_->addWidget(new FyersLinkPanel(role_, [this] {
+            refresh_broker_pill();
+            if (broker_page_ != nullptr) broker_page_->refresh();
+        }));
+
+        // One operator-facing broker page.  The legacy Kite Account, Link
+        // Kite and FYERS Primary routes remain stable for scripts and saved
+        // workspaces; this page is the consolidated entry point that shows
+        // both providers and selects the linked data source transparently.
+        broker_page_ = new BrokerPage(role_, [this] {
+            refresh_broker_pill();
+            if (broker_page_ != nullptr) broker_page_->refresh();
+        });
+        pages_->addWidget(broker_page_);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
@@ -1435,6 +1577,7 @@ private:
 
     void build_status() {
         pill_ = new QLabel;
+        fyers_pill_ = new QLabel;
         broker_pill_ = new QLabel;
         who_ = new QLabel;
         phase_ = new QLabel;
@@ -1444,7 +1587,10 @@ private:
         filters_ = new QLabel;
 
         statusBar()->addWidget(pill_);
-        // TWO PILLS, BECAUSE THEY ANSWER TWO QUESTIONS.
+        statusBar()->addWidget(fyers_pill_);
+        // Broker priority and broker session are separate pills, because they
+        // answer different questions. FYERS is the configured primary; Kite
+        // remains the secondary session indicator.
         //
         // The first is "is data arriving" and the second is "can we talk to
         // the broker". They are independent: a replay shows LIVE with the
@@ -1472,7 +1618,7 @@ private:
         }
     }
 
-    /// Re-read the session file and repaint the Kite pill.
+    /// Re-read broker metadata and repaint the FYERS-primary/Kite-secondary pills.
     ///
     /// `verified` is 0 here and stays 0 until something actually calls the
     /// API, so this build can reach `Unverified` and never `Authenticated`.
@@ -1480,13 +1626,44 @@ private:
     /// made a call, so nothing in this process has grounds to claim the token
     /// works.
     void refresh_broker_pill() {
+        const QDateTime service_now = QDateTime::currentDateTimeUtc();
+#ifdef ALTAIR_FYERS_ACCOUNT_FILE
+        const auto fyers_service = probe_service_snapshot(
+            QStringLiteral(ALTAIR_FYERS_ACCOUNT_FILE), broker_view::BrokerId::Fyers,
+            service_now);
+#else
+        const auto fyers_service = probe_service_snapshot(
+            QStringLiteral("data/fyers_account.json"), broker_view::BrokerId::Fyers,
+            service_now);
+#endif
+        const FyersState fyers = probe_fyers();
+        fyers_pill_->setText(QStringLiteral("  %1  ").arg(
+            fyers_service ? service_broker_label(*fyers_service) : fyers_label(fyers.link)));
+        fyers_pill_->setStyleSheet(
+            QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;")
+                .arg((fyers_service ? broker_colour(fyers_service->authentication)
+                                    : fyers_colour(fyers.link)).name()));
+        fyers_pill_->setToolTip(fyers_service
+            ? QStringLiteral("Fresh service evidence from a verified read-only call.")
+            : fyers.detail);
+
 #ifdef ALTAIR_SESSION_FILE
         const QString path = QStringLiteral(ALTAIR_SESSION_FILE);
 #else
         const QString path = QStringLiteral("data/kite_session.json");
 #endif
         const BrokerState b = probe_broker(path, true);
-        QString text = QStringLiteral("  %1").arg(broker_label(b.link));
+#ifdef ALTAIR_ACCOUNT_FILE
+        const auto kite_service = probe_service_snapshot(
+            QStringLiteral(ALTAIR_ACCOUNT_FILE), broker_view::BrokerId::ZerodhaKite,
+            service_now);
+#else
+        const auto kite_service = probe_service_snapshot(
+            QStringLiteral("data/kite_account.json"), broker_view::BrokerId::ZerodhaKite,
+            service_now);
+#endif
+        QString text = QStringLiteral("  %1").arg(
+            kite_service ? service_broker_label(*kite_service) : broker_label(b.link));
         if (!b.user_id.isEmpty()) {
             text += QStringLiteral(" · %1").arg(b.user_id);
         }
@@ -1494,11 +1671,24 @@ private:
         broker_pill_->setText(text);
         broker_pill_->setStyleSheet(
             QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;")
-                .arg(broker_colour(b.link).name()));
+                .arg(broker_colour(kite_service ? kite_service->authentication : b.link).name()));
         // The label is the state; the tooltip is what to DO about it. A pill
         // that only shows a colour makes the operator go looking for the
         // reason, which is the moment they stop trusting the pill.
-        broker_pill_->setToolTip(b.detail);
+        broker_pill_->setToolTip(kite_service
+            ? QStringLiteral("Fresh service evidence from a verified read-only call.")
+            : b.detail);
+        if (connection_badge_ != nullptr) {
+            const QString fyers_text = fyers_service
+                ? service_broker_label(*fyers_service) : fyers_label(fyers.link);
+            const QString kite_text = kite_service
+                ? service_broker_label(*kite_service) : broker_label(b.link);
+            connection_badge_->setText(QStringLiteral("  %1  ·  %2  ")
+                .arg(fyers_text, kite_text));
+            connection_badge_->setToolTip(QStringLiteral(
+                "FYERS: %1\nKite: %2\nOnly fresh service verification is treated as connected.")
+                .arg(fyers_pill_->toolTip(), broker_pill_->toolTip()));
+        }
     }
 
     void refresh_status() {
@@ -1638,8 +1828,13 @@ private:
     TickModel* model_ = nullptr;
     FilterProxy* proxy_ = nullptr;
     QTableView* view_ = nullptr;
-    QListWidget* nav_ = nullptr;
+    WorkspaceNavigation* nav_ = nullptr;
     QStackedWidget* pages_ = nullptr;
+    BrokerPage* broker_page_ = nullptr;
+    QSettings* nav_settings_ = nullptr;
+    QAction* nav_toggle_ = nullptr;
+    QAction* nav_favourite_ = nullptr;
+    QLabel* nav_location_ = nullptr;
 
     ChartWidget* chart_ = nullptr;
     QComboBox* source_ = nullptr;
@@ -1652,7 +1847,10 @@ private:
     QSlider* scrub_ = nullptr;
 
     QLabel* pill_ = nullptr;
+    QLabel* fyers_pill_ = nullptr;
     QLabel* broker_pill_ = nullptr;
+    QLabel* mode_badge_ = nullptr;
+    QLabel* connection_badge_ = nullptr;
     int since_broker_ = 0;
     QLabel* who_ = nullptr;
     QLabel* phase_ = nullptr;

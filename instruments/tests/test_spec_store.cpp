@@ -84,7 +84,7 @@ void test_spec_traits_and_scale()
           "10^7 is NOT representable in integer paise");
     check(!price_scale_is_representable(10'000), "10^4 is NOT representable either");
 
-    check(kFeedSourceCount == 2, "two feed sources");
+    check(kFeedSourceCount == 3, "three feed sources, including FYERS");
     check(sizeof(ContractSpec) > 0 && sizeof(SpecStore) > 0, "types have size");
 
     std::printf("        sizeof(ContractSpec) = %zu, sizeof(SpecStore) = %zu (%.1f MB)\n",

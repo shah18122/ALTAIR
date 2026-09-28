@@ -301,6 +301,18 @@ struct WiringRow {
 
 [[nodiscard]] inline std::vector<WiringRow> wiring() {
     return {
+        {QStringLiteral("FYERS"), QStringLiteral("Primary route (config/altair.toml)"),
+         WiringState::Built,
+         QStringLiteral("configured as the PRIMARY broker; Kite remains the explicit secondary")},
+        {QStringLiteral("FYERS"), QStringLiteral("Authentication"),
+         WiringState::BlockedOnInput,
+         fyers_label(probe_fyers().link) + QStringLiteral(" — ") + probe_fyers().detail},
+        {QStringLiteral("FYERS"), QStringLiteral("Live market-data transport"),
+         WiringState::NotBuilt,
+         QStringLiteral("read-only auth vocabulary is present; FYERS socket/HTTP transport is not wired into the desktop")},
+        {QStringLiteral("FYERS"), QStringLiteral("Historical 1m OHLCV (P2-12)"),
+         WiringState::BlockedOnInput,
+         QStringLiteral("requires an authenticated FYERS history export; no token or provider data is present locally")},
         {QStringLiteral("Kite"), QStringLiteral("Instrument master (P1-04)"),
          WiringState::Built,
          QStringLiteral("CSV parser + three-way reconciliation, tested")},

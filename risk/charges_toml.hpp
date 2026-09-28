@@ -40,13 +40,13 @@
 // table that is ABSENT sets `present = false` -- which `compute_cost` already
 // turns into `UnknownSegment` rather than a free trade.
 //
-// AND `last_verified = "UNVERIFIED"` PROPAGATES.
+// AND `last_verified = "UNVERIFIED"` BLOCKS PRICING.
 //
-// The file says UNVERIFIED today. Every schedule loaded from it therefore
-// carries `verified = false`, which rides through to `CostBreakdown::
-// schedule_verified`, so a P&L whose cost basis was never checked against a
-// circular says so rather than looking like any other number. Setting the date
-// in the TOML is what flips it -- not an argument here, not a flag.
+// Every schedule loaded from the file carries its verification state, and
+// `compute_cost` refuses an unverified schedule. The required safety flag must
+// also be present as a boolean true; absent, malformed, or disabled policy is
+// a loader error. The other keys under `[safety]`, broker tables and implicit
+// seeds are not enforced by this loader/card.
 
 #pragma once
 
@@ -77,7 +77,9 @@ enum class ChargesError : std::uint8_t {
     NoSchedules,
     /// Two schedules cover the same instant. The calculator picks the first
     /// match, so an overlap silently decides which rates a backtest gets.
-    OverlappingSchedules
+    OverlappingSchedules,
+    /// `[safety].block_on_unverified_schedule` must be explicitly boolean true.
+    UnsafeVerificationPolicy
 };
 
 /// Largest charges file accepted. UNIT: bytes.
@@ -86,8 +88,8 @@ inline constexpr std::size_t kMaxChargesBytes = 1u << 18;   // 256 KiB
 struct ChargesLoadReport {
     std::size_t schedules = 0;
     std::size_t segment_tables = 0;
-    /// True when `last_verified` is a date rather than "UNVERIFIED". Copied
-    /// into every schedule's `verified`, and nothing else can set it.
+    /// True only when `last_verified` is a valid ISO calendar date and
+    /// `verified_by` is non-blank. Copied into every schedule's `verified`.
     bool verified = false;
     /// The gap, in days, between the last schedule's `valid_to` and the end of
     /// time. Zero means the file covers the future; a positive number means

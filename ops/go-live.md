@@ -35,14 +35,14 @@ development of this repo:
 | 1.3 | **Phase 0 gate: clean build under clang** | `-Wall -Wextra -Wpedantic -Wconversion`, zero warnings | ❌ **BLOCKED** — no clang on this box, no WSL distribution, shell not elevated |
 | 1.4 | **Live feed subscription** | A full-mode WebSocket delivering depth, not candles | ❌ **OPEN** — `feed/` decoders are built and tested; nothing subscribes |
 | 1.5 | **One full day of reconciliation, green** | `note_reconcile` against a real contract note, `ok() == true` | ❌ **OPEN** — no contract note exists |
-| 1.6 | **`block_on_unverified_schedule = true`** | Confirmed in `config/charges.toml` | ✅ set — and it is what makes 1.2 fail loudly instead of silently |
+| 1.6 | **`block_on_unverified_schedule = true`** | The TOML loader requires this key to be boolean `true`; `compute_cost` refuses every schedule with `verified == false` (`charges_toml` and `cost` tests) | ✅ **ENFORCED** — this closes the cost-calculator guard only; a future OMS path must still call it |
 
 Item 1.2 is the one to take most seriously. The cost model is load-bearing:
-rule 5 prices every signal net of cost *before the signal exists*, so an
-unverified rate does not produce a wrong report, it produces wrong trades. P12-04
-measured the shape of a single stale rate — one head, one side, **₹470.93 on one
-sell of 65 NIFTY futures**. Twenty such trades a day is ₹9,400 of edge that was
-never there.
+rule 5 prices every signal net of cost *before the signal exists*. Pricing now
+fails closed while the file is unverified, but this does not verify the rates
+or establish an end-to-end order gate. P12-04 measured the shape of a single
+stale rate — one head, one side, **₹470.93 on one sell of 65 NIFTY futures**.
+Twenty such trades a day is ₹9,400 of edge that was never there.
 
 ---
 

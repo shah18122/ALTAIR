@@ -77,6 +77,7 @@ class OptionChainPanel final : public QWidget {
 
 public:
     explicit OptionChainPanel(QWidget* parent = nullptr) : QWidget(parent) {
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         auto* v = new QVBoxLayout(this);
         v->setContentsMargins(4, 4, 4, 4);
         v->setSpacing(4);
@@ -123,7 +124,16 @@ public:
         grid_->setEditTriggers(QAbstractItemView::NoEditTriggers);
         grid_->setSelectionBehavior(QAbstractItemView::SelectItems);
         grid_->setSelectionMode(QAbstractItemView::SingleSelection);
-        grid_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+        // The chain is intentionally wider than a laptop viewport. Keep the
+        // page's minimum width bounded and let the table scroll horizontally;
+        // Stretch made every header contribute to the window minimum, pushing
+        // the Terminal to 3044px on a 1920px display.
+        grid_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
+        grid_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        grid_->setMinimumWidth(0);
+        grid_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        grid_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+        grid_->horizontalHeader()->setDefaultSectionSize(82);
         grid_->verticalHeader()->setDefaultSectionSize(22);
         v->addWidget(grid_, 1);
 
@@ -164,6 +174,12 @@ public:
         spot_replay_ = replay;
         reprice();
     }
+
+    /// The chain has thirteen analytical columns and is intentionally wider
+    /// than a laptop viewport. Its table scrolls horizontally; the panel itself
+    /// must not export the table's aggregate column width as a window minimum.
+    [[nodiscard]] QSize minimumSizeHint() const override { return QSize(0, 280); }
+    [[nodiscard]] QSize sizeHint() const override { return QSize(640, 420); }
 
     [[nodiscard]] int strikes_shown() const { return grid_->rowCount(); }
     /// For tests: drive a click without a window manager, the same way the

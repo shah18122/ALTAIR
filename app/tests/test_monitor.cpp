@@ -11,6 +11,8 @@
 #include <app/monitor.hpp>
 
 #include <cstdio>
+#include <cmath>
+#include <limits>
 
 namespace {
 
@@ -97,6 +99,16 @@ int main() {
         check(m.health(kFeedDrops, t0) == Health::Unobserved,
               "and per-gauge too: a drops counter nobody feeds is not a drops "
               "counter reading zero");
+
+        auto partial = make_monitor();
+        partial.observe(kTickLatencyP99, 45.0, t0);
+        partial.observe(kModelDriftPsi, 0.01, t0);
+        partial.observe(kSessionPnlPaise, 0.0, t0);
+        partial.observe(kConservationResidual, 0.0, t0);
+        partial.observe(kFillRate, 0.97, t0);
+        const auto mixed = partial.worst(t0);
+        check(mixed.health == Health::Unobserved && mixed.index == kFeedDrops,
+              "one unwired gauge outranks every healthy gauge in the summary");
     }
 
     // ---- 2. THE DEAD FEED -------------------------------------------------
@@ -180,6 +192,22 @@ int main() {
               "is not -- the same magnitude, opposite sense");
     }
 
+    // ---- 5b. INVALID NUMBERS ARE NOT HEALTHY -----------------------------
+    {
+        auto m = make_monitor();
+        m.observe(kTickLatencyP99,
+                  std::numeric_limits<double>::quiet_NaN(), t0);
+        check(m.health(kTickLatencyP99, t0) == Health::Critical,
+              "NaN cannot slip through both threshold comparisons as Ok");
+
+        std::array<altair::GaugeSpec, 1> bad_specs{{
+            {"bad.order", 10.0, 5.0, altair::Sense::Above, seconds(60)}}};
+        altair::Monitor<1> bad_thresholds{bad_specs};
+        bad_thresholds.observe(0, 0.0, t0);
+        check(bad_thresholds.health(0, t0) == Health::Critical,
+              "misordered warning/critical thresholds are not reported as Ok");
+    }
+
     // ---- 6. THE MEAN IS THE NUMBER THAT LOOKS FINE ------------------------
     //
     // 985 ticks at 40 us and 15 at 3 ms. The mean clears a 200 us budget with
@@ -259,6 +287,27 @@ int main() {
               "a backwards clock is recorded rather than discarded, and a "
               "1000-second sample stays in range instead of running off the "
               "end of the array");
+    }
+
+    // ---- 8. COUNTERS AND RUNNING MEAN DO NOT WRAP ------------------------
+    {
+        std::uint64_t counter = std::numeric_limits<std::uint64_t>::max() - 1;
+        const bool reached_limit = altair::monitor_detail::increment_saturating(counter);
+        const bool stopped_at_limit =
+            !altair::monitor_detail::increment_saturating(counter)
+            && counter == std::numeric_limits<std::uint64_t>::max();
+        check(reached_limit && stopped_at_limit,
+              "diagnostic counters stop at UINT64_MAX instead of wrapping");
+
+        LatencyHistogram h;
+        const auto largest = std::numeric_limits<std::int64_t>::max();
+        h.record(largest);
+        h.record(largest);
+        h.record(-1);  // included in the sample count as a zero-duration fact
+        check(h.count() == 3 && h.max_ns() == largest
+                  && std::isfinite(h.mean_ns())
+                  && h.mean_ns() > 6.0e18 && h.mean_ns() < 6.2e18,
+              "near-INT64_MAX samples keep the online mean finite without a signed-sum overflow");
     }
 
     std::printf("\n%s\n", failures == 0 ? "all checks passed" : "FAILURES");

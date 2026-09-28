@@ -32,10 +32,26 @@
 // cap, because the cost of being slightly slow is seconds and the cost of
 // being slightly fast is a ban.
 
+// CX02-A1b / A2b. THREE WAYS THE WRITE ITSELF LOST DATA, AND WHAT CHANGED.
+//
+//   * Prices went out at ostream's default precision -- six significant
+//     digits -- so NIFTY 24,123.45 was written 24123.5 (C14-001). Every price
+//     is now written exactly (app/price_text.hpp), and one that cannot be
+//     written refuses the fetch before any month is opened.
+//   * `--force` truncated a whole month and wrote back only the requested
+//     sub-range, so `--from 2024-09-15 --force` erased September 1-14
+//     (C14-007). It now refuses unless the window covers the whole month.
+//   * Month files were written in place, unchecked. A disk-full left a torn
+//     CSV. Each month is now built in memory and replaced by one checked
+//     write-and-rename (app/dataset_merge.hpp).
+
+#include <app/dataset_merge.hpp>
 #include <broker/https_client.hpp>
 #include <broker/kite_historical.hpp>
 
+#include <charconv>
 #include <chrono>
+#include <map>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -167,7 +183,10 @@ int main(int argc, char** argv) {
             return 1;
         }
         if (r->status != 200) {
-            std::printf("  HTTP %d\n    %s\n", r->status, r->body.c_str());
+            // At most 512 bytes of the body: it can be megabytes (C14-016).
+            std::printf("  HTTP %lld\n    %.512s%s\n",
+                        static_cast<long long>(r->status), r->body.c_str(),
+                        r->body.size() > 512 ? " ...(truncated)" : "");
             return 1;
         }
         // ---- PARSE-VERIFY, THEN ATOMIC REPLACE (P1-08b) -----------------
@@ -224,31 +243,15 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        const std::string tmp = std::string(dump) + ".tmp";
-        {
-            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-            if (!out) {
-                std::printf("  cannot write %s\n", tmp.c_str());
-                return 1;
-            }
-            out << r->body;
-            if (!out) {
-                std::printf("  write to %s failed; %s is UNTOUCHED\n",
-                            tmp.c_str(), dump);
-                return 1;
-            }
-        }
-        std::error_code rn;
-        std::filesystem::rename(tmp, dump, rn);
-        if (rn) {
-            // Windows refuses rename onto an existing file on some paths;
-            // remove and retry rather than leaving the temp behind.
-            std::filesystem::remove(dump, rn);
-            std::filesystem::rename(tmp, dump, rn);
-        }
-        if (rn) {
-            std::printf("  could not replace %s (%s); the download is in %s\n",
-                        dump, rn.message().c_str(), tmp.c_str());
+        // CX02-A2c (R-AB-029). ONE checked write-and-rename, the same path
+        // every dataset file takes. This used to remove the target BEFORE
+        // retrying the rename, so a second failure left no instrument master
+        // at all -- the file every lot size, tick size, strike step and expiry
+        // comes from (rule 1).
+        const auto wr = altair::dataset::replace_file_checked(dump, r->body);
+        if (!wr) {
+            std::printf("  could not replace %s (%s); it is UNCHANGED\n",
+                        dump, altair::dataset::to_string(wr.error()));
             return 1;
         }
         std::printf("  wrote %s -- %zu bytes, %zu rows, %zu fields each, "
@@ -286,8 +289,17 @@ int main(int argc, char** argv) {
     const bool vol_absent = has_flag(argc, argv, "--volume-absent");
     const bool vol_zero = has_flag(argc, argv, "--volume-zero");
 
-    const std::int64_t token = std::atoll(token_s);
-    if (token <= 0) {
+    // The WHOLE argument, as a number that fits a Kite token. atoll read
+    // "256265x" as 256265 (C14-016).
+    std::int64_t token = 0;
+    {
+        const std::string_view t(token_s);
+        const auto pr = std::from_chars(t.data(), t.data() + t.size(), token);
+        if (pr.ec != std::errc{} || pr.ptr != t.data() + t.size()) {
+            token = 0;
+        }
+    }
+    if (token <= 0 || token > 4'294'967'295LL) {
         std::printf("  --token must be a positive instrument_token\n");
         return 2;
     }
@@ -379,6 +391,23 @@ int main(int argc, char** argv) {
     const std::string auth =
         std::string("token ") + api_key + ":" + access;
 
+    // Use the updater's same per-series lock. A bulk fetch and an incremental
+    // merge to the same directory must not both decide what a month should
+    // contain and then race to publish different complete files.
+    std::error_code series_dir_error;
+    std::filesystem::create_directories(out_dir, series_dir_error);
+    if (series_dir_error) {
+        std::printf("  cannot prepare output directory %s\n", out_dir);
+        return 1;
+    }
+    altair::dataset::UpdateStateLock series_lock;
+    if (!series_lock.acquire(std::filesystem::path(out_dir)
+                             / ".kite_update_series.lock")) {
+        std::printf("  SERIES UPDATE LOCK FAILED for %s; another updater may be "
+                    "active. Nothing written.\n", out_dir);
+        return 1;
+    }
+
     std::vector<altair::RawCandle> all;
     for (std::size_t i = 0; i < chunks->size(); ++i) {
         const auto& c = (*chunks)[i];
@@ -403,7 +432,10 @@ int main(int argc, char** argv) {
             // The body carries Kite's machine-readable reason. Printed
             // because it is the only way to tell "token expired" from "no
             // historical subscription" -- and it contains no credential.
-            std::printf("HTTP %d\n    %s\n", r->status, r->body.c_str());
+            // At most 512 bytes of it (C14-016).
+            std::printf("HTTP %lld\n    %.512s%s\n",
+                        static_cast<long long>(r->status), r->body.c_str(),
+                        r->body.size() > 512 ? " ...(truncated)" : "");
             return 1;
         }
         const auto candles = altair::parse_candles(r->body);
@@ -483,17 +515,79 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // One file per month, matching what dataset/ already holds.
-    std::error_code ec;
-    std::filesystem::create_directories(out_dir, ec);
-    std::size_t written = 0, skipped = 0, skipped_candles = 0;
-    std::string cur_month;
-    std::ofstream f;
-    for (const altair::RawCandle& c : all) {
+    // ---- EVERY PRICE MUST BE WRITABLE BEFORE ANY FILE IS TOUCHED ----------
+    //
+    // C14-001. Exact text, and a NaN or negative price refuses the fetch here
+    // rather than halfway through a month.
+    std::vector<std::string> prices(all.size());
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        if (!altair::dataset::append_prices(prices[i], all[i])) {
+            std::printf("\n  UNWRITABLE PRICE (zero, negative, non-finite or "
+                        "out of range) in the "
+                        "candle at %s.\n  NOTHING WAS WRITTEN.\n",
+                        altair::format_ist(all[i].ts_ns).c_str());
+            return 1;
+        }
+    }
+
+    // ---- one file per month, built whole in memory -----------------------
+    std::map<std::string, std::string> months;          // YYYY-MM -> bytes
+    std::map<std::string, std::size_t> month_candles;
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        const altair::RawCandle& c = all[i];
         const std::string stamp = altair::format_ist(c.ts_ns);
-        const std::string month = stamp.substr(0, 7);      // YYYY-MM
-        if (month != cur_month) {
-            if (f.is_open()) { f.close(); }
+        const std::string month = stamp.substr(0, 7);
+        std::string& body = months[month];
+        if (body.empty()) {
+            body = "time,open,high,low,close,volume";
+            if (want_oi) { body += ",oi"; }
+            body += '\n';
+        }
+        body += stamp;
+        body += prices[i];                               // ,o,h,l,c,
+        // Empty field, not 0, when the instrument reports no volume.
+        if (!vol_absent) {
+            body += std::to_string(static_cast<long long>(c.volume));
+        }
+        if (want_oi) {
+            // Absent OI writes an EMPTY field, not a zero. bar_csv.hpp already
+            // distinguishes those for volume and the same rule applies here.
+            body += ',';
+            if (c.oi_known) {
+                body += std::to_string(static_cast<long long>(c.oi));
+            }
+        }
+        body += '\n';
+        ++month_candles[month];
+    }
+
+    const std::int64_t now_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::int64_t today =
+        (now_ns + altair::detail::kIstOffsetNs) / altair::dataset::kDayNs;
+
+    // ---- --force MAY NOT DELETE WHAT IT DID NOT FETCH (C14-007) -----------
+    //
+    // Checked for EVERY month before ANY is written, so a refusal leaves the
+    // whole tree as it was rather than the first months replaced.
+    for (const auto& [month, body] : months) {
+        const std::string path = std::string(out_dir) + "/" + month + ".csv";
+        if (force && std::filesystem::exists(path)
+            && !altair::dataset::force_covers_month(month, from, to, today)) {
+            std::printf(
+                "\n  REFUSED: --force would replace %s with only the part of\n"
+                "  %s inside %s..%s, deleting every stored row outside it.\n"
+                "  NOTHING WAS WRITTEN. Widen --from/--to to the whole month, "
+                "or drop --force.\n", path.c_str(), month.c_str(),
+                from.c_str(), to.c_str());
+            return 1;
+        }
+    }
+
+    std::size_t written = 0, skipped = 0, skipped_candles = 0, write_failed = 0;
+    for (const auto& [month, body] : months) {
+        {
             const std::string path =
                 std::string(out_dir) + "/" + month + ".csv";
             if (!force && std::filesystem::exists(path)) {
@@ -515,52 +609,37 @@ int main(int argc, char** argv) {
                 // It still skips, because overwriting good data on a whim is
                 // worse. But it now counts what it dropped and prints it, so
                 // the loss is on screen at the moment it happens.
-                std::size_t lost = 0;
-                for (const altair::RawCandle& c2 : all) {
-                    if (altair::format_ist(c2.ts_ns).substr(0, 7) == month) {
-                        ++lost;
-                    }
-                }
-                skipped_candles += lost;
-                cur_month = month;
+                skipped_candles += month_candles[month];
                 ++skipped;
                 continue;
             }
-            f.open(path, std::ios::trunc);
-            if (!f) {
-                std::printf("  cannot write %s\n", path.c_str());
-                return 1;
+            // One checked write-and-rename. A failure leaves the stored month
+            // exactly as it was, and says so.
+            const auto wr = altair::dataset::replace_file_checked(path, body);
+            if (!wr) {
+                std::printf("  WRITE FAILED for %s: %s. That file is unchanged "
+                            "on disk.\n", path.c_str(),
+                            altair::dataset::to_string(wr.error()));
+                ++write_failed;
+                continue;
             }
-            f << "time,open,high,low,close,volume";
-            if (want_oi) { f << ",oi"; }
-            f << "\n";
-            cur_month = month;
             ++written;
         }
-        if (!f.is_open()) { continue; }              // skipped month
-        f << stamp << ',' << c.open << ',' << c.high << ',' << c.low << ','
-          << c.close << ',';
-        // Empty field, not 0, when the instrument reports no volume.
-        if (!vol_absent) { f << static_cast<long long>(c.volume); }
-        if (want_oi) {
-            // Absent OI writes an EMPTY field, not a zero. bar_csv.hpp already
-            // distinguishes those for volume and the same rule applies here.
-            f << ',';
-            if (c.oi_known) { f << static_cast<long long>(c.oi); }
-        }
-        f << "\n";
     }
-    if (f.is_open()) { f.close(); }
 
     std::printf("  wrote %zu month files to %s", written, out_dir);
     if (skipped > 0) {
         std::printf(",\n  SKIPPED %zu month file(s) that already existed AND "
                     "DROPPED %zu CANDLES with them.\n  If this fetch reaches "
                     "outside what those files hold, that data is now lost -- "
-                    "re-run\n  with --force, or narrow the range to the months "
-                    "you actually want.",
+                    "re-run\n  with --force over WHOLE months, or narrow the "
+                    "range to the months you actually want.",
                     skipped, skipped_candles);
     }
+    if (write_failed > 0) {
+        std::printf("\n  %zu MONTH FILE(S) COULD NOT BE WRITTEN -- see above.",
+                    write_failed);
+    }
     std::printf("\n");
-    return 0;
+    return write_failed == 0 ? 0 : 1;
 }

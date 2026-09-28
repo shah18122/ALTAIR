@@ -14,6 +14,14 @@ target_link_libraries(altair_analytics INTERFACE
 )
 
 if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_binomial_test tests/test_binomial.cpp)
+    target_link_libraries(altair_binomial_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME binomial COMMAND altair_binomial_test)
+
+    add_executable(altair_advanced_pricers_test tests/test_advanced_pricers.cpp)
+    target_link_libraries(altair_advanced_pricers_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME analytics_advanced_pricers COMMAND altair_advanced_pricers_test)
+
     add_executable(altair_greeks_test tests/test_greeks.cpp)
     target_link_libraries(altair_greeks_test PRIVATE altair_analytics altair_flags)
     add_test(NAME greeks COMMAND altair_greeks_test)

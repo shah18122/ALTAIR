@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -288,6 +289,36 @@ void conservation_is_exact_and_double_would_miss_it()
     check(clean(check_order(good_order(), AccountState{}, limits(), k2, kNow))
           == false,
           "after which nothing trades");
+
+    // The mathematical sum can be zero even when a left-associated int64
+    // intermediate overflows. The exact cancellation must not spuriously trip.
+    constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+    constexpr auto kMin = std::numeric_limits<std::int64_t>::min();
+    check(conservation_residual(Notional{kMax}, Notional{1}, Notional{kMin}) == 0,
+          "wide exact accumulation preserves cancellation across int64 bounds");
+    KillSwitch k3;
+    check(enforce_conservation(k3, Notional{kMax}, Notional{1}, Notional{kMin},
+                               kNow) == 0 && !k3.tripped(),
+          "an exactly balanced extreme sum does not trip the kill switch");
+
+    // If the residual itself cannot fit, return a signed saturation but still
+    // fail closed. The zero/nonzero decision remains exact.
+    KillSwitch k4;
+    check(conservation_residual(Notional{kMax}, Notional{kMax}, Notional{kMax})
+              == kMax,
+          "an unrepresentable positive residual saturates without signed UB");
+    check(enforce_conservation(k4, Notional{kMax}, Notional{kMax},
+                               Notional{kMax}, kNow) == kMax
+          && k4.tripped(),
+          "an out-of-range residual still trips the kill switch");
+    check(conservation_residual(Notional{kMin}, Notional{kMin}, Notional{kMax})
+              == kMin,
+          "an unrepresentable negative residual saturates without signed UB");
+    KillSwitch k5;
+    check(enforce_conservation(k5, Notional{kMin}, Notional{kMin},
+                               Notional{kMax}, kNow) == kMin
+          && k5.tripped(),
+          "an out-of-range negative residual also trips the kill switch");
 }
 
 // ── 6 ────────────────────────────────────────────────────────────────────
@@ -367,6 +398,85 @@ void portfolio_and_loss_limits_bind()
           " config would refuse every order and look like a broken engine");
 }
 
+// ── 8 ────────────────────────────────────────────────────────────────────
+void unrepresentable_arithmetic_is_refused()
+{
+    std::printf("\n8 unrepresentable_arithmetic_is_refused\n");
+    static_assert(static_cast<std::uint32_t>(Violation::MalformedOrder)
+                  == (1u << 13));
+    static_assert(static_cast<std::uint32_t>(Violation::ArithmeticOverflow)
+                  == (1u << 14));
+
+    KillSwitch k;
+    RiskLimits l = limits();
+    AccountState a{};
+    ProposedOrder o = good_order();
+    o.qty = Qty{std::numeric_limits<std::int64_t>::min()};
+    const Violation min_qty = check_order(o, a, l, k, kNow);
+    check(has(min_qty, Violation::ArithmeticOverflow) && !clean(min_qty),
+          "INT64_MIN quantity magnitude is refused without signed negation");
+
+    // The operands are individually representable, but their resulting
+    // position is not. This must not wrap to a small/negative approval.
+    a.position = Qty{std::numeric_limits<std::int64_t>::max()};
+    o = good_order();
+    const Violation pos_sum = check_order(o, a, l, k, kNow);
+    check(has(pos_sum, Violation::ArithmeticOverflow) && !clean(pos_sum),
+          "position plus order quantity overflow is refused");
+
+    // Addition can represent INT64_MIN even though its absolute position
+    // cannot be represented as a positive int64.
+    a.position = Qty{std::numeric_limits<std::int64_t>::min() + 150};
+    o = good_order();
+    o.qty = Qty{-150};
+    const Violation min_after = check_order(o, a, l, k, kNow);
+    check(has(min_after, Violation::ArithmeticOverflow) && !clean(min_after),
+          "an exactly INT64_MIN resulting position is refused before abs");
+
+    // Quote age uses checked subtraction in both directions. The old raw
+    // timestamp operator would overflow for these extremes.
+    a = AccountState{};
+    o = good_order();
+    o.quote_ts = Timestamp{std::numeric_limits<std::int64_t>::min()};
+    const Violation old_extreme = check_order(
+        o, a, l, k, Timestamp{std::numeric_limits<std::int64_t>::max()});
+    check(has(old_extreme, Violation::ArithmeticOverflow)
+              && has(old_extreme, Violation::StaleQuote),
+          "unrepresentable old quote age is explicitly refused");
+    o.quote_ts = Timestamp{std::numeric_limits<std::int64_t>::max()};
+    const Violation future_extreme = check_order(
+        o, a, l, k, Timestamp{std::numeric_limits<std::int64_t>::min()});
+    check(has(future_extreme, Violation::ArithmeticOverflow)
+              && has(future_extreme, Violation::StaleQuote),
+          "unrepresentable future quote age is explicitly refused");
+
+    // Gross is accumulated as a checked total, not compared via a subtraction
+    // that could become invalid if its operands/contracts change.
+    a = AccountState{};
+    a.gross_notional = Notional{std::numeric_limits<std::int64_t>::max() - 1};
+    o = good_order();
+    const Violation gross_sum = check_order(o, a, l, k, kNow);
+    check(has(gross_sum, Violation::ArithmeticOverflow)
+              && has(gross_sum, Violation::MaxGrossNotional),
+          "gross plus order notional overflow is refused, not wrapped");
+
+    a.gross_notional = Notional{-1};
+    const Violation negative_gross = check_order(o, a, l, k, kNow);
+    check(has(negative_gross, Violation::ArithmeticOverflow)
+              && has(negative_gross, Violation::MaxGrossNotional),
+          "a negative gross-notional state is refused as invalid input");
+
+    // A representable quantity can still make price x quantity overflow.
+    a = AccountState{};
+    o = good_order();
+    o.qty = Qty{std::numeric_limits<std::int64_t>::max()};
+    o.lot_size = LotSize{1};
+    const Violation product = check_order(o, a, l, k, kNow);
+    check(has(product, Violation::ArithmeticOverflow)
+              && has(product, Violation::MaxGrossNotional),
+          "unrepresentable gross notional is refused explicitly");
+}
+
 } // namespace
 
 int main()
@@ -379,6 +489,7 @@ int main()
     conservation_is_exact_and_double_would_miss_it();
     staleness_rejects_both_old_and_future_quotes();
     portfolio_and_loss_limits_bind();
+    unrepresentable_arithmetic_is_refused();
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");
     return failures == 0 ? 0 : 1;

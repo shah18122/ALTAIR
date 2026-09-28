@@ -17,7 +17,7 @@
 #  endif
 #  include <windows.h>
 #  define ALTAIR_PAGES 1
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
 #  include <sys/mman.h>
 #  include <unistd.h>
 #  define ALTAIR_PAGES 1
@@ -37,7 +37,7 @@ std::size_t query_page_size() noexcept
     ::GetSystemInfo(&si);
     return si.dwPageSize != 0 ? static_cast<std::size_t>(si.dwPageSize)
                               : kFallbackPageSize;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
     const long v = ::sysconf(_SC_PAGESIZE);
     return v > 0 ? static_cast<std::size_t>(v) : kFallbackPageSize;
 #else
@@ -88,9 +88,9 @@ std::byte* os_map(std::size_t bytes, bool huge) noexcept
     }
     void* p = ::VirtualAlloc(nullptr, bytes, flags, PAGE_READWRITE);
     return static_cast<std::byte*>(p);
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
     int flags = MAP_PRIVATE | MAP_ANONYMOUS;
-#  ifdef MAP_HUGETLB
+#  if defined(__linux__) && defined(MAP_HUGETLB)
     if (huge) {
         flags |= MAP_HUGETLB;
     }
@@ -111,7 +111,7 @@ void os_unmap(std::byte* p, std::size_t bytes) noexcept
 #if defined(_WIN32)
     (void)bytes;   // MEM_RELEASE requires a size of 0
     ::VirtualFree(p, 0, MEM_RELEASE);
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
     ::munmap(p, bytes);
 #else
     (void)p;

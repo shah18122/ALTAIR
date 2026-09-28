@@ -35,6 +35,7 @@
 #pragma once
 
 #include <instruments/contract_spec.hpp>
+#include <instruments/cross_venue.hpp>
 #include <instruments/kite_dump.hpp>
 #include <instruments/reconcile.hpp>
 
@@ -76,6 +77,14 @@ struct EquityLoadReport {
     std::size_t rejected_by_sink = 0;
     EquityMasterError first_error = EquityMasterError::EmptyInput;
     std::size_t first_error_row = 0;
+};
+
+/// Contract plus the exchange-independent identity intentionally kept outside
+/// ContractSpec. This is the separate ISIN->InstrumentId path permitted by the
+/// Phase 7 contract, so the hot-path spec layout does not grow for a cold join.
+struct EquityMasterIdentity {
+    ContractSpec spec{};
+    char isin[instruments::kIsinChars + 1]{};
 };
 
 namespace detail {
@@ -317,6 +326,41 @@ load_equity_master(const char* csv, std::size_t len, const SeriesFilter& series,
         return std::unexpected(EquityMasterError::EmptyInput);
     }
     return rep;
+}
+
+[[nodiscard]] inline std::expected<EquityMasterIdentity, EquityMasterError>
+parse_equity_identity_row(const char* row, std::size_t len,
+                          const EquityColumns& cols, Exchange exchange,
+                          Timestamp snapshot_at) noexcept {
+    const auto spec = parse_equity_row(row, len, cols, exchange, snapshot_at);
+    if (!spec) return std::unexpected(spec.error());
+
+    detail::KiteField fields[32];
+    bool unterminated = false;
+    const std::size_t count = detail::eq_split(row, len, fields, 32, unterminated);
+    if (unterminated || cols.isin < 0
+        || count <= static_cast<std::size_t>(cols.isin)) {
+        return std::unexpected(EquityMasterError::TooFewFields);
+    }
+    const auto isin = detail::eq_trim(fields[cols.isin]);
+    if (isin.n != instruments::kIsinChars) {
+        return std::unexpected(EquityMasterError::BadSymbol);
+    }
+    EquityMasterIdentity out{};
+    out.spec = *spec;
+    std::memcpy(out.isin, isin.p, isin.n);
+    out.isin[isin.n] = '\0';
+    return out;
+}
+
+[[nodiscard]] inline instruments::CrossVenueLeg
+cross_venue_leg(const EquityMasterIdentity& row, InstrumentId id) noexcept {
+    instruments::CrossVenueLeg leg{};
+    std::memcpy(leg.isin, row.isin, instruments::kIsinChars + 1);
+    leg.exchange = row.spec.exchange;
+    leg.segment = row.spec.segment;
+    leg.id = id;
+    return leg;
 }
 
 } // namespace altair

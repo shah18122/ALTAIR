@@ -1,5 +1,4 @@
-// desktop/terminal.hpp -- the trading terminal: watchlist, ticket, and halt,
-// on one screen.
+// desktop/terminal.hpp -- account-first trading terminal.
 //
 // P32-01. Smit asked for the Watchlist, the Order Ticket and the Trade Handler
 // to stop being three separate nav rows and become one terminal.
@@ -48,11 +47,14 @@
 #pragma once
 
 #include "auth.hpp"
+#include <broker/account_snapshot.hpp>
 #include "kill_switch.hpp"
 #include "live_feed.hpp"
 #include "option_chain.hpp"
 #include "order_ticket.hpp"
 #include "panels.hpp"
+#include "funds_summary.hpp"
+#include "position_table.hpp"
 #include "price_client.hpp"
 #include "data/series_io.hpp"
 
@@ -61,15 +63,40 @@
 #include <QKeySequence>
 #include <QShortcut>
 #include <QLabel>
+#include <QHeaderView>
+#include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSortFilterProxyModel>
 #include <QSplitter>
+#include <QStackedWidget>
+#include <QTableView>
 #include <QTextStream>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <cstdint>
+#include <expected>
+
 namespace altair::ui {
+
+/// One immutable, already-validated account input for the read-only Terminal.
+/// The producer owns transport and credentials; this surface only consumes the
+/// typed snapshot and keeps paper/broker provenance explicit.
+struct TerminalAccountInput {
+    broker_view::AccountSnapshot snapshot{};
+    QString label;
+    FundsSource funds_source{FundsSource::Broker};
+    PositionSource positions_source{PositionSource::Broker};
+};
+
+enum class TerminalAccountError : std::uint8_t {
+    SnapshotUnusable,
+    PositionSessionMismatch,
+    PositionApplyRejected,
+    FundsApplyRejected
+};
 
 
 /// What is sitting in the intent queue, read back off disk.
@@ -224,6 +251,9 @@ QWidget#AltairTerminal QGroupBox { color:#8A93A2; border:1px solid #232830;
 QWidget#AltairTerminal QGroupBox::title { subcontrol-origin:margin; left:8px;
     color:#F4C95D; }
 QWidget#strip { background:#0A0C10; border-bottom:1px solid #F4C95D; }
+QWidget#accountSurface { background:#0E1116; }
+QLabel#sectionKicker { color:#F4C95D;font-weight:700;letter-spacing:1px; }
+QLabel#accountCaveat { color:#8A93A2; }
 )";
 
 class TerminalPage final : public QWidget {
@@ -267,6 +297,12 @@ public:
             "with --replay nifty 1m to test without a Kite token, or --go for "
             "live."));
         h->addWidget(stream_btn_);
+        positions_btn_ = new QPushButton(QStringLiteral("Positions"), strip);
+        positions_btn_->setToolTip(QStringLiteral("Open positions and comparable broker funds"));
+        h->addWidget(positions_btn_);
+        operations_btn_ = new QPushButton(QStringLiteral("Operations"), strip);
+        operations_btn_->setToolTip(QStringLiteral("Legacy order, queue and emergency controls"));
+        h->addWidget(operations_btn_);
         auto* keys = new QLabel(QStringLiteral(
             "<span style='color:#8A93A2'>"
             "<b style='color:#7FD17F'>F1</b> buy &nbsp;"
@@ -277,8 +313,88 @@ public:
         h->addWidget(keys);
         v->addWidget(strip);
 
-        // ---- THREE COLUMNS: watch, chain, order ------------------------
-        split_ = new QSplitter(Qt::Horizontal, this);
+        // ---- ACCOUNT-FIRST SURFACE -------------------------------------
+        // P4-07: the Terminal opens on positions and funds. The older trade
+        // controls remain reachable under Operations while their workflows
+        // are migrated, but they no longer dominate the default view.
+        surface_ = new QStackedWidget(this);
+        account_surface_ = new QWidget(surface_);
+        account_surface_->setObjectName(QStringLiteral("accountSurface"));
+        auto* account_layout = new QVBoxLayout(account_surface_);
+        account_layout->setContentsMargins(10, 10, 10, 10);
+        account_layout->setSpacing(8);
+
+        auto* funds_title = new QLabel(QStringLiteral("AVAILABLE FUNDS BY BROKER"), account_surface_);
+        funds_title->setObjectName(QStringLiteral("sectionKicker"));
+        account_layout->addWidget(funds_title);
+        auto* caveat = new QLabel(QStringLiteral(
+            "Comparable INR arithmetic only — balances remain at their broker and are not fungible."),
+            account_surface_);
+        caveat->setObjectName(QStringLiteral("accountCaveat"));
+        caveat->setWordWrap(true);
+        account_layout->addWidget(caveat);
+        funds_model_ = new FundsSummaryModel(this);
+        funds_view_ = new QTableView(account_surface_);
+        funds_view_->setObjectName(QStringLiteral("terminalFunds"));
+        funds_view_->setModel(funds_model_);
+        funds_view_->verticalHeader()->hide();
+        funds_view_->horizontalHeader()->setStretchLastSection(true);
+        funds_view_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+        funds_view_->setAlternatingRowColors(true);
+        funds_view_->setSelectionMode(QAbstractItemView::NoSelection);
+        funds_view_->setMaximumHeight(118);
+        account_layout->addWidget(funds_view_);
+
+        auto* position_head = new QHBoxLayout;
+        auto* position_title = new QLabel(QStringLiteral("OPEN POSITIONS"), account_surface_);
+        position_title->setObjectName(QStringLiteral("sectionKicker"));
+        position_head->addWidget(position_title);
+        position_head->addStretch();
+        position_filter_ = new QLineEdit(account_surface_);
+        position_filter_->setObjectName(QStringLiteral("positionFilter"));
+        position_filter_->setAccessibleName(QStringLiteral("Filter open positions"));
+        position_filter_->setPlaceholderText(QStringLiteral("Filter broker, account, exchange or instrument…"));
+        position_filter_->setClearButtonEnabled(true);
+        position_filter_->setMaximumWidth(360);
+        position_head->addWidget(position_filter_);
+        account_layout->addLayout(position_head);
+
+        positions_model_ = new PositionTableModel({}, this);
+        positions_proxy_ = new QSortFilterProxyModel(this);
+        positions_proxy_->setSourceModel(positions_model_);
+        positions_proxy_->setSortRole(PositionTableModel::SortRole);
+        positions_proxy_->setFilterKeyColumn(-1);
+        positions_proxy_->setFilterCaseSensitivity(Qt::CaseInsensitive);
+        positions_view_ = new QTableView(account_surface_);
+        positions_view_->setObjectName(QStringLiteral("terminalPositions"));
+        positions_view_->setModel(positions_proxy_);
+        positions_view_->setSortingEnabled(true);
+        positions_view_->setAlternatingRowColors(true);
+        positions_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        positions_view_->setSelectionMode(QAbstractItemView::SingleSelection);
+        positions_view_->verticalHeader()->hide();
+        positions_view_->horizontalHeader()->setSectionsMovable(true);
+        positions_view_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+        positions_view_->horizontalHeader()->setStretchLastSection(true);
+        for (int column = 0; column < PositionTableModel::ColumnCount; ++column)
+            positions_view_->setColumnHidden(column,
+                PositionTableModel::hidden_by_default(column));
+        account_layout->addWidget(positions_view_, 1);
+        auto* empty_note = new QLabel(QStringLiteral(
+            "Only open positions are shown. Unknown marks and stale evidence stay explicit; "
+            "positions are never netted across broker accounts."), account_surface_);
+        empty_note->setObjectName(QStringLiteral("accountCaveat"));
+        empty_note->setWordWrap(true);
+        account_layout->addWidget(empty_note);
+        surface_->addWidget(account_surface_);
+
+        connect(position_filter_, &QLineEdit::textChanged, this,
+                [this](const QString& text) {
+            positions_proxy_->setFilterFixedString(text);
+        });
+
+        // ---- LEGACY OPERATIONS SURFACE ---------------------------------
+        split_ = new QSplitter(Qt::Horizontal, surface_);
         watch_ = new WatchlistPanel(role, split_);
         split_->addWidget(watch_);
         chain_ = new OptionChainPanel(split_);
@@ -306,7 +422,13 @@ public:
         split_->setStretchFactor(0, 24);
         split_->setStretchFactor(1, 50);
         split_->setStretchFactor(2, 26);
-        v->addWidget(split_, 1);
+        surface_->addWidget(split_);
+        surface_->setCurrentWidget(account_surface_);
+        v->addWidget(surface_, 1);
+        connect(positions_btn_, &QPushButton::clicked, this,
+                [this] { surface_->setCurrentWidget(account_surface_); });
+        connect(operations_btn_, &QPushButton::clicked, this,
+                [this] { surface_->setCurrentWidget(split_); });
 
         // ---- WIRES ------------------------------------------------------
         //
@@ -372,6 +494,11 @@ public:
         refresh_stream();
     }
 
+    /// Keep the account-first terminal within a laptop viewport. Wide chain
+    /// content scrolls inside its table rather than enlarging the page minimum.
+    [[nodiscard]] QSize minimumSizeHint() const override { return QSize(640, 480); }
+    [[nodiscard]] QSize sizeHint() const override { return QSize(1280, 720); }
+
     /// For tests: the composed parts, so a test can drive selection without a
     /// window manager.
     [[nodiscard]] WatchlistPanel* watchlist() const noexcept { return watch_; }
@@ -381,6 +508,63 @@ public:
     [[nodiscard]] LiveFeedPanel* feed() const noexcept { return feed_; }
     [[nodiscard]] OptionChainPanel* chain() const noexcept { return chain_; }
     [[nodiscard]] PriceClient* stream() const noexcept { return client_; }
+    [[nodiscard]] FundsSummaryModel* funds_model() const noexcept { return funds_model_; }
+    [[nodiscard]] PositionTableModel* positions_model() const noexcept { return positions_model_; }
+    [[nodiscard]] QTableView* positions_view() const noexcept { return positions_view_; }
+    [[nodiscard]] bool account_surface_visible() const noexcept {
+        return surface_ != nullptr && surface_->currentWidget() == account_surface_;
+    }
+    void show_account_surface() { surface_->setCurrentWidget(account_surface_); }
+
+    /// Apply one typed, credential-free account snapshot to the read-only
+    /// Terminal. `now` is UTC nanoseconds supplied by the owner; this method
+    /// never reads a clock or contacts a broker. Preconditions: `input.label`
+    /// identifies the account for display, and all quantities use the units in
+    /// `broker_view::AccountSnapshot`. Stale, mismatched or duplicate data is
+    /// refused without partially mutating either table.
+    [[nodiscard]] std::expected<void, TerminalAccountError>
+    apply_account(const TerminalAccountInput& input, Timestamp now) {
+        const auto& snapshot = input.snapshot;
+        if (!broker_view::usable(snapshot, now)) {
+            return std::unexpected(TerminalAccountError::SnapshotUnusable);
+        }
+        if (snapshot.positions.status == broker_view::SnapshotSectionStatus::Present
+            && snapshot.typed_positions.account_session != snapshot.account_session) {
+            return std::unexpected(TerminalAccountError::PositionSessionMismatch);
+        }
+
+        // PositionTableModel validates all rows and performs its own diff before
+        // publishing model changes. Apply it first so a duplicate/mismatch can
+        // never leave newly published funds beside old positions.
+        if (snapshot.positions.status == broker_view::SnapshotSectionStatus::Present) {
+            const AccountView account{snapshot.account_session,
+                                      input.positions_source, input.label};
+            const auto applied = positions_model_->apply(
+                account, snapshot.typed_positions, now);
+            if (!applied) {
+                return std::unexpected(TerminalAccountError::PositionApplyRejected);
+            }
+        } else {
+            positions_model_->drop(snapshot.account_session);
+        }
+
+        FundsAccountView funds;
+        funds.session = snapshot.account_session;
+        funds.source = input.funds_source;
+        funds.label = input.label;
+        funds.connected = snapshot.funds.status
+            == broker_view::SnapshotSectionStatus::Present;
+        if (funds.connected) funds.funds = snapshot.typed_funds;
+        if (!funds_model_->apply(funds)) {
+            return std::unexpected(TerminalAccountError::FundsApplyRejected);
+        }
+        return {};
+    }
+
+    void show_halt_controls() {
+        surface_->setCurrentWidget(split_);
+        right_->setCurrentWidget(halt_);
+    }
     /// For tests: what a strip tile currently SAYS.
     [[nodiscard]] QString tile_text(unsigned tok) const {
         return tok == 256265u ? nifty_.label->text()
@@ -525,6 +709,16 @@ private:
     }
 
     QSplitter* split_ = nullptr;
+    QStackedWidget* surface_ = nullptr;
+    QWidget* account_surface_ = nullptr;
+    QPushButton* positions_btn_ = nullptr;
+    QPushButton* operations_btn_ = nullptr;
+    FundsSummaryModel* funds_model_ = nullptr;
+    QTableView* funds_view_ = nullptr;
+    PositionTableModel* positions_model_ = nullptr;
+    QSortFilterProxyModel* positions_proxy_ = nullptr;
+    QTableView* positions_view_ = nullptr;
+    QLineEdit* position_filter_ = nullptr;
     WatchlistPanel* watch_ = nullptr;
     OptionChainPanel* chain_ = nullptr;
     QTabWidget* right_ = nullptr;

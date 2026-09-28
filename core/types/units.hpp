@@ -335,7 +335,9 @@ apply_bps(Notional n, Bps b) noexcept {
 /// Round `p` to a multiple of `tick`. Nearest uses half away from zero.
 /// Down/Up are floor/ceil toward -inf/+inf respectively, INCLUDING for
 /// negative prices (spreads can be negative).
-/// DivideByZero if tick is zero; NotRepresentable if tick is negative.
+/// DivideByZero if tick is zero; NotRepresentable if tick is negative;
+/// Overflow if the rounded multiple is outside int64 (CX02-D1, finding
+/// C21-001 -- the correction card is prompts/cx02/CORRECTIONS.md).
 [[nodiscard]] ALTAIR_HOT constexpr std::expected<Price, ArithError>
 round_to_tick(Price p, Price tick, RoundMode mode) noexcept {
     const auto t = tick.raw();
@@ -369,6 +371,17 @@ round_to_tick(Price p, Price tick, RoundMode mode) noexcept {
         }
     }
 
+    // CHECKED BEFORE THE MULTIPLY, exactly as item 4 requires of notional_of.
+    // P0-01's item 9 listed only DivideByZero and NotRepresentable, so this
+    // was left out and `quot * t` could wrap at the extremes: signed overflow
+    // is undefined behaviour, not a large number (C21-001). Rounding
+    // Price::max() UP to the next tick has no representable answer, and a
+    // refusal is the answer.
+    constexpr std::int64_t kI64Max = 0x7FFF'FFFF'FFFF'FFFF;
+    constexpr std::int64_t kI64Min = -kI64Max - 1;
+    if (quot > kI64Max / t || quot < kI64Min / t) {
+        return std::unexpected(ArithError::Overflow);
+    }
     return Price{quot * t};
 }
 

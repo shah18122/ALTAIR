@@ -90,6 +90,15 @@ public:
         return (present_[i / 64] & (1ULL << (i % 64))) != 0ULL;
     }
 
+    /// Mark one registered feature absent without disturbing any other slot.
+    /// The stored value is cleared too, so a later diagnostic cannot mistake
+    /// an old value for the current one. Out-of-range indices are ignored.
+    void clear(FeatureIndex i) noexcept {
+        if (i >= count_) { return; }
+        value_[i] = 0.0;
+        present_[i / 64] &= ~(1ULL << (i % 64));
+    }
+
     /// How many of the registered features actually have a value.
     [[nodiscard]] std::size_t present_count() const noexcept {
         std::size_t n = 0;

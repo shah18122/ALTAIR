@@ -70,6 +70,35 @@ struct Uniform {
     }
 };
 
+struct InferenceGate {
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+};
+
+/// The first non-dummy inference pauses after its slot is pinned. This makes
+/// slot reuse a deterministic protocol test rather than a scheduler race.
+struct PausingUniform {
+    double w = 0.0;
+    InferenceGate* gate = nullptr;
+
+    [[nodiscard]] double operator()(const double* x,
+                                    std::size_t n) const noexcept {
+        if (gate != nullptr && n != 0 && x[0] != 0.0) {
+            bool expected = false;
+            if (gate->entered.compare_exchange_strong(
+                    expected, true, std::memory_order_release,
+                    std::memory_order_relaxed)) {
+                while (!gate->release.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+            }
+        }
+        double acc = 0.0;
+        for (std::size_t i = 0; i < n; ++i) { acc += w * x[i]; }
+        return acc;
+    }
+};
+
 // ── 1 ────────────────────────────────────────────────────────────────────
 // THE serving card.
 /// How many reads make "NOT ONE was torn" a claim rather than a coincidence.
@@ -216,24 +245,29 @@ void an_in_place_swap_lets_a_reader_straddle_two_models()
     });
     // Same progress bound as block 1, and for the same reason.
     std::size_t swaps = 0;
+    std::size_t deferred = 0;
     const auto deadline2 = std::chrono::steady_clock::now()
                            + std::chrono::seconds(10);
     while (reads2.load() < kMeaningfulReads
            && std::chrono::steady_clock::now() < deadline2) {
         for (int i = 0; i < 2000; ++i) {
-            (void)server.stage(Uniform{i % 2 == 0 ? 2.0 : 1.0}, key_for(0x99),
-                               ModelStage::Live);
+            const auto staged = server.stage(
+                Uniform{i % 2 == 0 ? 2.0 : 1.0}, key_for(0x99),
+                ModelStage::Live);
+            if (!staged) {
+                if (staged.error() == ServingError::SlotBusy) { ++deferred; }
+                continue;
+            }
             server.warm(2);
-            (void)server.publish();
-            ++swaps;
+            if (server.publish()) { ++swaps; }
         }
     }
     stop2.store(true, std::memory_order_relaxed);
     reader2.join();
 
-    std::printf("    double-buffered with one atomic index, %zu concurrent"
-                " reads across %zu swaps: %zu torn\n",
-                reads2.load(), swaps, torn2.load());
+    std::printf("    pinned double-buffered serving, %zu concurrent"
+                " reads across %zu swaps (%zu safely deferred): %zu torn\n",
+                reads2.load(), swaps, deferred, torn2.load());
     // NOTE THE ASYMMETRY WITH BLOCK 1, WHICH IS DELIBERATE.
     //
     // There the assertion was `torn > 0` -- the race must be OBSERVED, and too
@@ -251,11 +285,12 @@ void an_in_place_swap_lets_a_reader_straddle_two_models()
     } else {
         check(reads2.load() >= kMeaningfulReads,
               "the reader got a usable number of inferences");
+        check(swaps > 0,
+              "the writer completed real publications while the reader ran");
         check(torn2.load() == 0,
-              "and NOT ONE of them straddled a swap -- the writer fills the"
-              " inactive slot and publishes with a single release store, and a"
-              " reader takes one acquire load and holds that slot for the whole"
-              " inference");
+              "and NOT ONE of them straddled a swap -- the writer reserves the"
+              " inactive slot, and each reader pins its selected slot for the"
+              " whole inference");
     }
 
     // Serving still refuses the things it should.
@@ -272,6 +307,155 @@ void an_in_place_swap_lets_a_reader_straddle_two_models()
           "and a vector with an ABSENT feature is refused rather than having a"
           " zero substituted -- the substitute is a claim about the market"
           " disguised as a claim about missing data (P5-02)");
+}
+
+void a_slow_reader_pins_its_model_until_release()
+{
+    std::printf("\n1b a_slow_reader_pins_its_model_until_release\n");
+    ModelServer<PausingUniform, kF> server;
+    InferenceGate gate;
+    ModelKey key_a = key_for(0x99);
+    ModelKey key_b = key_for(0x99);
+    ModelKey key_c = key_for(0x99);
+    key_a.param_hash = 0xA;
+    key_b.param_hash = 0xB;
+    key_c.param_hash = 0xC;
+
+    check(server.stage(PausingUniform{1.0, &gate}, key_a, ModelStage::Live)
+              .has_value(), "the blocking model stages");
+    server.warm(1); // zero input: warm-up deliberately does not pause
+    const auto g1 = server.publish();
+    check(g1.has_value() && *g1 == 1, "the blocking model publishes as g1");
+
+    FeatureVector v{0x99, kF, Timestamp{7}};
+    FeatureIndex idx[kF];
+    for (std::size_t i = 0; i < kF; ++i) {
+        idx[i] = static_cast<FeatureIndex>(i);
+        (void)v.set(idx[i], 1.0);
+    }
+
+    std::expected<Forecast, ServingError> slow_result =
+        std::unexpected(ServingError::Retry);
+    std::thread slow_reader([&] { slow_result = server.infer(v, idx); });
+    const auto entered_deadline = std::chrono::steady_clock::now()
+                                  + std::chrono::seconds(5);
+    while (!gate.entered.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < entered_deadline) {
+        std::this_thread::yield();
+    }
+    const bool paused = gate.entered.load(std::memory_order_acquire);
+    check(paused, "the slow reader is paused inside model A after pinning it");
+
+    const auto stage_b = server.stage(PausingUniform{2.0, nullptr}, key_b,
+                                      ModelStage::Live);
+    check(stage_b.has_value(),
+          "the first swap stages in the other, unpinned slot");
+    if (stage_b) {
+        server.warm(1);
+        const auto g2 = server.publish();
+        check(g2.has_value() && *g2 == 2,
+              "model B publishes while the old inference still runs");
+    }
+
+    const auto second_started = std::chrono::steady_clock::now();
+    const auto stage_c_while_pinned = server.stage(
+        PausingUniform{3.0, nullptr}, key_c, ModelStage::Live);
+    const auto second_elapsed = std::chrono::steady_clock::now() - second_started;
+    check(!stage_c_while_pinned
+              && stage_c_while_pinned.error() == ServingError::SlotBusy,
+          "the second swap is deferred instead of overwriting model A under"
+          " its reader");
+    check(second_elapsed < std::chrono::seconds(1),
+          "the publisher makes a bounded cold-path check and does not wait for"
+          " the hot inference");
+
+    const auto while_b = server.infer(v, idx);
+    check(while_b.has_value() && near(while_b->value, 16.0, 1e-12)
+              && while_b->generation == 2
+              && while_b->model_digest == key_b.digest()
+              && while_b->feature_version == key_b.feature_version,
+          "new readers see one coherent model-B prediction and metadata");
+
+    gate.release.store(true, std::memory_order_release);
+    slow_reader.join();
+    check(slow_result.has_value() && near(slow_result->value, 8.0, 1e-12)
+              && slow_result->generation == 1
+              && slow_result->model_digest == key_a.digest()
+              && slow_result->feature_version == key_a.feature_version,
+          "the paused reader completes with model-A output and matching"
+          " generation/digest metadata, never a torn mixture");
+
+    const auto stage_c_after_release = server.stage(
+        PausingUniform{3.0, nullptr}, key_c, ModelStage::Live);
+    check(stage_c_after_release.has_value(),
+          "the formerly pinned slot becomes reusable after reader release");
+    if (stage_c_after_release) {
+        server.warm(1);
+        const auto g3 = server.publish();
+        const auto after_c = server.infer(v, idx);
+        check(g3.has_value() && *g3 == 3 && after_c.has_value()
+                  && near(after_c->value, 24.0, 1e-12)
+                  && after_c->generation == 3
+                  && after_c->model_digest == key_c.digest(),
+              "deferred model C publishes later with generation 3 and coherent"
+              " prediction metadata");
+    }
+    check(server.generation() == 3,
+          "the atomic publication descriptor reports the coherent latest"
+          " generation");
+}
+
+void restaging_invalidates_the_previous_warmup()
+{
+    std::printf("\n1c restaging_invalidates_the_previous_warmup\n");
+    ModelServer<Uniform, kF> server;
+    const ModelKey key = key_for(0x99);
+    check(server.stage(Uniform{2.0}, key, ModelStage::Live).has_value(),
+          "the initial model stages");
+    server.warm(4);
+    check(server.stage(Uniform{3.0}, key, ModelStage::Live).has_value(),
+          "a replacement can restage the same reserved slot");
+    check(server.publish().error() == ServingError::NotWarmed,
+          "restaging invalidates the earlier warm-up and blocks publication");
+    check(server.generation() == 0,
+          "the replacement has not become visible before being warmed");
+
+    server.warm(4);
+    const auto published = server.publish();
+    FeatureVector v{0x99, kF, Timestamp{7}};
+    FeatureIndex idx[kF];
+    for (std::size_t i = 0; i < kF; ++i) {
+        idx[i] = static_cast<FeatureIndex>(i);
+        (void)v.set(idx[i], 1.0);
+    }
+    const auto forecast = server.infer(v, idx);
+    check(published.has_value() && *published == 1 && forecast.has_value()
+              && near(forecast->value, 24.0, 1e-12)
+              && forecast->generation == 1
+              && forecast->model_digest == key.digest(),
+          "after a fresh warm-up, the replacement publishes and serves its own"
+          " value and metadata");
+}
+
+void zero_iteration_warmup_does_not_authorize_publication()
+{
+    std::printf("\n1d zero_iteration_warmup_does_not_authorize_publication\n");
+    ModelServer<Uniform, kF> server;
+    check(server.stage(Uniform{2.0}, key_for(0x99), ModelStage::Live)
+              .has_value(),
+          "the model stages before warm-up");
+
+    server.warm(0);
+    const auto skipped = server.publish();
+    check(!skipped && skipped.error() == ServingError::NotWarmed
+              && server.generation() == 0,
+          "zero warm-up iterations execute no predictor call and keep publish"
+          " fail-closed");
+
+    server.warm(1);
+    const auto published = server.publish();
+    check(published.has_value() && *published == 1,
+          "a real predictor invocation opens the warm-before-publish gate");
 }
 
 // ── 2 ────────────────────────────────────────────────────────────────────
@@ -448,6 +632,9 @@ int main()
 {
     std::printf("altair serving, aggregation and confidence interval tests\n");
     an_in_place_swap_lets_a_reader_straddle_two_models();
+    a_slow_reader_pins_its_model_until_release();
+    restaging_invalidates_the_previous_warmup();
+    zero_iteration_warmup_does_not_authorize_publication();
     forecasts_at_different_horizons_are_not_two_opinions();
     the_interval_carries_both_sources_of_uncertainty();
 

@@ -55,7 +55,7 @@ ChargeSchedule pre_april()
     ChargeSchedule s{};
     s.valid_from = ist_date(2000, 1, 1);
     s.valid_to   = ist_date(2026, 3, 31);
-    s.verified   = false;                       // charges.toml says UNVERIFIED
+    s.verified   = true;                        // explicit synthetic test schedule
 
     s.equity_delivery.present   = true;
     s.equity_delivery.stt       = rate_from(0.001L);
@@ -399,17 +399,16 @@ void refusals_and_provenance()
           "a segment with no charge line is UnknownSegment -- never priced at "
           "zero, which would make an untaxed segment look like free money");
 
-    const auto c = compute_cost(fut_trade(Side::Buy, 2'408'000, 65), s, b);
-    check(c.has_value() && !c->schedule_verified,
-          "and the result carries schedule_verified = false, because "
-          "charges.toml still says UNVERIFIED -- a P&L whose cost basis was "
-          "never checked against a circular should say so");
+    ChargeSchedule unverified = s;
+    unverified.verified = false;
+    const auto refused = compute_cost(
+        fut_trade(Side::Buy, 2'408'000, 65), unverified, b);
+    check(!refused && refused.error() == CostError::UnverifiedSchedule,
+          "an unverified schedule is refused before its rates can be priced");
 
-    ChargeSchedule ok = s;
-    ok.verified = true;
-    const auto v = compute_cost(fut_trade(Side::Buy, 2'408'000, 65), ok, b);
+    const auto v = compute_cost(fut_trade(Side::Buy, 2'408'000, 65), s, b);
     check(v.has_value() && v->schedule_verified,
-          "a verified schedule says so too");
+          "an explicitly verified synthetic schedule still prices");
 }
 
 } // namespace

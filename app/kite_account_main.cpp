@@ -37,6 +37,7 @@
 // exact hole the allow-list exists to close.
 
 #include <broker/https_client.hpp>
+#include <broker/account_snapshot_parser.hpp>
 #include <broker/kite_api.hpp>
 
 #include <chrono>
@@ -46,6 +47,7 @@
 #include <ctime>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -112,6 +114,22 @@ void usage(const char* exe) {
         "  Needs data/kite_session.json (altair_kite_login writes it) and\n"
         "  ALTAIR_KITE_API_KEY in the environment. The access token is read\n"
         "  from the file and never printed.\n", exe);
+}
+
+[[nodiscard]] std::string json_quote(std::string_view text) {
+    std::string out{"\""};
+    for (const char c : text) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default: out.push_back(c); break;
+        }
+    }
+    out.push_back('"');
+    return out;
 }
 
 } // namespace
@@ -187,6 +205,29 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    const auto now = std::time(nullptr);
+    const auto seconds = static_cast<std::int64_t>(now);
+    if (seconds <= 0 || seconds > 9'223'372'036LL) {
+        std::printf("\n  local UTC clock is outside the supported range.\n");
+        return 1;
+    }
+    const altair::broker_view::EvidenceWindow observed{
+        altair::Timestamp{seconds * 1'000'000'000LL},
+        altair::Timestamp{seconds * 1'000'000'000LL + 30'000'000'000LL}};
+    const auto response = [&want](std::size_t i) {
+        return altair::broker_view::ProviderResponse{
+            static_cast<int>(want[i].status), want[i].body};
+    };
+    const auto typed = altair::broker_view::parse_account_snapshot(
+        altair::broker_view::BrokerId::ZerodhaKite,
+        {altair::broker_view::BrokerId::ZerodhaKite, 1, 1}, observed,
+        response(0), response(1), response(2), response(3), response(4),
+        "user_id");
+    if (!typed) {
+        std::printf("\n  Kite responses did not form a valid typed account snapshot; not writing.\n");
+        return 1;
+    }
+
     // Written temp-then-rename, so the UI never reads a half-written file.
     // The same argument as the warm-restart snapshot in P12-02: a torn file
     // parses.
@@ -197,9 +238,16 @@ int main(int argc, char** argv) {
             std::printf("\n  cannot write %s\n", tmp.c_str());
             return 1;
         }
-        const auto now = std::time(nullptr);
-        o << "{\n  \"fetched_at_unix\": " << static_cast<long long>(now)
-          << ",\n";
+        o << "{\n  \"schema_version\": 1,\n"
+          << "  \"broker\": \"ZERODHA_KITE\",\n"
+          << "  \"fetched_at_unix\": " << static_cast<long long>(now)
+          << ",\n  \"service_epoch\": 1"
+          << ",\n  \"auth_verified_at_unix\": " << static_cast<long long>(now)
+          << ",\n  \"auth_expires_at_unix\": " << static_cast<long long>(now + 30)
+          << ",\n  \"account_expires_at_unix\": " << static_cast<long long>(now + 30)
+          << ",\n  \"feed_status\": \"disabled\""
+          << ",\n  \"account_id\": "
+          << json_quote(typed->account_id.data()) << ",\n";
         for (std::size_t i = 0; i < want.size(); ++i) {
             o << "  \"" << want[i].name << "_status\": " << want[i].status
               << ",\n";

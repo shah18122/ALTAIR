@@ -11,6 +11,7 @@ add_library(altair::oms ALIAS altair_oms)
 target_include_directories(altair_oms INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(altair_oms INTERFACE
     altair_risk
+    altair_invariant
     altair_types
     altair_time
     altair_flags
@@ -27,6 +28,13 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_order_intent_test PRIVATE
         ALTAIR_INTENT_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/intents.jsonl")
     add_test(NAME order_intent COMMAND altair_order_intent_test)
+
+    # CX02-B2. The drain, rebuilt: a missing, truncated or replaced file is an
+    # error; intents expire; ids are deduplicated across restarts; every bound
+    # refuses or reports. Writes its scratch files in the working directory.
+    add_executable(altair_intent_queue_test tests/test_intent_queue.cpp)
+    target_link_libraries(altair_intent_queue_test PRIVATE altair_oms altair_flags)
+    add_test(NAME intent_queue COMMAND altair_intent_queue_test)
 
     add_executable(altair_order_state_test tests/test_order_state.cpp)
     target_link_libraries(altair_order_state_test PRIVATE altair_oms altair_flags)
@@ -55,6 +63,14 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_throttle_test PRIVATE altair_oms altair_flags)
     add_test(NAME throttle COMMAND altair_throttle_test)
 
+    add_executable(altair_broker_dispatch_gate_test tests/test_broker_dispatch_gate.cpp)
+    target_link_libraries(altair_broker_dispatch_gate_test PRIVATE altair_oms altair_flags)
+    add_test(NAME broker_dispatch_gate COMMAND altair_broker_dispatch_gate_test)
+
+    add_executable(altair_fyers_order_adapter_test tests/test_fyers_adapter.cpp)
+    target_link_libraries(altair_fyers_order_adapter_test PRIVATE altair_oms altair_flags)
+    add_test(NAME fyers_order_adapter COMMAND altair_fyers_order_adapter_test)
+
     # P13-01..06. Execution algorithms and implementation shortfall. They live
     # in oms/ because they decide the quantity and timing of orders, which is
     # placing an order in every sense that matters -- a scheduler in
@@ -68,4 +84,10 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_capacity_test tests/test_capacity.cpp)
     target_link_libraries(altair_capacity_test PRIVATE altair_oms altair_flags)
     add_test(NAME oms_capacity COMMAND altair_capacity_test)
+
+    # P7-07. The paper execution venue: a deterministic fill simulator that
+    # reuses the state machine and the conservation ledger; no live route.
+    add_executable(altair_paper_venue_test tests/test_paper_venue.cpp)
+    target_link_libraries(altair_paper_venue_test PRIVATE altair_oms altair_flags)
+    add_test(NAME paper_venue COMMAND altair_paper_venue_test)
 endif()

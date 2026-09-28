@@ -1,0 +1,24 @@
+{
+ "group": "LEAD",
+ "reader": "claude-lead (main session)",
+ "date": "2026-09-14",
+ "baseline_head": "a34af5c5c9fa8c7498e8cc4df00907548a41e1a5",
+ "hash_check": "All 13 files re-hashed 2026-09-14 ~21:00 IST: MATCH partition sha256.",
+ "files": [
+  {"path": "CLAUDE.md", "total_lines": 365, "ranges_read": [[1, 365]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Project instructions: roles, 8 gates, hard rules 1-11, in-process UI decision, layout, build. Full text received as an injected system context block in this session, not via a chunked Read call.", "path_class": "doc", "findings": []},
+  {"path": "prompts/PROTOCOL.md", "total_lines": 199, "ranges_read": [[1, 199]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Claude/DeepSeek card protocol, gates, correction cards, phase gate checklist.", "path_class": "doc", "findings": []},
+  {"path": "prompts/CODEX_COMPLETION_PLAN.md", "total_lines": 231, "ranges_read": [[1, 231]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Codex CX-00..CX-08 plan; priority findings; idea adoption table; FYERS preflight; terminal spec.", "path_class": "doc", "findings": []},
+  {"path": "prompts/CODEX_PROJECT_MEMORY.md", "total_lines": 145, "ranges_read": [[1, 145]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Codex handoff memory: scope, inherited observations, six priority leads.", "path_class": "doc", "findings": []},
+  {"path": "change_by_codex.txt", "total_lines": 41, "ranges_read": [[1, 41]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Codex change log (CX-00 planning entry only).", "path_class": "doc", "findings": []},
+  {"path": "idea.txt", "total_lines": 559, "ranges_read": [[1, 559]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "User-owned model summary + fly-brain tiered architecture proposal (circuits, 5 ms budget, DPDK, async risk, online updates).", "path_class": "doc", "findings": []},
+  {"path": "ROADMAP.md", "total_lines": 1344, "ranges_read": [[1, 1017], [1018, 1344]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Original architecture/phases/latency budget (section 11)/hard rules. Header status line stale ('Phase 0 ready to start').", "path_class": "doc", "findings": []},
+  {"path": "prompts/LEDGER.md", "total_lines": 1079, "ranges_read": [[1, 270], [271, 540], [541, 640], [641, 760], [761, 835], [836, 910], [911, 1079]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Card status board, carried debt, gate logs. Long lines (up to 2,576 chars) verified received complete.", "path_class": "doc", "findings": []},
+  {"path": "README.md", "total_lines": 115, "ranges_read": [[1, 115]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Repo readme. Status section stale ('1 / 96 task cards complete').", "path_class": "doc", "findings": []},
+  {"path": ".commandcode/taste/coding-style/taste.md", "total_lines": 20, "ranges_read": [[1, 20]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Coding-style preferences.", "path_class": "doc", "findings": []},
+  {"path": ".commandcode/taste/taste.md", "total_lines": 0, "ranges_read": [], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Empty file (0 bytes; sha256 of empty input).", "path_class": "doc", "findings": []},
+  {"path": ".commandcode/taste/tooling/taste.md", "total_lines": 6, "ranges_read": [[1, 6]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Tooling preferences.", "path_class": "doc", "findings": []},
+  {"path": ".commandcode/taste/workflow/taste.md", "total_lines": 15, "ranges_read": [[1, 15]], "reading_status": "fully_read", "review_status": "reviewed", "test_status": "doc", "purpose_ownership": "Workflow preferences.", "path_class": "doc", "findings": []}
+ ],
+ "unread_or_partial": [],
+ "notes": "LEDGER facts used later: go-live blocking items open (unrotated secrets, charges.toml UNVERIFIED, Phase 0 clang/TSAN gate, no live subscription, no contract note reconciled); models_serving test asserts an observed race (flaky); Phase 0/1 gates NO-GO; P8 exit NOT MET; P8-15b reversed the 15m edge (-7.19 sigma); P4-05 kite adapter builds bodies but has no transport; P17-04 VRP blocked on live bid/ask."
+}

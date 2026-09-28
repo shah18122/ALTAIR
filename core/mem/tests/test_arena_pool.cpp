@@ -10,6 +10,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
+#include <utility>
 
 namespace {
 
@@ -272,6 +274,105 @@ void test_pool_ownership_and_foreign_release()
     check(p->acquire().has_value(), "the pool still works afterwards");
 }
 
+// CX02-D2 (C21-002). P0-05b item 12 specified a null release and a foreign
+// release and said nothing about releasing an OWNED block that is already
+// free. That self-looped the free list -- the same block handed to two owners
+// -- and decremented in_use_ a second time.
+void test_pool_double_release_is_counted_and_harmless()
+{
+    alignas(64) std::byte buf[1024];
+    auto p = Pool::create(buf, sizeof(buf), 64, 64);
+    check(p.has_value(), "create for the double-release test");
+    if (!p.has_value()) {
+        return;
+    }
+
+    void* a = p->acquire().value();
+    void* b = p->acquire().value();
+    check(p->in_use() == 2 && p->double_releases() == 0, "two blocks are out");
+
+    p->release(a);
+    check(p->in_use() == 1, "the first release lands");
+    p->release(a);                       // the same block, a second time
+    check(p->double_releases() == 1,
+          "the second release of the same block is REFUSED and counted");
+    check(p->in_use() == 1, "and in_use() does not underflow");
+
+    // The free list is intact. A self-looped list hands the same block to two
+    // owners, which is the corruption this exists to prevent.
+    void* c = p->acquire().value();
+    void* d = p->acquire().value();
+    check(c != d, "two acquires return DIFFERENT blocks");
+    check(c != b && d != b, "and neither is the block its owner still holds");
+    check(p->foreign_releases() == 0, "none of that was a foreign release");
+
+    // Nothing out at all: there is no block to return.
+    auto q = Pool::create(buf, sizeof(buf), 64, 64);
+    if (q.has_value()) {
+        q->release(buf);
+        check(q->double_releases() == 1 && q->in_use() == 0,
+              "a release when nothing is out is counted, not underflowed");
+    }
+
+    // Blocks too small for a tag are confirmed by the free-list walk alone.
+    alignas(16) std::byte small[128];
+    auto s = Pool::create(small, sizeof(small), sizeof(void*), alignof(void*));
+    check(s.has_value(), "a pool of pointer-sized blocks");
+    if (s.has_value()) {
+        void* x = s->acquire().value();
+        void* y = s->acquire().value();
+        s->release(x);
+        s->release(x);
+        check(s->double_releases() == 1,
+              "a pool whose blocks are too small to carry a tag catches it"
+              " with the walk alone");
+        void* x2 = s->acquire().value();
+        void* y2 = s->acquire().value();
+        check(x2 != y2 && y != x2 && y != y2,
+              "and its free list still hands out distinct blocks");
+    }
+}
+
+// CX02-D2 (C01-004, second half). A COPY of a pool hands the same blocks out
+// twice; the card never forbade one.
+void test_pool_and_arena_are_move_only()
+{
+    check(!std::is_copy_constructible_v<Pool> && !std::is_copy_assignable_v<Pool>,
+          "Pool cannot be copied -- two copies would allocate from one free list");
+    check(std::is_move_constructible_v<Pool> && std::is_move_assignable_v<Pool>,
+          "but it can be moved");
+    check(!std::is_copy_constructible_v<Arena>
+              && !std::is_copy_assignable_v<Arena>,
+          "Arena cannot be copied either -- two copies would bump one span");
+    check(std::is_move_constructible_v<Arena> && std::is_move_assignable_v<Arena>,
+          "and it can be moved");
+
+    alignas(64) std::byte buf[1024];
+    auto m = Pool::create(buf, sizeof(buf), 64, 64);
+    check(m.has_value(), "create for the move check");
+    if (m.has_value()) {
+        void* held = m->acquire().value();
+        Pool moved = std::move(*m);
+        check(moved.capacity() > 0 && moved.in_use() == 1,
+              "the moved-to pool owns the blocks and remembers what is out");
+        check(m->capacity() == 0 && m->in_use() == 0
+                  && !m->acquire().has_value(),
+              "and the moved-from pool owns NOTHING -- it cannot hand out the"
+              " block the new owner is holding");
+        moved.release(held);
+        check(moved.in_use() == 0, "the moved-to pool still releases");
+    }
+
+    alignas(64) std::byte abuf[256];
+    Arena src{abuf, sizeof(abuf)};
+    (void)src.allocate(32, 8);
+    Arena dst = std::move(src);
+    check(dst.used() == 32 && dst.capacity() == sizeof(abuf),
+          "a moved-to arena carries the span and the bump position");
+    check(src.capacity() == 0 && !src.allocate(1, 1).has_value(),
+          "and the moved-from arena allocates nothing");
+}
+
 namespace {
 
 /// Throughput report. These operations are 1-3 ns, BELOW the ~12 ns cost of the
@@ -346,6 +447,8 @@ int main()
     test_pool_create_validation();
     test_pool_acquire_release_cycle();
     test_pool_ownership_and_foreign_release();
+    test_pool_double_release_is_counted_and_harmless();
+    test_pool_and_arena_are_move_only();
 
     report_throughput();
 

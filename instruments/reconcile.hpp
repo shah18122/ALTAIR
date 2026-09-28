@@ -152,6 +152,7 @@ struct Entry {
     Timestamp    src_snapshot[kSpecSourceCount];
     std::uint32_t kite_token;
     std::uint32_t xts_token;
+    std::uint32_t fyers_token;
     std::uint8_t present_mask;
     std::uint8_t src_stale_mask;
     std::uint8_t winner_prec;
@@ -263,6 +264,9 @@ public:
         }
         if (spec.source == SpecSource::XtsMaster) {
             e.xts_token = spec.token[static_cast<std::size_t>(FeedSource::Xts)];
+        }
+        if (spec.token[static_cast<std::size_t>(FeedSource::Fyers)] != 0) {
+            e.fyers_token = spec.token[static_cast<std::size_t>(FeedSource::Fyers)];
         }
         dirty_ = true;
         return {};
@@ -495,6 +499,7 @@ private:
         m.price_scale = scale;
         m.token[static_cast<std::size_t>(FeedSource::Kite)] = e.kite_token;
         m.token[static_cast<std::size_t>(FeedSource::Xts)]  = e.xts_token;
+        m.token[static_cast<std::size_t>(FeedSource::Fyers)] = e.fyers_token;
 
         // D8: a wrapping sum of a finalising mix, so the merged hash does not
         // depend on which order the sources arrived in.

@@ -139,9 +139,9 @@ struct DepthUpdate {
 };
 
 // ── D7: the layout is pinned ─────────────────────────────────────────────
-// These structs ride an SPSC ring and a seqlock, and are memcpy'd into the
-// tick store. A field inserted in the middle must break the BUILD, not a file
-// format that replay silently depends on.
+// These structs cross the feed ring and tick-store boundaries. A field
+// inserted in the middle must break the BUILD, not a file format that replay
+// silently depends on.
 static_assert(std::is_trivially_copyable_v<Tick>);
 static_assert(std::is_trivially_copyable_v<DepthLevel>);
 static_assert(std::is_trivially_copyable_v<DepthUpdate>);

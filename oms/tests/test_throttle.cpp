@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 
 namespace {
 
@@ -205,6 +206,20 @@ void the_router_refuses_an_unavailable_venue_rather_than_falling_back()
     check(!n && n.error() == RouteError::NoVenue,
           "an unset venue is refused -- Venue::None is ordinal 0 so a zeroed"
           " request cannot route anywhere by default");
+
+    BrokerThrottle fyers{kFyersOrderLimits};
+    BrokerThrottle kite_secondary{kKiteOrderLimits};
+    const auto f = route(Venue::Fyers, fyers, kite_secondary, at_ms(0));
+    check(f && f->venue == Venue::Fyers,
+          "the explicit FYERS route uses the FYERS throttle");
+    check(fyers.used_today() == 1 && kite_secondary.used_today() == 0,
+          "a FYERS route never consumes the Kite secondary budget");
+    const auto f_legacy = route(Venue::Fyers, kite, at_ms(0));
+    check(!f_legacy && f_legacy.error() == RouteError::VenueUnavailable,
+          "the legacy Kite-only route refuses FYERS instead of silently"
+          " routing a primary order to the secondary account");
+    check(std::strcmp(describe(Venue::Fyers), "FYERS") == 0,
+          "venue descriptions expose the primary broker clearly");
 
     // A throttled venue surfaces as a route failure carrying the reason.
     BrokerThrottle tiny{BrokerLimits{1, 0, 0}};

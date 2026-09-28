@@ -42,7 +42,8 @@ namespace detail {
 [[nodiscard]] ALTAIR_HOT inline std::optional<SideDepth>
 sum_side(const DepthLevel* lv, std::uint8_t populated,
          std::uint8_t levels) noexcept {
-    if (levels == 0 || populated == 0) {
+    if (levels == 0 || populated == 0
+        || static_cast<std::size_t>(populated) > kDepthLevels) {
         return std::nullopt;
     }
     // RULE 11: this clamp is the safety, not a shortcut past it. Kite

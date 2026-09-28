@@ -54,6 +54,14 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_cointegration_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_cointegration COMMAND altair_cointegration_test)
 
+    add_executable(altair_stat_arb_test tests/test_stat_arb.cpp)
+    target_link_libraries(altair_stat_arb_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_stat_arb COMMAND altair_stat_arb_test)
+
+    add_executable(altair_pairs_trade_test tests/test_pairs_trade.cpp)
+    target_link_libraries(altair_pairs_trade_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_pairs_trade COMMAND altair_pairs_trade_test)
+
     # P21-01/02. Momentum and mean reversion -- the Stage 3 hole. One test
     # binary for both because the whole reason to build them together is that
     # they are comparable, and a shared control (the random walk both must lose
@@ -93,4 +101,9 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_regime_real_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME strategies_regime_real COMMAND altair_regime_real_test)
+
+    # P7-02. The event-driven cross-venue scan scheduler.
+    add_executable(altair_scan_scheduler_test tests/test_scan_scheduler.cpp)
+    target_link_libraries(altair_scan_scheduler_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_scan_scheduler COMMAND altair_scan_scheduler_test)
 endif()

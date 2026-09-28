@@ -55,7 +55,7 @@ void layout_is_pinned()
     check(sizeof(DepthUpdate) == 272, "DepthUpdate is 272 bytes");
     check(std::is_trivially_copyable_v<Tick>, "Tick is trivially copyable");
     check(std::is_trivially_copyable_v<DepthUpdate>,
-          "DepthUpdate is trivially copyable -- it rides a seqlock");
+          "DepthUpdate is trivially copyable -- it crosses the feed boundary");
     check(kTickWireVersion == 1, "wire version 1");
     check(offsetof(Tick, id) == 0, "id is first, at offset 0");
     check(offsetof(DepthUpdate, ask) == 144, "the ask array starts at 144");

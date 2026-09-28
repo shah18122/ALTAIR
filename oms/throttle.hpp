@@ -58,11 +58,18 @@ struct BrokerLimits {
     std::int32_t per_day = 0;
 };
 
-/// Kite's documented order limits.
+/// Kite's configured local order limits.  The daily value is intentionally
+/// conservative and remains a configuration gate, not a claim that every
+/// account has the same entitlement.
 ///
 /// Named constants rather than literals at the call site, because these change
 /// and a number buried in a router is a number nobody finds when they do.
 inline constexpr BrokerLimits kKiteOrderLimits{10, 200, 3000};
+
+/// FYERS' published retail-algo ceiling is 10 orders/second.  The minute and
+/// day values are kept as explicit local caps so the router never assumes an
+/// unlimited account; they can be lowered in deployment configuration.
+inline constexpr BrokerLimits kFyersOrderLimits{10, 200, 100'000};
 
 struct ThrottleDecision {
     ThrottleVerdict verdict = ThrottleVerdict::Allowed;
@@ -206,10 +213,11 @@ private:
     std::uint64_t refused_ = 0;
 };
 
-/// Which venues exist. Kite is the only one live; XTS is declared so the
-/// router has somewhere to route when P4-06 lands, and is REFUSED until then
-/// rather than silently falling through to Kite.
-enum class Venue : std::uint8_t { None = 0, Kite, Xts };
+/// Which venues exist.  Kite and XTS retain their historical ordinals because
+/// Venue is persisted in diagnostics.  FYERS is appended rather than
+/// renumbering them.  A secondary venue is always explicitly selected; the
+/// router never crosses brokers after an uncertain submission.
+enum class Venue : std::uint8_t { None = 0, Kite = 1, Xts = 2, Fyers = 3 };
 
 enum class RouteError : std::uint8_t {
     /// Every venue that could take this order is throttled.
@@ -227,19 +235,16 @@ struct RouteDecision {
 
 /// Pick a venue and take its token.
 ///
-/// With one live venue this is a throttle check with a name on it. The shape
-/// is here so P4-06 adds a venue rather than rewriting the caller -- but it
-/// REFUSES an unavailable venue rather than falling back, because a silent
-/// fallback sends an order to a broker the caller did not choose, on an
-/// account they may not have meant to use.
+/// Compatibility overload for the historical Kite-only caller.  FYERS cannot
+/// be selected through this overload because it has no FYERS throttle object;
+/// refusing is safer than accidentally routing a primary FYERS order to Kite.
 [[nodiscard]] inline std::expected<RouteDecision, RouteError>
 route(Venue preferred, BrokerThrottle& kite, Timestamp now) noexcept {
     if (preferred == Venue::None) {
         return std::unexpected(RouteError::NoVenue);
     }
-    if (preferred == Venue::Xts) {
-        // P4-06 is not built. Refusing beats routing to Kite behind the
-        // caller's back.
+    if (preferred == Venue::Xts || preferred == Venue::Fyers) {
+        // Refusing beats routing to another account behind the caller's back.
         return std::unexpected(RouteError::VenueUnavailable);
     }
     RouteDecision d{};
@@ -249,6 +254,44 @@ route(Venue preferred, BrokerThrottle& kite, Timestamp now) noexcept {
         return std::unexpected(RouteError::AllThrottled);
     }
     return d;
+}
+
+/// Route an explicitly selected venue with independent per-broker throttles.
+///
+/// This function does not implement automatic execution failover.  If a
+/// placement result is uncertain, the caller must reconcile that order at the
+/// same venue before making any new routing decision.
+[[nodiscard]] inline std::expected<RouteDecision, RouteError>
+route(Venue preferred, BrokerThrottle& fyers, BrokerThrottle& kite,
+      Timestamp now) noexcept {
+    if (preferred == Venue::None) {
+        return std::unexpected(RouteError::NoVenue);
+    }
+    if (preferred == Venue::Xts) {
+        return std::unexpected(RouteError::VenueUnavailable);
+    }
+    RouteDecision d{};
+    if (preferred == Venue::Fyers) {
+        d.venue = Venue::Fyers;
+        d.throttle = fyers.acquire(now);
+    } else {
+        d.venue = Venue::Kite;
+        d.throttle = kite.acquire(now);
+    }
+    if (d.throttle.verdict != ThrottleVerdict::Allowed) {
+        return std::unexpected(RouteError::AllThrottled);
+    }
+    return d;
+}
+
+[[nodiscard]] constexpr const char* describe(Venue v) noexcept {
+    switch (v) {
+    case Venue::Fyers: return "FYERS";
+    case Venue::Kite:  return "Kite";
+    case Venue::Xts:   return "XTS";
+    case Venue::None:  return "none";
+    }
+    return "unknown";
 }
 
 [[nodiscard]] constexpr const char* describe(ThrottleVerdict v) noexcept {

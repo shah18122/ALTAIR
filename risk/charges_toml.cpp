@@ -58,7 +58,17 @@ bool parse_date(std::string_view s, std::int64_t& out_ns) noexcept {
             v[f] = v[f] * 10 + (c - '0');
         }
     }
-    if (v[1] < 1 || v[1] > 12 || v[2] < 1 || v[2] > 31) {
+    if (v[1] < 1 || v[1] > 12) {
+        return false;
+    }
+    const bool leap = (v[0] % 4 == 0 && v[0] % 100 != 0)
+                   || (v[0] % 400 == 0);
+    constexpr unsigned month_days[] = {
+        31u, 28u, 31u, 30u, 31u, 30u,
+        31u, 31u, 30u, 31u, 30u, 31u};
+    const unsigned max_day = month_days[static_cast<std::size_t>(v[1] - 1)]
+                           + ((v[1] == 2 && leap) ? 1u : 0u);
+    if (v[2] < 1 || v[2] > max_day) {
         return false;
     }
     out_ns = days_from_civil(v[0], static_cast<unsigned>(v[1]),
@@ -172,11 +182,49 @@ load_document(const toml::table& root,
     out.clear();
     ChargesLoadReport rep{};
 
-    // D7 -- verification propagates from the file and from nowhere else.
-    if (const auto* lv = root.get("last_verified")) {
-        const auto v = lv->value<std::string_view>();
-        rep.verified = v && !v->empty() && *v != "UNVERIFIED";
+    // CX02-E2: this policy is mandatory, not an optional default. A missing
+    // table/key, wrong TOML type, or explicit false must stop configuration
+    // loading before a caller can treat the rates as usable. This card only
+    // enforces this schedule-verification setting; other safety/broker/implicit
+    // entries are intentionally not represented as enforced here.
+    const auto* safety_node = root.get("safety");
+    const auto* safety = safety_node != nullptr ? safety_node->as_table() : nullptr;
+    if (safety == nullptr) {
+        return std::unexpected(ChargesError::UnsafeVerificationPolicy);
     }
+    const auto* block = safety->get("block_on_unverified_schedule");
+    if (block == nullptr) {
+        return std::unexpected(ChargesError::UnsafeVerificationPolicy);
+    }
+    const auto enabled = block->value<bool>();
+    if (!enabled || !*enabled) {
+        return std::unexpected(ChargesError::UnsafeVerificationPolicy);
+    }
+
+    // D7 / CX02-E2 -- verification is provenance, not a truthy string.
+    // A valid ISO calendar date AND a non-whitespace verifier are required;
+    // every absent, malformed, placeholder or incomplete marker stays
+    // unverified, which compute_cost refuses.
+    const auto* lv = root.get("last_verified");
+    std::int64_t verified_at = 0;
+    bool valid_date = false;
+    if (lv != nullptr) {
+        const auto date = lv->value<std::string_view>();
+        valid_date = date && parse_date(*date, verified_at);
+    }
+    bool has_verifier = false;
+    if (const auto* by_node = root.get("verified_by")) {
+        const auto by = by_node->value<std::string_view>();
+        if (by) {
+            for (char c : *by) {
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+                    has_verifier = true;
+                    break;
+                }
+            }
+        }
+    }
+    rep.verified = valid_date && has_verifier;
 
     RateNano gst = rate_from(0.18L);
     RateNano sebi = rate_from(0.000001L);
@@ -361,6 +409,8 @@ const char* charges_error_text(ChargesError e) noexcept {
         case ChargesError::BadEnum:       return "a side or turnover_basis is not a recognised value";
         case ChargesError::NoSchedules:   return "no [[schedule]] blocks";
         case ChargesError::OverlappingSchedules: return "two schedules cover the same instant";
+        case ChargesError::UnsafeVerificationPolicy:
+            return "[safety].block_on_unverified_schedule must be boolean true";
     }
     return "unknown";
 }

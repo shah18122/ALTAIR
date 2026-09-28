@@ -78,6 +78,28 @@ inline constexpr std::size_t kOutboxBytesCap = 1u << 20;   // 1 MiB
 /// under this file's control.
 inline constexpr std::size_t kSendBufferBytes = 64u * 1024u;
 
+namespace price_bus_detail {
+
+/// Coalesce only whole frames that have not started writing. Bytes before
+/// `head` of `out.front()` are already on the TCP stream and cannot be
+/// retracted; removing that frame would corrupt framing for every later one.
+[[nodiscard]] inline std::size_t
+drop_oldest_unsent_until_bounded(
+    std::deque<std::vector<std::uint8_t>>& out, std::size_t head,
+    std::size_t& bytes, std::size_t cap) noexcept {
+    std::size_t dropped = 0;
+    while (bytes > cap && out.size() > 1) {
+        auto victim = out.begin();
+        if (head != 0) { ++victim; }
+        bytes -= victim->size();
+        out.erase(victim);
+        ++dropped;
+    }
+    return dropped;
+}
+
+} // namespace price_bus_detail
+
 class PriceBus {
 public:
     PriceBus(boost::asio::io_context& io, unsigned short port)
@@ -197,14 +219,12 @@ public:
         for (auto& c : clients_) {
             c->out.push_back(frame);
             c->bytes += frame.size();
-            // Whole frames, oldest first. A byte-level trim would leave the
-            // reader mid-header and every frame after it would be garbage.
-            while (c->bytes > kOutboxBytesCap && c->out.size() > 1) {
-                c->bytes -= c->out.front().size();
-                c->out.pop_front();
-                c->head = 0;
-                ++dropped_;
-            }
+            // Whole unsent frames, oldest first. Preserve a partially written
+            // head: its prefix is already visible on the TCP stream, so
+            // dropping it would corrupt the reader even though no bytes are
+            // being trimmed from an individual frame.
+            dropped_ += price_bus_detail::drop_oldest_unsent_until_bounded(
+                c->out, c->head, c->bytes, kOutboxBytesCap);
         }
         flush();
     }

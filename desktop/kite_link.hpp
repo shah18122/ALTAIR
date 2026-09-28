@@ -37,6 +37,8 @@
 
 #include "auth.hpp"
 #include "broker_status.hpp"
+#include "credential_setup.hpp"
+#include "helper_process.hpp"
 
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -45,12 +47,8 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QApplication>
-#include <QCoreApplication>
-#include <QFileInfo>
 #include <QLineEdit>
 #include <QPlainTextEdit>
-#include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QString>
@@ -166,6 +164,12 @@ public:
         }
         v->addWidget(where);
 
+        v->addWidget(new BrokerCredentialForm(
+            CredentialBroker::Kite, role_, [this] { step_open(); },
+            [this] {
+                if (on_linked_) (void)on_linked_();
+            }, this));
+
         auto* box = new QGroupBox(QStringLiteral("Link"), this);
         auto* bv = new QVBoxLayout(box);
 
@@ -227,16 +231,18 @@ public:
 private:
     void say(const QString& s) { log_->appendPlainText(redact_request_token(s)); }
 
-    /// Run the login binary and return {exit code, combined output}.
-    ///
-    /// Synchronous with a bounded wait. The exchange is one HTTPS round trip
-    /// and a person is watching; a thread and a signal here would buy nothing
-    /// and would make a failure harder to attribute.
-    QPair<int, QString> run(const QStringList& args) {
-        QProcess p;
-        p.setProgram(exe_);
-        p.setArguments(args);
-        p.setProcessChannelMode(QProcess::MergedChannels);
+    void set_link_buttons_enabled(bool enabled) {
+        const bool permitted = may(role_, Capability::ChangeFeedSource);
+        const bool available = !exe_.isEmpty();
+        open_->setEnabled(enabled && permitted && available);
+        exchange_->setEnabled(enabled && permitted && available);
+    }
+
+    void start_helper(const QString& program, const QStringList& arguments,
+                      int timeout_ms, QByteArray standard_input,
+                      std::function<void(HelperProcessResult)> completed) {
+        set_link_buttons_enabled(false);
+        QString working_directory;
         // THE WORKING DIRECTORY IS LOAD-BEARING. P26-02.
         //
         // altair_kite_login writes "data/kite_session.json" -- a RELATIVE path
@@ -254,46 +260,52 @@ private:
         // is the right behaviour, and the caller is the one that knows where
         // the tree is.
 #ifdef ALTAIR_SOURCE_DIR
-        p.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
+        working_directory = QStringLiteral(ALTAIR_SOURCE_DIR);
 #endif
-        p.start();
-        if (!p.waitForStarted(5000)) {
-            return {-1, QStringLiteral("could not start %1").arg(exe_)};
+        const auto generation = helper_.start(
+            program, arguments, working_directory, timeout_ms,
+            std::move(standard_input),
+            [this, completed = std::move(completed)](
+                HelperProcessResult result) mutable {
+                set_link_buttons_enabled(true);
+                completed(std::move(result));
+            });
+        if (!generation) {
+            set_link_buttons_enabled(true);
+            say(QStringLiteral("· another Kite helper command is still running"));
         }
-        if (!p.waitForFinished(30000)) {
-            p.kill();
-            return {-1, QStringLiteral("timed out after 30 s")};
-        }
-        return {p.exitCode(), QString::fromUtf8(p.readAll())};
     }
 
     void step_open() {
         say(QStringLiteral("\n· asking %1 for the login URL...").arg(exe_));
-        const auto [code, out] = run({});
-        // Exit 2 is "the environment variables are not set", and its message
-        // is the useful one. Exit 1 is the usage text, which is what a
-        // no-argument run is SUPPOSED to produce -- treating it as failure
-        // would report an error on the happy path.
-        if (code == 2) {
-            say(out.trimmed());
-            say(QStringLiteral("· set the two variables with setx, then open a "
-                               "NEW terminal and restart this window."));
-            return;
-        }
-        const QString url = login_url_from(out);
-        if (url.isEmpty()) {
-            say(QStringLiteral("· no login URL in the output:"));
-            say(out.trimmed());
-            return;
-        }
-        // The URL carries the api key, which the browser is about to see
-        // anyway -- but it does not belong in a pane that gets screenshotted.
-        say(QStringLiteral("· opening the Kite login in your browser"));
-        if (!QDesktopServices::openUrl(QUrl(url))) {
-            say(QStringLiteral("· could not open a browser. The URL is in the "
-                               "output of `altair_kite_login` with no "
-                               "arguments."));
-        }
+        start_helper(exe_, {}, 30000, {}, [this](HelperProcessResult result) {
+            if (!result.ran_to_completion()) {
+                say(QStringLiteral("· Kite helper failed: %1").arg(result.detail));
+                return;
+            }
+            // Exit 2 is "credentials are not configured", and its message is
+            // the useful one. A no-argument run returns the browser URL with
+            // success; a helper launched by hand no longer looks like a crash.
+            if (result.exit_code == 2) {
+                say(result.output.trimmed());
+                say(QStringLiteral(
+                    "· save API key, API secret and the exact registered redirect "
+                    "URL in the App credentials form above, then try again."));
+                return;
+            }
+            const QString url = login_url_from(result.output);
+            if (url.isEmpty()) {
+                say(QStringLiteral("· no login URL in the output:"));
+                say(result.output.trimmed());
+                return;
+            }
+            say(QStringLiteral("· opening the Kite login in your browser"));
+            if (!QDesktopServices::openUrl(QUrl(url))) {
+                say(QStringLiteral(
+                    "· could not open a browser. The URL is in the output of "
+                    "`altair_kite_login` with no arguments."));
+            }
+        });
     }
 
     void step_exchange() {
@@ -303,38 +315,39 @@ private:
             return;
         }
         say(QStringLiteral("\n· exchanging %1").arg(redact_request_token(arg)));
-        const auto [code, out] = run({arg});
-        say(out.trimmed());
-        if (code == 0) {
-            // Clear the box: the token is now spent, and a second press with
-            // the same value gets a 403 that reads like a different bug.
-            paste_->clear();
-            say(QStringLiteral("· session written. That token is now SPENT."));
-            update_dataset();
-            if (on_linked_) {
-                const QString note = on_linked_();
-                if (!note.isEmpty()) { say(note); }
+        start_helper(exe_, {QStringLiteral("--stdin")}, 30000,
+                     arg.toUtf8() + '\n',
+                     [this](HelperProcessResult result) {
+            if (!result.ran_to_completion()) {
+                say(QStringLiteral("· Kite helper failed: %1").arg(result.detail));
+                return;
             }
+            say(result.output.trimmed());
+            if (result.exit_code == 0) {
+                // Clear the box: the token is now spent, and a second press
+                // with the same value gets a misleading 403.
+                paste_->clear();
+                say(QStringLiteral("· session written. That token is now SPENT."));
+                if (on_linked_) {
+                    const QString note = on_linked_();
+                    if (!note.isEmpty()) say(note);
+                }
+                update_dataset();
 #if !ALTAIR_HAVE_NET
-            // THE PILL WILL NOT SAY AUTHENTICATED, AND THAT IS CORRECT.
-            //
-            // The exchange happened in a subprocess that HAS an HTTPS client.
-            // This process does not, so it cannot use the session it just
-            // caused to be written, and the pill reports what THIS build can
-            // do. Saying so here is the difference between a confusing pill
-            // and an explained one.
-            say(QStringLiteral(
-                "· note: this build has no HTTP client, so the pill will stay "
-                "NO TRANSPORT. The session file is valid and altair_kite_fetch "
-                "and altair_kite_account can use it. Run `build.bat net` for a "
-                "window that can."));
+                say(QStringLiteral(
+                    "· note: this build has no HTTP client, so the pill will "
+                    "stay NO TRANSPORT. The session file is valid and the "
+                    "network helpers can use it. Run `build.bat net` for a "
+                    "window that can."));
 #endif
-        } else {
-            say(QStringLiteral("· exchange did not succeed (exit %1). The "
-                               "token was not spent if Kite refused the "
-                               "checksum; it was if Kite accepted it and "
-                               "something later failed.").arg(code));
-        }
+            } else {
+                say(QStringLiteral(
+                    "· exchange did not succeed (exit %1). The token was not "
+                    "spent if Kite refused the checksum; it was if Kite "
+                    "accepted it and something later failed.")
+                        .arg(result.exit_code));
+            }
+                     });
     }
 
     /// Bring dataset/ up to date, immediately after linking.
@@ -383,33 +396,25 @@ private:
         say(QStringLiteral(
             "· updating dataset/ -- NIFTY, BANKNIFTY and INDIA VIX at 1m, "
             "5m, 15m, 60m and daily. This takes a minute."));
-        QApplication::processEvents();
-
-        QProcess proc;
-        proc.setProgram(found);
-        proc.setArguments({QStringLiteral("--go")});
-        proc.setProcessChannelMode(QProcess::MergedChannels);
-#ifdef ALTAIR_SOURCE_DIR
-        // Pinned for the reason P26-02b found the hard way: a subprocess
-        // launched from a desktop shortcut resolves `dataset` relative to the
-        // build folder and writes a second tree nobody reads.
-        proc.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
-#endif
-        proc.start();
-        if (!proc.waitForStarted(5000) || !proc.waitForFinished(600000)) {
-            proc.kill();
-            say(QStringLiteral("· the updater did not finish. dataset/ may be "
-                               "partly updated -- it merges, so nothing was "
-                               "lost."));
-            return;
-        }
-        // The whole tail, because the per-series lines ARE the report: which
-        // series moved, how many bars, and how many stored bars turned out to
-        // have been captured mid-session.
-        const QString out = QString::fromUtf8(proc.readAll()).trimmed();
-        for (const QString& ln : out.split(QChar('\n'))) {
-            if (!ln.trimmed().isEmpty()) { say(ln); }
-        }
+        start_helper(
+            found, {QStringLiteral("--go")}, 600000, {},
+            [this](HelperProcessResult result) {
+                if (!result.ran_to_completion()) {
+                    say(QStringLiteral(
+                        "· the updater did not finish (%1). dataset/ may be "
+                        "partly updated; it merges, so nothing was lost.")
+                            .arg(result.detail));
+                    return;
+                }
+                const QString out = result.output.trimmed();
+                for (const QString& line : out.split(QChar('\n'))) {
+                    if (!line.trimmed().isEmpty()) say(line);
+                }
+                if (result.exit_code != 0) {
+                    say(QStringLiteral("· dataset updater exited with code %1")
+                            .arg(result.exit_code));
+                }
+            });
     }
 
     Role role_;
@@ -423,6 +428,9 @@ private:
     QPushButton* exchange_ = nullptr;
     QLineEdit* paste_ = nullptr;
     QPlainTextEdit* log_ = nullptr;
+    // Destroyed first, suppressing any in-flight callback before the widget
+    // fields above are torn down.
+    HelperProcess helper_;
 };
 
 } // namespace altair::ui

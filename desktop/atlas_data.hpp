@@ -14,16 +14,13 @@
 // written down, because "I did not find it" and "it is not there" are
 // different claims and only one of them belongs in a reference.
 //
-// AND THE PARTIALS ARE THE ROWS THAT MISLEAD.
+// BUILT IS NOT TRAINED.
 //
-// "LSTM" in a feature list sounds like a trained recurrent network. What is
-// here is an exact LSTM forward pass whose recurrent weights are FROZEN at
-// initialisation, with only a linear readout solved by ridge -- an echo-state
-// reservoir, not backpropagation. "Transformer" is a single-head causal
-// attention primitive with no multi-head, no positional encoding, no layer
-// norm and no stacked block. Somebody reading a one-word status would deploy
-// those believing something false, so Partial exists and says exactly what is
-// missing.
+// The trainable MLP, analytic-BPTT LSTM/GRU and causal multi-head Transformer
+// now close the former implementation gaps. Their deterministic fixtures prove
+// the equations, gradients, causality and checkpoints. They do NOT establish
+// profitability or a production fit; those are separate data/evaluation gates
+// shown in the Atlas header and models/TRAINING_MATRIX.md.
 //
 // EVERY PATH IS CHECKED AT CONFIGURE TIME. cmake/AtlasAudit.cmake fails the
 // build if a row names a file that does not exist, so this table cannot rot
@@ -34,6 +31,7 @@
 #pragma once
 
 #include <array>
+#include <QString>
 #include <cstddef>
 #include <cstdint>
 
@@ -76,8 +74,35 @@ struct AtlasRow {
     const char* what;
 };
 
+/// Stable identity for a model row. It is derived from the semantic family
+/// and model names rather than the array position, so inserting or reordering
+/// rows cannot retarget saved links. The delimiter is part of the input to
+/// keep `(ab,c)` distinct from `(a,bc)`.
+[[nodiscard]] constexpr std::uint64_t atlas_model_id(const AtlasRow& row) noexcept {
+    std::uint64_t h = 1469598103934665603ull;
+    const auto add = [&h](const char* text) constexpr {
+        for (const char* p = text; *p != 0; ++p) {
+            h ^= static_cast<std::uint64_t>(
+                static_cast<unsigned char>(*p));
+            h *= 1099511628211ull;
+        }
+    };
+    add(row.family);
+    h ^= 0xffu;
+    h *= 1099511628211ull;
+    add(row.model);
+    return h;
+}
+
+/// Stable route identity for the Atlas. The current table predates semantic
+/// IDs; this compatibility helper keeps routing independent of row position
+/// while the full P6-01 ID migration is completed.
+[[nodiscard]] constexpr std::uint64_t atlas_route_id(const AtlasRow& row) noexcept {
+    return atlas_model_id(row);
+}
+
 // ---------------------------------------------------------------------------
-// Nav indices referenced below are the post-P35-03b layout (32 pages, 0..31).
+// Nav indices referenced below are the current 33-page layout (0..32).
 // If the nav moves, these move with it; the audit checks paths, not indices,
 // so a stale index shows up as a button that opens the wrong page rather than
 // as a build failure. Keep them honest by hand.
@@ -97,19 +122,20 @@ inline constexpr std::array kAtlasRows{
              "strategies/cointegration.hpp", 26,
              "Tests whether two drifting series are tied together, so their "
              "GAP is tradeable even though neither price is."},
-    AtlasRow{"1. Statistical alpha", "Pairs trading", AtlasStatus::Partial,
-             "strategies/cointegration.hpp", 26,
-             "The diagnostics exist -- hedge ratio, half-life, pair selection "
-             "-- but there is no entry/exit rule and no pair P&L."},
+    AtlasRow{"1. Statistical alpha", "Pairs trading", AtlasStatus::Implemented,
+             "strategies/pairs_trade.hpp", 26,
+             "Causal z-score entry, mean/stop/time exits, equal-notional legs "
+             "and costed round-trip P&L complete the cointegration diagnostics."},
     AtlasRow{"1. Statistical alpha", "Statistical arbitrage",
-             AtlasStatus::Partial, "strategies/score.hpp", 19,
-             "The parts are here (cointegration, signal blending, "
-             "neutralisation); nothing assembles them into a cross-sectional "
-             "book."},
+             AtlasStatus::Implemented, "strategies/stat_arb.hpp", 19,
+             "Builds a capacity-bounded, dollar- and single-factor-neutral "
+             "multi-leg book and refuses signals that are not positive after "
+             "declared round-trip cost."},
     AtlasRow{"1. Statistical alpha", "Factor models (Fama-French, PCA)",
-             AtlasStatus::Absent, "", -1,
-             "Decomposing returns into common drivers -- value, size, "
-             "momentum. Nothing here extracts factors, and there is no PCA."},
+             AtlasStatus::Implemented, "models/classical.hpp", 16,
+             "PCA plus explicit value, quality and lagged momentum portfolios "
+             "are implemented in models/named_factors.hpp. Market use remains "
+             "gated on survivorship-safe point-in-time fundamentals."},
     AtlasRow{"1. Statistical alpha", "Relative value",
              AtlasStatus::Implemented, "strategies/fundamentals.hpp", -1,
              "Is this company cheap against its own sector, on multiples "
@@ -137,35 +163,35 @@ inline constexpr std::array kAtlasRows{
              "A single tree of yes/no splits. Here it is a component of the "
              "booster rather than a standalone model."},
     AtlasRow{"2. Machine learning", "MLP / feedforward network",
-             AtlasStatus::Partial, "models/mlp.hpp", 29,
-             "Forward pass is exact, but the hidden layer is FROZEN at random "
-             "initialisation and only a linear readout is trained. Not "
-             "backpropagation."},
-    AtlasRow{"2. Machine learning", "LSTM / GRU", AtlasStatus::Partial,
-             "models/recurrent.hpp", 29,
-             "Exact gate equations, but the recurrent weights never learn -- "
-             "an echo-state reservoir with a ridge readout, not a trained "
-             "recurrent network."},
+             AtlasStatus::Implemented, "models/mlp.hpp", 29,
+             "A deterministic two-layer network with full hidden/readout "
+             "backpropagation, numerical gradient proof and complete checkpoints."},
+    AtlasRow{"2. Machine learning", "LSTM / GRU", AtlasStatus::Implemented,
+             "models/trainable_recurrent.hpp", 29,
+             "Every LSTM and GRU gate is trained by analytic BPTT, gradient-"
+             "checked and stored in a full reproducible checkpoint."},
     AtlasRow{"2. Machine learning", "Transformer / attention",
-             AtlasStatus::Partial, "models/attention.hpp", 29,
-             "Single-head causal attention with a mandatory no-peeking mask. "
-             "No multi-head, no positional encoding, no layer norm, no stack."},
-    AtlasRow{"2. Machine learning", "CNN", AtlasStatus::Partial,
+             AtlasStatus::Implemented, "models/transformer.hpp", 29,
+             "Causal multi-head attention with positions, layer norms, residual "
+             "feed-forward stacks, full-parameter training and checkpoints."},
+    AtlasRow{"2. Machine learning", "CNN", AtlasStatus::Implemented,
              "models/attention.hpp", 29,
-             "A one-dimensional dilated causal convolution (a TCN block). No "
-             "two-dimensional convolution and no pooling."},
-    AtlasRow{"2. Machine learning", "Random forest", AtlasStatus::Absent,
-             "", -1,
-             "Many trees trained on random subsets and averaged. A strong "
-             "baseline for regime classification; not present."},
+             "The requested one-dimensional dilated causal convolution is "
+             "implemented with explicit left padding, receptive-field proof "
+             "and a refusal when causality is unspecified."},
+    AtlasRow{"2. Machine learning", "Random forest", AtlasStatus::Implemented,
+             "models/classical.hpp", 16,
+             "Deterministic shallow trees trained on bootstrap samples and "
+             "random feature subsets, averaged for a bounded research baseline."},
     AtlasRow{"2. Machine learning", "Logistic regression",
-             AtlasStatus::Absent, "", -1,
+             AtlasStatus::Implemented, "models/classical.hpp", 16,
              "Predicts a probability rather than a number -- 'will the next "
-             "bar be up'. Only the logistic FUNCTION exists, not a classifier."},
+             "bar be up' -- with bounded gradient descent and L2 regularisation."},
     AtlasRow{"2. Machine learning", "SVM / KNN / autoencoder",
-             AtlasStatus::Absent, "", -1,
-             "None of the three. Autoencoders in particular would be the tool "
-             "for compressing a feature set or flagging an odd day."},
+             AtlasStatus::Implemented, "models/classical.hpp", 16,
+             "Deterministic linear/RBF C-SVM and exact scaled k-NN "
+             "classification/regression are fixture-tested. A fitted linear "
+             "autoencoder gives optimal low-rank reconstruction and anomaly loss."},
 
     // -- 3. Time series and volatility --------------------------------------
     AtlasRow{"3. Time series & volatility", "AR (autoregression)",
@@ -173,13 +199,14 @@ inline constexpr std::array kAtlasRows{
              "Predicts the next value from the last few, in a straight line. "
              "The simplest forecast that is not just 'no change'."},
     AtlasRow{"3. Time series & volatility", "ARMA / ARIMA / SARIMA",
-             AtlasStatus::Absent, "", -1,
-             "AR plus a moving average of past ERRORS, plus differencing and "
-             "seasonality. The classical forecasting family; not here."},
+             AtlasStatus::Implemented, "models/time_series.hpp", 18,
+             "Conditional AR/MA fitting, regular and seasonal differencing, "
+             "level-scale inversion and conservative stationarity/invertibility "
+             "refusals, with seeded recovery fixtures."},
     AtlasRow{"3. Time series & volatility", "VAR (vector autoregression)",
-             AtlasStatus::Absent, "", -1,
-             "Several series predicting each other at once -- NIFTY, "
-             "BANKNIFTY and VIX jointly. Only a bivariate VECM step exists."},
+             AtlasStatus::Implemented, "models/classical.hpp", 18,
+             "A bounded VAR(1) predicts several series jointly from one lag; "
+             "higher-order VAR and live data alignment remain caller concerns."},
     AtlasRow{"3. Time series & volatility", "Kalman filter",
              AtlasStatus::Implemented, "analytics/kalman.hpp", 7,
              "Tracks a quantity you cannot observe directly from noisy "
@@ -193,9 +220,10 @@ inline constexpr std::array kAtlasRows{
              "Counts how often the market moves from one return bucket to "
              "another, and tests whether that is more than chance."},
     AtlasRow{"3. Time series & volatility", "Ornstein-Uhlenbeck",
-             AtlasStatus::Partial, "strategies/cointegration.hpp", 26,
-             "The mean-reversion speed of a spread (its half-life) is fitted; "
-             "there is no OU simulator or full parameter estimation."},
+             AtlasStatus::Implemented, "models/time_series.hpp", 26,
+             "Exact-discretisation estimation reports theta, long-run mean, "
+             "diffusion, uncertainty and half-life; exact transition simulation "
+             "uses a caller-supplied normal draw."},
     AtlasRow{"3. Time series & volatility", "Brownian motion / GBM",
              AtlasStatus::Implemented, "backtest/montecarlo.hpp", -1,
              "The random walk that underlies option pricing: prices drift and "
@@ -208,14 +236,15 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "analytics/garch.hpp", 13,
              "Volatility clusters: calm follows calm and violence follows "
              "violence. GJR adds that falls raise it more than rises do."},
-    AtlasRow{"3. Time series & volatility", "EGARCH", AtlasStatus::Absent,
-             "", -1,
-             "A GARCH variant modelling log-variance, so it cannot go "
-             "negative. GJR covers the same asymmetry here."},
+    AtlasRow{"3. Time series & volatility", "EGARCH", AtlasStatus::Implemented,
+             "analytics/advanced_pricers.hpp", 13,
+             "The bounded log-variance recursion and deterministic Gaussian "
+             "QMLE recover persistence and leverage on a seeded fixture."},
     AtlasRow{"3. Time series & volatility", "Heston stochastic volatility",
-             AtlasStatus::Partial, "backtest/montecarlo.hpp", -1,
-             "Paths can be SIMULATED with volatility that is itself random. "
-             "There is no Heston option pricer."},
+             AtlasStatus::Implemented, "analytics/advanced_pricers.hpp", 21,
+             "Stochastic-volatility paths and a Little-Heston-trap "
+             "characteristic-function option pricer are both present; the "
+             "pricer converges to Black-Scholes and preserves parity."},
     AtlasRow{"3. Time series & volatility", "Hurst exponent",
              AtlasStatus::Implemented, "analytics/hurst.hpp", 17,
              "Measures whether a series trends, mean-reverts, or is a coin "
@@ -255,17 +284,20 @@ inline constexpr std::array kAtlasRows{
              "The gap between the price you decided at and the price you got, "
              "split into the reasons for it."},
     AtlasRow{"4. Microstructure & execution", "Queue position",
-             AtlasStatus::Absent, "", -1,
-             "Where your order sits in the line at a price level, which "
-             "decides whether it fills at all. Deferred since P2-09c."},
+             AtlasStatus::Implemented, "book/queue_position.hpp", 24,
+             "Exact FIFO replay handles identified adds, cancels and trades "
+             "ahead, and invalidates on sequence gaps. Live use remains gated "
+             "on licensed order-by-order depth."},
     AtlasRow{"4. Microstructure & execution", "Fill probability",
-             AtlasStatus::Absent, "", -1,
-             "The chance a resting limit order gets hit. The backtester uses "
-             "deterministic fill rules instead."},
+             AtlasStatus::Implemented, "models/fill_probability.hpp", 24,
+             "A train-fold-scaled logistic hazard reports probabilities and "
+             "reliability bins. Market validation still needs labelled fills "
+             "joined to licensed queue state."},
     AtlasRow{"4. Microstructure & execution", "Trade arrival (Hawkes)",
-             AtlasStatus::Absent, "", -1,
-             "Trades cluster: one arrival makes the next more likely. Nothing "
-             "here models arrival intensity."},
+             AtlasStatus::Implemented, "models/hawkes.hpp", 24,
+             "A stable exponential Hawkes likelihood, deterministic bounded "
+             "fit and time-rescaling residuals are fixture-tested. Live use "
+             "still needs licensed timestamped trades/orders."},
 
     // -- 5. Risk ------------------------------------------------------------
     AtlasRow{"5. Risk", "VaR -- historical, parametric, Monte Carlo",
@@ -293,9 +325,11 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "risk/neutralise.hpp", 15,
              "Strips out market and sector exposure so what is left is the "
              "bet you actually meant to make."},
-    AtlasRow{"5. Risk", "Factor risk model", AtlasStatus::Absent, "", -1,
-             "Splitting portfolio risk into named common factors. Only sector "
-             "and beta buckets exist; there is no factor covariance."},
+    AtlasRow{"5. Risk", "Factor risk model", AtlasStatus::Implemented,
+             "risk/factor_risk.hpp", 15,
+             "B-prime exposure, common-factor covariance contributions and "
+             "idiosyncratic variance reconcile exactly. Market use still "
+             "requires point-in-time holdings and factor returns."},
     AtlasRow{"5. Risk", "Conformal risk control", AtlasStatus::Implemented,
              "models/conformal.hpp", 18,
              "Makes a forecast's error bar HONEST by calibrating it against "
@@ -347,13 +381,13 @@ inline constexpr std::array kAtlasRows{
              "Rebuilds the volatility index from the option chain, which is "
              "how you learn what it is actually measuring."},
     AtlasRow{"6. Options & derivatives", "Binomial / trinomial tree",
-             AtlasStatus::Absent, "", -1,
-             "Prices by stepping through a lattice of up/down moves. The most "
-             "intuitive method; referenced only as an external benchmark."},
+             AtlasStatus::Implemented, "analytics/advanced_pricers.hpp", 21,
+             "Bounded CRR binomial and recombining Boyle trinomial lattices "
+             "price European/American contracts and refuse invalid probabilities."},
     AtlasRow{"6. Options & derivatives", "Finite-difference PDE pricer",
-             AtlasStatus::Absent, "", -1,
-             "Solves the pricing equation on a grid. Finite differences are "
-             "used for local vol, but there is no PDE pricer."},
+             AtlasStatus::Implemented, "analytics/advanced_pricers.hpp", 21,
+             "An explicit log-space Black-Scholes solver chooses enough time "
+             "steps for a nonnegative stencil and reports grid-verified prices."},
 
     // -- 7. Portfolio construction ------------------------------------------
     AtlasRow{"7. Portfolio construction", "Position sizing",
@@ -380,41 +414,42 @@ inline constexpr std::array kAtlasRows{
              "Blends the market's implied view with your own, weighted by how "
              "confident you are. Absolute views only."},
     AtlasRow{"7. Portfolio construction", "Mean-variance optimisation",
-             AtlasStatus::Absent, "", -1,
-             "The Markowitz efficient frontier -- the textbook optimiser. Its "
-             "absence is why Black-Litterman's output has nothing to feed."},
+             AtlasStatus::Implemented, "risk/optimise.hpp", 15,
+             "Long-only projected-gradient Markowitz weights from explicit "
+             "expected returns and covariance; always compare with 1/N out of sample."},
 
     // -- 8. Alternative data ------------------------------------------------
     AtlasRow{"8. Alternative data", "News / NLP / sentiment",
-             AtlasStatus::Absent, "", -1,
-             "Reading text as a signal. Nothing in this tree ingests text; "
-             "there is no corpus and no model."},
-    AtlasRow{"8. Alternative data", "Event models", AtlasStatus::Absent,
-             "", -1,
-             "Trading around earnings, policy and expiry. Expiry TIMING is a "
-             "feature, but nothing models the event's effect."},
+             AtlasStatus::Implemented, "models/sentiment.hpp", 17,
+             "An auditable finance lexicon handles negation and point-in-time "
+             "availability; event evaluation remains in models/event_study.hpp."},
+    AtlasRow{"8. Alternative data", "Event models", AtlasStatus::Implemented,
+             "models/event_study.hpp", 17,
+             "Event windows align on availability rather than event date, "
+             "subtract a benchmark, embargo overlaps and report CAR uncertainty."},
 
     // -- 9. Simulation ------------------------------------------------------
     AtlasRow{"9. Simulation", "Monte Carlo", AtlasStatus::Implemented,
-             "backtest/montecarlo.hpp", -1,
+             "backtest/montecarlo.hpp", 7,
              "Runs the world thousands of times to get a DISTRIBUTION of "
              "outcomes instead of one guess."},
     AtlasRow{"9. Simulation", "Bootstrapping", AtlasStatus::Implemented,
-             "backtest/montecarlo.hpp", -1,
+             "backtest/montecarlo.hpp", 7,
              "Reshuffles real history rather than assuming a bell curve. The "
              "block variant keeps volatility clustering intact."},
     AtlasRow{"9. Simulation", "Jump diffusion", AtlasStatus::Implemented,
-             "backtest/montecarlo.hpp", -1,
+             "backtest/montecarlo.hpp", 7,
              "Adds sudden gaps to the smooth random walk, because real prices "
              "leap and Brownian motion does not."},
     AtlasRow{"9. Simulation", "Walk-forward & purged CV",
              AtlasStatus::Implemented, "backtest/validation.hpp", 16,
              "Tests only on data the model has never seen, with a gap so a "
              "label cannot leak backwards. Random K-fold is banned."},
-    AtlasRow{"9. Simulation", "Agent-based simulation", AtlasStatus::Absent,
-             "", -1,
-             "Simulating a market as interacting traders rather than as an "
-             "equation. Not present."},
+    AtlasRow{"9. Simulation", "Agent-based simulation", AtlasStatus::Implemented,
+             "backtest/agent_market.hpp", -1,
+             "Fundamental, momentum, noise and explicit liquidity-provider "
+             "agents clear deterministically with conserved cash/inventory. "
+             "Market claims remain gated on validated agent assumptions."},
 
     // -- 10. Reinforcement learning -----------------------------------------
     AtlasRow{"10. Reinforcement learning", "Q-learning",
@@ -422,9 +457,11 @@ inline constexpr std::array kAtlasRows{
              "Learns by trial and error which action pays in which market "
              "state. Shipped against a ten-line heuristic it must beat."},
     AtlasRow{"10. Reinforcement learning", "DQN / PPO / actor-critic",
-             AtlasStatus::Absent, "", -1,
-             "Neural-network reinforcement learning. QUANTLAB trained a PPO "
-             "agent and REJECTED it: it lost to a simple heuristic."},
+             AtlasStatus::Implemented, "models/deep_rl.hpp", 17,
+             "Deterministic replay/target DQN, clipped PPO with GAE/action "
+             "masks, and actor-critic losses/checkpoints are fixture-tested. "
+             "They remain research-only until the paper environment and "
+             "heuristic baseline gates pass."},
 
     // -- cross-cutting, and not in the roadmap's ten ------------------------
     AtlasRow{"Cross-cutting", "Transaction cost calculator",
@@ -456,5 +493,20 @@ inline constexpr std::array kAtlasRows{
 };
 
 inline constexpr std::size_t kAtlasCount = kAtlasRows.size();
+
+/// Resolve the stable identity emitted by AtlasPanel back to its catalogue row.
+/// Keeping this beside the catalogue prevents callers from treating a hash as
+/// a display name (the old Models page did exactly that and labelled every
+/// clicked row "ABSENT OR PARTIAL").
+[[nodiscard]] inline const AtlasRow* atlas_row_by_id(const QString& id) noexcept {
+    if (!id.startsWith(QStringLiteral("atlas."))) return nullptr;
+    bool ok = false;
+    const auto value = id.sliced(6).toULongLong(&ok, 16);
+    if (!ok) return nullptr;
+    for (const auto& row : kAtlasRows) {
+        if (atlas_model_id(row) == value) return &row;
+    }
+    return nullptr;
+}
 
 }  // namespace altair::ui

@@ -40,19 +40,28 @@
 //
 // IT IS READ-ONLY AGAINST THE BROKER. /instruments/historical is a GET. This
 // program has no order vocabulary and could not place one if asked.
+//
+// CX02-A2. THE MERGE NOW LIVES IN app/dataset_merge.hpp, WHERE IT IS TESTED.
+//
+// It used to live in this main(), untested, and the audit found it could lose
+// a stored month five different ways (C14-005), merged windows Kite had
+// truncated without the coverage check the fetcher applies (C14-006), and
+// wrote prices at six significant digits (C14-001). The rules above -- merge,
+// 1 bp, unfinished bars dropped -- are unchanged. What changed is how a file
+// is replaced, which files are replaced, and what is refused.
 
+#include <app/dataset_merge.hpp>
 #include <broker/https_client.hpp>
 #include <broker/kite_historical.hpp>
 
-#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <map>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -108,73 +117,13 @@ namespace {
     return !out.empty();
 }
 
-struct Series {
+struct SeriesPlan {
     const char* sym;        // dataset directory
     std::int64_t token;     // Kite instrument_token
     const char* dir;        // interval directory
     const char* interval;   // Kite interval name
     std::int64_t ns;        // bar width in nanoseconds
 };
-
-/// One stored row, keyed by its stamp so a merge is a map insert.
-struct Row {
-    std::string line;       // the CSV row, verbatim
-    double close = 0.0;
-};
-
-[[nodiscard]] double close_of(const std::string& line) {
-    std::size_t at = 0;
-    for (int f = 0; f < 4; ++f) {
-        at = line.find(',', at);
-        if (at == std::string::npos) { return 0.0; }
-        ++at;
-    }
-    return std::atof(line.c_str() + at);
-}
-
-/// Is the bar starting at `start_ns` finished, at `now_ns`?
-///
-/// A DAILY BAR IS NOT FINISHED AT MIDNIGHT. Stamped 00:00, it covers 09:15 to
-/// 15:30 IST, so start + one day would call today's partial bar complete for
-/// the whole afternoon.
-[[nodiscard]] bool bar_is_complete(std::int64_t start_ns, std::int64_t iv_ns,
-                                  std::int64_t now_ns) {
-    if (iv_ns >= 86'400'000'000'000LL) {
-        const std::int64_t ist = start_ns + altair::detail::kIstOffsetNs;
-        const std::int64_t day = ist / 86'400'000'000'000LL;
-        const std::int64_t settle =
-            day * 86'400'000'000'000LL + (15 * 3600 + 30 * 60) * 1'000'000'000LL
-            - altair::detail::kIstOffsetNs;
-        return now_ns >= settle;
-    }
-    return start_ns + iv_ns <= now_ns;
-}
-
-/// The key two stamps must share to be the SAME BAR.
-///
-/// P34-01, AND THE FIRST VERSION GOT THIS WRONG. dataset/spot/nifty/1d holds
-/// `2026-09-08` and Kite returns `2026-09-08T00:00:00+05:30`. Keyed on the
-/// full string those are different bars, so a top-up ADDED a duplicate of
-/// every day it re-fetched instead of matching it -- 09-08 ended up in the
-/// tree twice, in two files, in two formats.
-///
-/// A daily bar is identified by its DATE. The time on it is decoration, and
-/// the two sources decorate differently.
-[[nodiscard]] std::string bar_key(const std::string& stamp,
-                                  std::int64_t iv_ns) {
-    return iv_ns >= 86'400'000'000'000LL && stamp.size() >= 10
-               ? stamp.substr(0, 10)
-               : stamp;
-}
-
-/// Is this a `YYYY-MM.csv` partition file?
-[[nodiscard]] bool is_month_file(const std::string& name) {
-    if (name.size() != 11 || name.compare(7, 4, ".csv") != 0) { return false; }
-    for (std::size_t i : {0u, 1u, 2u, 3u, 5u, 6u}) {
-        if (name[i] < '0' || name[i] > '9') { return false; }
-    }
-    return name[4] == '-';
-}
 
 void usage(const char* exe) {
     std::printf(
@@ -192,6 +141,8 @@ void usage(const char* exe) {
 
 } // namespace
 
+namespace ds = altair::dataset;
+
 int main(int argc, char** argv)
 {
     if (has_flag(argc, argv, "--help")) { usage(argv[0]); return 0; }
@@ -201,18 +152,34 @@ int main(int argc, char** argv)
     const char* days_s = arg_value(argc, argv, "--days");
     const bool go = has_flag(argc, argv, "--go");
     const std::string root = out_s != nullptr ? out_s : "dataset";
-    const int back = days_s != nullptr ? std::atoi(days_s) : 400;
+    int back = 400;
+    if (days_s != nullptr) {
+        // C14-016: atoi read "40x" as 40 and "x" as 0.
+        const auto d = ds::parse_count(days_s, 1, 20'000);
+        if (!d) {
+            std::printf("  --days must be a whole number from 1 to 20000\n");
+            return 2;
+        }
+        back = *d;
+    }
 
     struct Sym { const char* name; std::int64_t token; };
     const Sym kAll[] = {{"nifty", 256265}, {"banknifty", 260105},
                         {"indiavix", 264969}};
     std::vector<Sym> syms;
     {
-        const std::string want =
-            syms_s != nullptr ? syms_s : "nifty,banknifty,indiavix";
-        for (const Sym& s : kAll) {
-            if (want.find(s.name) != std::string::npos) { syms.push_back(s); }
+        // EXACT names. A substring match made `--symbols banknifty` update
+        // nifty as well (C14-016).
+        std::vector<std::string_view> names;
+        for (const Sym& s : kAll) { names.emplace_back(s.name); }
+        const auto sel = ds::select_names(
+            syms_s != nullptr ? syms_s : "nifty,banknifty,indiavix", names);
+        if (!sel.unknown.empty()) {
+            std::printf("  --symbols: \"%s\" is not one of nifty, banknifty, "
+                        "indiavix\n", sel.unknown.front().c_str());
+            return 2;
         }
+        for (const std::size_t i : sel.picked) { syms.push_back(kAll[i]); }
     }
     if (syms.empty()) {
         std::printf("  --symbols matched nothing\n");
@@ -226,7 +193,7 @@ int main(int argc, char** argv)
                        {"60m", "60minute", 3'600'000'000'000LL},
                        {"1d", "day", 86'400'000'000'000LL}};
 
-    std::vector<Series> plan;
+    std::vector<SeriesPlan> plan;
     for (const Sym& s : syms) {
         for (const Iv& iv : kIvs) {
             plan.push_back({s.name, s.token, iv.dir, iv.name, iv.ns});
@@ -244,7 +211,7 @@ int main(int argc, char** argv)
                 root.c_str());
 
     if (!go) {
-        for (const Series& s : plan) {
+        for (const SeriesPlan& s : plan) {
             std::printf("    spot/%s/%s\n", s.sym, s.dir);
         }
         std::printf("\n  DRY RUN. Nothing was fetched and nothing written.\n"
@@ -268,23 +235,38 @@ int main(int argc, char** argv)
     std::size_t series_done = 0, added_total = 0, replaced_total = 0;
     std::size_t rounding_total = 0, partial_total = 0, failed = 0;
 
-    for (const Series& s : plan) {
+    for (const SeriesPlan& s : plan) {
         const std::string dir = root + "/spot/" + s.sym + "/" + s.dir;
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
+        if (ec) {
+            std::printf("    spot/%-10s %-4s  COULD NOT CREATE SERIES DIRECTORY; "
+                        "nothing merged\n", s.sym, s.dir);
+            ++failed;
+            continue;
+        }
+        // Hold one lock across the complete read -> fetch -> merge -> replace
+        // sequence. Atomic file renames alone still allow two updater
+        // processes to read the same old series and have the last writer drop
+        // the other process's newly merged bars.
+        ds::UpdateStateLock series_lock;
+        if (!series_lock.acquire(
+                std::filesystem::path(dir) / ".kite_update_series.lock")) {
+            std::printf("    spot/%-10s %-4s  SERIES UPDATE LOCK FAILED; "
+                        "another updater may be active; nothing merged\n",
+                        s.sym, s.dir);
+            ++failed;
+            continue;
+        }
 
         // ---- what is already here, and how far it reaches ----------------
-        std::map<std::string, std::map<std::string, Row>> files;
-        std::map<std::string, std::string> where;   // bar key -> file it is in
-        std::string last_stamp;
-        std::string header = "time,open,high,low,close,volume";
-        // The file NEW rows belong in. `all.csv` when the series is stored as
-        // one file, otherwise the month partition. Detected rather than
-        // assumed: nifty/1d is a single all.csv and nifty/1m is monthly, and
-        // the first version wrote month files into both -- which left
-        // 1d/all.csv AND a 1d/2026-09.csv holding the same day twice.
-        std::string single_file;
-        bool stamp_is_date_only = false;
+        //
+        // `all.csv` versus month partitions is detected, not assumed: nifty/1d
+        // is a single all.csv and nifty/1m is monthly, and the first version
+        // wrote month files into both.
+        ds::Series store;
+        bool unreadable = false;
+        ec.clear();
         for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
             if (!e.is_regular_file()) { continue; }
             const std::string name = e.path().filename().string();
@@ -292,48 +274,55 @@ int main(int argc, char** argv)
                 || name.compare(name.size() - 4, 4, ".csv") != 0) {
                 continue;
             }
-            if (!is_month_file(name) && (single_file.empty()
-                                         || name == "all.csv")) {
-                single_file = name;
-            }
             std::ifstream in(e.path());
-            if (!in) { continue; }
-            std::string line;
-            std::getline(in, line);
-            if (!line.empty() && line[0] == 't') { header = line; }
-            while (std::getline(in, line)) {
-                if (line.empty()) { continue; }
-                const std::string stamp = line.substr(0, line.find(','));
-                if (stamp.size() < 10) { continue; }
-                const std::string key = bar_key(stamp, s.ns);
-                files[name][key] = Row{line, close_of(line)};
-                where[key] = name;
-                if (stamp.size() == 10) { stamp_is_date_only = true; }
-                // MAX ACROSS EVERY FILE, not the last one by name.
-                // banknifty/1d holds all.csv and vendor_pre2015.csv, and the
-                // vendor file sorts LAST -- the same trap the Data Flow
-                // inventory hit in P30-03.
-                if (stamp > last_stamp) { last_stamp = stamp; }
+            if (!in) {
+                unreadable = true;
+                break;
             }
+            ds::load_file(store, name, in, s.ns);
+            if (in.bad()) {
+                unreadable = true;
+                break;
+            }
+        }
+        if (ec || unreadable) {
+            // An unreadable stored file is not an empty one: merging without
+            // it would put its bars into a second file beside it.
+            std::printf("    spot/%-10s %-4s  COULD NOT READ what is stored; "
+                        "nothing merged\n", s.sym, s.dir);
+            ++failed;
+            continue;
         }
 
         // ---- the window to ask for ---------------------------------------
-        std::int64_t from_day = today - back;
-        if (last_stamp.size() >= 10) {
-            std::int64_t d = 0;
-            if (altair::parse_date(last_stamp.substr(0, 10), d)) {
-                // From the last STORED day, not the day after: the last bar
-                // of a partitioned intraday series is mid-session, and asking
-                // from the next day would leave the rest of that day missing
-                // for good.
-                from_day = d;
+        // From the last STORED day, not the day after: the last bar of a
+        // partitioned intraday series is mid-session, and asking from the
+        // next day would leave the rest of that day missing for good.
+        const auto from_day_result =
+            ds::update_from_day(store.last_stamp, today, back);
+        if (!from_day_result) {
+            if (from_day_result.error() == ds::UpdateWindowError::FutureLastStamp) {
+                // CX02-A2c (R-AB-028). Clamping a future stamp used to create
+                // a zero-width query that returned empty and reported success
+                // forever. Refuse the corrupt series visibly.
+                std::printf(
+                    "    spot/%-10s %-4s  STORED ROW DATED IN THE FUTURE "
+                    "(%s); refusing rather than asking for a zero-width "
+                    "window\n", s.sym, s.dir, store.last_stamp.c_str());
+            } else {
+                std::printf(
+                    "    spot/%-10s %-4s  INVALID STORED LAST STAMP (%s); "
+                    "nothing merged\n", s.sym, s.dir,
+                    store.last_stamp.empty() ? "empty" : store.last_stamp.c_str());
             }
+            ++failed;
+            continue;
         }
-        if (from_day > today) { from_day = today; }
+        const std::int64_t from_day = *from_day_result;
+        const std::string from_s = altair::date_string(from_day);
+        const std::string to_s = altair::date_string(today);
 
-        const auto chunks = altair::chunk_requests(
-            altair::date_string(from_day),
-            altair::date_string(today), s.interval);
+        const auto chunks = altair::chunk_requests(from_s, to_s, s.interval);
         if (!chunks) {
             std::printf("    spot/%-10s %-4s  could not plan a request\n",
                         s.sym, s.dir);
@@ -363,74 +352,104 @@ int main(int argc, char** argv)
             continue;
         }
 
+        // ---- did Kite answer the whole window? (C14-006) ------------------
+        //
+        // Kite truncates an over-long request instead of refusing it, so a
+        // short answer is not an error on the wire. The fetcher has always
+        // refused one; this merged it, and the hole became permanent.
+        const ds::Coverage cov = ds::judge_coverage(got, from_s, to_s, 5);
+        const ds::EmptyAnswerEvent empty_event = !got.empty()
+            ? ds::EmptyAnswerEvent::NonemptyResponse
+            : cov == ds::Coverage::Incomplete
+                ? ds::EmptyAnswerEvent::TradingWindowEmpty
+                : ds::EmptyAnswerEvent::NoTradingSession;
+        const auto empty_streak = ds::update_empty_answer_streak(
+            std::filesystem::path(dir) / ".kite_update_empty_answers",
+            empty_event);
+        if (!empty_streak) {
+            std::printf("    spot/%-10s %-4s  EMPTY-RESPONSE STATE FAILED: %s; "
+                        "NOTHING MERGED\n", s.sym, s.dir,
+                        ds::to_string(empty_streak.error()));
+            ++failed;
+            continue;
+        }
+        if (cov == ds::Coverage::Incomplete || cov == ds::Coverage::Malformed) {
+            std::printf("    spot/%-10s %-4s  %s for %s..%s (%zu candles, "
+                        "%llu consecutive empty response(s)); NOTHING MERGED\n",
+                        s.sym, s.dir,
+                        cov == ds::Coverage::Incomplete ? "INCOMPLETE COVERAGE"
+                                                        : "MALFORMED ANSWER",
+                        from_s.c_str(), to_s.c_str(), got.size(),
+                        static_cast<unsigned long long>(*empty_streak));
+            ++failed;
+            continue;
+        }
+
         // ---- merge --------------------------------------------------------
         std::size_t added = 0, replaced = 0, rounding = 0, partial = 0;
+        std::size_t blocked = 0, bad_price = 0, unusable = 0;
         for (const altair::RawCandle& c : got) {
-            if (!bar_is_complete(c.ts_ns, s.ns, now_ns)) {
+            if (!ds::bar_is_complete(c.ts_ns, s.ns, now_ns)) {
                 ++partial;
                 continue;
             }
-            const std::string full = altair::format_ist(c.ts_ns);
-            const std::string key = bar_key(full, s.ns);
-            // Written in the shape the series already uses. Mixing
-            // `2026-09-08` and `2026-09-08T00:00:00+05:30` in one file makes
-            // every reader's stamp parser the arbiter of what a bar is.
-            const std::string stamp =
-                (stamp_is_date_only && s.ns >= 86'400'000'000'000LL)
-                    ? full.substr(0, 10) : full;
-
-            std::string line = stamp;
-            char buf[128];
-            std::snprintf(buf, sizeof(buf), ",%g,%g,%g,%g,", c.open, c.high,
-                          c.low, c.close);
-            line += buf;      // volume left EMPTY: an index reports none
-
-            const auto w = where.find(key);
-            const std::string file =
-                w != where.end() ? w->second
-                : (!single_file.empty() ? single_file
-                                        : full.substr(0, 7) + ".csv");
-            auto& m = files[file];
-            const auto it = m.find(key);
-            if (it == m.end()) {
-                m[key] = Row{line, c.close};
-                where[key] = file;
-                if (stamp > last_stamp) { last_stamp = stamp; }
-                ++added;
+            // Exact prices (C14-001). Volume is left EMPTY: an index reports
+            // none.
+            std::string prices;
+            if (!ds::append_prices(prices, c)) {
+                ++bad_price;
                 continue;
             }
-            // MATERIAL or DECIMAL PLACES -- see the header.
-            const double a = it->second.close, b = c.close;
-            const double d = (a > 0.0 && b > 0.0)
-                ? std::fabs(10'000.0 * std::log(b / a)) : 0.0;
-            if (d > 1.0) {
-                it->second = Row{line, b};
-                ++replaced;
-            } else if (d > 0.0) {
-                ++rounding;
+            switch (ds::merge_bar(store, altair::format_ist(c.ts_ns), prices,
+                                  c.close, s.ns)) {
+            case ds::MergeResult::Added:       ++added; break;
+            case ds::MergeResult::Replaced:    ++replaced; break;
+            case ds::MergeResult::Rounding:    ++rounding; break;
+            case ds::MergeResult::Same:        break;
+            case ds::MergeResult::BlockedFile: ++blocked; break;
+            case ds::MergeResult::Unusable:    ++unusable; break;
             }
         }
+        if (bad_price > 0 || blocked > 0 || unusable > 0) {
+            // Rule 9. A NaN price is a malformed answer, and a bar that
+            // belongs in a file this reader cannot fully key cannot be merged
+            // without dropping the rows it could not key. Neither is written
+            // around.
+            std::printf("    spot/%-10s %-4s  %zu unwritable price(s), %zu "
+                        "bar(s) for a file with unkeyable or duplicate rows, "
+                        "%zu with an unusable close; NOTHING WRITTEN\n",
+                        s.sym, s.dir, bad_price, blocked, unusable);
+            ++failed;
+            continue;
+        }
 
-        // ---- rewrite the months that changed ------------------------------
-        if (added > 0 || replaced > 0) {
-            for (const auto& [file, rows] : files) {
-                const std::string path = dir + "/" + file;
-                const std::string tmp = path + ".tmp";
-                std::ofstream f(tmp, std::ios::trunc);
-                if (!f) { continue; }
-                f << header << "\n";
-                for (const auto& [stamp, row] : rows) { f << row.line << "\n"; }
-                f.close();
-                std::remove(path.c_str());
-                std::rename(tmp.c_str(), path.c_str());
+        // ---- write back ONLY the files that changed (C14-005) -------------
+        std::size_t write_failed = 0;
+        for (const auto& [file, f] : store.files) {
+            if (!f.dirty) { continue; }
+            const auto r = ds::replace_file_checked(
+                std::filesystem::path(dir) / file, ds::render(f));
+            if (!r) {
+                std::printf("    spot/%-10s %-4s  WRITE FAILED for %s: %s -- "
+                            "that file is unchanged on disk\n", s.sym, s.dir,
+                            file.c_str(), ds::to_string(r.error()));
+                ++write_failed;
             }
         }
 
         std::printf("    spot/%-10s %-4s  +%-6zu ~%-4zu  (=%zu rounding, "
                     "%zu unfinished)  -> %s\n",
                     s.sym, s.dir, added, replaced, rounding, partial,
-                    last_stamp.empty() ? "-" : last_stamp.c_str());
-        ++series_done;
+                    store.last_stamp.empty() ? "-" : store.last_stamp.c_str());
+        if (store.cross_file_duplicates > 0) {
+            std::printf("      note: %zu bar(s) are stored in two files; left "
+                        "as they are\n", store.cross_file_duplicates);
+        }
+        if (write_failed > 0) {
+            ++failed;
+        } else {
+            ++series_done;
+        }
         added_total += added;
         replaced_total += replaced;
         rounding_total += rounding;

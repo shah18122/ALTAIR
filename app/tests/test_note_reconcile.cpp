@@ -63,14 +63,17 @@ constexpr Timestamp ist_date(std::int64_t y, unsigned m, unsigned d) noexcept {
                      - kIstOffset.raw()};
 }
 
-// The two real schedules, same as risk/tests/test_cost.cpp. Duplicated rather
-// than shared because a reconciler that imports the cost model's own test
-// fixtures is checking the model against itself.
+// The two deterministic schedule fixtures, same as risk/tests/test_cost.cpp.
+// Their values are known test inputs only; `verified` lets compute_cost
+// exercise the fixture arithmetic and does NOT verify the production TOML
+// schedule, which remains fail-closed until its rates have a cited source.
+// Duplicated rather than shared because a reconciler that imports the cost
+// model's own test fixtures is checking the model against itself.
 ChargeSchedule pre_april() {
     ChargeSchedule s{};
     s.valid_from = ist_date(2000, 1, 1);
     s.valid_to   = ist_date(2026, 3, 31);
-    s.verified   = false;
+    s.verified   = true;
 
     s.equity_futures.present      = true;
     s.equity_futures.stt          = rate_from(0.0002L);      // 0.02%

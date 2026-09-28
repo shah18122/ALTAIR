@@ -59,6 +59,7 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QTimeZone>
+#include <QTemporaryDir>
 
 #include <models/calibration.hpp>
 #include <models/forecast_scorecard.hpp>
@@ -113,82 +114,125 @@ namespace altair::ui {
 struct FetchResult {
     bool ran = false;
     QString error;
+    QString provider;
     UiStamped bars;
 };
 
-[[nodiscard]] inline FetchResult
-fetch_recent(std::uint32_t token, const QString& interval_dir, int days) {
-    FetchResult out;
-    QString exe =
-#if defined(_WIN32)
-        QStringLiteral("altair_kite_fetch.exe");
-#else
-        QStringLiteral("altair_kite_fetch");
-#endif
+[[nodiscard]] inline const char* fyers_resolution_for(const QString& iv) {
+    if (iv == QStringLiteral("1m")) return "1";
+    if (iv == QStringLiteral("5m")) return "5";
+    if (iv == QStringLiteral("15m")) return "15";
+    if (iv == QStringLiteral("60m")) return "60";
+    return "D";
+}
+
+[[nodiscard]] inline QString fyers_symbol_for(const QString& symbol_dir) {
+    if (symbol_dir == QStringLiteral("banknifty")) return QStringLiteral("NSE:NIFTYBANK-INDEX");
+    if (symbol_dir == QStringLiteral("indiavix")) return QStringLiteral("NSE:INDIAVIX-INDEX");
+    return QStringLiteral("NSE:NIFTY50-INDEX");
+}
+
+[[nodiscard]] inline QString find_forecast_helper(const QString& executable) {
     QStringList tried;
-    tried << QCoreApplication::applicationDirPath()
-                 + QStringLiteral("/../app/") + exe;
-    tried << QCoreApplication::applicationDirPath()
-                 + QStringLiteral("/../../net/app/") + exe;
+    const QString app = QCoreApplication::applicationDirPath();
+    tried << app + QLatin1Char('/') + executable;
+    tried << app + QStringLiteral("/../app/") + executable;
+    tried << app + QStringLiteral("/../../net/app/") + executable;
 #ifdef ALTAIR_SOURCE_DIR
-    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + executable;
 #endif
-    QString found;
-    for (const QString& c : tried) {
-        if (QFileInfo(c).isFile()) {
-            found = QFileInfo(c).canonicalFilePath();
-            break;
-        }
+    for (const QString& candidate : tried) {
+        const QFileInfo info(candidate);
+        if (info.isFile()) return info.canonicalFilePath();
     }
-    if (found.isEmpty()) {
+    return {};
+}
+
+[[nodiscard]] inline FetchResult
+fetch_recent(const QString& symbol_dir, std::uint32_t token,
+             const QString& interval_dir, int days) {
+    FetchResult out;
+#if defined(_WIN32)
+    const QString fyers_name = QStringLiteral("altair_fyers_history.exe");
+    const QString kite_name = QStringLiteral("altair_kite_fetch.exe");
+#else
+    const QString fyers_name = QStringLiteral("altair_fyers_history");
+    const QString kite_name = QStringLiteral("altair_kite_fetch");
+#endif
+    const QString fyers_exe = find_forecast_helper(fyers_name);
+    const QString kite_exe = find_forecast_helper(kite_name);
+#ifdef ALTAIR_SOURCE_DIR
+    const QString fyers_session = QStringLiteral(ALTAIR_SOURCE_DIR "/data/fyers_session.json");
+#else
+    const QString fyers_session = QCoreApplication::applicationDirPath()
+        + QStringLiteral("/../data/fyers_session.json");
+#endif
+    if (fyers_exe.isEmpty() && kite_exe.isEmpty()) {
         out.error = QStringLiteral(
-            "altair_kite_fetch is not in this build. It needs the `net` "
-            "preset: build.bat net");
+            "No FYERS or Kite history helper is in this build. Build the net preset.");
         return out;
     }
 
-#ifdef ALTAIR_SOURCE_DIR
-    const QString scratch =
-        QStringLiteral(ALTAIR_SOURCE_DIR "/data/live_forecast_scratch");
-#else
-    const QString scratch = QStringLiteral("data/live_forecast_scratch");
-#endif
-    QDir().mkpath(scratch);
-    // Cleared first: a stale month file from a previous instrument would be
-    // merged in as if it belonged to this one.
-    for (const QString& f :
-         QDir(scratch).entryList(QStringList{QStringLiteral("*.csv")},
-                                 QDir::Files)) {
-        QFile::remove(scratch + QLatin1Char('/') + f);
+    QTemporaryDir temporary;
+    if (!temporary.isValid()) {
+        out.error = QStringLiteral("Cannot create an isolated fetch directory");
+        return out;
     }
+    const QString scratch = temporary.path();
 
     const QDate today = QDateTime::currentDateTime(
                             QTimeZone(5 * 3600 + 30 * 60)).date();
-    QProcess proc;
-    proc.setProgram(found);
-    proc.setArguments({QStringLiteral("--token"), QString::number(token),
-                       QStringLiteral("--interval"),
-                       QString::fromLatin1(kite_interval_for(interval_dir)),
-                       QStringLiteral("--from"),
-                       today.addDays(-days).toString(Qt::ISODate),
-                       QStringLiteral("--to"), today.toString(Qt::ISODate),
-                       QStringLiteral("--out"), scratch,
-                       QStringLiteral("--volume-absent"),
-                       QStringLiteral("--force"),
-                       QStringLiteral("--go")});
-    proc.setProcessChannelMode(QProcess::MergedChannels);
+    const QString from = today.addDays(-days).toString(Qt::ISODate);
+    const QString to = today.toString(Qt::ISODate);
+    const auto run = [&](const QString& program, const QStringList& arguments,
+                         const QString& provider) -> QString {
+        QProcess proc;
+        proc.setProgram(program);
+        proc.setArguments(arguments);
+        proc.setProcessChannelMode(QProcess::MergedChannels);
 #ifdef ALTAIR_SOURCE_DIR
-    proc.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
+        proc.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
 #endif
-    proc.start();
-    if (!proc.waitForStarted(5000) || !proc.waitForFinished(60000)) {
-        proc.kill();
-        out.error = QStringLiteral("the fetcher did not finish");
-        return out;
+        proc.start();
+        if (!proc.waitForStarted(5000) || !proc.waitForFinished(60000)) {
+            proc.kill();
+            return provider + QStringLiteral(" fetcher did not finish");
+        }
+        const QString message = QString::fromUtf8(proc.readAll()).trimmed();
+        if (proc.exitCode() != 0) return provider + QStringLiteral(": ")
+            + message.section(QChar('\n'), -3);
+        out.provider = provider;
+        return {};
+    };
+
+    QString fyers_error;
+    if (!fyers_exe.isEmpty() && QFileInfo::exists(fyers_session)) {
+        fyers_error = run(fyers_exe,
+            {QStringLiteral("--symbol"), fyers_symbol_for(symbol_dir),
+             QStringLiteral("--resolution"), QString::fromLatin1(fyers_resolution_for(interval_dir)),
+             QStringLiteral("--from"), from, QStringLiteral("--to"), to,
+             QStringLiteral("--out"), scratch + QStringLiteral("/fyers.csv"),
+             QStringLiteral("--force"), QStringLiteral("--go")},
+            QStringLiteral("FYERS"));
     }
-    if (proc.exitCode() != 0) {
-        out.error = QString::fromUtf8(proc.readAll()).trimmed()
-                        .section(QChar('\n'), -3);
+    if (out.provider.isEmpty() && !kite_exe.isEmpty()) {
+        const QString kite_error = run(kite_exe,
+            {QStringLiteral("--token"), QString::number(token),
+             QStringLiteral("--interval"), QString::fromLatin1(kite_interval_for(interval_dir)),
+             QStringLiteral("--from"), from, QStringLiteral("--to"), to,
+             QStringLiteral("--out"), scratch, QStringLiteral("--volume-absent"),
+             QStringLiteral("--force"), QStringLiteral("--go")},
+            QStringLiteral("Kite"));
+        if (!kite_error.isEmpty()) {
+            out.error = fyers_error.isEmpty() ? kite_error
+                : fyers_error + QStringLiteral(" | fallback ") + kite_error;
+            return out;
+        }
+    }
+    if (out.provider.isEmpty()) {
+        out.error = fyers_error.isEmpty()
+            ? QStringLiteral("FYERS has no saved session and Kite fetch is unavailable")
+            : fyers_error;
         return out;
     }
     out.ran = true;
@@ -278,7 +322,7 @@ forecast_report(const QString& dataset_root, const QString& sym,
     // ---- 2. the live tail ------------------------------------------------
     QString live_note;
     if (live) {
-        const FetchResult fr = fetch_recent(q.kite_token, interval,
+        const FetchResult fr = fetch_recent(sym, q.kite_token, interval,
                                             interval == QStringLiteral("1d")
                                                 ? 120 : 20);
         if (!fr.ran) {
@@ -288,6 +332,9 @@ forecast_report(const QString& dataset_root, const QString& sym,
                 "  old. The anchor below says exactly which bar was used.\n\n")
                             .arg(fr.error);
         } else {
+            live_note = QStringLiteral(
+                "  RECENT HISTORY PROVIDER: %1 (FYERS primary; Kite fallback)\n\n")
+                            .arg(fr.provider);
             // MERGE ON TIMESTAMP, FRESH WINS. Kite's settled value for a bar
             // supersedes whatever is in dataset/ -- which is the fix for the
             // frozen partial bar, not merely a refresh.

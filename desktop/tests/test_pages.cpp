@@ -361,9 +361,9 @@ int main(int argc, char** argv)
     // Sections 1 and 2 price nothing and must ALWAYS compute: a convexity
     // margin is a property of three quotes and a calendar margin is a
     // difference of two total variances. Sections 3-5 price a bill and are
-    // blocked where config/charges.toml has no loader, which is the `default`
-    // preset -- so what is asserted here is that the page says WHICH, rather
-    // than that a particular number appears.
+    // blocked where config/charges.toml has no loader OR is still unverified --
+    // so what is asserted here is that the page says WHICH, rather than that a
+    // particular number appears.
     // -----------------------------------------------------------------------
     std::printf("\n[4h] parity and calendar\n");
     {
@@ -395,10 +395,10 @@ int main(int argc, char** argv)
             ar.contains(QStringLiteral("COSTED SCANNERS UNAVAILABLE"));
         check(costed != blocked,
               costed ? "charges.toml loaded, so the costed scanners computed"
-                     : "no charges.toml loader in this build, and the page "
-                       "names that blocker instead of costing against a "
-                       "literal -- rule 5 is what everything downstream "
-                       "trusts");
+                     : "charges.toml is absent or unverified, and the page "
+                       "names that blocker instead of costing against an "
+                       "untrusted schedule -- rule 5 is what everything "
+                       "downstream trusts");
         if (costed) {
             // The short-cash asymmetry only means something when a REVERSAL
             // is the chosen side; on a fair chain the conversion wins and the
@@ -569,6 +569,13 @@ int main(int argc, char** argv)
               "an intraday bar is not complete part way through");
         check(bar_is_complete(s5, five, s5 + five),
               "and is exactly when its own width has elapsed");
+        check(fyers_symbol_for(QStringLiteral("nifty"))
+                  == QStringLiteral("NSE:NIFTY50-INDEX")
+                  && fyers_symbol_for(QStringLiteral("banknifty"))
+                  == QStringLiteral("NSE:NIFTYBANK-INDEX")
+                  && QString::fromLatin1(fyers_resolution_for(QStringLiteral("1m")))
+                  == QStringLiteral("1"),
+              "forecast fetch maps UI instruments and the one-minute option to FYERS v3 identifiers");
     }
 
     // -----------------------------------------------------------------------

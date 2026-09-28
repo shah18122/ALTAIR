@@ -219,6 +219,36 @@ void test_units_round_to_tick()
 
     check(is_on_tick(Price{10005}, Price{5}).value() == true, "10005 on tick");
     check(is_on_tick(Price{10007}, Price{5}).value() == false, "10007 not on tick");
+
+    // CX02-D1 / C21-001. The final multiply is checked BEFORE it happens: at
+    // the int64 extremes it is signed overflow, which is undefined behaviour
+    // rather than a large number, and P0-01's item 9 never asked for it.
+    constexpr std::int64_t kI64Max = 0x7FFF'FFFF'FFFF'FFFF;
+    constexpr std::int64_t kI64Min = -kI64Max - 1;
+    check(round_to_tick(Price{kI64Max}, Price{5}, RoundMode::Up).error()
+              == ArithError::Overflow,
+          "int64 max rounded UP to a 5-tick has no answer, and is refused");
+    // Nearest can only step past the top when the remainder is at least half
+    // the tick. int64 max is 2 (mod 5), so it rounds DOWN and cannot overflow
+    // on a 5-tick -- it is 3 (mod 4), which does.
+    check(round_to_tick(Price{kI64Max}, Price{4}, RoundMode::Nearest).error()
+              == ArithError::Overflow,
+          "so is a nearest-rounding that steps past the top");
+    check(round_to_tick(Price{kI64Max}, Price{5}, RoundMode::Nearest).value()
+              == Price{kI64Max - 2},
+          "while one that rounds down at the top still answers");
+    check(round_to_tick(Price{kI64Min}, Price{5}, RoundMode::Down).error()
+              == ArithError::Overflow,
+          "and int64 min rounded DOWN, which steps past the bottom");
+    // The last representable multiple is returned, not refused: the bound
+    // refuses what exceeds it and nothing else (rule 11).
+    constexpr std::int64_t kTop = kI64Max - (kI64Max % 5);
+    check(round_to_tick(Price{kTop}, Price{5}, RoundMode::Up).value()
+              == Price{kTop},
+          "while the largest multiple of the tick that fits is returned exactly");
+    check(round_to_tick(Price{kTop}, Price{5}, RoundMode::Down).value()
+              == Price{kTop},
+          "in both directions");
 }
 
 void test_units_type_safety_static_asserts()

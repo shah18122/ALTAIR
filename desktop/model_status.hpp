@@ -337,8 +337,9 @@ struct Stage {
          QStringLiteral("versioned, horizon-banded registry")},
         {QStringLiteral("Models"), QStringLiteral("models/"),
          WiringState::BlockedOnInput,
-         QStringLiteral("1 of 12 trained on real data (Markov, P8-13); the "
-                        "rest need data that does not exist")},
+         QStringLiteral("numerical engines are built; readiness is mixed: "
+                        "retained fits, settled no-edge results and data gates "
+                        "are listed separately on Models")},
         {QStringLiteral("Aggregator"), QStringLiteral("models/aggregator.hpp"),
          WiringState::BlockedOnInput,
          QStringLiteral("needs two or more members to combine")},

@@ -298,6 +298,100 @@ void bad_instrument_and_capacity()
           "clear() empties it, and NotFound returns");
 }
 
+// ── 9 ────────────────────────────────────────────────────────────────────
+void malformed_depth_counts_are_rejected()
+{
+    std::printf("\n9 malformed_depth_counts_are_rejected\n");
+    g_book.clear();
+
+    DepthUpdate first = mk(1, 1, 2'500'000, 2'500'050);
+    first.bid_levels = static_cast<std::uint8_t>(kDepthLevels + 1);
+    auto rejected = g_book.apply(first);
+    check(!rejected && rejected.error() == BookError::BadDepthCount,
+          "a snapshot claiming more bid levels than its fixed array is refused");
+    check(!g_book.has(static_cast<InstrumentId>(1)) && g_book.size() == 0,
+          "a malformed first snapshot does not create a book or instrument");
+
+    check(g_book.apply(mk(1, 1, 2'500'000, 2'500'050)).has_value(),
+          "a valid snapshot establishes the prior state");
+    DepthUpdate malformed_ask = mk(1, 2, 2'400'000, 2'400'050);
+    malformed_ask.ask_levels = UINT8_MAX;
+    rejected = g_book.apply(malformed_ask);
+    check(!rejected && rejected.error() == BookError::BadDepthCount,
+          "a snapshot claiming 255 ask levels is refused before it is stored");
+
+    const auto state = g_book.at(static_cast<InstrumentId>(1));
+    check(state.has_value() && (*state)->seq == 1
+              && (*state)->bid[0].px.raw() == 2'500'000
+              && (*state)->ask[0].px.raw() == 2'500'050,
+          "the malformed update leaves the previous market state intact");
+    check(state.has_value() && (*state)->consecutive_rejects == 1,
+          "the existing instrument records the rejected malformed snapshot");
+    check(g_book.stats().malformed_depth == 2 && g_book.stats().applied == 1,
+          "malformed snapshots are counted without incrementing accepted applies");
+}
+
+// ── 10 ───────────────────────────────────────────────────────────────────
+void stale_tick_flag_rejected_state_survives()
+{
+    std::printf("\n10 stale_tick_flag_rejected_state_survives\n");
+    g_book.clear();
+
+    check(g_book.apply(mk(1, 1, 2'500'000, 2'500'050)).has_value(),
+          "a good snapshot establishes the prior book");
+    auto prior = g_book.at(static_cast<InstrumentId>(1));
+    check(prior.has_value(), "the established book is available");
+    if (!prior) { return; }
+
+    // Compare the complete object representation while allowing only the
+    // per-instrument rejection counter to change.
+    std::uint8_t before[sizeof(BookState)]{};
+    std::memcpy(before, *prior, sizeof(BookState));
+
+    DepthUpdate stale = mk(1, 2, 2'400'000, 2'400'050);
+    stale.flags = set_flag(stale.flags, TickFlag::Stale);
+    const auto result = g_book.apply(stale);
+    check(!result && result.error() == BookError::StaleTick,
+          "a stale-marked depth snapshot is rejected");
+
+    const auto after = g_book.at(static_cast<InstrumentId>(1));
+    check(after.has_value(), "the prior book remains available");
+    if (!after) { return; }
+
+    std::uint8_t current[sizeof(BookState)]{};
+    std::memcpy(current, *after, sizeof(BookState));
+    const std::size_t counter_begin = offsetof(BookState, consecutive_rejects);
+    const std::size_t counter_end = counter_begin + sizeof((*after)->consecutive_rejects);
+    const bool unchanged_except_reject_count =
+        std::memcmp(before, current, counter_begin) == 0
+        && std::memcmp(before + counter_end, current + counter_end,
+                       sizeof(BookState) - counter_end) == 0;
+    check(unchanged_except_reject_count,
+          "the prior state bytes are unchanged except the rejection counter");
+    check((*after)->seq == 1 && (*after)->bid[0].px.raw() == 2'500'000
+              && (*after)->ask[0].px.raw() == 2'500'050
+              && (*after)->consecutive_rejects == 1,
+          "the last good prices and sequence survive and the rejection is recorded");
+    check(g_book.stats().stale_tick == 1 && g_book.stats().applied == 1,
+          "the dedicated stale counter advances without accepting the update");
+}
+
+void stale_flagged_stored_state_is_not_tradable()
+{
+    std::printf("\nstale_flagged_stored_state_is_not_tradable\n");
+
+    BookState state{};
+    state.bid_levels = 1;
+    state.ask_levels = 1;
+    state.bid[0].px = Price{100};
+    state.ask[0].px = Price{101};
+    check(is_tradable(state), "a fresh two-sided non-crossed book is tradable");
+
+    state.flags = set_flag(state.flags, TickFlag::Stale);
+    check(!is_tradable(state),
+          "a stale-flagged stored snapshot is not tradable");
+}
+
 // ── gate 6: the latency budget ───────────────────────────────────────────
 void benchmark()
 {
@@ -361,6 +455,9 @@ int main()
     snapshot_replaces_rather_than_merges();
     is_tradable_needs_both_sides();
     bad_instrument_and_capacity();
+    malformed_depth_counts_are_rejected();
+    stale_tick_flag_rejected_state_survives();
+    stale_flagged_stored_state_is_not_tradable();
     benchmark();
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");

@@ -14,6 +14,9 @@ target_link_libraries(altair_book INTERFACE
 )
 
 if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_queue_position_test tests/test_queue_position.cpp)
+    target_link_libraries(altair_queue_position_test PRIVATE altair_book altair_flags)
+    add_test(NAME queue_position COMMAND altair_queue_position_test)
     add_executable(altair_l2_book_test tests/test_l2_book.cpp)
     target_link_libraries(altair_l2_book_test PRIVATE altair_book altair_flags)
     add_test(NAME l2_book COMMAND altair_l2_book_test)

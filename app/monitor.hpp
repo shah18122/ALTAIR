@@ -62,18 +62,30 @@
 
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace altair {
+
+namespace monitor_detail {
+
+/// Increment a diagnostic counter without wrapping. Callers can treat false
+/// as a hard capacity boundary and keep their related counters consistent.
+[[nodiscard]] constexpr bool increment_saturating(std::uint64_t& value) noexcept {
+    if (value == std::numeric_limits<std::uint64_t>::max()) { return false; }
+    ++value;
+    return true;
+}
+
+} // namespace monitor_detail
 
 // -------------------------------------------------------------------------
 // Health
 // -------------------------------------------------------------------------
 
-/// Ordered WORST-LAST so `worst()` is a max. `Stale` is deliberately above
-/// `Critical`: a breached threshold is the system reporting something bad, a
-/// stale signal is the system having stopped reporting at all, and only one of
-/// those tells you what your exposure is.
+/// Stable display values. `worst()` uses `health_rank()` rather than these
+/// ordinals so an unobserved gauge outranks stale, critical, warning and ok.
 enum class Health : std::uint8_t {
     /// Nothing has ever been observed. NOT `Ok` -- see the header.
     Unobserved = 0,
@@ -82,6 +94,17 @@ enum class Health : std::uint8_t {
     Critical   = 3,
     Stale      = 4
 };
+
+[[nodiscard]] constexpr std::uint8_t health_rank(Health h) noexcept {
+    switch (h) {
+    case Health::Ok:         return 1;
+    case Health::Warn:       return 2;
+    case Health::Critical:   return 3;
+    case Health::Stale:      return 4;
+    case Health::Unobserved: return 5;
+    }
+    return 5;
+}
 
 [[nodiscard]] inline const char* health_text(Health h) noexcept {
     switch (h) {
@@ -123,7 +146,7 @@ struct GaugeSpec {
 
 /// Fixed-capacity, allocation-free, four sub-buckets per octave.
 ///
-/// 256 buckets of `std::uint32_t` is 1 KiB, so this can live on the hot path;
+/// 256 buckets of `std::uint64_t` is 2 KiB, so this can live on the hot path;
 /// CLAUDE.md rule 4 forbids allocation inside `ALTAIR_HOT` and a histogram that
 /// grows a vector is exactly the thing that would violate it under load, which
 /// is to say precisely when the latency being measured matters.
@@ -131,6 +154,11 @@ struct GaugeSpec {
 /// Resolution is a factor of 2^(1/4), about 19%. That is coarse for a mean and
 /// entirely adequate for the question actually being asked, which is whether
 /// the tail is inside the decay window of the signal being traded.
+///
+/// Counters stop accepting samples at UINT64_MAX instead of wrapping. Since
+/// every accepted sample increments exactly one bucket, no bucket can exceed
+/// the accepted total. The running mean uses an online update, avoiding a
+/// signed cumulative-sum overflow even for near-INT64_MAX latency samples.
 class LatencyHistogram {
 public:
     static constexpr std::size_t kBuckets = 256;
@@ -139,8 +167,9 @@ public:
     /// being dropped -- a clock that runs backwards is a fact about the
     /// system, and discarding it hides it.
     void record(std::int64_t ns) noexcept {
-        ++count_;
-        sum_ns_ += ns > 0 ? ns : 0;
+        if (!monitor_detail::increment_saturating(count_)) { return; }
+        const double sample_ns = ns > 0 ? static_cast<double>(ns) : 0.0;
+        mean_ns_ += (sample_ns - mean_ns_) / static_cast<double>(count_);
         if (ns > max_ns_) { max_ns_ = ns; }
         ++bucket_[index_of(ns)];
     }
@@ -151,9 +180,7 @@ public:
     /// UNIT: nanoseconds. Present for comparison against `percentile`, and to
     /// make the header's point checkable rather than asserted.
     [[nodiscard]] double mean_ns() const noexcept {
-        return count_ == 0 ? 0.0
-                           : static_cast<double>(sum_ns_)
-                                 / static_cast<double>(count_);
+        return mean_ns_;
     }
 
     /// UNIT: nanoseconds. `q` in [0, 1].
@@ -179,7 +206,7 @@ public:
     void reset() noexcept {
         bucket_.fill(0);
         count_ = 0;
-        sum_ns_ = 0;
+        mean_ns_ = 0.0;
         max_ns_ = 0;
     }
 
@@ -220,9 +247,9 @@ public:
     }
 
 private:
-    std::array<std::uint32_t, kBuckets> bucket_{};
+    std::array<std::uint64_t, kBuckets> bucket_{};
     std::uint64_t count_ = 0;
-    std::int64_t sum_ns_ = 0;
+    double mean_ns_ = 0.0;
     std::int64_t max_ns_ = 0;
 };
 
@@ -277,10 +304,16 @@ public:
             return Health::Stale;
         }
         const GaugeSpec& s = spec_[i];
+        if (!std::isfinite(g.value) || !std::isfinite(s.warn_at)
+            || !std::isfinite(s.critical_at)) {
+            return Health::Critical;
+        }
         if (s.sense == Sense::Above) {
+            if (s.warn_at > s.critical_at) { return Health::Critical; }
             if (g.value >= s.critical_at) { return Health::Critical; }
             if (g.value >= s.warn_at)     { return Health::Warn; }
         } else {
+            if (s.warn_at < s.critical_at) { return Health::Critical; }
             if (g.value <= s.critical_at) { return Health::Critical; }
             if (g.value <= s.warn_at)     { return Health::Warn; }
         }
@@ -291,11 +324,13 @@ public:
     /// stable across calls rather than depending on iteration luck.
     [[nodiscard]] Worst worst(Timestamp now) const noexcept {
         Worst w{};
-        w.name = N > 0 ? spec_[0].name : "";
-        for (std::size_t i = 0; i < N; ++i) {
+        if constexpr (N == 0) { return w; }
+        w.health = health(0, now);
+        w.index = 0;
+        w.name = spec_[0].name;
+        for (std::size_t i = 1; i < N; ++i) {
             const Health h = health(i, now);
-            if (static_cast<std::uint8_t>(h)
-                > static_cast<std::uint8_t>(w.health)) {
+            if (health_rank(h) > health_rank(w.health)) {
                 w.health = h;
                 w.index = i;
                 w.name = spec_[i].name;

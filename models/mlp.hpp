@@ -86,30 +86,86 @@ cross_sectional_rank(const double* values, std::size_t n,
     return {};
 }
 
+/// How an `Mlp` is trained.
+enum class MlpTrainer : std::uint8_t {
+    /// The hidden layer is seeded once and frozen; only the linear readout is
+    /// solved, in closed form. This is the original random-features model and
+    /// remains the DEFAULT so existing callers and their recorded numbers do
+    /// not move silently.
+    RandomFeatures = 0,
+    /// M12: the hidden layer is trained too, by backpropagation. Slower per
+    /// epoch, and the only way to reach a target a frozen random basis cannot
+    /// span -- which is exactly the gap Atlas flagged as `Partial`.
+    Backprop
+};
+
 /// A two-layer MLP with ReLU, satisfying P8-03's `Model` interface.
 ///
-/// Trained the same way as models/recurrent.hpp: the hidden layer is fixed at
-/// its seeded initialisation and the linear readout is solved in closed form.
-/// A random hidden layer with a solved readout is a random-features model --
-/// again a real, named method, and again honestly weaker than backpropagation,
-/// which is what the LibTorch backend adds.
+/// In `RandomFeatures` mode it trains as models/recurrent.hpp does: the hidden
+/// layer is fixed at its seeded initialisation and the linear readout is solved
+/// in closed form. A random hidden layer with a solved readout is a real, named
+/// method, and honestly weaker than backpropagation.
+///
+/// In `Backprop` mode the hidden layer is trained as well, by SGD on the
+/// sample-weighted mean squared error, so the model can represent a target a
+/// frozen random basis cannot. Gradient descent on a non-convex objective is
+/// not guaranteed to find a global optimum and this does not pretend otherwise;
+/// the gradient is CHECKED against a central finite difference rather than
+/// asserted, because a gradient that is never compared to a numerical one is an
+/// assertion about nothing.
+///
+/// STORAGE. Both modes share ONE contiguous parameter vector, laid out
+/// [W1: H*X][b1: H][w2: H+1], so a checkpoint is a single copy and the
+/// finite-difference test can perturb any parameter by index.
 template <std::size_t H, std::size_t X>
 class Mlp {
 public:
-    explicit Mlp(double ridge) noexcept : ridge_(ridge) {}
+    /// W1 (H*X) and b1 (H): everything the readout path holds frozen.
+    static constexpr std::size_t kHiddenParams = H * X + H;
+    /// The readout incl. intercept -- what `RandomFeatures::param_count()` is.
+    static constexpr std::size_t kReadoutParams = H + 1;
+    /// [W1][b1][w2 incl. intercept] -- what `Backprop::param_count()` is.
+    static constexpr std::size_t kFullParams = kHiddenParams + kReadoutParams;
+
+    explicit Mlp(double ridge,
+                 MlpTrainer trainer = MlpTrainer::RandomFeatures) noexcept
+        : ridge_(ridge), trainer_(trainer) {}
+
+    [[nodiscard]] MlpTrainer trainer() const noexcept { return trainer_; }
 
     void reset(std::uint64_t seed) noexcept {
         Init g{seed};
-        Matrix w{w1_, H, X};
+        Matrix w{w1(), H, X};
         g.xavier(w, X, H);
-        g.zeros(b1_, H);
-        for (double& v : w2_) { v = 0.0; }
+        g.zeros(b1(), H);
+        if (trainer_ == MlpTrainer::Backprop) {
+            // A ZERO READOUT GIVES THE HIDDEN LAYER NO GRADIENT AT ALL.
+            //
+            // dL/dW1 is proportional to dL/dy times w2, so with w2 == 0 every
+            // hidden parameter has an exactly zero gradient on the first step.
+            // The readout then trains alone, shrinks the units it finds
+            // uninformative toward zero, and those units stay frozen out --
+            // which is a plateau, not a slow start. This fixture reproduced it
+            // at 0.25 MSE, unchanged by learning rate or epoch count, until the
+            // readout was seeded. Xavier here is the standard symmetry break.
+            //
+            // RandomFeatures is deliberately untouched: its ridge solve
+            // overwrites the readout entirely, so a zero start there is both
+            // harmless and the behaviour existing callers were recorded against.
+            Matrix r{w2(), H, 1};
+            g.xavier(r, H, 1);
+            w2()[H] = 0.0;   // the intercept still starts at the sample mean
+        } else {
+            for (std::size_t i = 0; i < kReadoutParams; ++i) { w2()[i] = 0.0; }
+        }
     }
 
     void hidden(const double* x, double* h) const noexcept {
+        const double* b = b1();
+        const double* w = w1();
         for (std::size_t i = 0; i < H; ++i) {
-            double acc = b1_[i];
-            const double* r = w1_ + i * X;
+            double acc = b[i];
+            const double* r = w + i * X;
             for (std::size_t j = 0; j < X; ++j) { acc += r[j] * x[j]; }
             h[i] = relu(acc);
         }
@@ -128,7 +184,99 @@ public:
     /// nothing is held. Two files having the same bug with different
     /// constants is the argument for hard rule 11 rather than for quietly
     /// fixing this one.
-    double train_epoch(const Dataset& d, const Block& b, double) noexcept {
+    double train_epoch(const Dataset& d, const Block& b, double lr) noexcept {
+        return trainer_ == MlpTrainer::Backprop ? train_epoch_backprop(d, b, lr)
+                                                : train_epoch_readout(d, b);
+    }
+
+    /// The sample-weighted mean squared error on `b` AND its gradient with
+    /// respect to the FULL parameter vector.
+    ///
+    /// This is what backprop descends and what the finite-difference test
+    /// differentiates, and it is deliberately ONE function: returning the value
+    /// it differentiates is what stops the checked objective and the descended
+    /// objective from drifting apart.
+    [[nodiscard]] double compute_gradients(const Dataset& d, const Block& b,
+                                           double* grad) const noexcept {
+        for (std::size_t i = 0; i < kFullParams; ++i) { grad[i] = 0.0; }
+        const std::size_t n = b.size();
+        if (n == 0) { return 0.0; }
+        const double* w1p = w1();
+        const double* b1p = b1();
+        const double* w2p = w2();
+        double wsum = 0.0, sse = 0.0;
+        double x[X], h[H], z[H];
+        for (std::size_t i = 0; i < n; ++i) {
+            for (std::size_t j = 0; j < X; ++j) { x[j] = d.x.at(b.start + i, j); }
+            for (std::size_t a = 0; a < H; ++a) {
+                double acc = b1p[a];
+                const double* r = w1p + a * X;
+                for (std::size_t j = 0; j < X; ++j) { acc += r[j] * x[j]; }
+                z[a] = acc;
+                h[a] = relu(acc);
+            }
+            double yhat = w2p[H];
+            for (std::size_t a = 0; a < H; ++a) { yhat += w2p[a] * h[a]; }
+            const double err = yhat - d.y[b.start + i];
+            const double sw = d.weight != nullptr ? d.weight[b.start + i] : 1.0;
+            if (!(sw > 0.0)) { continue; }   // a zero-weight label is not an observation
+            sse += sw * err * err;
+            wsum += sw;
+            const double dy = 2.0 * sw * err;
+            for (std::size_t a = 0; a < H; ++a) {
+                grad[kHiddenParams + a] += dy * h[a];
+            }
+            grad[kHiddenParams + H] += dy;                 // readout intercept
+            for (std::size_t a = 0; a < H; ++a) {
+                if (z[a] <= 0.0) { continue; }             // ReLU' is 0 on the dead side
+                const double dh = dy * w2p[a];
+                grad[H * X + a] += dh;                     // b1
+                double* rw = grad + a * X;
+                for (std::size_t j = 0; j < X; ++j) { rw[j] += dh * x[j]; }
+            }
+        }
+        if (!(wsum > 0.0)) { return 0.0; }
+        const double scale = 1.0 / wsum;
+        for (std::size_t i = 0; i < kFullParams; ++i) { grad[i] *= scale; }
+        return sse / wsum;
+    }
+
+    /// One SGD step over the full parameter vector.
+    ///
+    /// Returns the UNWEIGHTED mean squared error, matching the readout path's
+    /// reporting convention so switching modes does not silently change the
+    /// number the harness prints.
+    double train_epoch_backprop(const Dataset& d, const Block& b,
+                                double lr) noexcept {
+        double grad[kFullParams];
+        (void)compute_gradients(d, b, grad);
+        if (lr != 0.0) {
+            for (std::size_t i = 0; i < kFullParams; ++i) {
+                p_[i] -= lr * grad[i];
+            }
+        }
+        return unweighted_mse(d, b);
+    }
+
+    /// Unweighted mean squared error over `b` -- the figure the readout path
+    /// has always reported.
+    [[nodiscard]] double unweighted_mse(const Dataset& d,
+                                        const Block& b) const noexcept {
+        const std::size_t n = b.size();
+        if (n == 0) { return 0.0; }
+        double x[X], h[H], sse = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            for (std::size_t j = 0; j < X; ++j) { x[j] = d.x.at(b.start + i, j); }
+            hidden(x, h);
+            double yhat = w2()[H];
+            for (std::size_t a = 0; a < H; ++a) { yhat += w2()[a] * h[a]; }
+            const double e = yhat - d.y[b.start + i];
+            sse += e * e;
+        }
+        return sse / static_cast<double>(n);
+    }
+
+    double train_epoch_readout(const Dataset& d, const Block& b) noexcept {
         constexpr std::size_t M = H + 1;
         const std::size_t n = b.size();
         if (n == 0) { return 0.0; }
@@ -163,9 +311,9 @@ public:
         // SSE = w'Aw - 2w'rhs + y'y. Exact, and no second pass over the rows.
         double sse = yty;
         for (std::size_t a = 0; a < M; ++a) {
-            sse -= 2.0 * w2_[a] * ru[a];
+            sse -= 2.0 * w2()[a] * ru[a];
             for (std::size_t c = 0; c < M; ++c) {
-                sse += w2_[a] * au[a * M + c] * w2_[c];
+                sse += w2()[a] * au[a * M + c] * w2()[c];
             }
         }
         return sse > 0.0 ? sse / static_cast<double>(n) : 0.0;
@@ -173,19 +321,29 @@ public:
 
     void predict(const Dataset& d, const Block& b, double* out) const noexcept {
         double h[H], x[X];
+        const double* w = w2();
         for (std::size_t i = b.start; i < b.end; ++i) {
             for (std::size_t j = 0; j < X; ++j) { x[j] = d.x.at(i, j); }
             hidden(x, h);
-            double p = w2_[H];
-            for (std::size_t j = 0; j < H; ++j) { p += w2_[j] * h[j]; }
+            double p = w[H];
+            for (std::size_t j = 0; j < H; ++j) { p += w[j] * h[j]; }
             out[i] = p;
         }
     }
 
-    [[nodiscard]] std::size_t param_count() const noexcept { return H + 1; }
-    [[nodiscard]] const double* params() const noexcept { return w2_; }
+    /// In `RandomFeatures` mode a checkpoint is the readout only, exactly as
+    /// before. In `Backprop` mode it is the whole vector, because the hidden
+    /// layer is now part of what was learned and a readout-only checkpoint
+    /// would reload into a different model.
+    [[nodiscard]] std::size_t param_count() const noexcept {
+        return trainer_ == MlpTrainer::Backprop ? kFullParams : kReadoutParams;
+    }
+    [[nodiscard]] const double* params() const noexcept {
+        return trainer_ == MlpTrainer::Backprop ? p_ : w2();
+    }
     void load_params(const double* src) noexcept {
-        for (std::size_t i = 0; i <= H; ++i) { w2_[i] = src[i]; }
+        double* dst = trainer_ == MlpTrainer::Backprop ? p_ : w2();
+        for (std::size_t i = 0; i < param_count(); ++i) { dst[i] = src[i]; }
     }
 
 private:
@@ -237,17 +395,23 @@ private:
         for (std::size_t ri = M; ri-- > 0;) {
             double acc = rhs[ri];
             for (std::size_t c = ri + 1; c < M; ++c) {
-                acc -= A[ri * M + c] * w2_[c];
+                acc -= A[ri * M + c] * w2()[c];
             }
             const double d0 = A[ri * M + ri];
-            w2_[ri] = std::fabs(d0) > 1e-300 ? acc / d0 : 0.0;
+            w2()[ri] = std::fabs(d0) > 1e-300 ? acc / d0 : 0.0;
         }
     }
 
-    double w1_[H * X] = {};
-    double b1_[H] = {};
-    double w2_[H + 1] = {};
+    [[nodiscard]] double* w1() noexcept { return p_; }
+    [[nodiscard]] const double* w1() const noexcept { return p_; }
+    [[nodiscard]] double* b1() noexcept { return p_ + H * X; }
+    [[nodiscard]] const double* b1() const noexcept { return p_ + H * X; }
+    [[nodiscard]] double* w2() noexcept { return p_ + kHiddenParams; }
+    [[nodiscard]] const double* w2() const noexcept { return p_ + kHiddenParams; }
+
+    double p_[kFullParams] = {};
     double ridge_;
+    MlpTrainer trainer_;
 };
 
 } // namespace altair

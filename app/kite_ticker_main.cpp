@@ -162,10 +162,26 @@ int main(int argc, char** argv)
                 all.substr(at, comma == std::string::npos ? std::string::npos
                                                           : comma - at);
             if (!one.empty()) {
-                const long long v = std::atoll(one.c_str());
-                if (v > 0) {
-                    tokens.push_back(static_cast<std::uint32_t>(v));
+                // The WHOLE field, as a number that fits a Kite token.
+                // atoll read "256265x" as 256265 and a value above 2^32
+                // wrapped to a different instrument (C14-016). A bad token
+                // refuses the command rather than being dropped from the
+                // subscription unnoticed.
+                std::uint64_t v = 0;
+                bool ok = one.size() <= 10;
+                for (const char ch : one) {
+                    if (ch < '0' || ch > '9') {
+                        ok = false;
+                        break;
+                    }
+                    v = v * 10 + static_cast<std::uint64_t>(ch - '0');
                 }
+                if (!ok || v == 0 || v > 4'294'967'295ULL) {
+                    std::printf("  --tokens: \"%s\" is not an instrument "
+                                "token\n", one.c_str());
+                    return 2;
+                }
+                tokens.push_back(static_cast<std::uint32_t>(v));
             }
             if (comma == std::string::npos) { break; }
             at = comma + 1;

@@ -61,6 +61,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 
 namespace altair {
 
@@ -69,6 +70,8 @@ enum class DeployError : std::uint8_t {
     NotArmed,
     /// The trigger was re-armed after evaluation started.
     AlreadyArmed,
+    /// This controller has already opened its one canary run.
+    AlreadyOpened,
     /// No canary is open.
     NoCanary,
     /// The fallback version was not supplied.
@@ -92,7 +95,9 @@ enum class RollbackReason : std::uint8_t {
     /// A drift detector fired on the candidate's error stream.
     DriftAlarm,
     /// The candidate disagreed with the incumbent more than the armed bound.
-    DivergenceExceeded
+    DivergenceExceeded,
+    /// A non-finite forecast or realised observation cannot be scored safely.
+    InvalidObservation
 };
 
 [[nodiscard]] inline const char* rollback_name(RollbackReason r) noexcept {
@@ -103,6 +108,7 @@ enum class RollbackReason : std::uint8_t {
         case RollbackReason::LossExceeded:       return "LossExceeded";
         case RollbackReason::DriftAlarm:         return "DriftAlarm";
         case RollbackReason::DivergenceExceeded: return "DivergenceExceeded";
+        case RollbackReason::InvalidObservation: return "InvalidObservation";
     }
     return "?";
 }
@@ -244,6 +250,7 @@ public:
     open(const ShadowRun& shadow, const ModelKey& fallback,
          double capital_fraction) noexcept {
         if (!armed_) { return std::unexpected(DeployError::NotArmed); }
+        if (opened_once_) { return std::unexpected(DeployError::AlreadyOpened); }
         if (!shadow.complete()) {
             return std::unexpected(DeployError::ShadowIncomplete);
         }
@@ -263,6 +270,7 @@ public:
         outcome_ = CanaryOutcome{};
         outcome_.reason = RollbackReason::None;
         open_ = true;
+        opened_once_ = true;
         return {};
     }
 
@@ -275,18 +283,43 @@ public:
             double realised, std::int64_t realised_paise,
             bool drift_alarm) noexcept {
         if (!open_) { return std::unexpected(DeployError::NoCanary); }
+        outcome_.trigger = trigger_;
+        if (!std::isfinite(candidate_forecast)
+            || !std::isfinite(incumbent_forecast)
+            || !std::isfinite(realised)) {
+            return fail(RollbackReason::InvalidObservation);
+        }
+        const double disagreement =
+            std::fabs(candidate_forecast - incumbent_forecast);
+        if (!std::isfinite(disagreement)) {
+            return fail(RollbackReason::InvalidObservation);
+        }
         cell_.observe(candidate_forecast, realised);
-        if (realised_paise < 0) { loss_ += -realised_paise; }
-        divergence_ += std::fabs(candidate_forecast - incumbent_forecast);
+        if (realised_paise < 0) {
+            const std::uint64_t loss_paise =
+                std::uint64_t{0} - static_cast<std::uint64_t>(realised_paise);
+            const std::uint64_t max_loss =
+                std::numeric_limits<std::uint64_t>::max();
+            loss_ = loss_ > max_loss - loss_paise
+                ? max_loss : loss_ + loss_paise;
+        }
+        divergence_ += disagreement;
         ++n_;
 
-        outcome_.trigger = trigger_;
         outcome_.observations = n_;
-        outcome_.observed_loss = loss_;
+        outcome_.observed_loss = loss_ > static_cast<std::uint64_t>(
+                                          std::numeric_limits<std::int64_t>::max())
+            ? std::numeric_limits<std::int64_t>::max()
+            : static_cast<std::int64_t>(loss_);
         outcome_.observed_divergence = divergence_
                                      / static_cast<double>(n_);
         if (const auto v = cell_.ic()) { outcome_.observed_ic = *v; }
 
+        // A hard loss limit fires regardless of sample size; waiting for
+        // statistical significance after it is breached defeats the guard.
+        if (loss_ > static_cast<std::uint64_t>(trigger_.max_loss_paise)) {
+            return fail(RollbackReason::LossExceeded);
+        }
         // A drift alarm fires regardless of sample size: it is itself a
         // statement that the recent data no longer resembles the training
         // data, and waiting for more of that data to accumulate is not
@@ -297,9 +330,6 @@ public:
         // ORDER MATTERS, and it is loss first. A canary that has lost money
         // AND has a poor IC should be reported as a loss -- the IC is a
         // diagnosis and the loss is the thing that happened.
-        if (loss_ > trigger_.max_loss_paise) {
-            return fail(RollbackReason::LossExceeded);
-        }
         if (outcome_.observed_divergence > trigger_.max_divergence) {
             return fail(RollbackReason::DivergenceExceeded);
         }
@@ -331,12 +361,13 @@ private:
     RollbackTrigger trigger_{};
     CanaryOutcome outcome_{};
     ScoreCell cell_{};
-    std::int64_t loss_ = 0;
+    std::uint64_t loss_ = 0;
     double divergence_ = 0.0;
     double fraction_ = 0.0;
     std::size_t n_ = 0;
     bool armed_ = false;
     bool open_ = false;
+    bool opened_once_ = false;
 };
 
 // ---------------------------------------------------------------------------

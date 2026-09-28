@@ -160,7 +160,9 @@ private:
                      : QStringLiteral("nothing here has been checked against "
                                       "an NSE circular or a broker schedule. "
                                       "A 3 bps error turns a profitable "
-                                      "arbitrage into a losing one.")));
+                                      "arbitrage into a losing one. Pricing "
+                                      "is refused until the schedule is "
+                                      "verified and last_verified is updated.")));
 #else
         note_->setText(QStringLiteral(
             "<span style='color:#B9770B'>The charge-schedule loader is not in "
@@ -183,6 +185,15 @@ private:
     void recompute() {
         if (!loaded_ || schedules_.empty()) {
             out_->setPlainText(QString());
+            return;
+        }
+        if (!verified_) {
+            out_->setPlainText(QStringLiteral(
+                "COSTING REFUSED\n\n"
+                "The loaded charge schedule is UNVERIFIED. No cost or "
+                "round-trip estimate is produced until the rates are checked "
+                "against their source and last_verified is updated. The "
+                "mandatory block_on_unverified_schedule policy is active."));
             return;
         }
         const auto seg = static_cast<Segment>(segment_->currentData().toInt());
@@ -312,13 +323,6 @@ private:
                 "over every trade a backtest took.\n");
         }
 
-        if (!verified_) {
-            o += QStringLiteral(
-                "\n  UNVERIFIED. charges.toml has never been checked against a "
-                "circular, so\n  every figure above is what the file says, not "
-                "what the exchange charges.\n  CostBreakdown carries that flag "
-                "through to anything that reads it.");
-        }
         out_->setPlainText(o);
     }
 

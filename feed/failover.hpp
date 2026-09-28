@@ -42,6 +42,7 @@ struct FailoverDecision {
     FeedSource     active = FeedSource::Kite;
     FeedHealth     kite = FeedHealth::Unknown;
     FeedHealth     xts = FeedHealth::Unknown;
+    FeedHealth     fyers = FeedHealth::Unknown;
 };
 
 class FailoverWatchdog {
@@ -91,16 +92,34 @@ public:
         FailoverDecision d{};
         d.kite = health_of(FeedSource::Kite, now);
         d.xts = health_of(FeedSource::Xts, now);
+        d.fyers = health_of(FeedSource::Fyers, now);
         d.active = active_;
 
-        const FeedHealth act = (active_ == FeedSource::Kite) ? d.kite : d.xts;
-        const FeedSource other = (active_ == FeedSource::Kite) ? FeedSource::Xts
-                                                              : FeedSource::Kite;
-        const FeedHealth oth = (other == FeedSource::Kite) ? d.kite : d.xts;
+        const FeedHealth act = health_of(active_, now);
+        const FeedHealth preferred = health_of(cfg_.preferred, now);
+        FeedSource candidate = active_;
+        FeedHealth candidate_health = FeedHealth::Unknown;
+        if (preferred == FeedHealth::Live && cfg_.preferred != active_) {
+            candidate = cfg_.preferred;
+            candidate_health = preferred;
+        } else {
+            // Deterministic fallback order keeps the original Kite/XTS
+            // behavior and adds FYERS only when both earlier sources are not
+            // usable. The configured preferred source still wins above.
+            constexpr FeedSource order[] = {
+                FeedSource::Kite, FeedSource::Xts, FeedSource::Fyers};
+            for (const FeedSource src : order) {
+                if (src != active_ && health_of(src, now) == FeedHealth::Live) {
+                    candidate = src;
+                    candidate_health = FeedHealth::Live;
+                    break;
+                }
+            }
+        }
 
-        // D5: neither source is usable. Reported, not silently tolerated —
+        // D5: no source is usable. Reported, not silently tolerated --
         // switching to an equally dead feed would look like a fix.
-        if (act != FeedHealth::Live && oth != FeedHealth::Live) {
+        if (act != FeedHealth::Live && candidate_health != FeedHealth::Live) {
             ++stats_.none_healthy;
             d.action = FailoverAction::NoneHealthy;
             return d;
@@ -110,13 +129,13 @@ public:
             // Healthy. The only remaining question is failback: if the
             // preferred source is back and has been stable long enough, return
             // to it. D4.
-            if (active_ != cfg_.preferred && oth == FeedHealth::Live
-                && stable_for(other, now)) {
+            if (active_ != cfg_.preferred && preferred == FeedHealth::Live
+                && stable_for(cfg_.preferred, now)) {
                 if (!cfg_.enabled) {
                     ++stats_.suppressed;
                     return d;
                 }
-                active_ = other;
+                active_ = cfg_.preferred;
                 ++stats_.switches;
                 ++stats_.failbacks;
                 d.action = FailoverAction::SwitchTo;
@@ -125,13 +144,13 @@ public:
             return d;
         }
 
-        // The active source is stale and the other is Live. Switch — with no
+        // The active source is stale and a candidate is Live. Switch — with no
         // stability wait, because staying on a dead feed costs every tick.
         if (!cfg_.enabled) {
             ++stats_.suppressed;
             return d;
         }
-        active_ = other;
+        active_ = candidate;
         ++stats_.switches;
         d.action = FailoverAction::SwitchTo;
         d.active = active_;

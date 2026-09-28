@@ -16,6 +16,8 @@
 // No check description here may contain the substring FAIL.
 
 #include "../terminal.hpp"
+#include <core/time/timestamp.hpp>
+#include <core/types/units.hpp>
 
 #include <QApplication>
 #include <QDateTime>
@@ -40,6 +42,38 @@ void check(bool ok, const char* what)
     }
 }
 
+altair::broker_view::AccountSnapshot account_fixture(
+    altair::broker_view::SessionKey session,
+    bool funds_present = true,
+    bool positions_present = true) {
+    using namespace altair::broker_view;
+    AccountSnapshot snapshot{};
+    snapshot.account_session = session;
+    snapshot.observed = {altair::Timestamp{90'000'000'000}, altair::Timestamp{110'000'000'000}};
+    snapshot.account_id[0] = 'A';
+    snapshot.account_id[1] = '1';
+    snapshot.profile.status = SnapshotSectionStatus::Present;
+    snapshot.funds.status = funds_present ? SnapshotSectionStatus::Present
+                                           : SnapshotSectionStatus::Absent;
+    snapshot.positions.status = positions_present ? SnapshotSectionStatus::Present
+                                                   : SnapshotSectionStatus::Absent;
+    snapshot.typed_funds.available_trading_balance = altair::Notional{25'000};
+    snapshot.typed_funds.cash = altair::Notional{30'000};
+    snapshot.typed_positions.account_session = session;
+    snapshot.typed_positions.observed = snapshot.observed;
+    if (positions_present) {
+        snapshot.typed_positions.count = 1;
+        auto& position = snapshot.typed_positions.position[0];
+        position.instrument = InstrumentKey{7001};
+        position.product = PositionProduct::Intraday;
+        position.net_qty = altair::Qty{50};
+        position.average_price = altair::Price{10'000};
+        position.last_mark = altair::Price{10'100};
+        position.marked = snapshot.observed;
+    }
+    return snapshot;
+}
+
 } // namespace
 
 using namespace altair;
@@ -58,6 +92,50 @@ int main(int argc, char** argv)
     check(term.watchlist() != nullptr, "the watchlist is there");
     check(term.ticket() != nullptr, "the order ticket is there");
     check(term.halt() != nullptr, "the halt control is there");
+
+    // ------------------------------------------------------------------
+    // 1b. Typed account ingress feeds the existing read-only surfaces.
+    // ------------------------------------------------------------------
+    std::printf("\n[1b] typed account snapshot reaches funds and positions\n");
+    const broker_view::SessionKey fixture_session{broker_view::BrokerId::Fyers, 7, 1};
+    const auto applied = term.apply_account(
+        {account_fixture(fixture_session), QStringLiteral("FYERS · A1"),
+         FundsSource::Broker, PositionSource::Broker}, altair::Timestamp{100'000'000'000});
+    check(applied.has_value(), "a fresh typed snapshot is accepted");
+    check(term.funds_model()->account_count() == 1,
+          "funds model receives one provider account");
+    check(term.positions_model()->rowCount() == 1,
+          "positions model receives one open position");
+    check(term.funds_model()->index(0, FundsSummaryModel::Available).data()
+              .toString() == QStringLiteral("250.00"),
+          "typed available balance is rendered in INR");
+
+    const int funds_before = term.funds_model()->account_count();
+    const int positions_before = term.positions_model()->rowCount();
+    auto stale = account_fixture(fixture_session);
+    stale.observed = {altair::Timestamp{1}, altair::Timestamp{2}};
+    const auto stale_result = term.apply_account(
+        {stale, QStringLiteral("FYERS · A1"), FundsSource::Broker,
+         PositionSource::Broker}, altair::Timestamp{100'000'000'000});
+    check(!stale_result.has_value(), "a stale account snapshot is refused");
+    check(term.funds_model()->account_count() == funds_before
+              && term.positions_model()->rowCount() == positions_before,
+          "stale account data does not partially mutate the Terminal");
+
+    auto no_positions = account_fixture(fixture_session, true, false);
+    const auto no_positions_result = term.apply_account(
+        {no_positions, QStringLiteral("FYERS · A1"), FundsSource::Broker,
+         PositionSource::Broker}, altair::Timestamp{100'000'000'000});
+    check(no_positions_result.has_value() && term.positions_model()->rowCount() == 0,
+          "an absent positions section removes stale visible positions");
+    auto paper = account_fixture({broker_view::BrokerId::ZerodhaKite, 8, 1});
+    const auto paper_result = term.apply_account(
+        {paper, QStringLiteral("Paper · K1"), FundsSource::Paper,
+         PositionSource::Paper}, altair::Timestamp{100'000'000'000});
+    check(paper_result.has_value()
+              && term.funds_model()->index(1, FundsSummaryModel::Account).data()
+                     .toString().contains(QStringLiteral("PAPER")),
+          "paper account provenance remains visible and separate");
 
     // ------------------------------------------------------------------
     // 2. Selecting a row loads that instrument into the ticket.
@@ -127,6 +205,58 @@ int main(int argc, char** argv)
     std::printf("\n[4] a selection past the end does not read past the end\n");
     table->setCurrentCell(table->rowCount() + 50, 0);
     check(true, "selecting past the last row returned without a read");
+
+    // ------------------------------------------------------------------
+    // [4b] CX02-B4b (C17-021). A row the watchlist calls "watch only" used
+    // to hand the ticket a spec anyway, and a BLOCKED row did too.
+    // ------------------------------------------------------------------
+    std::printf("\n[4b] blocked rows are not orderable; resolved rows say so\n");
+    {
+        const auto& rows = term.watchlist()->list().rows();
+        int specs = 0;
+        const auto conn = QObject::connect(
+            term.watchlist(), &WatchlistPanel::contractPicked, term.watchlist(),
+            [&specs](unsigned, const QString&, qint64 lot, qint64, const QString&) {
+                if (lot > 0) { ++specs; }
+            });
+        int resolvable = -1;
+        for (int r = 0; r < table->rowCount() && resolvable < 0; ++r) {
+            const int before = specs;
+            table->setCurrentCell(r, 0);
+            if (specs > before) { resolvable = r; }
+        }
+        check(resolvable >= 0, "(a seeded row resolves against the master)");
+        if (resolvable >= 0 && table->rowCount() >= 2) {
+            const auto idx = static_cast<std::size_t>(resolvable);
+            const std::uint32_t tok = rows[idx].token;
+            check(rows[idx].spec == SpecState::FromMaster,
+                  "a_pick_does_not_report_the_spec_store: the row is marked"
+                  " FromMaster. It used to say 'watch only' while being"
+                  " orderable, and CX02-B4b then over-corrected to Resolved,"
+                  " which claims the point-in-time spec store agreed");
+            check(!rows[idx].tradeable(),
+                  "and tradeable() stays FALSE -- that word means the spec"
+                  " store, which desktop/ cannot link");
+            check(spec_state_label(rows[idx].spec)
+                      == QStringLiteral("master lot/tick"),
+                  "with a label that names where the numbers came from");
+            check(term.ticket()->has_spec(tok), "(and the ticket holds its spec)");
+
+            term.watchlist()->block_instrument(
+                tok, QStringLiteral("test: the spec store refused it"));
+            table->setCurrentCell(resolvable == 0 ? 1 : 0, 0);
+            const int before = specs;
+            table->setCurrentCell(resolvable, 0);
+            check(specs == before,
+                  "a BLOCKED row sends no usable spec to the ticket");
+            check(term.ticket()->current_token() == tok
+                      && !term.ticket()->has_spec(tok),
+                  "and the spec the ticket already held for it is REVOKED --"
+                  " picked while resolvable, then blocked, it cannot be"
+                  " requested");
+        }
+        QObject::disconnect(conn);
+    }
 
     // ------------------------------------------------------------------
     // [5] P39. THE OPTION CHAIN, AND EVERY PATH INTO THE TICKET CARRIES A SPEC.

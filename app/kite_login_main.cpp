@@ -1,6 +1,7 @@
 // app/kite_login_main.cpp -- the C++ Kite login, replacing the Python stopgap.
 //
 //     altair_kite_login "<the whole redirect URL, or the bare request_token>"
+//     printf '<redirect>' | altair_kite_login --stdin
 //
 // Step 1 of the handshake is a browser login with a Zerodha user id, password
 // and TOTP. This program does not ask for those and cannot supply them. It
@@ -12,13 +13,20 @@
 // only redacted.
 
 #include <broker/kite_login.hpp>
+#include <broker/credential_store.hpp>
+#include <broker/oauth_attempt.hpp>
 #include <core/time/timestamp.hpp>
 
 #include <chrono>
+#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <optional>
+#include <random>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -49,6 +57,93 @@ std::string env_or_empty(const char* name)
     const char* v = std::getenv(name);
     return v ? std::string{v} : std::string{};
 #endif
+}
+
+std::string vault_or_env(std::string_view account, const char* environment)
+{
+    const auto stored = altair::broker::load_credential(
+        {"altair.kite", std::string{account}});
+    return stored ? *stored : env_or_empty(environment);
+}
+
+std::optional<std::string> read_bounded_stdin()
+{
+    constexpr std::size_t kMaxRedirectBytes = 16 * 1024;
+    std::string input;
+    input.reserve(1024);
+    for (int next = std::getc(stdin); next != EOF; next = std::getc(stdin)) {
+        if (input.size() == kMaxRedirectBytes) { return std::nullopt; }
+        if (next == '\n') break;
+        input.push_back(static_cast<char>(next));
+    }
+    while (!input.empty()
+           && (input.back() == '\r' || input.back() == '\n')) {
+        input.pop_back();
+    }
+    return input;
+}
+
+std::int64_t now_unix_seconds()
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+std::string random_state()
+{
+    std::random_device source;
+    std::mt19937_64 random{static_cast<std::uint64_t>(source())
+                           ^ (static_cast<std::uint64_t>(source()) << 32)};
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (int i = 0; i < 4; ++i) out << std::setw(16) << random();
+    return out.str();
+}
+
+bool write_attempt(const altair::broker::OAuthAttempt& attempt)
+{
+    std::error_code ignored;
+    std::filesystem::create_directories("data", ignored);
+    std::ofstream out{"data/kite_login_state.txt",
+                      std::ios::binary | std::ios::trunc};
+    if (!out) return false;
+    out << "ALTAIR-KITE-OAUTH/1\n" << attempt.issued_unix_seconds << '\n'
+        << attempt.state << '\n' << attempt.callback << '\n';
+    return static_cast<bool>(out);
+}
+
+std::optional<altair::broker::OAuthAttempt> read_attempt()
+{
+    std::ifstream in{"data/kite_login_state.txt", std::ios::binary};
+    if (!in) return std::nullopt;
+    std::string version;
+    std::string issued;
+    altair::broker::OAuthAttempt attempt;
+    if (!std::getline(in, version) || version != "ALTAIR-KITE-OAUTH/1"
+        || !std::getline(in, issued) || !std::getline(in, attempt.state)
+        || !std::getline(in, attempt.callback)) return std::nullopt;
+    const auto parsed = std::from_chars(
+        issued.data(), issued.data() + issued.size(), attempt.issued_unix_seconds);
+    if (parsed.ec != std::errc{} || parsed.ptr != issued.data() + issued.size())
+        return std::nullopt;
+    attempt.lifetime_seconds = 600;
+    return attempt;
+}
+
+const char* redirect_error(altair::broker::OAuthRedirectError error)
+{
+    using altair::broker::OAuthRedirectError;
+    switch (error) {
+    case OAuthRedirectError::InvalidAttempt: return "saved login attempt is invalid";
+    case OAuthRedirectError::Expired: return "login attempt expired; start a new login";
+    case OAuthRedirectError::CallbackMismatch: return "redirect callback does not match the registered URL";
+    case OAuthRedirectError::Cancelled: return "login was cancelled or rejected";
+    case OAuthRedirectError::MissingCode: return "redirect has no request_token";
+    case OAuthRedirectError::MissingState: return "redirect has no Altair state";
+    case OAuthRedirectError::StateMismatch: return "Altair state mismatch";
+    case OAuthRedirectError::MalformedEncoding: return "redirect query encoding is malformed";
+    }
+    return "invalid redirect";
 }
 
 /// What to DO about a refusal, chosen from what Kite actually said.
@@ -130,42 +225,99 @@ int main(int argc, char** argv)
 {
     using namespace altair;
 
-    const std::string api_key = env_or_empty("ALTAIR_KITE_API_KEY");
-    const std::string api_secret = env_or_empty("ALTAIR_KITE_API_SECRET");
-    if (api_key.empty() || api_secret.empty()) {
-        std::printf("ALTAIR_KITE_API_KEY and ALTAIR_KITE_API_SECRET must be "
-                    "set.\nSet them with setx, then open a NEW terminal.\n");
+    if (argc >= 2 && (std::string_view{argv[1]} == "--help"
+                      || std::string_view{argv[1]} == "-h")) {
+        std::printf(
+            "Kite Connect v3 browser login helper.\n"
+            "Usage: altair_kite_login [--stdin | REDIRECT_URL]\n"
+            "Run without arguments to create a one-time login URL, then pass\n"
+            "the complete registered callback URL back with --stdin.\n"
+            "Credentials are read from the OS vault; tokens are never printed.\n");
+        return 0;
+    }
+
+    const std::string api_key = vault_or_env("api-key", "ALTAIR_KITE_API_KEY");
+    const std::string api_secret =
+        vault_or_env("api-secret", "ALTAIR_KITE_API_SECRET");
+    const std::string redirect =
+        vault_or_env("redirect-uri", "ALTAIR_KITE_REDIRECT_URI");
+    if (api_key.empty() || api_secret.empty() || redirect.empty()) {
+        std::printf("Kite app credentials are incomplete in the OS vault or "
+                    "this process environment. Missing:%s%s%s\n",
+                    api_key.empty() ? " API key" : "",
+                    api_secret.empty() ? " API secret" : "",
+                    redirect.empty() ? " registered redirect URL" : "");
+        std::printf("Open Brokers > Zerodha > App credentials, save all three, "
+                    "then start a new browser login. Do not paste secrets into logs.\n");
         return 2;
     }
 
     if (argc < 2) {
-        std::printf("\n  Kite login -- step 2 of 2\n");
+        if (redirect.find_first_of("?#\r\n") != std::string::npos) {
+            std::printf("registered Kite redirect must be an exact URL without query or fragment\n");
+            return 2;
+        }
+        const broker::OAuthAttempt attempt{
+            redirect, random_state(), now_unix_seconds(), 600};
+        if (!write_attempt(attempt)) {
+            std::printf("could not save the one-time Kite login state\n");
+            return 2;
+        }
+        std::printf("\n  Kite login -- step 1 of 2\n");
         std::printf("  %s\n", std::string(58, '-').c_str());
         std::printf("  1. Open this and log in:\n");
         std::printf("       https://kite.zerodha.com/connect/login"
-                    "?api_key=%s&v=3\n", api_key.c_str());
+                    "?api_key=%s&v=3&redirect_params=altair_state%%3D%s\n",
+                    api_key.c_str(), attempt.state.c_str());
         std::printf("  2. Zerodha redirects to your registered callback with"
                     " ?request_token=...\n");
         std::printf("  3. Run:\n");
         std::printf("       %s \"<paste the whole redirect URL>\"\n", argv[0]);
         std::printf("\n  A request_token is SINGLE USE and expires in"
                     " minutes.\n\n");
-        return 1;
+        return 0;
     }
 
-    const std::string token = request_token_from(argv[1]);
-    if (token.empty()) {
-        std::printf("  no request_token found in that argument\n");
+    std::string redirect_or_token;
+    if (std::string_view{argv[1]} == "--stdin") {
+        const auto piped = read_bounded_stdin();
+        if (!piped || piped->empty()) {
+            std::printf("  a non-empty redirect of at most 16 KiB is required on stdin\n");
+            return 1;
+        }
+        redirect_or_token = *piped;
+    } else {
+        // Kept for deliberate manual invocation. The desktop always selects
+        // --stdin so a live request_token is absent from the process list.
+        redirect_or_token = argv[1];
+    }
+    const auto attempt = read_attempt();
+    if (!attempt) {
+        std::printf("  no active Kite login attempt; open a new login first\n");
         return 1;
     }
+    const auto token = broker::validate_oauth_redirect(
+        redirect_or_token, *attempt, now_unix_seconds(), "request_token",
+        "altair_state");
+    if (!token) {
+        std::printf("  Kite redirect refused: %s\n", redirect_error(token.error()));
+        if (token.error() == broker::OAuthRedirectError::Expired
+            || token.error() == broker::OAuthRedirectError::Cancelled) {
+            std::error_code ignored;
+            std::filesystem::remove("data/kite_login_state.txt", ignored);
+        }
+        return 1;
+    }
+    std::error_code consume_error;
+    std::filesystem::remove("data/kite_login_state.txt", consume_error);
 
     const auto now = Timestamp{
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count()};
 
     std::printf("  exchanging a %zu-character request_token...\n",
-                token.size());
-    const auto r = kite_exchange_token(api_key, api_secret, token, now);
+                token->size());
+    const auto r = kite_exchange_token(api_key, api_secret, *token, now);
     if (!r) {
         const LoginFailure& f = r.error();
         std::printf("  exchange did not succeed: %s\n", explain(f.code));
@@ -188,7 +340,22 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // Persist. The token is live from this moment, so a failure to record it
+    const std::string authorization = "token " + api_key + ":"
+        + std::string{r->session.access_token};
+    const auto profile = https_get_auth(
+        "api.kite.trade", "/user/profile", authorization);
+    const std::string profile_status = profile
+        ? detail::json_string_field(profile->body, "status") : std::string{};
+    const std::string profile_user = profile
+        ? detail::json_string_field(profile->body, "user_id") : std::string{};
+    if (!profile || profile->status != 200 || profile_status != "success"
+        || profile_user.empty() || profile_user != r->session.user_id) {
+        std::printf("  token obtained but Kite profile verification failed; session not saved\n");
+        return 1;
+    }
+
+    // Persist only after the independent profile call proves the token and
+    // account identity. The token is live from this moment, so a failure to record it
     // is worse than not having it -- it would be working and untracked.
     std::error_code fs_ec;
     std::filesystem::create_directories("data", fs_ec);

@@ -30,6 +30,7 @@
 #pragma once
 
 #include "data/series_io.hpp"
+#include "model_job.hpp"
 #include <analytics/american.hpp>
 #include <analytics/ewma.hpp>
 #include <analytics/hurst.hpp>
@@ -85,13 +86,20 @@
 #include <QTextStream>
 #include <QProcess>
 #include <QHBoxLayout>
+#include <QHeaderView>
+#include <QHideEvent>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QTableWidget>
+#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
 #include <cmath>
 #include <fstream>
+#include <initializer_list>
 #include <map>
 #include <limits>
 #include <sstream>
@@ -301,11 +309,37 @@ struct QuantSymbol {
 class ComputePage : public QWidget {
 public:
     ComputePage(const QString& title, const QString& button, QWidget* parent)
-        : QWidget(parent) {
+        : QWidget(parent), jobs_(this) {
         auto* v = new QVBoxLayout(this);
         v->setContentsMargins(14, 14, 14, 14);
         run_ = new QPushButton(button, this);
-        out_ = new QPlainTextEdit(this);
+        results_ = new QTabWidget(this);
+        results_->setObjectName(QStringLiteral("modelResultTabs"));
+
+        summary_ = new QTableWidget(0, 3, results_);
+        summary_->setObjectName(QStringLiteral("modelResultSummary"));
+        summary_->setHorizontalHeaderLabels({QStringLiteral("Field"),
+                                             QStringLiteral("Value"),
+                                             QStringLiteral("Unit / source")});
+        summary_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        summary_->setSelectionMode(QAbstractItemView::NoSelection);
+        summary_->verticalHeader()->setVisible(false);
+        summary_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        summary_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+        summary_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+
+        table_ = new QTableWidget(0, 2, results_);
+        table_->setObjectName(QStringLiteral("modelResultTable"));
+        table_->setHorizontalHeaderLabels({QStringLiteral("Section"),
+                                           QStringLiteral("Reported result")});
+        table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table_->verticalHeader()->setVisible(false);
+        table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+
+        out_ = new QPlainTextEdit(results_);
+        out_->setObjectName(QStringLiteral("modelResultReport"));
         out_->setReadOnly(true);
         out_->setStyleSheet(QStringLiteral(
             "QPlainTextEdit{background:#11171C;color:#D6DBDF;"
@@ -318,8 +352,27 @@ public:
         row_ = new QHBoxLayout;
         row_->setContentsMargins(0, 0, 0, 0);
         row_->addWidget(run_);
+        cancel_ = new QPushButton(QStringLiteral("Cancel"), this);
+        cancel_->setEnabled(false);
+        row_->addWidget(cancel_);
+        progress_ = new QProgressBar(this);
+        progress_->setRange(0, 100);
+        progress_->setValue(0);
+        progress_->setTextVisible(false);
+        progress_->setMaximumWidth(120);
+        row_->addWidget(progress_);
+        job_status_ = new QLabel(QStringLiteral("Idle"), this);
+        job_status_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        row_->addWidget(job_status_);
         v->addLayout(row_);
-        v->addWidget(out_, 1);
+        results_->addTab(summary_, QStringLiteral("Contract"));
+        results_->addTab(table_, QStringLiteral("Results"));
+        results_->addTab(out_, QStringLiteral("Full report"));
+        v->addWidget(results_, 1);
+        connect(cancel_, &QPushButton::clicked, this, [this] {
+            jobs_.cancel_current();
+            job_status_->setText(QStringLiteral("Cancelling…"));
+        });
     }
 
     [[nodiscard]] QPushButton* button() const noexcept { return run_; }
@@ -365,6 +418,8 @@ public:
         stale_->setStyleSheet(QStringLiteral("color:#B9770B;"));
         row_->addWidget(stale_);
         connect(symbols_, &QComboBox::currentIndexChanged, this, [this] {
+            jobs_.invalidate();
+            set_busy(false);
             if (ran_) {
                 stale_->setText(QStringLiteral(
                     "instrument changed — press the button to re-run"));
@@ -380,6 +435,7 @@ public:
         c->addItem(QStringLiteral("60-minute"), QStringLiteral("60m"));
         c->addItem(QStringLiteral("15-minute"), QStringLiteral("15m"));
         c->addItem(QStringLiteral("5-minute"), QStringLiteral("5m"));
+        c->addItem(QStringLiteral("1-minute"), QStringLiteral("1m"));
         row_->insertWidget(2, new QLabel(QStringLiteral("Interval"), this));
         row_->insertWidget(3, c);
         return c;
@@ -393,18 +449,167 @@ public:
 
     void set_text(const QString& s) {
         out_->setPlainText(s);
+        render_result_tables(QString{}, ModelJobPayload{s});
         ran_ = true;
         if (stale_ != nullptr) { stale_->clear(); }
     }
     void append(const QString& s) { out_->appendPlainText(s); }
 
+    void run_async(QString provenance, ModelJobController::Work work) {
+        set_busy(true);
+        progress_->setValue(0);
+        job_status_->setText(QStringLiteral("Queued — %1").arg(provenance));
+        (void)jobs_.submit(
+            std::move(provenance), std::move(work),
+            [this](int value, const QString& text) {
+                progress_->setValue(value);
+                job_status_->setText(text);
+            },
+            [this](const ModelJobResult& result) {
+                set_busy(false);
+                if (result.cancelled) {
+                    job_status_->setText(QStringLiteral("Cancelled"));
+                    return;
+                }
+                if (!result.error.isEmpty()) {
+                    job_status_->setText(QStringLiteral("Error"));
+                    out_->setPlainText(QStringLiteral("MODEL JOB ERROR\n\n%1\n\nProvenance: %2")
+                                           .arg(result.error, result.provenance));
+                    return;
+                }
+                out_->setPlainText(result.output
+                    + QStringLiteral("\n\n――― RUN PROVENANCE ―――\n%1\n")
+                          .arg(result.provenance));
+                render_result_tables(result.provenance, result.payload);
+                ran_ = true;
+                if (stale_ != nullptr) stale_->clear();
+                job_status_->setText(QStringLiteral("Complete"));
+            });
+    }
+
+    void invalidate_job() {
+        jobs_.invalidate();
+        set_busy(false);
+        job_status_->setText(QStringLiteral("Selection changed — previous job invalidated"));
+    }
+
+protected:
+    void hideEvent(QHideEvent* event) override {
+        invalidate_job();
+        QWidget::hideEvent(event);
+    }
+
 private:
+    static QString evidence_line(const QStringList& lines,
+                                 std::initializer_list<const char*> terms) {
+        for (const QString& line : lines) {
+            const QString lower = line.toLower();
+            for (const char* term : terms) {
+                if (lower.contains(QLatin1String(term))) return line.trimmed();
+            }
+        }
+        return QStringLiteral("Not exposed by this report");
+    }
+
+    static void put(QTableWidget* table, int row, int column,
+                    const QString& text) {
+        auto* item = new QTableWidgetItem(text);
+        item->setToolTip(text);
+        table->setItem(row, column, item);
+    }
+
+    void add_summary(const QString& field, const QString& value,
+                     const QString& source) {
+        const int row = summary_->rowCount();
+        summary_->insertRow(row);
+        put(summary_, row, 0, field);
+        put(summary_, row, 1, value);
+        put(summary_, row, 2, source);
+    }
+
+    void render_result_tables(const QString& provenance,
+                              const ModelJobPayload& payload) {
+        summary_->setRowCount(0);
+        table_->setRowCount(0);
+
+        const QStringList inputs = provenance.split(QLatin1Char(';'), Qt::SkipEmptyParts);
+        for (const QString& input : inputs) {
+            const qsizetype equals = input.indexOf(QLatin1Char('='));
+            if (equals <= 0) continue;
+            add_summary(QStringLiteral("Input: %1").arg(input.left(equals).trimmed()),
+                        input.mid(equals + 1).trimmed(),
+                        QStringLiteral("run provenance"));
+        }
+
+        const QStringList lines = payload.report.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        if (!payload.fields.empty()) {
+            for (const ModelResultField& field : payload.fields)
+                add_summary(field.name, field.value, field.unit_or_source);
+        } else {
+            add_summary(QStringLiteral("Sample window"),
+                        evidence_line(lines, {"sample", "rows", "bars", "sessions", "years", "fold"}),
+                        QStringLiteral("report adapter"));
+            add_summary(QStringLiteral("Uncertainty"),
+                        evidence_line(lines, {"uncert", "confidence", "interval", "error bar", "std error", "standard error", " band"}),
+                        QStringLiteral("report adapter"));
+            add_summary(QStringLiteral("Cost-adjusted validation"),
+                        evidence_line(lines, {"net of cost", "cost hurdle", "round-trip cost", "slippage", "breakeven"}),
+                        QStringLiteral("report adapter"));
+            add_summary(QStringLiteral("Missing data"),
+                        evidence_line(lines, {"no data", "missing dataset", "no option chain", "not subscribed", "unavailable"}),
+                        QStringLiteral("report adapter"));
+        }
+
+        if (!payload.rows.empty()) {
+            for (const ModelResultRow& result : payload.rows) {
+                const int row = table_->rowCount();
+                table_->insertRow(row);
+                put(table_, row, 0, result.section);
+                put(table_, row, 1, result.value);
+            }
+        } else {
+            QString section = QStringLiteral("Report");
+            for (const QString& raw : lines) {
+                const QString line = raw.trimmed();
+                if (line.isEmpty() || line.startsWith(QStringLiteral("――― RUN PROVENANCE"))) continue;
+                const bool heading = line.startsWith(QStringLiteral("―――"))
+                    || (line.size() < 90 && line == line.toUpper()
+                        && line.contains(QRegularExpression(QStringLiteral("[A-Z]"))));
+                if (heading) {
+                    section = line;
+                    continue;
+                }
+                const int row = table_->rowCount();
+                table_->insertRow(row);
+                put(table_, row, 0, section);
+                put(table_, row, 1, line);
+            }
+        }
+        if (table_->rowCount() == 0) {
+            table_->insertRow(0);
+            put(table_, 0, 0, QStringLiteral("Report"));
+            put(table_, 0, 1, QStringLiteral("No structured result rows were emitted."));
+        }
+    }
+
+    void set_busy(bool busy) {
+        run_->setEnabled(!busy);
+        cancel_->setEnabled(busy);
+    }
+
     QPushButton* run_ = nullptr;
+    QPushButton* cancel_ = nullptr;
     QComboBox* symbols_ = nullptr;
     QLabel* stale_ = nullptr;
+    QLabel* job_status_ = nullptr;
+    QProgressBar* progress_ = nullptr;
     bool ran_ = false;
     QHBoxLayout* row_ = nullptr;
+    QTabWidget* results_ = nullptr;
+    QTableWidget* summary_ = nullptr;
+    QTableWidget* table_ = nullptr;
     QPlainTextEdit* out_ = nullptr;
+    ModelJobController jobs_;
 };
 
 // ---------------------------------------------------------------------------
@@ -3583,11 +3788,16 @@ struct SeriesSpan {
                 }
             }
         }
-        if (sch == nullptr) {
+        // Loading a schedule is not enough to make it a valid cost basis.
+        // `compute_cost` deliberately refuses an unverified schedule; render
+        // that refusal once at the page boundary instead of producing three
+        // half-empty scanner sections whose individual calls all fail.
+        if (sch == nullptr || !sch->verified) {
             s += QStringLiteral(
                 "――― 3. PARITY, THE BOX, AND THE FUTURES CALENDAR ―――\n\n"
-                "  COSTED SCANNERS UNAVAILABLE. config/charges.toml did not\n"
-                "  load. Rule 5 says every signal is priced\n"
+                "  COSTED SCANNERS UNAVAILABLE. config/charges.toml is either\n"
+                "  unavailable or has not been verified against its source.\n"
+                "  Rule 5 says every signal is priced\n"
                 "  net of full cost before it exists, so these three report\n"
                 "  nothing rather than a number costed against a guess.\n\n");
         } else {

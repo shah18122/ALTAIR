@@ -173,6 +173,17 @@ note       = "Post Union-Budget-2026 STT regime. F&O STT raised."
 # BROKER SLABS
 #   Per-order brokerage. Verify against your own contract note.
 # ═══════════════════════════════════════════════════════════════════════════
+[broker.fyers]
+display_name = "FYERS"
+# FYERS rates are intentionally unset until the account's current contract
+# note is verified. The cost calculator must refuse an unverified schedule.
+configured = false
+equity_delivery = { type = "unset" }
+equity_intraday = { type = "unset" }
+equity_futures  = { type = "unset" }
+equity_options  = { type = "unset" }
+currency_fo     = { type = "unset" }
+
 [broker.kite]
 display_name = "Zerodha Kite"
 equity_delivery = { type = "flat",    amount = 0.0 }

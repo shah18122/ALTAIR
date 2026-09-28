@@ -207,7 +207,9 @@ int main(int argc, char** argv)
         std::printf("\n  TRANSPORT FAILED\n");
         return 1;
     }
-    std::printf("\n    HTTP %ld  %zu bytes\n", r->status, r->body.size());
+    // %lld with a cast: `%ld` with an unsigned status is UB on LP64 (C14-016).
+    std::printf("\n    HTTP %lld  %zu bytes\n",
+                static_cast<long long>(r->status), r->body.size());
     if (r->status == 403) {
         std::printf("    token rejected -- Kite sessions are daily. Run "
                     "altair_kite_login.\n");

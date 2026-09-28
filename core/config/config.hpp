@@ -12,7 +12,8 @@
 //
 // Rule 4: no allocation on the hot path, and config IS read on the hot path.
 // So nothing here allocates, the key is a fixed array (so a snapshot can be
-// memcpy'd through a seqlock), and lookup resolves to a handle once.
+// copied through the preallocated SnapshotSlots store), and lookup resolves
+// to a handle once.
 //
 // Nothing in this file knows what a file is. Parsing is P0-08b.
 
@@ -49,7 +50,7 @@ inline constexpr std::size_t kMaxConfigEntries = 128;
 inline constexpr std::size_t kMaxConfigKeyLen = 47;
 
 // ─────────────────────────────────────────────────────────────────────────
-// One key/value pair. Trivially copyable: a snapshot rides a seqlock.
+// One key/value pair. Fixed-size and trivially copyable for snapshot copies.
 //
 // The key text is stored ALONGSIDE its hash, and lookup compares both. The
 // hash alone would be a silent-collision bug: two distinct keys mapping to one

@@ -43,11 +43,13 @@
 #pragma once
 
 #include <core/types/units.hpp>
+#include <core/types/signed_sum.hpp>
 #include <core/time/timestamp.hpp>
 
 #include <cmath>
 #include <cstdint>
 #include <expected>
+#include <limits>
 
 namespace altair {
 
@@ -85,7 +87,11 @@ enum class Violation : std::uint32_t {
     /// Blocks rather than defaults (rule 9).
     SpecUnavailable      = 1u << 12,
     /// Non-positive price or quantity on the order itself.
-    MalformedOrder       = 1u << 13
+    MalformedOrder       = 1u << 13,
+    /// Arithmetic overflow, an unrepresentable magnitude/time difference, or
+    /// an invalid arithmetic operand (such as negative gross notional).
+    /// Refuse rather than overflow or wrap.
+    ArithmeticOverflow   = 1u << 14
 };
 
 [[nodiscard]] constexpr Violation operator|(Violation a, Violation b) noexcept {
@@ -176,14 +182,19 @@ private:
 /// positive for a sell), `costs` every charge (always negative), and
 /// `cash_delta` the change the ledger recorded. They must sum to EXACTLY zero.
 ///
-/// Returns the residual. Zero is the only acceptable answer; the caller trips
-/// the switch on anything else. Returning the number rather than a bool is
-/// deliberate -- the size and sign of a breach is the first thing anyone will
-/// want, and recomputing it after the fact is how it gets lost.
+/// Returns the exact residual when representable, saturating only when the
+/// mathematical result lies outside int64_t. Zero/nonzero remains exact, and
+/// the caller trips the switch on anything else. Returning the number rather
+/// than a bool is deliberate -- the size and sign of an ordinary breach is the
+/// first thing anyone will want, and recomputing it after the fact loses it.
 [[nodiscard]] ALTAIR_HOT constexpr std::int64_t
 conservation_residual(Notional fills, Notional costs,
                       Notional cash_delta) noexcept {
-    return fills.raw() + costs.raw() + cash_delta.raw();
+    ExactSignedSum residual;
+    residual.add(fills.raw());
+    residual.add(costs.raw());
+    residual.add(cash_delta.raw());
+    return residual.saturated_value();
 }
 
 /// Per-instrument and portfolio caps. All from config, none defaulted to
@@ -238,6 +249,36 @@ struct ProposedOrder {
     Price band_upper{0};
 };
 
+namespace risk_detail {
+
+/// Checked signed magnitude. INT64_MIN has no positive int64 representation.
+[[nodiscard]] constexpr bool checked_abs(std::int64_t value,
+                                         std::int64_t& out) noexcept {
+    if (value == std::numeric_limits<std::int64_t>::min()) { return false; }
+    out = value < 0 ? -value : value;
+    return true;
+}
+
+[[nodiscard]] constexpr bool checked_add(std::int64_t a, std::int64_t b,
+                                         std::int64_t& out) noexcept {
+    constexpr auto kMin = std::numeric_limits<std::int64_t>::min();
+    constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+    if ((b > 0 && a > kMax - b) || (b < 0 && a < kMin - b)) { return false; }
+    out = a + b;
+    return true;
+}
+
+[[nodiscard]] constexpr bool checked_sub(std::int64_t a, std::int64_t b,
+                                         std::int64_t& out) noexcept {
+    constexpr auto kMin = std::numeric_limits<std::int64_t>::min();
+    constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+    if ((b > 0 && a < kMin + b) || (b < 0 && a > kMax + b)) { return false; }
+    out = a - b;
+    return true;
+}
+
+} // namespace risk_detail
+
 /// Run every pre-trade check. Returns the full set of violations.
 ///
 /// `now` comes off the tick (rule 7). Nothing here reads a clock, so a replay
@@ -261,19 +302,24 @@ check_order(const ProposedOrder& o, const AccountState& acct,
         v |= Violation::MalformedOrder;
     }
 
-    const std::int64_t abs_qty = o.qty.raw() < 0 ? -o.qty.raw() : o.qty.raw();
+    std::int64_t abs_qty = 0;
+    const bool abs_qty_valid = risk_detail::checked_abs(o.qty.raw(), abs_qty);
+    if (!abs_qty_valid) { v |= Violation::ArithmeticOverflow; }
 
-    if (o.lot_size.raw() > 0 && abs_qty % o.lot_size.raw() != 0) {
+    if (abs_qty_valid && o.lot_size.raw() > 0
+        && abs_qty % o.lot_size.raw() != 0) {
         v |= Violation::NotWholeLots;
     }
     if (o.tick_size.raw() > 0 && o.limit_price.raw() > 0
         && o.limit_price.raw() % o.tick_size.raw() != 0) {
         v |= Violation::NotOnTick;
     }
-    if (o.freeze_qty.raw() > 0 && abs_qty > o.freeze_qty.raw()) {
+    if (abs_qty_valid && o.freeze_qty.raw() > 0
+        && abs_qty > o.freeze_qty.raw()) {
         v |= Violation::FreezeQuantity;
     }
-    if (lim.max_order_qty.raw() > 0 && abs_qty > lim.max_order_qty.raw()) {
+    if (abs_qty_valid && lim.max_order_qty.raw() > 0
+        && abs_qty > lim.max_order_qty.raw()) {
         v |= Violation::MaxOrderQty;
     }
 
@@ -289,23 +335,54 @@ check_order(const ProposedOrder& o, const AccountState& acct,
 
     // Resulting position, not current. A cap checked against the position you
     // already have approves the order that breaches it.
-    const std::int64_t after = acct.position.raw() + o.qty.raw();
-    const std::int64_t abs_after = after < 0 ? -after : after;
-    if (lim.max_position_qty.raw() > 0
+    std::int64_t after = 0;
+    const bool after_valid =
+        risk_detail::checked_add(acct.position.raw(), o.qty.raw(), after);
+    if (!after_valid) { v |= Violation::ArithmeticOverflow; }
+    std::int64_t abs_after = 0;
+    const bool abs_after_valid =
+        after_valid && risk_detail::checked_abs(after, abs_after);
+    if (after_valid && !abs_after_valid) { v |= Violation::ArithmeticOverflow; }
+    if (abs_after_valid && lim.max_position_qty.raw() > 0
         && abs_after > lim.max_position_qty.raw()) {
+        v |= Violation::MaxPositionQty;
+    } else if (!abs_after_valid && lim.max_position_qty.raw() > 0) {
         v |= Violation::MaxPositionQty;
     }
     if (lim.max_position_notional.raw() > 0 && o.limit_price.raw() > 0) {
-        const auto n = notional_of(o.limit_price, Qty{abs_after});
-        if (!n || n->raw() > lim.max_position_notional.raw()) {
+        if (!abs_after_valid) {
+            v |= Violation::ArithmeticOverflow;
             v |= Violation::MaxPositionNotional;
+        } else {
+            const auto n = notional_of(o.limit_price, Qty{abs_after});
+            if (!n) {
+                v |= Violation::ArithmeticOverflow;
+                v |= Violation::MaxPositionNotional;
+            } else if (n->raw() > lim.max_position_notional.raw()) {
+                v |= Violation::MaxPositionNotional;
+            }
         }
     }
     if (lim.max_gross_notional.raw() > 0 && o.limit_price.raw() > 0) {
-        const auto add = notional_of(o.limit_price, Qty{abs_qty});
-        if (!add
-            || acct.gross_notional.raw() > lim.max_gross_notional.raw() - add->raw()) {
+        if (!abs_qty_valid) {
+            v |= Violation::ArithmeticOverflow;
             v |= Violation::MaxGrossNotional;
+        } else {
+            const auto add = notional_of(o.limit_price, Qty{abs_qty});
+            std::int64_t gross_after = 0;
+            if (!add) {
+                v |= Violation::ArithmeticOverflow;
+                v |= Violation::MaxGrossNotional;
+            } else if (acct.gross_notional.raw() < 0) {
+                v |= Violation::ArithmeticOverflow;
+                v |= Violation::MaxGrossNotional;
+            } else if (!risk_detail::checked_add(acct.gross_notional.raw(),
+                                                 add->raw(), gross_after)) {
+                v |= Violation::ArithmeticOverflow;
+                v |= Violation::MaxGrossNotional;
+            } else if (gross_after > lim.max_gross_notional.raw()) {
+                v |= Violation::MaxGrossNotional;
+            }
         }
     }
 
@@ -318,11 +395,17 @@ check_order(const ProposedOrder& o, const AccountState& acct,
         v |= Violation::MaxOpenOrders;
     }
     if (lim.max_quote_age.raw() > 0) {
-        const std::int64_t age = (now - o.quote_ts).raw();
-        // A quote from the FUTURE is as broken as one too old, and silently
-        // accepting it would be look-ahead (rule 7).
-        if (age < 0 || age > lim.max_quote_age.raw()) {
+        std::int64_t age = 0;
+        if (!risk_detail::checked_sub(now.ns_since_epoch(),
+                                      o.quote_ts.ns_since_epoch(), age)) {
+            v |= Violation::ArithmeticOverflow;
             v |= Violation::StaleQuote;
+        } else {
+            // A quote from the FUTURE is as broken as one too old, and silently
+            // accepting it would be look-ahead (rule 7).
+            if (age < 0 || age > lim.max_quote_age.raw()) {
+                v |= Violation::StaleQuote;
+            }
         }
     }
     return v;

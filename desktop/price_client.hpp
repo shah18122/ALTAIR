@@ -138,6 +138,7 @@ public:
     [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
     [[nodiscard]] std::uint64_t gaps() const noexcept { return gaps_; }
     [[nodiscard]] std::uint64_t missed() const noexcept { return missed_; }
+    [[nodiscard]] std::uint64_t missed_trades() const noexcept { return trade_missed_; }
     [[nodiscard]] std::uint64_t undecodable() const noexcept { return bad_; }
 
     [[nodiscard]] const LivePrice* price(std::uint32_t token) const {
@@ -151,6 +152,7 @@ public:
 Q_SIGNALS:
     void statusChanged();
     void priceUpdated(unsigned token);
+    void tradeUpdated(unsigned token);
 
 private Q_SLOTS:
     void drain() {
@@ -206,6 +208,7 @@ private:
         if (seen != 0 && h.seq > seen + 1) {
             ++gaps_;
             missed_ += h.seq - seen - 1;
+            if (h.topic == kTopicTrades) trade_missed_ += h.seq - seen - 1;
         }
         seen = h.seq;
 
@@ -230,6 +233,7 @@ private:
             }
         }
         Q_EMIT priceUpdated(d.payload.token);
+        if (h.topic == kTopicTrades) Q_EMIT tradeUpdated(d.payload.token);
     }
 
     QTcpSocket* sock_ = nullptr;
@@ -242,6 +246,7 @@ private:
     std::uint64_t frames_ = 0;
     std::uint64_t gaps_ = 0;
     std::uint64_t missed_ = 0;
+    std::uint64_t trade_missed_ = 0;
     std::uint64_t bad_ = 0;
 };
 

@@ -52,13 +52,20 @@ enum class SpecState : std::uint8_t {
     /// The spec store answered, and the answer BLOCKS this instrument --
     /// sources disagreed, or the contract is ambiguous. Rule 9: it is shown,
     /// loudly, rather than dropped.
-    Blocked
+    Blocked,
+    /// CX02-B4d. Lot and tick came from the INSTRUMENT MASTER this window
+    /// parsed itself, not from the point-in-time spec store, which `desktop/`
+    /// cannot link. The ticket has real numbers, so the row is orderable --
+    /// but it is NOT `Resolved`, because nobody asked the store (R-AB-041,
+    /// rule 1), and `tradeable()` stays false for that reason.
+    FromMaster
 };
 
 [[nodiscard]] inline QString spec_state_label(SpecState s) {
     switch (s) {
-    case SpecState::Resolved:  return QStringLiteral("resolved");
-    case SpecState::Blocked:   return QStringLiteral("BLOCKED");
+    case SpecState::Resolved:   return QStringLiteral("resolved");
+    case SpecState::FromMaster: return QStringLiteral("master lot/tick");
+    case SpecState::Blocked:    return QStringLiteral("BLOCKED");
     case SpecState::Unresolved:
     default:                   return QStringLiteral("watch only");
     }
@@ -170,6 +177,31 @@ public:
             r.tick_size_paise = tick_paise;
             r.spec = SpecState::Resolved;
             r.note.clear();
+            return true;
+        }
+        return false;
+    }
+
+    /// Apply the INSTRUMENT MASTER's numbers. CX02-B4d: a weaker claim than
+    /// resolve(), and saying so is the point -- the row becomes orderable and
+    /// the Spec column names where the numbers came from, instead of
+    /// asserting that the point-in-time spec store agreed. A BLOCKED row is
+    /// never promoted by it (rule 9).
+    bool from_master(std::uint32_t token, std::int64_t lot,
+                     std::int64_t tick_paise) {
+        for (WatchRow& r : rows_) {
+            if (r.token != token) {
+                continue;
+            }
+            if (r.spec == SpecState::Blocked || lot <= 0 || tick_paise <= 0) {
+                return false;
+            }
+            r.lot_size = lot;
+            r.tick_size_paise = tick_paise;
+            r.spec = SpecState::FromMaster;
+            r.note = QStringLiteral(
+                "lot and tick from the instrument master - the point-in-time "
+                "spec store has not been asked");
             return true;
         }
         return false;

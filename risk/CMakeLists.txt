@@ -59,6 +59,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_portfolio_test PRIVATE altair_risk altair_flags)
     add_test(NAME portfolio COMMAND altair_portfolio_test)
 
+    add_executable(altair_factor_risk_test tests/test_factor_risk.cpp)
+    target_link_libraries(altair_factor_risk_test PRIVATE altair_risk altair_flags)
+    add_test(NAME risk_factor_risk COMMAND altair_factor_risk_test)
+
     if(tomlplusplus_FOUND)
         # Reads the REAL config/charges.toml, so the path is a build-time
         # constant rather than something the test hunts for relative to a

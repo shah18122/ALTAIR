@@ -260,6 +260,22 @@ void exchange_is_a_parameter()
           "is in the D1 key, and they trade at different prices");
 }
 
+void equity_identity_keeps_isin_outside_hot_spec()
+{
+    std::printf("\n8 equity_identity_keeps_isin_outside_hot_spec\n");
+    const auto cols = parse_equity_header(kHdr, std::strlen(kHdr));
+    const auto row = parse_equity_identity_row(kRel, std::strlen(kRel), *cols,
+                                               Exchange::NSE, kSnap);
+    check(row.has_value() && std::strcmp(row->isin, "INE002A01018") == 0,
+          "the real equity row preserves its ISIN in the cold identity record");
+    if (row) {
+        const auto leg = cross_venue_leg(*row, InstrumentId{44});
+        check(std::strcmp(leg.isin, "INE002A01018") == 0
+                  && leg.exchange == Exchange::NSE && leg.segment == Segment::Cash,
+              "the parser output feeds the ISIN-keyed cross-venue universe directly");
+    }
+}
+
 // ── 8 ────────────────────────────────────────────────────────────────────
 void a_zero_lot_is_refused()
 {
@@ -288,6 +304,7 @@ int main()
     quoted_fields_do_not_shift_columns();
     malformed_rows_are_counted_not_fatal();
     exchange_is_a_parameter();
+    equity_identity_keeps_isin_outside_hot_spec();
     a_zero_lot_is_refused();
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");

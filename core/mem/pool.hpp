@@ -25,6 +25,33 @@ public:
     /// An empty pool. acquire() always returns Exhausted.
     constexpr Pool() noexcept = default;
 
+    /// CX02-D2 (C21-002). MOVE-ONLY. A copy hands the same blocks out twice:
+    /// both pools walk the same free list from the same head and both believe
+    /// they own it. P0-05b's contract never forbade copying, so `Pool q = p;`
+    /// compiled. A moved-from pool owns nothing.
+    Pool(const Pool&) = delete;
+    Pool& operator=(const Pool&) = delete;
+    Pool(Pool&& o) noexcept
+        : base_(o.base_), free_(o.free_), stride_(o.stride_), cap_(o.cap_),
+          in_use_(o.in_use_), high_(o.high_), foreign_(o.foreign_),
+          doubles_(o.doubles_) {
+        o.disown();
+    }
+    Pool& operator=(Pool&& o) noexcept {
+        if (this != &o) {
+            base_ = o.base_;
+            free_ = o.free_;
+            stride_ = o.stride_;
+            cap_ = o.cap_;
+            in_use_ = o.in_use_;
+            high_ = o.high_;
+            foreign_ = o.foreign_;
+            doubles_ = o.doubles_;
+            o.disown();
+        }
+        return *this;
+    }
+
     /// Carve `bytes` at `base` into blocks of at least `block_size`, each
     /// aligned to `align`. UNIT: bytes throughout.
     /// PRECONDITION: align is a power of two and >= alignof(void*);
@@ -91,6 +118,16 @@ public:
         }
         void* blk = free_;
         free_ = *reinterpret_cast<void**>(blk);
+        // CX02-D2. Clear the free tag, so a LIVE block does not look free.
+        // Without this, a block that has been round-tripped once still
+        // carries its tag, every release of it matches, and each one pays for
+        // a free-list walk to disprove the match -- which turned the
+        // acquire/release benchmark (1,000,000 pairs over 131,072 blocks)
+        // into a test timeout. One store keeps release() O(1).
+        if (stride_ >= 2 * sizeof(void*)) {
+            *reinterpret_cast<std::uintptr_t*>(
+                static_cast<std::byte*>(blk) + sizeof(void*)) = 0;
+        }
         ++in_use_;
         if (in_use_ > high_) {
             high_ = in_use_;
@@ -98,10 +135,24 @@ public:
         return blk;
     }
 
-    /// Return a block. UNIT: none. O(1).
+    /// Return a block. UNIT: none. O(1) in the common case; see below.
     /// A null pointer is ignored, as free() ignores one. A pointer this pool
     /// does not own is ignored AND counted in foreign_releases() — corrupting
     /// the free list silently would be far worse than a counter.
+    ///
+    /// CX02-D2 (C21-002). A block that is ALREADY FREE is ignored and counted
+    /// in double_releases(). Pushing it again self-loops the free list — the
+    /// same block is then handed out to two owners — and decrements in_use_ a
+    /// second time, which underflows. P0-05b's item 12 specified null and
+    /// foreign releases and said nothing about this one.
+    ///
+    /// HOW IT IS DETECTED, AND WHY IT IS STILL O(1) ON THE HOT PATH. A freed
+    /// block carries a tag in its second word. A live block's second word is
+    /// the caller's data and almost never matches, so the usual answer is one
+    /// comparison. A match is not proof — caller data can look like a tag —
+    /// so it is CONFIRMED by walking the free list, which is bounded by
+    /// capacity(). Blocks too small to hold a tag are confirmed by the walk
+    /// alone, and that cost is stated rather than hidden.
     ALTAIR_HOT void release(void* p) noexcept {
         if (p == nullptr) {
             return;   // a silent no-op, and NOT foreign
@@ -110,9 +161,23 @@ public:
             ++foreign_;
             return;
         }
+        // Nothing is out: whatever this is, it is not a block this pool
+        // handed over, and decrementing would underflow.
+        if (in_use_ == 0) {
+            ++doubles_;
+            return;
+        }
+        const bool tagged = stride_ >= 2 * sizeof(void*);
+        if ((!tagged || read_tag(p) == tag_for(p)) && on_free_list(p)) {
+            ++doubles_;
+            return;
+        }
         // Push onto the head: the just-released block is the next acquired, so
         // the hottest block stays hottest.
         *reinterpret_cast<void**>(p) = free_;
+        if (tagged) {
+            write_tag(p);
+        }
         free_ = p;
         --in_use_;
     }
@@ -154,7 +219,58 @@ public:
         return foreign_;
     }
 
+    /// Count of release() calls with an OWNED block that was already free.
+    /// UNIT: count. Non-zero is a caller bug — the same block released twice —
+    /// and the pool refused it rather than corrupting the free list.
+    [[nodiscard]] constexpr std::uint64_t double_releases() const noexcept {
+        return doubles_;
+    }
+
 private:
+    /// A free block's second word carries this, mixed with its own address so
+    /// a copied block does not look free at its new place.
+    static constexpr std::uintptr_t kPoolFreeTag =
+        static_cast<std::uintptr_t>(0x9E37'79B9'7F4A'7C15ull);
+
+    [[nodiscard]] static std::uintptr_t tag_for(const void* p) noexcept {
+        return reinterpret_cast<std::uintptr_t>(p) ^ kPoolFreeTag;
+    }
+    [[nodiscard]] static std::uintptr_t read_tag(void* p) noexcept {
+        return *reinterpret_cast<std::uintptr_t*>(
+            static_cast<std::byte*>(p) + sizeof(void*));
+    }
+    static void write_tag(void* p) noexcept {
+        *reinterpret_cast<std::uintptr_t*>(
+            static_cast<std::byte*>(p) + sizeof(void*)) = tag_for(p);
+    }
+
+    /// Is `p` already on the free list? RULE 11: the walk is bounded by
+    /// capacity() + 1, which a well-formed free list cannot exceed — it holds
+    /// at most cap_ distinct blocks. A list that somehow loops therefore ends
+    /// the walk instead of hanging, and the caller is told "not found", which
+    /// is the conservative answer.
+    [[nodiscard]] bool on_free_list(const void* p) const noexcept {
+        void* node = free_;
+        for (std::size_t i = 0; i <= cap_ && node != nullptr; ++i) {
+            if (node == p) {
+                return true;
+            }
+            node = *reinterpret_cast<void* const*>(node);
+        }
+        return false;
+    }
+
+    constexpr void disown() noexcept {
+        base_ = nullptr;
+        free_ = nullptr;
+        stride_ = 0;
+        cap_ = 0;
+        in_use_ = 0;
+        high_ = 0;
+        foreign_ = 0;
+        doubles_ = 0;
+    }
+
     std::byte*  base_ = nullptr;
     void*       free_ = nullptr;
     std::size_t stride_ = 0;
@@ -162,6 +278,7 @@ private:
     std::size_t in_use_ = 0;
     std::size_t high_ = 0;
     std::uint64_t foreign_ = 0;
+    std::uint64_t doubles_ = 0;
 };
 
 } // namespace altair

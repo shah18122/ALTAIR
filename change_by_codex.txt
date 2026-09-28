@@ -1,0 +1,816 @@
+Altair change log
+=================
+
+Concise, append-only session summaries. `final.md` is the single document:
+§18 is the product backlog, §21 the card ledger, §20.4 says summaries live here.
+Never record secrets, tokens or account payloads here.
+
+--------------------------------------------------------------------------------
+2026-09-24 — resume from final.md: P0-02c1 applied, DEBT-01 passed, P6-01c1 applied
+
+Resumed the §2.2 loop against the state final.md left open. Three items were in
+flight and none had been closed. All three are now closed, with the records in
+§18.12 and §18.13.
+
+1. P0-02c1 (agent A, code) — APPLIED. `core/types/broker_positions.hpp`
+   `unrealised()` computed `*p.last_mark - p.average_price`, whose overflow
+   happens inside `StrongInt::operator-` (`units.hpp:129`) before the cast —
+   undefined behaviour on a row `valid()` accepts, because `valid()` constrains
+   `average_price` but not `last_mark`. The subtraction now goes through
+   `ExactSignedSum` with `try_value` → `PositionError::Overflow`.
+   `unrealised_total()`'s two hand-rolled bounds were deleted for the same
+   mechanism, checked after every addend, so the header has one overflow
+   strategy rather than two. Tests: two assertions appended to the existing
+   `test_unrealised_absent_mark_is_not_zero` (no ninth function) and the
+   compile-time assertion the card asked for, which previously could not be
+   written — the unchecked operator made it a constant-evaluation failure
+   instead of a value. Gates 7 and 5b now PASS; 1–5 and 8 re-pass.
+
+2. DEBT-01 (agent B, code) — PASS. The implementation was already on disk at
+   07:27 with no review recorded. `format_paise` took its magnitude by negating
+   `paise`, which is UB at `INT64_MIN`; it now takes the magnitude in `uint64_t`
+   (`0u - (uint64_t)paise` is the true magnitude for every input).
+   Verified, not assumed: signature unchanged, no new function, manifest exactly
+   `desktop/format.hpp`, `desktop/tests/test_format.cpp` and one
+   `desktop/CMakeLists.txt` block that matches the card byte for byte, the four
+   required test names present, and 0 hits for `-paise` / `std::abs` / `llabs`.
+
+3. P6-01c1 (agent C, document) — APPLIED, with one defect recorded rather than
+   smoothed over. §7 (85 stable IDs of the form `family.model`, 85 distinct by
+   count), §8 (14 bundled labels split, 11 examined and explicitly not split),
+   §9 (the 31 page corrections, D-1, the stale header comment, plus one
+   recommendation for a desktop card), §10 (six explicit unknowns) and §11
+   (compliance) are appended to `prompts/P6-01_ATLAS_RECONCILIATION.md`, and
+   §2's "48 distinct named files" is corrected to 49.
+
+   **The defect found while doing it: the audit's §6 table rows 64–85 are not
+   Atlas rows.** `atlas_data.hpp` contains none of `Fixed frac`, `Max Sharpe`,
+   `Equal risk`, `Backtest engine`, `Market simulator`, `Multi-agent`, `Reward
+   shaping` or `Counterfactual` (0 hits each), and the 22 rows the file does
+   contain appear nowhere in the table. §5's numbering, ten pages earlier, is
+   the real one. Recorded as §6.1 in the document, with the 22 real rows and the
+   search evidence, and in §18.13 — the table was left visible rather than
+   rewritten, and §9 was built on §5's numbering, which matches the file.
+
+Build and regression evidence, one run on the `default` preset after all edits:
+configure clean ("namespace audit clean — 683 names, no clashes"), build with
+**zero warnings**, `ctest` **148/148 passed, 0 failed, 237.10 s**. The
+money-formatting regression net passed in the same run: `desktop_format`,
+`desktop_position_table`, `desktop_bar_csv`, `desktop_chart`. That last one also
+closes §18.10's open action item — `desktop_position_table` has now passed
+--------------------------------------------------------------------------------
+2026-09-24 — continuation: the prompt register emptied (35 cards verified + removed)
+
+The §2.3 lifecycle rule ("a card that passes review has its record written into
+§18 and its prompt deleted") had never been applied to the historical list. The
+queue held 35 completed cards "awaiting sequential verification and removal";
+all 35 are now verified and gone, and `prompts/` holds only what cannot be
+processed yet: 7 blocked cards, 3 in-flight contracts, and the evidence and
+coordination documents.
+
+Verification, run mechanically and identically for every card
+(`build/verify-queue.ps1`, `build/verify-modules.ps1`):
+
+  - the §21 ledger row says DONE with a commit hash — 35/35;
+  - every path in the card's file manifest exists on disk, with module-relative
+    entries resolved against the module — 35/35;
+  - the module's test target is Passed in the 148/148 run of §20.1 — 35/35;
+  - later corrections were checked for APPLICATION BEFORE removal. P0-08a and
+    P0-09a each have one in `prompts/cx02/CORRECTIONS.md`, and both are applied:
+    `ConfigStoreError::StaleVersion` with a rising-version publish in
+    `core/config/store.hpp`, and `Breach::RefusedFill`, `Breach::ExternalMismatch`
+    plus `reconcile()` in `core/invariant/conservation.hpp` with its three
+    required tests present and called from `main`.
+
+P0-07, the item the previous "Next" named, was verified first: 4/4 manifest
+files, `binlog` passed, ledger DONE at `78545fa`.
+
+Removal is recoverable, and that was checked before deleting rather than after:
+each prompt was added by its own commit (`git log --diff-filter=A -- prompts/<file>`),
+so the bodies survive in history even though `prompts/` is untracked now.
+
+Two findings, recorded in `final.md` §18.14 and in the queue rather than waived:
+
+  1. The five acceptance tests the cx02 card for P0-06b/P0-08a requires
+     "exactly" by name do not exist by those names. The behaviour is present and
+     green — four under different names in
+     `core/lockfree/tests/test_snapshot_slots.cpp`, and the non-rising-version
+     case asserted inside `test_config_store_publish_and_refresh`
+     (`core/config/tests/test_config.cpp:255-261`, comment `CX02-C1 (C02-004)`).
+     The correction is applied; its naming requirement was not followed.
+  2. Audit findings outlive the prompts that name them: C22-001, C22-002,
+     C22-003 (no C++ code reads any key from `config/altair.toml`), C22-005 and
+     C22-006 remain open in `prompts/audit/cx01c/`.
+
+Process note for whoever edits these documents next: PowerShell 5.1's
+`Get-Content` / `Set-Content` round trip does NOT preserve non-ASCII in this tree.
+It reads a UTF-8 file as cp1252 and re-encodes the resulting mojibake, so every
+em dash and section sign in the file doubles. It happened once to
+`prompts/PROMPT_EXECUTION_QUEUE.md` during this session and was reversed exactly
+(the double-encoded bytes were re-encoded to cp1252 and decoded as UTF-8 again,
+verified: 16 em dashes, 24 section signs, zero mojibake, zero replacement chars).
+Use the editor tool for these files, or read with `-Encoding UTF8` and write with
+`[IO.File]::WriteAllText`. Do not script a whole-file rewrite with `Set-Content`.
+
+`final.md` gained §18.14 (the sweep's method, its 35-card verification table and
+the two findings). `prompts/PROMPT_EXECUTION_QUEUE.md` gained the batch table and
+a rewritten `Next`. No commit and no push. Nothing touched a broker, credential,
+order, external deployment or reference tree.
+
+against the post-P0-02c1 header, not only the pre-correction one.
+
+Cards removed after passing, per §2.3's lifecycle rule: `DEBT-01_format_paise_card.md`,
+`P0-02c1_correction.md`, `P6-01c1_correction.md`. Kept: `P0-02c_broker_positions.md`
+(the frozen interface contract the unwritten P0-02d/e/f cards build against) and
+`P6-01_ATLAS_RECONCILIATION.md` (a deliverable document). `desktop/atlas_data.hpp`
+was read, never written; its 19-line difference from HEAD is a pre-existing
+working-tree edit.
+
+Independence caveat, recorded because §2.1 puts the reviewer in a separate seat:
+the same agent implemented and ran the gates on all three items. Every claim
+above is a build result, a test name or a grep rather than a judgement, but the
+reviewer's independence is weaker than the rest of the ledger's and should be
+read that way.
+
+No commit and no push was performed. No broker, credential, order, external
+deployment or reference tree was touched. Still open, unchanged: P0-02d/e/f,
+P0-07's sequential verification, P6-02 (blocked on agreeing P6-01's IDs), and
+every phase of §18 not marked complete.
+
+2026-09-25 documentation consolidation: created `final.md` as the single root
+execution manual. It contains a precedence/start-here section followed by exact,
+SHA-256-verified copies of the former root `plan.md`, `CLAUDE.md`, `README.md`,
+`ROADMAP.md`, and `idea.txt`. The five superseded root documents are absent as
+requested. No product code, broker state, credentials, orders, commit, or push
+was changed.
+
+2026-09-25 P0-02 completion: verified the existing funds schema v2 card and
+implemented bounded redacted broker log events, immutable broker evidence /
+position / log publication through `SnapshotSlots`, an OMS dispatch permit that
+consumes and immediately rechecks the shared readiness contract, and desktop
+mapping from fresh service evidence. Added focused cards P0-02e/f/g. Built the
+new targets and passed broker_state, broker_log, broker_state_store,
+broker_dispatch_gate and desktop_broker_status (5/5). Restored
+`prompts/PROTOCOL.md`, which `final.md` requires for continuing execution. No
+credential, live order transport, broker account, commit or push was touched.
+
+2026-09-25 P1-01/P1-02 implementation: added a Darwin-only `macos-arm64`
+CMake configure/build/test preset, removed the non-Windows default assumption
+that Qt lives under `D:/Qt`, and added macOS ordinary-page allocation via
+`mmap`/`munmap` with honest huge-page fallback. CMake preset parsing and the
+Windows `page_alloc` regression pass. Actual macOS build/runtime evidence is
+still unverified until run on Apple Silicon; no portability claim was promoted
+beyond implementation.
+
+2026-09-25 P1-03/P1-04 implementation: added the Apple
+`mach_absolute_time`/timebase clock source, macOS bundle metadata, install rules,
+credential-helper placement, Qt deployment and CPack packaging. The first ZIP
+audit found Qt runtimes missing; deployment was corrected at install time and a
+new 49,746,817-byte Windows package was generated containing Qt6 libraries and
+`plugins/platforms/qwindows.dll`. The full configured target graph built during
+packaging and `tsc_clock` passed. Actual Apple build, `.dmg`, signing,
+notarisation and MPS measurements remain explicitly unverified without a Mac.
+
+2026-09-25 P2-01/P2-02/P2-03 implementation: added native Windows/macOS OS-vault
+adapters, a versioned stdin-only credential helper, masked admin credential forms
+for FYERS and Kite with save/replace/delete/connect actions, and vault-first auth
+helper configuration. Replaced all broker-link and Kite dataset `waitFor*` calls
+with a bounded event-driven runner (generation, busy refusal, cancellation,
+timeouts and output limits); OAuth redirects no longer appear in argv. Repeated
+testing found and fixed a Windows GUI-loop stall caused by closing the stdin pipe
+from the `started` callback; helpers now consume complete newline-framed requests.
+The desktop still links no broker/OMS target. credential_store,
+desktop_credential_setup, desktop_helper_process and desktop_kite_link pass 4/4;
+the net FYERS/Kite/credential helpers compile. No real broker login, credential
+mutation, order, commit or push was performed. Native Keychain runtime evidence
+remains Mac-gated.
+
+2026-09-25 OAuth/pair/Atlas continuation: added exact-callback and expiring
+state validation plus profile verification to FYERS and Kite helpers; focused
+synthetic OAuth, credential, helper and Kite-link executables pass 5/5. Removed
+the two dummy example.test login-state files created by smoke verification.
+Renamed the visible Ratio Spread destination to Pair Trading with a legacy
+route alias, independent canonical A/B selectors (NIFTY, BANKNIFTY, CIPLA,
+SUNPHARMA), swap and duplicate-leg refusal. Added deterministic stable Atlas
+row identities and an Atlas uniqueness assertion. No live broker call or order
+transport was used.
+
+2026-09-25 typed account snapshots: added broker/account_snapshot.hpp with
+bounded identity, freshness, optional paise funds, typed positions and
+independent profile/funds/positions/holdings/orders section states. Added a
+no-transport parser for Kite/FYERS-shaped JSON responses with exact decimal to
+paise conversion, provider/session checks, malformed/overflow refusal and
+absent-vs-zero semantics. Registered contract and parser tests. Live polling,
+publication and real-account verification remain intentionally outstanding.
+MSVC/Qt rebuilt the broker, Atlas, navigation and Pair Trading targets after
+fixing direct QDateTime/QTimeZone includes. Broker CTest passed 4/4; GUI runtime
+acceptance remains for the desktop harness.
+
+2026-09-25 P2-09/P3-01: added SnapshotPublisher to bind typed account replies
+to session epochs and publish immutable account/evidence state, with stale,
+reconnect and revocation handling; focused publisher test passes. Added an
+explicit fixed-capacity FYERS canonical identity map where exchange, segment,
+option, expiry, strike and underlying define identity and FYERS tokens are only
+aliases. Refreshed aliases are retained, token reuse and identity collisions
+are refused, and the FYERS identity test passes. Existing Kite/XTS arrays and
+live feed routing remain unchanged pending the FYERS decoder card.
+
+2026-09-25 FYERS account/feed continuation: added FYERS as a third explicit
+FeedSource, a bounded v3 `sf`/`if`/`dp` decoder, exact paise conversion and
+three-source watchdog health. Unknown message types/tokens, negative or
+sub-paise prices and overflowing exchange timestamps are refused or retain
+receive-time provenance. Added the dry-run-by-default altair_fyers_account
+helper containing only the five documented read-only account GETs; it validates
+the shared typed snapshot before replacing data/fyers_account.json. Added a
+visible FYERS account tab under Brokers with fetch/re-read, age, funds and
+positions/holdings/orders sections. The net desktop and helper compile; focused
+auth/account/lifecycle/publisher/failover/decoder/dry-run CTest is 8/8 green.
+No live broker call, credential output or order mutation was performed.
+
+2026-09-25 P2-08: adapted altair_kite_account to validate profile, account
+identity, freshness and per-section status through the shared AccountSnapshot
+parser before replacing the UI snapshot. The emitted file now names its schema,
+broker and bounded account identity. Both account helpers remain dry-run by
+default; the focused net-preset suite is now 9/9 green. No live API call ran.
+
+2026-09-25 P2-11 foundation: added provider-neutral service-evidence pill
+mapping for both FYERS and Kite. Authentication, market-data health and account
+freshness remain separate; fixtures cover saved-only, verified, expired,
+disconnected, stale and reconnected states. Focused net-preset CTest is 10/10
+green. Live desktop consumers still require P2-09 service/IPC wiring, so P2-11
+remains open.
+
+2026-09-25 — Phase 2/3 continuation
+- Added broker/service_runtime.hpp with deterministic one-poll ownership,
+  bounded backoff, reconnect epochs, stale/helper-death/rejection/revoke
+  handling and a fixed redacted event ring; added acceptance coverage.
+- Corrected SnapshotPublisher so an account transport failure does not invent
+  credential expiry or market-feed failure; feed evidence now has independent
+  connecting/live/disconnected transitions.
+- Added credential-free short-lived service fields to validated FYERS/Kite
+  account snapshots. Brokers overview and status-bar pills now consume those
+  fields, expose partial/stale states and refuse old/malformed files.
+- Added feed/fyers_adapter.hpp and feed/source_router.hpp: bounded subscription
+  state, SDK callback decode, event kinds, reconnect/gap/backpressure counters,
+  epoch/duplicate gates, normalisation and depth reset generation.
+- Added FYERS history URI/parser and altair_fyers_history. The tool is dry-run
+  by default, never overwrites its 1m/5m outputs and emits provenance sidecars
+  for the existing bar-consistency audit.
+- Built the complete network tree. Focused P2/P3 tests passed 15/15. Broad
+  CTest passed 173/174; unrelated desktop_pages parity prose/assertion mismatch
+  remains. No broker order request or live credentialed call was made.
+
+2026-09-25 — prompt cleanup: nine completed cards removed
+
+Read `final.md` (source of truth) against `prompts/` and deleted the cards whose
+work is closed and verified. Removed: `P0-02_BROKER_CONTRACT.md`,
+`P0-02c_broker_positions.md`, `P0-02d_FUNDS_PAYLOAD.md`,
+`P0-02e_BROKER_LOG_EVENT.md`, `P0-02f_OMS_BROKER_GATE.md`,
+`P0-02g_BROKER_PUBLICATION.md`, `P2-01_SECURE_CREDENTIAL_STORE.md`,
+`P2-02_ASYNC_HELPER_COMMANDS.md`, `P2-03_CREDENTIAL_SETUP_UI.md`.
+
+Each deliverable was confirmed present and CMake-registered, and its focused test
+was run from `build/default` before removal — all 0 failures: `broker_state`,
+`broker_log`, `broker_positions`, `broker_dispatch_gate`, `broker_state_store`,
+`credential_store`, `desktop_credential_setup`, `desktop_helper_process`.
+`P0-02_BROKER_CONTRACT.md`/`P0-02c` qualified because the execution record closes
+P0-02 and the consuming P0-02d/e/f/g cards are all done, so the "frozen contract
+still cited" exception lapsed.
+
+Preserved, because they are still live: `P6-01_ATLAS_RECONCILIATION.md`
+(consumed by open P6-02), the seven blocked cards (P1-02a/b/c, P1-03a, P1-08b,
+P2-10_kite_auth, PHASE13_PLAN), `P7-06_MTBT_card.md` (spec not yet written), and
+the coordination/evidence documents. `prompts/PROMPT_EXECUTION_QUEUE.md` was
+updated with the removal batch and the reworked `Next`. No source, test, config,
+credential or broker path was touched. No commit and no push.
+
+
+2026-09-25 — P2-10 unified broker activity dashboard
+
+Added `app/broker_activity_projection.hpp` and a `BrokerActivitySupervisor` that
+pumps both read-only broker services and atomically publishes one bounded,
+credential-free projection. The projection carries route revision, provider/source
+attribution, event and correlation IDs, redacted messages, and omitted-event
+counts. Added `desktop/broker_activity.hpp` and integrated an Activity & routes
+tab into the unified Brokers page with fail-closed freshness/schema/secret checks,
+filtering, bounded redacted copy/save export, route preference display, and a
+five-second refresh timer. Added focused service and desktop acceptance tests.
+
+Focused verification passed: `app_broker_service` and `desktop_broker_activity`
+(2/2). The default regression after integration reached 170/172; the two failures
+were the unrelated pre-existing `desktop_helper_process` segfault and
+`desktop_terminal` geometry assertion. The actual `altair_desktop` target linked
+successfully. No credentials, broker calls, orders, commits or pushes were made.
+
+2026-09-25 — Phase 7 opened: P7-06 spec delivered, P7-03/P7-04 diff, Phase 8 blocked
+
+Worked the dependency-safe slice of Phases 7-8. Nothing in Phase 8 can be started
+honestly: every task there verifies live behaviour and is blocked on brokers,
+credentials and a feed — marking any of it done is the fiction the review gates
+exist to stop. No Phase 8 item was touched.
+
+P7-06 — delivered as a document. `prompts/P7-06_MTBT_FEED_SPEC.md` was written
+from `prompts/P7-06_MTBT_card.md` (spec only: no C++/CMake/config, no binary, no
+licensed feed, no network). Ten claims: five cited from `final.md` §1/§7/§11/§14/§15,
+five marked UNVERIFIED (NSE TBT message semantics/rates, colocation requirement,
+BSE product, broker-WS update rate, licence cost). Contains the A1-A9 access
+checklist with a state per row, nine obligations for a future decoder card
+(including the C03-013 session-epoch/book-reset regression), the reuse-vs-new
+boundary (`Tick` 64 B / `DepthUpdate` 272 B / `Normaliser` / `L2Book` unchanged),
+the honest-performance statement (the broker gateway is the ceiling; no latency
+claim), and a conditional go/no-go naming P7-06a/P7-06b/P7-06c. Recommendation:
+NO-GO for construction until a licence and a captured reference stream exist.
+
+P7-03/P7-04 — the plan required a diff before re-dispatch, so one was produced
+(with line-level evidence). Both stay OPEN, and both are re-scope, not rebuild:
+- P7-03: `scan_cross_venue` is touch-to-touch, fully costed and refuse-on-
+  unreachable, but has no available-size input (`CrossVenueQuote` has no depth),
+  no impact/latency allowance (`basis.hpp` does not include `risk/slippage.hpp`),
+  and no inventory/settlement model (borrow is a boolean capability).
+- P7-04: `measure_basis`/`scan_cash_futures` cover basis, expiry, annualisation,
+  funding, dividends and four-leg cost, but the carry legs are priced at single
+  prices rather than bid/ask, borrow is a boolean rather than a fee in `net`, and
+  premium/discount is only implicit in `BasisDirection`.
+
+Records: `final.md` gained a "2026-09-25 — Phase 7" section in the post-consolidation
+execution record; `prompts/PROMPT_EXECUTION_QUEUE.md` lists the P7-06 pair as
+preserved evidence and reworks `Next`. Still blocked and unchanged: P7-05 (P2-10),
+P7-08 (feed/P3-03, P4-07), P7-09 (credentials, §14 #8). No source, test, config,
+credential or broker path was touched. No commit and no push.
+
+2026-09-26 — GUI launch diagnosis and clean launch path
+
+The built Windows executable was verified in two modes. A normal launch reaches
+the responsive `Altair — sign in` dialog. A development launch with `--as admin`
+reaches the responsive `Altair` main window. The existing `build/default` binary
+had been held by orphaned GUI processes and its repeated launches produced
+Windows Application Error `0xc0000005` in `VCRUNTIME140.dll`; this was not
+reproducible from a clean `build/gui-debug` tree. The default GUI build was also
+stale while those processes held its executable, producing `LNK1168` on rebuild.
+Added `build_gui.bat` and `launch_gui.bat` to make the clean, deployed GUI build
+and launch path explicit. No credentials, broker calls or orders were used.
+
+2026-09-26 — P7-03 residual: inventory and settlement gates
+
+Completed the remaining P7-03 strategy boundary in `strategies/basis.hpp` and
+`strategies/tests/test_basis.cpp`. Added explicit cross-venue execution
+constraints for sell-side inventory, permitted short capacity and settlement
+eligibility. Unknown or ineligible settlement refuses; inventory plus short
+capacity must cover the requested quantity; permitted short capacity still
+requires the account's intraday-short capability. Refusals never silently shrink
+the two-leg pair, and existing enum ordinals were preserved by appending new
+reasons. A compatibility overload preserves existing callers while new callers
+can provide explicit constraints.
+
+Focused verification passed: `strategies_basis`, `strategies_parity`,
+`strategies_calendar` and `strategies_oppty_log` (4/4). No broker, credential,
+OMS, order, commit or push was used.
+
+2026-09-26 — Offline GETS-style Terminal/account slice
+
+Completed the host-safe portion of P4-03..P4-07. `TerminalPage` now has a typed,
+credential-free `apply_account()` ingress for `broker_view::AccountSnapshot`.
+Fresh funds and positions populate the existing read-only models; stale snapshots,
+nested session mismatches and duplicate position keys refuse without partial
+mutation; absent positions clear old visible rows; paper/broker provenance stays
+distinct. The option chain now scrolls horizontally without forcing the Terminal
+minimum width beyond a laptop viewport.
+
+Focused verification passed: `desktop_navigation_shell`, `desktop_broker_status`,
+`desktop_broker_activity`, `desktop_position_table`, `desktop_funds_summary` and
+`desktop_terminal` (6/6). Live account/feed, Mac hardware and live order gates
+remain explicitly open.
+
+2026-09-26 — Pair Trading offline data contract and persistence
+
+Completed the offline/read-side portion of P5-01/P5-02 in
+`desktop/chain_panel.hpp` and `desktop/tests/test_pair_trading.cpp`. Pair A/B
+identity persistence now uses caller-provided QSettings; invalid or duplicate
+restores refuse. Each leg accepts explicit price/source/timestamp observations;
+missing, mixed replay/live, and stale-skew states are visible, and no leg is
+forward-filled. The comparison-parameter contract remains intentionally
+unimplemented until the later strategy discussion, and live source wiring stays
+gated on P3-03.
+
+Focused verification passed: `desktop_pair_trading`. No live feed, broker,
+credential, order, commit or push was used.
+
+
+2026-09-26 — FYERS app credentials provisioned for deployment
+
+Used the existing private `ALTAIR-CREDENTIAL/1` helper to save the supplied
+FYERS client ID and app secret into the current-user Windows Credential Manager
+under `altair.fyers`, together with the exact redirect
+`https://altair.thesmitshah.com/fyers/callback`. Helper output was only `OK
+saved`; a status query returned `OK complete`. No secret value was written to
+source, config, logs, command line or records.
+
+Generated the FYERS browser authorization URL from the vault and opened it in
+the default browser. The next step is manual browser approval; the one-time
+redirect must return to the same callback, after which the private `--stdin`
+helper exchange path can validate state, exchange the code and verify profile.
+No account login or live exchange was performed by this provisioning step.
+2026-09-26 — P7-04 executable cash/futures semantics
+
+Added `CashFuturesExecutionQuote`, explicit `PremiumDiscount` classification and
+`scan_cash_futures_executable()` in `strategies/basis.hpp`. Cash-and-carry uses
+cash ask/futures bid; reverse carry uses futures ask/cash bid; reverse-carry
+borrow cost is explicit and reduces net; missing/invalid touches, stale legs,
+non-finite assumptions and unavailable borrow refuse conservatively. Existing
+analytical basis/carry APIs remain intact.
+
+Focused verification passed: `strategies_basis`; existing parity/calendar/
+opportunity consumers remain covered by the prior 4/4 run. No live data, broker,
+credential, OMS, order, commit or push was used.
+
+2026-09-26 — P6-02 stable Atlas model routing
+
+Atlas entries and navigation menu actions now emit stable `atlas.<hash>` model
+identities instead of routing directly by legacy integer page. `MainWindow`
+routes identities to the canonical Models workspace, and `ModelPanel` records
+the selected identity with explicit implemented/absent-partial detail text.
+Unknown/non-Atlas IDs refuse without changing the current route. Focused
+`desktop_atlas` and `desktop_navigation` tests pass. The full production desktop
+relink remains compiler-heap limited in MSVC's generated MOC translation unit;
+no runtime or live-data claim is made from the component tests alone.
+
+
+2026-09-25 — P7-03 (partial): a price is not a size, and an edge must clear impact
+
+Proceeded with the Phase 7 remainder identified in the diff. One card, two files:
+`strategies/basis.hpp` and `strategies/tests/test_basis.cpp`. No C++, CMake,
+config or other module touched.
+
+Added to `CrossVenueQuote`: `buy_ask_qty`, `sell_bid_qty` (the size actually
+resting at each touch). Added to `CrossVenueOpportunity`: `executable_size`,
+`size_short`, `allowance`. Added `Executability::InsufficientSize` appended last
+so existing ordinals and ordinal-0 Unknown do not move, and
+`BasisError::{BadQuantity, BadAllowance}`.
+
+Added `ExecutionAllowance { impact_bps, latency_bps }`, passed in rather than
+fitted here: `risk/slippage.hpp` (P3-10) `predict_upper` produces the bps and this
+header consumes it, so the square-root law lives in one place. `net = gross -
+cost - allowance`; `cost` deliberately does not absorb the allowance, because a
+charge breakdown must stay a charge breakdown. `scan_cross_venue` takes the
+allowance as a new parameter and refuses on size rather than shrinking (a two-leg
+arbitrage cannot be half-filled). Precedence: no skew limit, bad allowance, bad
+quantity, bad price, stale leg, insufficient size, short cash, executable.
+
+Verified: built `altair_basis_test` and ran it — PASS, zero warnings. New test 6
+covers an undersized touch (InsufficientSize with the shortfall), an unreported
+size (refuses), exactly the smaller side (executable), the allowance arithmetic
+(8 bps on 295,100,000 paise = 236,080 paise, net = gross - cost - allowance
+exactly), a negative allowance (BadAllowance) and a zero quantity (BadQuantity).
+The decisive number: a 200-paise cross nets Rs 415.55 and is actionable; the same
+cross with 8 bps of measured allowance nets -Rs 1945.25 and is not. Rebuilt and
+re-ran the other consumers of the header: strategies_parity, strategies_calendar,
+strategies_oppty_log and the Qt altair_pages_test all PASS.
+
+P7-03 remains open on ONE requirement: inventory and settlement constraints
+(borrowing is still only the ShortCashCapability booleans). P7-04 is unchanged and
+its gaps stand. Phase 8 untouched. No credentials, no broker call, no commit.
+
+
+2026-09-26 — concurrent session found in basis.hpp; reviewed, verified, record corrected
+
+Went to start P7-04a (executable touch prices on the carry + explicit
+premium/discount label) and found `strategies/basis.hpp` and
+`strategies/tests/test_basis.cpp` already modified at 07:40 by a PARALLEL
+session — `CrossVenueSettlement`, `CrossVenueExecutionConstraints`,
+`Executability::SettlementUnavailable`, `Executability::InventoryUnavailable`,
+an 8-argument `scan_cross_venue`, a 7-argument back-compat overload and new
+tests. That session recorded nothing in `final.md`, so the entry from the
+previous session ("P7-03 remains open on inventory and settlement") had been
+left standing as a false statement.
+
+I did NOT edit those two files — another session had just written them, and the
+rule is to preserve the dirty tree and other agents' work. Instead I reviewed
+the change on disk and verified the merged state, which also confirms the two
+changes coexist correctly (my size/allowance logic is intact, and the documented
+precedence puts insufficient-size before the new settlement/inventory gates).
+
+Verified in this session, on the merged file: `strategies_basis` PASS (including
+the four new inventory/settlement checks: zero inventory with zero short capacity
+refuses; partial inventory with insufficient short capacity refuses without
+shrinking; inventory plus exactly the permitted intraday short is executable;
+permitted short capacity still requires the intraday-short account capability).
+Consumers re-built and passing: `strategies_parity`, `strategies_calendar`,
+`strategies_oppty_log`, `altair_pages_test`. Zero warnings. Wall clock at review
+time was 09:02, so the parallel session had stopped ~1h20m earlier rather than
+racing the build.
+
+Two review observations recorded rather than waived:
+1. `basis.hpp:518-523` has two consecutive `if (!size_ok)` blocks; the second
+   (setting `size_short`) belongs inside the first. Cosmetic duplicate control
+   flow, identical behaviour.
+2. The 7-argument overload assumes `settlement = Eligible` for callers that
+   predate the constraints. Documented, but it means the old arity silently
+   bypasses the new settlement gate; new callers must use the constraints form.
+
+Records: `final.md` gained a "2026-09-26 — concurrent session closed P7-03's
+inventory/settlement gap" section, and the stale bullet above it was corrected
+rather than deleted, so the earlier reading stays visible and is marked
+superseded. Net effect: **P7-03's stated requirements are now satisfied.** The
+remaining Phase 7 engineering gap at that review time was **P7-04**; it was
+subsequently implemented by the completed parallel session (see the existing
+2026-09-26 P7-04 record above): executable bid/ask directions, explicit
+PremiumDiscount classification and priced reverse-carry borrow cost. The merged
+`strategies_basis` test now passes those cases. Phase 8 remains untouched and
+blocked by live prerequisites. No credentials, no broker call, no commit.
+
+2026-09-26 — final.md audit and status consolidation
+
+Audited every unchecked Phase 0–8 item against the current source, prompt queue,
+execution log and focused binaries. Corrected authoritative status only where
+the repository has evidence: P0-02 is complete (service contract, payloads,
+publication, desktop evidence and OMS permit); P7-03 is complete (size,
+allowance, inventory, permitted-short and settlement gates); P7-04 is complete
+(bid/ask execution, explicit PremiumDiscount, borrow cost); P7-06 is complete
+as a specification deliverable, while its decoder remains licensed-feed gated.
+
+The remaining unchecked work is not all finishable on this Windows host: P1
+requires actual Mac hardware/MPS; P3-02/P3-03/P3-05 require an entitled live
+FYERS transport/account; P7-05 depends on the live broker dashboard; P7-08
+depends on a live feed and Terminal; P7-09 needs credentials and a route
+decision; P8-01..P8-04 are live integration/release gates. P6-03..P6-06 are
+large model-job/UI/algorithm/data-gate work, not a single safe cleanup. I did
+not mark any of those complete without evidence.
+
+Updated `final.md` and `prompts/PROMPT_EXECUTION_QUEUE.md` to remove stale P0-02,
+P7-03, P7-04 and P7-06 status claims and to list the real next gates. Verified
+`altair_basis_test` PASS and `git diff --check`. No credentials, broker call,
+
+2026-09-26 — P3 FYERS local slice audited and verified
+
+The requested P3-02/P3-03/P3-05 work was audited before editing. The repository
+already contains the local implementation: `feed/fyers_decoder.hpp`, fixed-
+capacity `feed/fyers_adapter.hpp`, headless epoch-aware `feed/source_router.hpp`,
+`app/fyers_history_main.cpp`, `broker/fyers_historical.hpp` and the read-only
+bar-consistency auditor. I did not duplicate or rewrite these existing paths.
+
+Focused verification on the current build: `altair_fyers_decoder_test` PASS;
+`altair_fyers_adapter_test` PASS (21 checks); the network-built
+commit or push.
+and refusing network/file work by default. No credential, endpoint, live socket
+or account was used.
+
+Status is now explicit in `final.md` and the queue: P3-02, P3-03 and P3-05 are
+complete for local implementation, but operational gates remain — official
+FYERS C SDK and entitled callback transport (P3-02), app-level live supervisor /
+publication (P3-03), and an authenticated entitled-account 1m/5m discrepancy
+report (P3-05). The phase checkboxes were changed to `[x]` only with that
+qualification in the adjacent text. No source implementation was changed in
+this slice; only the execution records were consolidated. No credentials,
+broker call, commit or push.
+
+2026-09-26 — FYERS facility inventory and credential-free helper shortcut
+
+Inventoried all local FYERS facilities: OAuth URL/hash/header helpers; five
+read-only account endpoints; typed snapshot parser/publication; historical URI
+and candle parser; decoder; bounded callback adapter; source router; desktop
+OAuth handoff; account/history dry-run helpers. Exercised all available local
+surfaces without credentials: auth, historical, decoder and adapter tests PASS;
+account dry-run enumerated profile/funds/positions/holdings/orders; history
+dry-run printed validated 1m/5m URIs and wrote nothing.
+
+Found and fixed `altair_fyers_login --help`: it previously attempted vault/env
+credential loading before help and printed a credential error on an unconfigured
+machine. Help now returns credential-free exit 0 before vault access, with clear
+usage and the `--stdin` shortcut used by the desktop. Rebuilt
+`build/net/app/altair_fyers_login.exe` and verified its output. No live endpoint,
+SDK socket, credential, order call, commit or push.
+
+2026-09-26 — FYERS webhook receiver built safely behind reverse proxy
+
+Built the local webhook boundary for
+`https://altair.thesmitshah.com/fyers/callback`: `broker/fyers_webhook.hpp`,
+`broker/tests/test_fyers_webhook.cpp`, `app/fyers_webhook_main.cpp`, CMake
+registration and `ops/fyers-webhook.md` deployment instructions.
+
+The receiver binds only to 127.0.0.1, accepts POST `/fyers/callback`, requires a
+deployment-provided `ALTAIR_FYERS_WEBHOOK_SECRET`, compares it without early
+exit, caps bodies at 64 KiB, accepts only Pending/Rejected/Cancelled/Traded,
+refuses malformed/unselected events and writes only redacted status/order-
+presence JSONL audit lines. It has no order-placement capability. Offline
+`altair_fyers_webhook_test` passes; the network webhook executable built.
+
+TLS/public DNS must be handled by nginx/Caddy/IIS forwarding to localhost:8787;
+port 8787 must not be public. The exact FYERS webhook secret header/signature
+contract is UNVERIFIED, so the current `X-Fyers-Webhook-Secret` expectation must
+be checked against official FYERS docs before activation. The supplied
+`146.75.205.0` also needs hosting-provider verification because `.0` is commonly
+a network address. No secret was stored, no live webhook was called, no order
+ event was sent, no commit or push.
+
+2026-09-26 — XAMPP/Apache proxy chain configured for FYERS
+
+The working diamond domain proved the Cloudflare tunnel works. Existing XAMPP
+Apache was already listening on 80/443, so no Apache download was needed.
+Enabled `mod_proxy_http` and added Apache forwarding for `/fyers/callback` to
+`http://127.0.0.1:8787/fyers/callback`; syntax validated. A correctly framed
+local request through Apache returned HTTP 200 / `ok` and wrote the redacted
+webhook audit record.
+
+Final Cloudflare topology: Published Application origin `http://127.0.0.1:80`
+(Apache), Apache path proxy to private receiver `127.0.0.1:8787`. Direct tunnel
+origin `localhost:8787`/`127.0.0.1:8787` is not the intended public topology.
+Cloudflare route must be changed/restarted to port 80. No live order event,
+credential change, commit or push.
+
+
+Follow-up: the webhook startup probe was moved from synchronous pre-Qt setup to
+`QTimer::singleShot(0, ...)`, so the port check/start happens after the Qt event
+loop has initialized. Windows still has stale protected `altair_desktop.exe`
+processes causing LNK1168, and recent crash events identify VCRUNTIME140 access
+violations in those existing desktop binaries. The source change compiled through
+MOC/object stages; final desktop relink remains blocked by the locked executable.
+2026-09-26 — FYERS webhook 502 diagnosis
+
+DNS from this workstation resolves `altair.thesmitshah.com` to Cloudflare
+(`104.21.70.17`, `172.67.217.236`, plus Cloudflare IPv6). No nginx/Caddy/IIS
+configuration exists in this checkout and no process was listening on 8787, so
+the 502 is the public proxy reporting an unavailable upstream. This cannot be
+fixed from the local repository without remote host access.
+
+Started the built receiver locally with the displayed secret, POSTed a synthetic
+Traded event to `http://127.0.0.1:8787/fyers/callback`, received HTTP 200 / `ok`,
+and verified the redacted JSONL audit line. Stopped it afterward; no listener
+remains. Updated `ops/fyers-webhook.md` and `final.md` with the exact deployment
+diagnosis and smoke-test boundary. Production requires the receiver running on
+the same origin as the reverse proxy, a healthy localhost:8787 upstream, TLS/
+Cloudflare routing, and a rotated secret. No live FYERS request, order event,
+credential storage, commit or push.
+
+2026-09-26 — FYERS webhook starts with the desktop
+
+Added `ensure_fyers_webhook_started()` to `desktop/main.cpp`. At desktop startup
+it probes 127.0.0.1:8787; if no listener exists, it locates and starts the
+detached `altair_fyers_webhook.exe 8787`. If already running, it does nothing,
+so duplicate bind attempts are avoided. The secret never appears in argv; the
+receiver uses `data/fyers_webhook_secret.txt` fallback. Added Qt6::Network for
+the port probe.
+
+The webhook target rebuilt. Desktop compilation reached MOC/object compilation;
+the final link was blocked by the existing locked
+`build/net/desktop/altair_desktop.exe` (LNK1168), unrelated to the startup code.
+Stop the old desktop process before rebuilding. The startup hook is best-effort
+and logs a warning if the helper executable is unavailable. No credentials,
+orders, commit or push.
+
+2026-09-26 — FYERS OAuth completion, Brokers data completeness and navbar polish
+
+Accepted current long FYERS access tokens with bounded dynamic authorization
+storage, retained the 16 KiB defensive limit, and made callback redaction
+idempotent. The Brokers workflow now continues successful OAuth into an
+asynchronous five-GET account refresh. The FYERS snapshot preserves per-section
+HTTP status and semantic state, carries `snapshot_complete`, renders
+COMPLETE/PARTIAL and FRESH/STALE, and cannot treat an invalid HTTP-200 response
+as complete. Raw non-empty positions remain displayable without inventing typed
+instrument rows; typed position/holding/order models remain future work.
+
+Live read-only verification succeeded: profile, funds, positions, holdings and
+orders all returned HTTP 200 and parsed present; `data/fyers_account.json` was
+written complete. No order mutation endpoint was invoked. Workspace menus and
+compact navbar popups now mark the current route and Find workspace advertises
+Ctrl+K. Production desktop and focused targets rebuilt; focused acceptance 8/8
+passed. The real navigation shell also passed 3/3 at 100%, 125% and 200% scale.
+Updated `final.md` with the current completion/future boundary. No commit or push.
+
+A broader 183-test network-preset attempt was incomplete rather than green or
+red: `strategies_scan_scheduler` was registered but its executable had not been
+built, and the unrelated `price_bus` test remained running without progress.
+The run was stopped without leaving its child process behind. This does not
+change the focused 8/8 result.
+
+2026-09-27 — remaining_work reconciliation and local backlog closure
+
+Reconciled `remaining_work.md` against `final.md`, source and executable test
+evidence. Parent-card status is now 44 complete / 10 open; the only unchecked
+parents are Mac/MPS evidence (P1-01..P1-06) and live end-to-end acceptance
+(P8-01..P8-04). The 27 model algorithm cards and eight data gates remain
+explicit child work and are not misreported as implemented models. Stale FYERS
+token-width and ISIN debt entries were removed because both are already fixed.
+
+Completed the remaining local Phase 4/P6/P7 work: account-first Terminal funds
+and positions, cancellable generation-safe model jobs and model-family views,
+algorithm/data-gate card issuance, bounded Arbitrage producer/UI workspace,
+deterministic paper-session journal/recovery with typed account snapshots, and
+the translation-only FYERS v3 order adapter behind the disabled dispatch gate.
+No live order transport was enabled.
+
+Fixed the parity/calendar report so an absent or unverified `charges.toml`
+blocks all costed scanners at the page boundary instead of rendering half-empty
+sections, and hardened paper-session average-entry derivation against raw
+integer multiplication overflow. Built previously missing registered test
+targets and rebuilt/staged `altair_desktop.exe` successfully. Full network-preset
+CTest passed 188/188 in 243.20 seconds. No credential mutation, live order,
+commit or push.
+
+2026-09-27 — P6 model-engine expansion and zero-absent Atlas
+
+Implemented deterministic numerical cores and fixtures for the P6 child queue:
+linear/RBF SVM, classification/regression KNN, fitted linear autoencoder,
+ARMA/ARIMA/SARIMA, exact-discretisation OU, EGARCH recursion/QMLE, Heston/trinomial/
+PDE pricing, factor-risk decomposition, PIT named factors, strict FIFO queue
+position, fill hazard calibration, univariate Hawkes fitting, embargoed event
+studies, conserved agent-market simulation, DQN/PPO/actor-critic, and a costed,
+capacity-bounded dollar/factor-neutral stat-arb basket. The already-present
+causal CNN was reclassified from absent after its impulse/receptive-field proof
+was audited.
+
+Atlas now reports 85 rows: 74 implemented, 11 partial and 0 absent. The 27-card
+ledger records 23 tested numerical implementations and four honest engine gaps:
+full trainable MLP/LSTM/GRU/Transformer work. Licensed
+data, paper-environment, option-surface and point-in-time dataset gates remain
+explicit; no synthetic fixture was relabelled as market validation. Live order
+submission remains disabled. Every registered target rebuilt, including the
+staged desktop, and the expanded network-preset suite passed 199/199 in 63.86
+seconds with four-way parallel execution.
+
+2026-09-27 — Brokers developer portal, target scaling and Phase 8 Windows tier
+
+Redesigned the unified Brokers page in the existing Qt stack as a web-style
+operations portal: product header, read-only safety guard, live-route rail,
+asymmetric FYERS/Kite cards, direct account/connection actions, operational
+metrics, stronger empty-state copy and custom tab states. Native shell tests
+assert the six workflows, independently attributed connection states and four
+direct card actions. A native Windows render is stored at
+`build/net/broker-ui-qa.png.brokers.png`.
+
+Added train-fold-only `TargetScaler` with explicit inverse transformation so
+large time-series targets can be fitted in standard units and restored before
+display/risk. Added `models/TRAINING_MATRIX.md`: no model logically requires a
+GPU; acceleration is recommended only for large neural jobs/searches, so Mac
+migration is deferred until a representative benchmark justifies it.
+
+Completed the Phase 8 Windows-local tier and recorded the remaining entitled
+account/licensed-feed evidence separately in `ops/phase8-acceptance.md`.
+Generated `build/net/Altair-0.1.0-Windows-AMD64.zip` (27,697,436 bytes), SHA-256
+68313C826F16CB4E03F161DE90B14C14895E0CD80B90A40F60F0304FC350C399.
+Live order dispatch remains disabled; no order was submitted.
+
+2026-09-28 — Atlas completion, trainable neural engines and final Windows stage
+
+Closed every remaining numerical implementation gap without conflating code
+completion with market training. Added a causal pairs-trade lifecycle with
+costed round-trip P&L and point-in-time, availability-gated financial sentiment.
+The existing MLP full-backprop implementation was verified and its stale Atlas
+status corrected. Added analytic full-gate BPTT for LSTM and GRU with central-
+difference gradient checks, gradient clipping and complete bit-identical
+checkpoints. Added a fixed-capacity causal Transformer reference with multiple
+heads, sinusoidal positions, layer-normalised residual blocks, feed-forward
+stacks, full-parameter deterministic training and complete checkpoints.
+
+Atlas now reports 85/85 numerical engines built, 0 partial and 0 absent. This
+does not claim the data-gated engines are fitted, profitable or live-approved;
+the hardware/training boundary is recorded in `models/TRAINING_MATRIX.md`. No
+model requires a GPU for correctness. GPU/MPS is recommended only for large
+MLP/CNN/LSTM/GRU/Transformer or large RL searches, so a Mac move is deferred
+until an actual CPU-versus-MPS benchmark justifies it.
+
+The full RelWithDebInfo Windows tree rebuilt and staged successfully. Complete
+CTest passed 204/204 in 75.81 seconds at four-way parallelism. Regenerated
+`build/net/Altair-0.1.0-Windows-AMD64.zip` at 53,789,281 bytes; SHA-256
+2B70CC57889FB2092010FAF9FE4C25ECA20FDC79B0EFE9D320151C20C61B3F67.
+The Phase 8 Windows-local tier is complete; credentialed FYERS/Kite, live-feed,
+licensed MTBT and native macOS acceptance remain external evidence gates. Live
+order dispatch remains disabled and no order was submitted.
+
+2026-09-28 — broker fetch, forecast, Atlas routing and strategy UI repair
+
+Fixed the live FYERS v3 history parser after a credentialed read-only probe
+showed that it incorrectly treated JSON object member order as part of the wire
+contract. Added documented 100-day intraday / 366-day daily chunking, generic
+1/5/15/60-minute and daily output mode, useful HTTP/provider diagnostics and
+safe overwrite control. A second live probe succeeded with 750 NIFTY one-minute
+bars for 2026-09-24..25. Of the 588 timestamps overlapping the existing local
+file, four closing values differed; maximum absolute close difference was 0.15
+index points. The temporary comparison file was removed.
+
+Repaired Forecast's recent-data button: packaged same-directory helpers are now
+discoverable, FYERS is attempted first with canonical index identifiers and
+Kite is the secondary fallback. The page continues to merge only completed
+bars and reports which provider supplied the tail. One-minute remains an
+explicit selectable resolution.
+
+Made Atlas stable IDs resolve back to their actual rows and route to each row's
+workspace instead of forcing all clicks to Models. Monte Carlo, bootstrapping
+and jump diffusion now open Analytics. Models Overview was retained as the
+readiness view and its stale fixed counts/"ABSENT OR PARTIAL" fallback were
+replaced by catalogue-derived fit states and exact Atlas detail.
+
+Rebuilt Pair Trading as an underlying/equity pair definition rather than an
+options-chain page. It now carries independent BUY/SELL sides and integer
+ratios (default BUY 2 NIFTY versus SELL 1 BANKNIFTY), persists the full pair and
+keeps data-source/timestamp skew refusal. Added a manual cross-venue/cash-future
+pair to Arbitrage with explicit fresh two-sided depth, common size,
+inventory/settlement and post-cost gates. No live order route was enabled.
+
+Kite's helper now returns success when it creates a login URL, reports exactly
+which app credential is missing, exposes help without requiring credentials,
+and directs setup through Brokers > Zerodha. The current vault has the Kite API
+key and secret but is missing the exact registered redirect URL; that one field
+must be saved in the form before a real login can be tested. Focused broker, Atlas, forecast-page,
+pair and arbitrage targets compile and their tests pass. Final desktop relink
+is pending only because the currently running Altair window has the executable
+locked; it was deliberately not terminated. No order was submitted.

@@ -34,6 +34,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_montecarlo_test PRIVATE altair_backtest altair_flags)
     add_test(NAME backtest_montecarlo COMMAND altair_montecarlo_test)
 
+    add_executable(altair_agent_market_test tests/test_agent_market.cpp)
+    target_link_libraries(altair_agent_market_test PRIVATE altair_backtest altair_flags)
+    add_test(NAME backtest_agent_market COMMAND altair_agent_market_test)
+
     # P17-01. Monte Carlo OPTION pricing. Links altair_analytics because the
     # European control is priced by the real black76 -- an MC pricer validated
     # against its own reimplementation of Black-76 would be checking a copy of

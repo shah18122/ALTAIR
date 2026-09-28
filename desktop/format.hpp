@@ -23,12 +23,18 @@ namespace altair::ui {
 /// Integer arithmetic throughout: the rupee part and the paise part are
 /// separated with `/` and `%`, never by dividing a double by 100. Ported from
 /// the web client's `formatPaise`, which was written for the same reason.
+/// The magnitude is taken in uint64_t so INT64_MIN is represented exactly.
 [[nodiscard]] inline QString format_paise(std::int64_t paise,
                                           bool explicit_sign = false) {
     const bool negative = paise < 0;
-    const std::int64_t abs_paise = negative ? -paise : paise;
-    const std::int64_t rupees = abs_paise / 100;
-    const std::int64_t fraction = abs_paise % 100;
+    // INT64_MIN has no positive int64 counterpart, so the magnitude is taken in
+    // uint64_t: converting a negative int64 to uint64 is defined (modulo 2^64),
+    // and 0u - that is the true magnitude for every input, INT64_MIN included.
+    const std::uint64_t magnitude = negative
+        ? std::uint64_t{0} - static_cast<std::uint64_t>(paise)
+        : static_cast<std::uint64_t>(paise);
+    const std::uint64_t rupees   = magnitude / 100;
+    const std::uint64_t fraction = magnitude % 100;
 
     QString digits = QString::number(rupees);
     // Indian grouping: last three digits, then pairs. 12345678 reads as

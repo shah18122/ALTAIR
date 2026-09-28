@@ -89,6 +89,16 @@ enum class BasisDirection : std::uint8_t {
     ReverseCashAndCarry
 };
 
+/// Screen classification of futures relative to cash. This is deliberately
+/// separate from executable direction: a premium can still be untradeable
+/// after costs, borrow or stale-touch checks.
+enum class PremiumDiscount : std::uint8_t {
+    Unknown = 0,
+    Premium,
+    Discount,
+    Fair
+};
+
 /// Whether the trade this mispricing implies can actually be placed.
 ///
 /// Ordinal 0 is `Unknown` on purpose. A zeroed struct must not read as
@@ -104,12 +114,26 @@ enum class Executability : std::uint8_t {
     /// The two legs were observed too far apart to be compared.
     QuotesTooFarApart,
     /// One of the legs had no quote.
-    NoQuote
+    NoQuote,
+    /// The scanned size exceeds the size actually resting at the touched
+    /// prices. A two-leg arbitrage cannot be half-filled: doing one leg and
+    /// not the other leaves a naked position rather than a smaller arbitrage.
+    /// This therefore REFUSES rather than shrinking quietly. Appended last so
+    /// the existing ordinals -- and ordinal 0 = Unknown -- do not move.
+    InsufficientSize,
+    /// The account-side inventory plus permitted short capacity cannot cover
+    /// the requested sell leg. Refuses rather than shrinking the pair.
+    InventoryUnavailable,
+    /// Settlement eligibility was not proven for the requested same-session
+    /// cross. Unknown is conservative and refuses exactly like ineligible.
+    SettlementUnavailable
 };
 
 enum class BasisError : std::uint8_t {
     /// A price was zero or negative.
     BadPrice,
+    /// The scanned quantity was zero or negative.
+    BadQuantity,
     /// Time to expiry was zero or negative -- there is no carry to price.
     BadTenor,
     /// The two legs were observed too far apart.
@@ -117,7 +141,9 @@ enum class BasisError : std::uint8_t {
     /// The cost calculator refused.
     CostUnavailable,
     /// The caller did not say how stale is too stale.
-    NoSkewLimit
+    NoSkewLimit,
+    /// The execution allowance was negative or non-finite.
+    BadAllowance
 };
 
 /// The two legs of a basis observation, each with the instant it was seen.
@@ -237,6 +263,62 @@ struct ShortCashCapability {
     bool borrow_available = false;
 };
 
+/// Executable cash/futures touches for one observation. Prices are integer
+/// paise and timestamps are UTC nanoseconds. All four prices are required by
+/// `scan_cash_futures_executable`; a zero touch is refused rather than replaced
+/// by the analytical mark in `BasisQuote`.
+struct CashFuturesExecutionQuote {
+    Price cash_bid{0};
+    Price cash_ask{0};
+    Price future_bid{0};
+    Price future_ask{0};
+    Timestamp cash_ts{};
+    Timestamp future_ts{};
+    Years t{0.0};
+    double rate{};
+    double dividend_yield{};
+    /// Borrow cost per unit for the reverse-carry cash short, in paise.
+    Notional borrow_cost_per_unit{};
+};
+
+struct CashFuturesExecutableOpportunity {
+    PremiumDiscount classification{PremiumDiscount::Unknown};
+    BasisDirection direction{BasisDirection::Unknown};
+    Executability executability{Executability::Unknown};
+    Duration skew{};
+    Notional entry_edge{};
+    Notional cost{};
+    Notional borrow_cost{};
+    Notional net{};
+    CostBreakdown open_cash{};
+    CostBreakdown open_future{};
+    CostBreakdown close_cash{};
+    CostBreakdown close_future{};
+
+    [[nodiscard]] bool actionable() const noexcept {
+        return executability == Executability::Executable && net.raw() > 0;
+    }
+};
+
+/// Account and venue constraints for one same-session cross-venue pair.
+///
+/// UNIT: quantities are instrument units. `sell_inventory` is stock already
+/// deliverable on the selling venue; `permitted_short` is the caller's bounded
+/// short capacity for the residual. Settlement must be explicit: Unknown is
+/// refused rather than treated as eligible. PRECONDITION: quantities are
+/// non-negative; the scanner refuses negative `Qty` values.
+enum class CrossVenueSettlement : std::uint8_t {
+    Unknown = 0,
+    Eligible,
+    Ineligible
+};
+
+struct CrossVenueExecutionConstraints {
+    Qty sell_inventory{0};
+    Qty permitted_short{0};
+    CrossVenueSettlement settlement{CrossVenueSettlement::Unknown};
+};
+
 namespace detail {
 
 [[nodiscard]] inline Trade leg(Segment seg, Exchange ex, Side side, Qty qty,
@@ -312,9 +394,114 @@ scan_cash_futures(const BasisQuote& q, Qty qty, Exchange ex,
     return o;
 }
 
+/// Scan executable cash/futures touches while retaining analytical premium /
+/// discount classification. Direction-specific entry prices are used:
+/// cash-and-carry buys cash at ask and sells futures at bid; reverse carry buys
+/// futures at ask and sells cash at bid. `max_skew` is nanoseconds and `qty` is
+/// units. Unknown/negative assumptions return a typed error or refusal.
+[[nodiscard]] inline std::expected<CashFuturesExecutableOpportunity, BasisError>
+scan_cash_futures_executable(const CashFuturesExecutionQuote& q, Qty qty,
+                             Exchange ex, Duration max_skew,
+                             const ShortCashCapability& cap,
+                             const ChargeSchedule& sch,
+                             const BrokerageRule& br) noexcept {
+    if (qty.raw() <= 0) return std::unexpected(BasisError::BadQuantity);
+    if (max_skew.raw() <= 0) return std::unexpected(BasisError::NoSkewLimit);
+    if (q.cash_bid.raw() <= 0 || q.cash_ask.raw() <= 0
+        || q.future_bid.raw() <= 0 || q.future_ask.raw() <= 0
+        || q.cash_bid.raw() > q.cash_ask.raw()
+        || q.future_bid.raw() > q.future_ask.raw())
+        return std::unexpected(BasisError::BadPrice);
+    if (!(q.t.raw() > 0.0) || !std::isfinite(q.rate)
+        || !std::isfinite(q.dividend_yield)
+        || q.borrow_cost_per_unit.raw() < 0)
+        return std::unexpected(BasisError::BadTenor);
+    const std::int64_t raw_skew = (q.future_ts - q.cash_ts).raw();
+    const Duration skew{raw_skew < 0 ? -raw_skew : raw_skew};
+    if (skew.raw() > max_skew.raw())
+        return std::unexpected(BasisError::StaleLeg);
+
+    const double cash_mid = 0.5 * static_cast<double>(q.cash_bid.raw()
+                                                       + q.cash_ask.raw());
+    const double future_mid = 0.5 * static_cast<double>(q.future_bid.raw()
+                                                         + q.future_ask.raw());
+    const double fair = cash_mid * std::expm1((q.rate - q.dividend_yield)
+                                               * q.t.raw());
+    const double screen = (future_mid - cash_mid) - fair;
+    CashFuturesExecutableOpportunity out{};
+    out.classification = screen > 0.5 ? PremiumDiscount::Premium
+                       : screen < -0.5 ? PremiumDiscount::Discount
+                                       : PremiumDiscount::Fair;
+    out.skew = skew;
+    out.direction = screen >= 0.0 ? BasisDirection::CashAndCarry
+                                  : BasisDirection::ReverseCashAndCarry;
+    if (out.direction == BasisDirection::ReverseCashAndCarry
+        && !cap.borrow_available) {
+        out.executability = Executability::ShortCashUnavailable;
+    } else {
+        out.executability = Executability::Executable;
+    }
+
+    const Timestamp cash_ts = q.cash_ts;
+    const Timestamp future_ts = q.future_ts;
+    const bool reverse = out.direction == BasisDirection::ReverseCashAndCarry;
+    const auto cash_open = detail::leg(Segment::Cash, ex,
+        reverse ? Side::Sell : Side::Buy, qty,
+        reverse ? q.cash_bid : q.cash_ask, true, cash_ts);
+    const auto future_open = detail::leg(Segment::Fut, ex,
+        reverse ? Side::Buy : Side::Sell, qty,
+        reverse ? q.future_ask : q.future_bid, false, future_ts);
+    const auto cash_close = detail::leg(Segment::Cash, ex,
+        reverse ? Side::Buy : Side::Sell, qty,
+        reverse ? q.cash_ask : q.cash_bid, true, cash_ts);
+    const auto future_close = detail::leg(Segment::Fut, ex,
+        reverse ? Side::Sell : Side::Buy, qty,
+        reverse ? q.future_bid : q.future_ask, false, future_ts);
+    const auto cb = compute_cost(cash_open, sch, br);
+    const auto fb = compute_cost(future_open, sch, br);
+    const auto cc = compute_cost(cash_close, sch, br);
+    const auto fc = compute_cost(future_close, sch, br);
+    if (!cb || !fb || !cc || !fc)
+        return std::unexpected(BasisError::CostUnavailable);
+    out.open_cash = *cb; out.open_future = *fb;
+    out.close_cash = *cc; out.close_future = *fc;
+    out.cost = Notional{cb->total.raw() + fb->total.raw()
+                       + cc->total.raw() + fc->total.raw()};
+    out.borrow_cost = Notional{reverse
+        ? q.borrow_cost_per_unit.raw() * qty.raw() : 0};
+    const std::int64_t gross_per_unit = reverse
+        ? q.cash_bid.raw() - q.future_ask.raw()
+        : q.future_bid.raw() - q.cash_ask.raw();
+    out.entry_edge = Notional{gross_per_unit * qty.raw()};
+    out.net = Notional{out.entry_edge.raw() - out.cost.raw()
+                       - out.borrow_cost.raw()};
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Cross-venue
 // ---------------------------------------------------------------------------
+
+/// The allowance a scan must clear before its edge is real.
+///
+/// An allowance is a MEASUREMENT, not a policy this header may invent, so it
+/// is passed in. `impact_bps` is what crossing past the touch would cost, and
+/// `latency_bps` is what the market moving between the two legs and the order
+/// arriving would cost. `risk/slippage.hpp` (P3-10) is the producer of the
+/// impact figure -- its `predict_upper` returns bps and is the one to size on,
+/// because sizing on the point estimate assumes the fitted coefficient is the
+/// true one. This header consumes bps and does not fit anything; that keeps the
+/// square-root law in one place instead of two.
+///
+/// UNIT: basis points of traded turnover, per leg-side, non-negative.
+struct ExecutionAllowance {
+    double impact_bps = 0.0;
+    double latency_bps = 0.0;
+
+    [[nodiscard]] double total_bps() const noexcept {
+        return impact_bps + latency_bps;
+    }
+};
 
 /// The same instrument quoted on two exchanges at the same instant.
 struct CrossVenueQuote {
@@ -324,9 +511,17 @@ struct CrossVenueQuote {
     /// scanner manufactures edge that does not exist.
     Exchange buy_venue = Exchange::NSE;
     Price buy_ask{0};
+    /// Size actually resting at `buy_ask`. UNIT: units.
+    ///
+    /// Zero means "the caller did not say", which refuses. A scanner that
+    /// assumed unlimited size at the touch reports arbitrage in a size it
+    /// could never get, which is the same class of error as comparing mids.
+    Qty buy_ask_qty{0};
     Timestamp buy_ts{};
     Exchange sell_venue = Exchange::BSE;
     Price sell_bid{0};
+    /// Size actually resting at `sell_bid`. UNIT: units. Zero refuses.
+    Qty sell_bid_qty{0};
     Timestamp sell_ts{};
 };
 
@@ -336,8 +531,22 @@ struct CrossVenueOpportunity {
     /// because the spread is normally wider than the venue difference.
     std::int64_t cross_spread{0};
     Duration skew{0};
+    /// The size the touch could actually support: the smaller of the two
+    /// resting sizes. Reported even on a refusal, so a caller can see how far
+    /// off it was rather than only that it was refused. UNIT: units.
+    Qty executable_size{0};
+    /// Scanned size minus `executable_size`, when the scan was too large.
+    /// UNIT: units. Zero when the size was available.
+    Qty size_short{0};
+    /// The charge total. Does NOT include the execution allowance -- the
+    /// allowance is not a charge, and folding it in here would hide a
+    /// measurement inside a tax breakdown.
     Notional cost{};
+    /// The allowance in paise: turnover x total_bps / 10000.
+    Notional allowance{};
     Notional gross_value{};
+    /// gross_value - cost - allowance. Signed. The allowance is subtracted
+    /// because an edge that does not clear impact and latency is not an edge.
     Notional net{};
     CostBreakdown buy_leg{};
     CostBreakdown sell_leg{};
@@ -361,12 +570,40 @@ struct CrossVenueOpportunity {
 /// above, both directions are reachable -- provided the caller says intraday
 /// short is enabled on the account. It still is not free: intraday STT is
 /// 0.025% sell-side, and it applies to the selling venue's leg.
+///
+/// THE SIZE HAS TO BE THERE AND THE EDGE HAS TO CLEAR THE ALLOWANCE.
+///
+///   SIZE. A price is not a size. The touch may hold 200 shares while the scan
+///   asks for 500, and a two-leg arbitrage cannot take 200 of one leg and 500
+///   of the other. The honest outcome is a refusal that reports the size that
+///   WAS there, not a quietly smaller trade.
+///
+///   ALLOWANCE. Crossing the touch, and waiting for the second leg to arrive,
+///   both cost money the charge schedule does not contain. `allow` carries
+///   those as bps (produced by risk/slippage.hpp) and they are subtracted from
+///   the net before `actionable()` can ever be true.
+///
+/// Refusal precedence, so the reason reported is the one to act on:
+///   no skew limit -> bad allowance -> bad quantity -> bad price -> stale leg
+///   -> insufficient size -> settlement unavailable -> inventory unavailable
+///   -> short cash unavailable -> executable.
+/// Size is decided BEFORE reachability because "you asked for more than is
+/// there" is a fact about this scan, while short-cash is a fact about the
+/// account; the size problem is the one the caller can fix now.
 [[nodiscard]] inline std::expected<CrossVenueOpportunity, BasisError>
 scan_cross_venue(const CrossVenueQuote& q, Qty qty, Duration max_skew,
-                 const ShortCashCapability& cap, const ChargeSchedule& sch,
-                 const BrokerageRule& br) noexcept {
+                 const ShortCashCapability& cap, const ExecutionAllowance& allow,
+                 const CrossVenueExecutionConstraints& constraints,
+                 const ChargeSchedule& sch, const BrokerageRule& br) noexcept {
     if (max_skew.raw() <= 0) {
         return std::unexpected(BasisError::NoSkewLimit);
+    }
+    const double total_bps = allow.total_bps();
+    if (!(total_bps >= 0.0) || !std::isfinite(total_bps)) {
+        return std::unexpected(BasisError::BadAllowance);
+    }
+    if (qty.raw() <= 0) {
+        return std::unexpected(BasisError::BadQuantity);
     }
     if (q.buy_ask.raw() <= 0 || q.sell_bid.raw() <= 0) {
         return std::unexpected(BasisError::BadPrice);
@@ -382,8 +619,39 @@ scan_cross_venue(const CrossVenueQuote& q, Qty qty, Duration max_skew,
     // TOUCH TO TOUCH. Buy at the ask, sell at the bid -- the prices we would
     // actually get, not the mids we would like to.
     o.cross_spread = q.sell_bid.raw() - q.buy_ask.raw();
-    o.executability = cap.intraday_short ? Executability::Executable
-                                         : Executability::ShortCashUnavailable;
+
+    // SIZE. The smaller of the two resting sizes is what the pair can carry.
+    // Zero means the caller did not supply a size, which cannot be checked and
+    // therefore refuses rather than assuming depth that was never quoted.
+    const std::int64_t resting =
+        q.buy_ask_qty.raw() < q.sell_bid_qty.raw() ? q.buy_ask_qty.raw()
+                                                   : q.sell_bid_qty.raw();
+    o.executable_size = Qty{resting > 0 ? resting : 0};
+    const bool size_ok = resting >= qty.raw();
+
+    if (constraints.settlement != CrossVenueSettlement::Eligible) {
+        o.executability = Executability::SettlementUnavailable;
+    } else if (constraints.sell_inventory.raw() < 0
+               || constraints.permitted_short.raw() < 0) {
+        o.executability = Executability::InventoryUnavailable;
+    } else {
+        const std::int64_t inventory = constraints.sell_inventory.raw();
+        const std::int64_t residual = inventory >= qty.raw()
+            ? 0 : qty.raw() - inventory;
+        if (residual > 0 && constraints.permitted_short.raw() < residual) {
+            o.executability = Executability::InventoryUnavailable;
+        } else if (residual > 0 && !cap.intraday_short) {
+            o.executability = Executability::ShortCashUnavailable;
+        } else {
+            o.executability = Executability::Executable;
+        }
+    }
+    if (!size_ok) {
+        o.executability = Executability::InsufficientSize;
+    }
+    if (!size_ok) {
+        o.size_short = Qty{resting > 0 ? qty.raw() - resting : qty.raw()};
+    }
 
     const auto lb = compute_cost(
         detail::leg(Segment::Cash, q.buy_venue, Side::Buy, qty, q.buy_ask,
@@ -395,9 +663,32 @@ scan_cross_venue(const CrossVenueQuote& q, Qty qty, Duration max_skew,
     o.buy_leg = *lb;
     o.sell_leg = *ls;
     o.cost = Notional{lb->total.raw() + ls->total.raw()};
+
+    // The allowance scales with the turnover both legs actually do.
+    const double turnover =
+        (static_cast<double>(q.buy_ask.raw())
+         + static_cast<double>(q.sell_bid.raw()))
+        * static_cast<double>(qty.raw());
+    const double allow_paise = turnover * total_bps / 10'000.0;
+    o.allowance = Notional{static_cast<std::int64_t>(allow_paise + 0.5)};
+
     o.gross_value = Notional{o.cross_spread * qty.raw()};
-    o.net = Notional{o.gross_value.raw() - o.cost.raw()};
+    o.net = Notional{o.gross_value.raw() - o.cost.raw() - o.allowance.raw()};
     return o;
+}
+
+/// Compatibility form for callers that predate explicit account constraints.
+/// It retains the former intraday-only contract by treating the requested size
+/// as permitted short capacity and assuming the caller's existing same-session
+/// settlement policy. New callers should pass CrossVenueExecutionConstraints.
+[[nodiscard]] inline std::expected<CrossVenueOpportunity, BasisError>
+scan_cross_venue(const CrossVenueQuote& q, Qty qty, Duration max_skew,
+                 const ShortCashCapability& cap, const ExecutionAllowance& allow,
+                 const ChargeSchedule& sch, const BrokerageRule& br) noexcept {
+    CrossVenueExecutionConstraints constraints{};
+    constraints.permitted_short = qty;
+    constraints.settlement = CrossVenueSettlement::Eligible;
+    return scan_cross_venue(q, qty, max_skew, cap, allow, constraints, sch, br);
 }
 
 } // namespace altair

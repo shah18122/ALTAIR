@@ -12,9 +12,28 @@ target_link_libraries(altair PRIVATE
     altair_flags
 )
 
+install(TARGETS altair RUNTIME DESTINATION bin)
+
+# P2-03. The desktop talks to this process over a private stdin pipe. It is the
+# only setup path that writes broker app credentials to the OS vault; desktop/
+# continues to link neither broker/ nor an order-capable library.
+add_executable(altair_credential_helper credential_helper_main.cpp)
+target_link_libraries(altair_credential_helper PRIVATE
+    altair_credential_store altair_flags)
+if(APPLE)
+    install(TARGETS altair_credential_helper
+        RUNTIME DESTINATION "Altair.app/Contents/Helpers")
+else()
+    install(TARGETS altair_credential_helper RUNTIME DESTINATION bin)
+endif()
+
 if(ALTAIR_BUILD_TESTS)
     add_test(NAME app_selftest COMMAND altair --selftest)
     add_test(NAME app_instruments COMMAND altair --instruments)
+    add_executable(altair_paper_session_test tests/test_paper_session.cpp paper_session.hpp)
+    target_link_libraries(altair_paper_session_test PRIVATE altair_oms altair_flags)
+    target_include_directories(altair_paper_session_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME app_paper_session COMMAND altair_paper_session_test)
 endif()
 
 # ── the Kite login, P2-10c ────────────────────────────────────────────────
@@ -28,9 +47,34 @@ endif()
 # Built only when the vcpkg `net` feature is present, so `--preset default`
 # keeps working with no vcpkg at all.
 if(ALTAIR_HAVE_NET)
+    add_executable(altair_fyers_webhook fyers_webhook_main.cpp)
+    target_link_libraries(altair_fyers_webhook PRIVATE altair_broker_net altair_flags)
     add_executable(altair_kite_login kite_login_main.cpp)
     target_link_libraries(altair_kite_login PRIVATE
+        altair_broker_net altair_credential_store altair_flags)
+
+    # FYERS v3 OAuth helper. Kept as a separate credential-boundary process:
+    # desktop/ opens the browser and never loads the app secret or token.
+    add_executable(altair_fyers_login fyers_login_main.cpp)
+    target_link_libraries(altair_fyers_login PRIVATE
+        altair_broker_net altair_credential_store altair_flags)
+    target_compile_definitions(altair_fyers_login PRIVATE
+        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+    # P2-07. Read-only FYERS account snapshot helper. It uses only the five
+    # explicit GET endpoints in broker/fyers_api.hpp and validates the shared
+    # typed snapshot before replacing the UI-facing file.
+    add_executable(altair_fyers_account fyers_account_main.cpp)
+    target_link_libraries(altair_fyers_account PRIVATE
         altair_broker_net altair_flags)
+    target_compile_definitions(altair_fyers_account PRIVATE
+        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+    add_executable(altair_fyers_history fyers_history_main.cpp)
+    target_link_libraries(altair_fyers_history PRIVATE
+        altair_broker_net altair_flags)
+    target_compile_definitions(altair_fyers_history PRIVATE
+        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
     # P2-12c. Fills dataset/ from the historical candle API. Separate binary
     # from `altair` for the same reason altair_kite_login is: a tool that reads
@@ -101,6 +145,30 @@ if(ALTAIR_HAVE_NET)
     else()
         message(STATUS "altair: price service skipped (no Boost)")
     endif()
+
+    if(APPLE)
+        set(_altair_helper_destination "Altair.app/Contents/Helpers")
+    else()
+        set(_altair_helper_destination "bin")
+    endif()
+    install(TARGETS
+        altair_kite_login altair_fyers_login altair_kite_fetch
+        altair_kite_account altair_fyers_account altair_kite_update altair_kite_ticker
+        altair_kite_quote altair_fyers_history altair_fyers_webhook
+        RUNTIME DESTINATION "${_altair_helper_destination}")
+    if(TARGET altair_price_service)
+        install(TARGETS altair_price_service
+            RUNTIME DESTINATION "${_altair_helper_destination}")
+    endif()
+    unset(_altair_helper_destination)
+
+    if(ALTAIR_BUILD_TESTS)
+        add_test(NAME fyers_account_dry_run COMMAND altair_fyers_account)
+        add_test(NAME kite_account_dry_run COMMAND altair_kite_account)
+        add_test(NAME fyers_history_dry_run COMMAND altair_fyers_history
+            --symbol NSE:SBIN-EQ --from 2026-09-01 --to 2026-09-02
+            --out-1m fyers-1m.csv --out-5m fyers-5m.csv)
+    endif()
 endif()
 
 # P12-02. Warm restart from state. Header-only and testable without a broker:
@@ -123,6 +191,16 @@ if(ALTAIR_BUILD_TESTS)
     target_include_directories(altair_monitor_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME monitor COMMAND altair_monitor_test)
+
+    # P2-09. The broker-service poll loop: drives broker/service_runtime against
+    # a transport seam. The test uses a scripted fake transport, so the poll
+    # cadence, helper-death timestamp retention and revocation are deterministic.
+    add_executable(altair_broker_service_test tests/test_broker_service.cpp)
+    target_link_libraries(altair_broker_service_test
+        PRIVATE altair_broker altair_types altair_flags)
+    target_include_directories(altair_broker_service_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME app_broker_service COMMAND altair_broker_service_test)
 endif()
 
 # P12-04. Daily reconciliation against the contract note. Links the REAL cost
@@ -137,4 +215,24 @@ if(ALTAIR_BUILD_TESTS)
     # Named `note_reconcile`: instruments/ already owns `reconcile`, which is the
     # three-way instrument-master check. Different question, different data.
     add_test(NAME note_reconcile COMMAND altair_note_reconcile_test)
+endif()
+
+# CX02-A1a / CX02-A2. What altair_kite_update and altair_kite_fetch write into
+# dataset/: exact price text (C14-001), and a merge and file replacement that
+# cannot lose a stored bar (C14-005/006/007). Header-only and offline -- the
+# fetch half needs a credential and is not exercised here. Links altair_broker
+# (no net) for RawCandle and verify_coverage.
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_price_text_test tests/test_price_text.cpp)
+    target_link_libraries(altair_price_text_test PRIVATE altair_flags)
+    target_include_directories(altair_price_text_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME price_text COMMAND altair_price_text_test)
+
+    add_executable(altair_dataset_merge_test tests/test_dataset_merge.cpp)
+    target_link_libraries(altair_dataset_merge_test PRIVATE
+        altair_broker altair_flags)
+    target_include_directories(altair_dataset_merge_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME dataset_merge COMMAND altair_dataset_merge_test)
 endif()

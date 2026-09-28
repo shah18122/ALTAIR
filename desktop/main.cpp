@@ -42,6 +42,7 @@
 #include <QApplication>
 #include <QDebug>
 #include <QMessageBox>
+#include <QFileInfo>
 #include <QString>
 
 #include <array>
@@ -131,7 +132,9 @@ std::vector<altair::ReplayTick> demo_session(std::size_t count,
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
-
+    // Defer the cold-path probe until Qt has completed application setup. A
+    // synchronous socket probe before the first event-loop turn can crash some
+    // Windows/Qt runtime combinations during DLL/plugin initialization.
     // THE MARK. Altair is the brightest star in Aquila, the Eagle, so the icon
     // is an eagle climbing with the star at its apex -- the name and the
     // constellation, not a decoration.
@@ -154,14 +157,6 @@ int main(int argc, char** argv) {
     // what is loading. It is closed by the login dialog, not by a timer: a
     // splash that vanishes on a timer while the app is still loading has
     // simply moved the blank gap later.
-    QSplashScreen splash(QPixmap(QStringLiteral(":/altair_eagle.svg"))
-                             .scaled(220, 220, Qt::KeepAspectRatio,
-                                     Qt::SmoothTransformation));
-    splash.showMessage(
-        QStringLiteral("  Altair — loading instruments and tape..."),
-        Qt::AlignBottom | Qt::AlignHCenter, QColor(0xD6, 0xDB, 0xDF));
-    splash.show();
-    app.processEvents();
     QApplication::setApplicationName(QStringLiteral("Altair"));
     QApplication::setOrganizationName(QStringLiteral("Altair"));
 
@@ -296,7 +291,6 @@ int main(int argc, char** argv) {
         // The splash comes down HERE, when there is something to replace it,
         // rather than on a timer -- a timed splash that expires mid-load just
         // moves the blank gap later.
-        splash.close();
         altair::ui::LoginDialog login(users);
         if (login.exec() != QDialog::Accepted
             || login.role() == altair::ui::Role::None) {
@@ -395,8 +389,11 @@ int main(int argc, char** argv) {
     // skips login entirely and would otherwise leave the splash on top of the
     // window. finish() ties it to the widget that replaces it, which is the
     // one thing a splash should be tied to.
-    splash.finish(&window);
-    window.showFullScreen();
+    // Show a normal window first so the shell remains responsive on Windows.
+    window.resize(1400, 900);
+    window.show();
+    window.raise();
+    window.activateWindow();
 
     return QApplication::exec();
 }

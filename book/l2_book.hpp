@@ -36,11 +36,13 @@ namespace altair {
 enum class BookError : std::uint8_t {
     NotFound,        // never updated — NOT the same as empty (D1)
     BadInstrument,   // id outside the addressable range
-    StaleSequence    // seq not greater than the stored one (D3)
+    StaleSequence,   // seq not greater than the stored one (D3)
+    BadDepthCount,   // a side claims more levels than its fixed array holds
+    StaleTick        // the normaliser marked exchange time implausible
 };
 
-/// One instrument's book. Trivially copyable so it can ride a seqlock out to
-/// the analytics thread without a lock.
+/// One instrument's book. Fixed-size and trivially copyable for snapshot
+/// publication to analytics; it never owns dynamic storage.
 struct BookState {
     InstrumentId  id;
     std::uint32_t seq;
@@ -68,22 +70,29 @@ static_assert(std::is_trivially_copyable_v<BookState>);
 
 /// The single question a strategy should ask before acting on a book.
 ///
-/// Both sides must have liquidity AND the book must not be crossed. An
-/// empty-sided book is not tradable even though it is not crossed — there is
-/// simply nothing there to trade against.
+/// Both sides must have liquidity, the book must not be crossed, and its
+/// exchange timestamp must not be marked stale. An empty-sided book is not
+/// tradable even though it is not crossed — there is simply nothing there to
+/// trade against.
+[[nodiscard]] constexpr bool has_valid_depth_counts(const BookState& b) noexcept {
+    return b.bid_levels <= kDepthLevels && b.ask_levels <= kDepthLevels;
+}
+
 [[nodiscard]] constexpr bool is_tradable(const BookState& b) noexcept {
-    return b.bid_levels > 0 && b.ask_levels > 0 && !b.crossed;
+    return has_valid_depth_counts(b) && b.bid_levels > 0
+        && b.ask_levels > 0 && !b.crossed
+        && !has_flag(b.flags, TickFlag::Stale);
 }
 
 /// UNIT: paise. Empty unless both sides have a level. Mirrors the DepthUpdate
 /// accessors in feed/tick.hpp so a consumer reads a book the same way whether
 /// it holds an update or stored state.
 [[nodiscard]] constexpr const DepthLevel* best_bid(const BookState& b) noexcept {
-    return b.bid_levels > 0 ? &b.bid[0] : nullptr;
+    return has_valid_depth_counts(b) && b.bid_levels > 0 ? &b.bid[0] : nullptr;
 }
 
 [[nodiscard]] constexpr const DepthLevel* best_ask(const BookState& b) noexcept {
-    return b.ask_levels > 0 ? &b.ask[0] : nullptr;
+    return has_valid_depth_counts(b) && b.ask_levels > 0 ? &b.ask[0] : nullptr;
 }
 
 [[nodiscard]] constexpr std::optional<Price> mid(const BookState& b) noexcept {
@@ -122,7 +131,9 @@ public:
         std::uint64_t crossed = 0;          // stored, but marked
         std::uint64_t stale_sequence = 0;   // rejected
         std::uint64_t bad_instrument = 0;   // rejected
+        std::uint64_t malformed_depth = 0;  // a level count exceeds fixed capacity
         std::uint64_t instruments = 0;      // distinct ids seen
+        std::uint64_t stale_tick = 0;       // rejected: TickFlag::Stale
     };
 
     L2Book() noexcept { clear(); }
@@ -143,6 +154,30 @@ public:
         }
 
         BookState& b = books_[i];
+
+        // TickFlag::Stale is a normaliser diagnostic, but storing its marked
+        // price as the current book would still expose stale market state to
+        // downstream consumers. Refuse it before changing any book field.
+        if (has_flag(d.flags, TickFlag::Stale)) {
+            ++stats_.stale_tick;
+            if (seen_[i] && b.consecutive_rejects < 0xFFFFu) {
+                ++b.consecutive_rejects;
+            }
+            return std::unexpected(BookError::StaleTick);
+        }
+
+        // The wire-facing count is an untrusted uint8_t, not proof that the
+        // corresponding fixed array contains that many elements. Refuse the
+        // entire snapshot before it can become a BookState consumed by
+        // analytics. As with a stale sequence, record the rejection against
+        // an already-observed instrument without mutating its market state.
+        if (d.bid_levels > kDepthLevels || d.ask_levels > kDepthLevels) {
+            ++stats_.malformed_depth;
+            if (seen_[i] && b.consecutive_rejects < 0xFFFFu) {
+                ++b.consecutive_rejects;
+            }
+            return std::unexpected(BookError::BadDepthCount);
+        }
 
         // D3: an out-of-order update carries no information — it is a strictly
         // worse view of a moment already superseded, and applying it would move

@@ -1,0 +1,398 @@
+{
+ "group": "G17_desktop_shell_terminal",
+ "reader": "claude-subagent:G17_desktop_shell_terminal",
+ "date": "2026-09-14",
+ "baseline_head": "a34af5c5c9fa8c7498e8cc4df00907548a41e1a5",
+ "files": [
+  {
+   "path": "desktop/main_window.hpp",
+   "sha256_inventory": "067f43930d3e771199967c2a1ae8650a3482d56e1ded30bf3ce3d90fdb19868c",
+   "sha256_before": "067f43930d3e771199967c2a1ae8650a3482d56e1ded30bf3ce3d90fdb19868c",
+   "sha256_after": "067f43930d3e771199967c2a1ae8650a3482d56e1ded30bf3ce3d90fdb19868c",
+   "total_lines": 1673,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     599
+    ],
+    [
+     600,
+     899
+    ],
+    [
+     900,
+     1199
+    ],
+    [
+     1200,
+     1499
+    ],
+    [
+     1500,
+     1673
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "no test covers seek/restart/reload in group",
+   "purpose_ownership": "desktop shell: nav/page stack, replay pump, scrubber, status bar, chart source wiring",
+   "path_class": "ui",
+   "threads_shared_state": "GUI thread only; QTimer 16 ms pump; all compute pages run synchronously in click slots",
+   "integration": "constructed by desktop/main.cpp",
+   "findings": [
+    "C17-001",
+    "C17-002",
+    "C17-003",
+    "C17-004",
+    "C17-005",
+    "C17-006"
+   ]
+  },
+  {
+   "path": "desktop/terminal.hpp",
+   "sha256_inventory": "31d2fa2b30a802c6e3ea8426025126a637c3a28e9a28376604f432ca3718be02",
+   "sha256_before": "31d2fa2b30a802c6e3ea8426025126a637c3a28e9a28376604f432ca3718be02",
+   "sha256_after": "31d2fa2b30a802c6e3ea8426025126a637c3a28e9a28376604f432ca3718be02",
+   "total_lines": 541,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     541
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "test_terminal.cpp [1]-[8]; strip LIVE/REPLAY and PendingIntents untested",
+   "purpose_ownership": "Terminal page: composes watchlist, option chain, order ticket, pending-intent viewer, halt, feed; owns PriceClient",
+   "path_class": "ui",
+   "threads_shared_state": "GUI thread; PriceClient signals",
+   "integration": "MainWindow::build_pages page 2",
+   "findings": [
+    "C17-007",
+    "C17-008",
+    "C17-009"
+   ]
+  },
+  {
+   "path": "desktop/option_chain.hpp",
+   "sha256_inventory": "7cfa153aedb0f20674794114b50a2fdb1b087af5e112fb952128a22b3bc0de65",
+   "sha256_before": "7cfa153aedb0f20674794114b50a2fdb1b087af5e112fb952128a22b3bc0de65",
+   "sha256_after": "7cfa153aedb0f20674794114b50a2fdb1b087af5e112fb952128a22b3bc0de65",
+   "total_lines": 519,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     519
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "test_terminal.cpp [5],[7]; cost/scroll/disconnect untested",
+   "purpose_ownership": "Black-76 flat-vol option chain grid; emits contractPicked with spec",
+   "path_class": "ui",
+   "threads_shared_state": "GUI thread",
+   "integration": "TerminalPage",
+   "findings": [
+    "C17-007",
+    "C17-008",
+    "C17-012"
+   ]
+  },
+  {
+   "path": "desktop/order_ticket.hpp",
+   "sha256_inventory": "068261b44727227eda4323d1f96c86d8edd189c3596184b3cd63a636811a0e7e",
+   "sha256_before": "068261b44727227eda4323d1f96c86d8edd189c3596184b3cd63a636811a0e7e",
+   "sha256_after": "068261b44727227eda4323d1f96c86d8edd189c3596184b3cd63a636811a0e7e",
+   "total_lines": 500,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     500
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "test_order_ticket.cpp (intent_line, role, escape); submit()/append_intent untested",
+   "purpose_ownership": "order REQUEST ticket; appends JSONL intent to ALTAIR_INTENT_FILE after typed confirmation",
+   "path_class": "ui",
+   "threads_shared_state": "GUI thread; file shared with oms/ drainer (other process/thread)",
+   "integration": "TerminalPage",
+   "findings": [
+    "C17-010",
+    "C17-011",
+    "C17-013",
+    "C17-019"
+   ]
+  },
+  {
+   "path": "desktop/CMakeLists.txt",
+   "sha256_inventory": "97c71b6aceac3e576866579e4eaf7f75efcb89fc36d6c9bd6b44b3a323e7f5fd",
+   "sha256_before": "97c71b6aceac3e576866579e4eaf7f75efcb89fc36d6c9bd6b44b3a323e7f5fd",
+   "sha256_after": "97c71b6aceac3e576866579e4eaf7f75efcb89fc36d6c9bd6b44b3a323e7f5fd",
+   "total_lines": 660,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     599
+    ],
+    [
+     600,
+     660
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "configure-time gate-3 audit",
+   "purpose_ownership": "altair_desktop target, link allow-list audit, dev-credential define, desktop tests",
+   "path_class": "build",
+   "threads_shared_state": "n/a",
+   "integration": "top-level CMake",
+   "findings": [
+    "C17-015",
+    "C17-018"
+   ]
+  },
+  {
+   "path": "desktop/chain_panel.hpp",
+   "sha256_inventory": "61afaf9647d4076588e0d3cd9b98aa333b93ab6926e3a641d979ae8354aeac12",
+   "sha256_before": "61afaf9647d4076588e0d3cd9b98aa333b93ab6926e3a641d979ae8354aeac12",
+   "sha256_after": "61afaf9647d4076588e0d3cd9b98aa333b93ab6926e3a641d979ae8354aeac12",
+   "total_lines": 335,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     335
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "indirect via test_terminal (load_chain)",
+   "purpose_ownership": "load_chain over Kite master via kite_dump sink; Ratio Spread ladder page",
+   "path_class": "ui",
+   "threads_shared_state": "GUI thread",
+   "integration": "MainWindow page 8; OptionChainPanel::load_underlying",
+   "findings": [
+    "C17-017"
+   ]
+  },
+  {
+   "path": "desktop/kill_switch.hpp",
+   "sha256_inventory": "8f4f4a5e0b70dac9f999846066d65da582ae226458da58b3e7913be60112064a",
+   "sha256_before": "8f4f4a5e0b70dac9f999846066d65da582ae226458da58b3e7913be60112064a",
+   "sha256_after": "8f4f4a5e0b70dac9f999846066d65da582ae226458da58b3e7913be60112064a",
+   "total_lines": 300,
+   "ranges_read": [
+    [
+     1,
+     300
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "no test in group reads it",
+   "purpose_ownership": "halt REQUEST/CLEAR panel writing ALTAIR_KILL_REQUEST_FILE with typed phrases",
+   "path_class": "ui",
+   "threads_shared_state": "GUI thread; file shared with future oms/ poller",
+   "integration": "TerminalPage Halt tab",
+   "findings": [
+    "C17-014"
+   ]
+  },
+  {
+   "path": "desktop/live_forecast.hpp",
+   "sha256_inventory": "f80a81d2e60dd04be9a4740ae27f96f544ba1714db8b5b345dc9d38d7d5878f7",
+   "sha256_before": "f80a81d2e60dd04be9a4740ae27f96f544ba1714db8b5b345dc9d38d7d5878f7",
+   "sha256_after": "f80a81d2e60dd04be9a4740ae27f96f544ba1714db8b5b345dc9d38d7d5878f7",
+   "total_lines": 764,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     599
+    ],
+    [
+     600,
+     764
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "no test in group",
+   "purpose_ownership": "forecast_report: history load, optional Kite fetch subprocess merge, partial-bar drop, walk-forward, conformal band, trading-rule section",
+   "path_class": "ui",
+   "threads_shared_state": "GUI thread; synchronous QProcess (up to 65 s); writes data/live_forecast_scratch",
+   "integration": "MainWindow Forecast page (18)",
+   "findings": [
+    "C17-001",
+    "C17-020"
+   ]
+  },
+  {
+   "path": "desktop/main.cpp",
+   "sha256_inventory": "3c5a505362c81c9065a6e6f09e75bdcc56b947aedbaf5d44c0d8d05f758d744e",
+   "sha256_before": "3c5a505362c81c9065a6e6f09e75bdcc56b947aedbaf5d44c0d8d05f758d744e",
+   "sha256_after": "3c5a505362c81c9065a6e6f09e75bdcc56b947aedbaf5d44c0d8d05f758d744e",
+   "total_lines": 402,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     402
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "no test",
+   "purpose_ownership": "entry point: tape load (real or synthetic), --sessions/--page validation, login or --as bypass, window flags",
+   "path_class": "ui",
+   "threads_shared_state": "GUI thread; tape vectors are main() locals outliving window",
+   "integration": "altair_desktop executable",
+   "findings": [
+    "C17-015",
+    "C17-016"
+   ]
+  },
+  {
+   "path": "desktop/panels.hpp",
+   "sha256_inventory": "589689d84f1284d9b956aea34cf7a17c69d293bd8a5f9f1c738657ce33d5fda1",
+   "sha256_before": "589689d84f1284d9b956aea34cf7a17c69d293bd8a5f9f1c738657ce33d5fda1",
+   "sha256_after": "589689d84f1284d9b956aea34cf7a17c69d293bd8a5f9f1c738657ce33d5fda1",
+   "total_lines": 1310,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     599
+    ],
+    [
+     600,
+     899
+    ],
+    [
+     900,
+     1199
+    ],
+    [
+     1200,
+     1310
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "WatchlistPanel exercised by test_terminal [2]/[3]; LoginDialog/ModelPanel untested in group",
+   "purpose_ownership": "LoginDialog, WiringPanel, ModelPanel (Markov fit / walk-forward), DataflowWidget, quote snapshot loader, WatchlistPanel (master + quotes subprocess)",
+   "path_class": "ui",
+   "threads_shared_state": "GUI thread; synchronous QProcess (35 s); processEvents in run_walk_forward",
+   "integration": "main.cpp (LoginDialog); MainWindow (ModelPanel, DataflowWidget); TerminalPage (WatchlistPanel)",
+   "findings": [
+    "C17-001",
+    "C17-021",
+    "C17-022"
+   ]
+  },
+  {
+   "path": "desktop/tests/test_order_ticket.cpp",
+   "sha256_inventory": "f2bb11ca9201b8e7fb037b1d49b611d63a1b348261b500481857c20c86241e03",
+   "sha256_before": "f2bb11ca9201b8e7fb037b1d49b611d63a1b348261b500481857c20c86241e03",
+   "sha256_after": "f2bb11ca9201b8e7fb037b1d49b611d63a1b348261b500481857c20c86241e03",
+   "total_lines": 183,
+   "ranges_read": [
+    [
+     1,
+     183
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "test body; ctest desktop_order_ticket",
+   "purpose_ownership": "byte-for-byte intent_line vs oms vectors, role gate, escaping",
+   "path_class": "test",
+   "threads_shared_state": "none",
+   "integration": "ctest",
+   "findings": []
+  },
+  {
+   "path": "desktop/tests/test_terminal.cpp",
+   "sha256_inventory": "040736857c92bb543c7489a026b5b0fd2312c04a1740c3169f72a70d0b11a3da",
+   "sha256_before": "040736857c92bb543c7489a026b5b0fd2312c04a1740c3169f72a70d0b11a3da",
+   "sha256_after": "040736857c92bb543c7489a026b5b0fd2312c04a1740c3169f72a70d0b11a3da",
+   "total_lines": 324,
+   "ranges_read": [
+    [
+     1,
+     300
+    ],
+    [
+     300,
+     324
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "test body; ctest desktop_terminal; [4] tautological; uses production data file paths",
+   "purpose_ownership": "terminal wiring: selection->ticket, chain->ticket spec, REPLAY labels, tick valuation, prev close",
+   "path_class": "test",
+   "threads_shared_state": "none",
+   "integration": "ctest",
+   "findings": []
+  },
+  {
+   "path": "desktop/watchlist.hpp",
+   "sha256_inventory": "a4deb0747e01daab266da403abff68b992fbd855dfb9f741434949c2de1a8a4b",
+   "sha256_before": "a4deb0747e01daab266da403abff68b992fbd855dfb9f741434949c2de1a8a4b",
+   "sha256_after": "a4deb0747e01daab266da403abff68b992fbd855dfb9f741434949c2de1a8a4b",
+   "total_lines": 215,
+   "ranges_read": [
+    [
+     1,
+     215
+    ]
+   ],
+   "reading_status": "fully_read",
+   "review_status": "reviewed",
+   "test_status": "indirect via WatchlistPanel in test_terminal; resolve/block never called",
+   "purpose_ownership": "Watchlist value model: add/resolve/block by token, kMaxWatchRows=500 refuses",
+   "path_class": "ui",
+   "threads_shared_state": "none",
+   "integration": "included by panels.hpp; Watchlist used by WatchlistPanel",
+   "findings": [
+    "C17-021"
+   ]
+  }
+ ],
+ "unread_or_partial": [],
+ "notes": "FINAL. 13/13 files fully read (7,726 lines), every line via Read in <=300-line chunks; sha256 before/after match inventory for all. Out-of-group context consulted for revalidation only: desktop/market_clock.hpp (grep), desktop/kite_link.hpp 290-324, engine CMakeLists link lines, oms/order_intent.hpp (grep), models/calibration.hpp (grep). Findings C17-001..C17-022: 1 P1 (C17-010), 10 P2, 11 P3. Codex UI-001..UI-004 all CONFIRMED. Nothing built or run."
+}

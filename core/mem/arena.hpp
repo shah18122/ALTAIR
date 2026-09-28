@@ -68,6 +68,27 @@ public:
     constexpr Arena(std::byte* base, std::size_t bytes) noexcept
         : base_(base), cap_(bytes) {}
 
+    /// CX02-D2 (C01-004). MOVE-ONLY, for the same reason as Pool: two copies
+    /// bump the same span independently, so both hand out the same bytes and
+    /// each believes the other's allocations are free space. P0-05b's contract
+    /// never forbade a copy. A moved-from arena holds nothing.
+    Arena(const Arena&) = delete;
+    Arena& operator=(const Arena&) = delete;
+    constexpr Arena(Arena&& o) noexcept
+        : base_(o.base_), cap_(o.cap_), used_(o.used_), high_(o.high_) {
+        o.disown();
+    }
+    constexpr Arena& operator=(Arena&& o) noexcept {
+        if (this != &o) {
+            base_ = o.base_;
+            cap_ = o.cap_;
+            used_ = o.used_;
+            high_ = o.high_;
+            o.disown();
+        }
+        return *this;
+    }
+
     /// Bump-allocate `bytes` aligned to `align`.
     /// UNIT: bytes for both. PRECONDITION: align is a power of two.
     /// Returns Exhausted when the aligned request does not fit, BadAlignment
@@ -147,6 +168,13 @@ public:
     [[nodiscard]] constexpr std::size_t high_water() const noexcept { return high_; }
 
 private:
+    constexpr void disown() noexcept {
+        base_ = nullptr;
+        cap_ = 0;
+        used_ = 0;
+        high_ = 0;
+    }
+
     std::byte*  base_ = nullptr;
     std::size_t cap_ = 0;
     std::size_t used_ = 0;

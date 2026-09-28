@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <deque>
 #include <thread>
 #include <vector>
 
@@ -55,11 +56,40 @@ altair::PricePayload tick(std::uint32_t token, std::int64_t paise,
     return p;
 }
 
+void partial_head_survives_queue_coalescing()
+{
+    using Frame = std::vector<std::uint8_t>;
+    std::deque<Frame> out{
+        Frame{0, 1, 2, 3, 4, 5, 6, 7},
+        Frame{8, 9, 10, 11, 12, 13, 14, 15},
+        Frame{16, 17, 18, 19, 20, 21, 22, 23}};
+    std::size_t head = 3; // the first three bytes already reached TCP
+    std::size_t bytes = 24;
+    const std::size_t dropped =
+        altair::price_bus_detail::drop_oldest_unsent_until_bounded(
+            out, head, bytes, 16);
+    check(dropped == 1 && out.size() == 2 && bytes == 16,
+          "cap pressure removes one complete unsent frame");
+    check(head == 3 && out.front().front() == 0
+              && out.front()[head] == 3,
+          "a partially written head keeps its original offset and bytes");
+
+    out.push_back(Frame{24, 25, 26, 27, 28, 29, 30, 31});
+    bytes += out.back().size();
+    const std::size_t dropped_again =
+        altair::price_bus_detail::drop_oldest_unsent_until_bounded(
+            out, head, bytes, 16);
+    check(dropped_again == 1 && out.size() == 2 && bytes == 16
+              && out.front().front() == 0 && out.back().front() == 24,
+          "repeated coalescing retains the in-flight head and newest frame");
+}
+
 }  // namespace
 
 int main()
 {
     std::printf("P37-02 price bus\n\n");
+    partial_head_survives_queue_coalescing();
     namespace ip = boost::asio::ip;
 
     boost::asio::io_context io;
@@ -90,7 +120,26 @@ int main()
     client.connect(ip::tcp::endpoint(ip::make_address("127.0.0.1"),
                                      bus.port()), ec);
     check(!ec, "a subscriber connects");
-    bus.poll();
+    // WAIT FOR THE ACCEPT, DO NOT ASSUME IT.
+    //
+    // The accept completes on the bus's own poll(), not on connect(). A single
+    // poll() here assumed the connection had already been accepted; under a
+    // loaded machine it had not, so clients() read 0 and the twenty frames
+    // below were published into a bus with no confirmed subscriber. That is the
+    // root cause of the run that hung: the client then waited for frames that
+    // were never sent to it. Bounded, because an unbounded wait is the hang
+    // wearing a different hat.
+    {
+        const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::seconds(5);
+        while (bus.clients() != 1
+               && std::chrono::steady_clock::now() < deadline) {
+            bus.poll();
+            if (bus.clients() != 1) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+    }
     check(bus.clients() == 1, "and the bus sees exactly one client");
 
     // ---- frames arrive intact, in order ----------------------------------
@@ -107,7 +156,37 @@ int main()
     std::vector<std::uint8_t> buf(
         static_cast<std::size_t>(kN)
         * (altair::kFrameHeaderBytes + altair::kPricePayloadBytes));
-    boost::asio::read(client, boost::asio::buffer(buf), ec);
+    // BOUNDED, because a plain `boost::asio::read` here hung the whole suite
+    // under parallel CTest. It waits for exactly buf.size() bytes and, if one
+    // frame never becomes ready, waits forever -- reporting nothing, which is
+    // the least useful possible outcome for a check about frame delivery. The
+    // drain loop below already learned this (see the note near the tail
+    // buffer); this read had not. A deadline turns a hang into a diagnostic.
+    client.non_blocking(true, ec);
+    std::size_t filled = 0;
+    {
+        const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::seconds(10);
+        while (filled < buf.size() && !ec
+               && std::chrono::steady_clock::now() < deadline) {
+            boost::system::error_code rec;
+            const std::size_t n = client.read_some(
+                boost::asio::buffer(buf.data() + filled, buf.size() - filled),
+                rec);
+            filled += n;
+            bus.poll();
+            if (rec && rec != boost::asio::error::would_block
+                && rec != boost::asio::error::try_again) {
+                break;                                   // closed or a real error
+            }
+            if (n == 0) {
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+            }
+        }
+        if (filled < buf.size()) {
+            ec = boost::asio::error::timed_out;
+        }
+    }
     check(!ec, "every published frame arrives");
 
     bool ordered = true, correct = true;

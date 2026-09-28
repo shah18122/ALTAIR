@@ -53,4 +53,23 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_universe_test
         PRIVATE altair_instruments altair_flags)
     add_test(NAME universe COMMAND altair_universe_test)
+
+    add_executable(altair_fyers_identity_test tests/test_fyers_identity.cpp)
+    target_link_libraries(altair_fyers_identity_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME fyers_identity COMMAND altair_fyers_identity_test)
+
+    # P3-01 parser. Reads the FYERS public symbol master; fixtures are real
+    # rows fetched from public.fyers.in, so the column map is checked against
+    # live data.
+    add_executable(altair_fyers_master_test tests/test_fyers_master.cpp)
+    target_link_libraries(altair_fyers_master_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME fyers_master COMMAND altair_fyers_master_test)
+
+    # P7-01. The eligible cross-venue universe: NSE<->BSE by ISIN.
+    add_executable(altair_cross_venue_test tests/test_cross_venue.cpp)
+    target_link_libraries(altair_cross_venue_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME cross_venue COMMAND altair_cross_venue_test)
 endif()

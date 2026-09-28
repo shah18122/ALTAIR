@@ -196,7 +196,7 @@ void test_config_content_hash_order_independent()
 void test_config_snapshot_traits()
 {
     check(std::is_trivially_copyable_v<ConfigSnapshot>,
-          "ConfigSnapshot is trivially copyable — the seqlock requires it");
+          "ConfigSnapshot remains a trivially copyable fixed-layout value");
     check(std::is_trivially_copyable_v<ConfigEntry>, "ConfigEntry is trivially copyable");
     check(kMaxConfigEntries == 128, "kMaxConfigEntries == 128");
     check(kMaxConfigKeyLen == 47, "kMaxConfigKeyLen == 47");
@@ -212,33 +212,71 @@ void test_config_store_publish_and_refresh()
     check(store.publishes() == 0, "publish count 0");
 
     ConfigSnapshot local;
-    check(!store.refresh(local), "refresh against an empty store is false");
+    // CX02-C1c (R-AB-019). This used to answer Unchanged, which told a reader
+    // holding an EMPTY snapshot that it was up to date -- for ever.
+    check(store.refresh(local) == ConfigRefresh::NoConfig,
+          "empty_store_is_not_reported_as_current: refresh against a store"
+          " that has never published says NoConfig");
     check(local.size() == 0, "and copies nothing");
+    ConfigSnapshot borrowed;
+    borrowed.set_version(1'000'000);          // built elsewhere, never published
+    check(store.refresh(borrowed) == ConfigRefresh::NoConfig,
+          "and a copy carrying a version this store never published gets the"
+          " same answer, not a silent Unchanged");
 
     ConfigSnapshot s;
     (void)s.set_int("a", 1);
     s.set_version(1);
-    store.publish(s);
+    check(store.publish(s).has_value(), "version 1 is published");
     check(store.version() == 1, "version published");
     check(store.publishes() == 1, "publish counted");
 
-    check(store.refresh(local), "the version moved, so refresh copies");
+    check(store.refresh(local) == ConfigRefresh::Updated,
+          "the version moved, so refresh copies");
     check(local.version() == 1, "local version updated");
     check(local.get_int(local.find("a").value()).value() == 1, "value visible");
 
-    check(!store.refresh(local), "a second refresh is a no-op");
+    check(store.refresh(local) == ConfigRefresh::Unchanged,
+          "a second refresh is a no-op");
     check(local.version() == 1, "and leaves the version alone");
 
     ConfigSnapshot s2;
     (void)s2.set_int("a", 2);
     (void)s2.set_int("b", 3);
     s2.set_version(2);
-    store.publish(s2);
-    check(store.refresh(local), "a second publish is picked up");
+    check(store.publish(s2).has_value(), "version 2 is published");
+    check(store.refresh(local) == ConfigRefresh::Updated,
+          "a second publish is picked up");
     check(local.version() == 2, "version 2");
     check(local.size() == 2, "two entries now");
     check(local.get_int(local.find("a").value()).value() == 2, "the old value is gone");
     check(local.content_hash() == s2.content_hash(), "content_hash travels intact");
+
+    // CX02-C1 (C02-004). A version that does not rise is REFUSED -- it used
+    // to be stored where no reader holding that version would ever see it.
+    ConfigSnapshot same;
+    (void)same.set_int("a", 99);
+    same.set_version(2);
+    const auto r_same = store.publish(same);
+    check(!r_same && r_same.error() == ConfigStoreError::StaleVersion,
+          "version 2 again, with different content, is refused");
+    ConfigSnapshot lower;
+    (void)lower.set_int("a", 98);
+    lower.set_version(1);
+    check(!store.publish(lower), "and so is a LOWER version");
+    check(store.refresh(local) == ConfigRefresh::Unchanged
+              && local.get_int(local.find("a").value()).value() == 2,
+          "so the reader keeps what was really published, and knows it is"
+          " current");
+
+    ConfigStore fresh;
+    ConfigSnapshot unversioned;              // a loader forgot set_version
+    (void)unversioned.set_int("x", 1);
+    check(!fresh.publish(unversioned),
+          "a snapshot left at version 0 is refused on a fresh store -- a"
+          " reader's empty copy is version 0 too and would never refresh");
+    check(store.refused() == 2 && fresh.refused() == 1,
+          "every refusal is counted");
 }
 
 void test_config_store_concurrent_readers()
@@ -267,13 +305,20 @@ void test_config_store_concurrent_readers()
         return s;
     };
 
+    std::atomic<std::uint64_t> publish_refused{0};
+    std::atomic<std::uint64_t> contended{0};
+
     std::thread writer([&] {
         std::uint64_t n = 1;
-        store.publish(build(n));
+        if (!store.publish(build(n))) {
+            publish_refused.fetch_add(1, std::memory_order_relaxed);
+        }
         writer_ready.store(true, std::memory_order_release);
         ++n;
         while (readers_done.load(std::memory_order_acquire) < 2) {
-            store.publish(build(n));
+            if (!store.publish(build(n))) {
+                publish_refused.fetch_add(1, std::memory_order_relaxed);
+            }
             ++n;
         }
         published.store(n - 1, std::memory_order_relaxed);
@@ -292,7 +337,15 @@ void test_config_store_concurrent_readers()
                 gave_up.store(true, std::memory_order_relaxed);
                 break;
             }
-            if (!store.refresh(local)) {
+            const ConfigRefresh rr = store.refresh(local);
+            if (rr == ConfigRefresh::Contended) {
+                // CX02-C1: a refresh that could not copy safely right now.
+                // Nothing was torn and `local` is untouched; try again.
+                contended.fetch_add(1, std::memory_order_relaxed);
+                std::this_thread::yield();
+                continue;
+            }
+            if (rr != ConfigRefresh::Updated) {
                 // YIELD, do not hot-spin. An unchanged refresh() is 0.63 ns
                 // while a publish copies a 9 KB snapshot, so a spinning reader
                 // burns the whole attempt cap before a loaded writer can
@@ -342,6 +395,10 @@ void test_config_store_concurrent_readers()
     check(!gave_up.load(), "neither reader hit the attempt cap");
     check(refreshes.load() >= 2 * kTargetChanges,
           "at least 2'000 distinct versions observed — the evidence floor");
+    check(publish_refused.load() == 0,
+          "every publish rose in version, so none was refused");
+    std::printf("        %llu contended refreshes (refused, not torn)\n",
+                static_cast<unsigned long long>(contended.load()));
 
     std::printf("        %llu versions published, %llu refreshes observed\n",
                 static_cast<unsigned long long>(published.load()),
@@ -363,7 +420,10 @@ void report_throughput()
         (void)s.set_int(key, static_cast<std::int64_t>(i));
     }
     s.set_version(1);
-    store.publish(s);
+    if (!store.publish(s)) {
+        std::printf("  publish refused; throughput not measured\n");
+        return;
+    }
 
     ConfigSnapshot local;
     (void)store.refresh(local);
@@ -372,7 +432,7 @@ void report_throughput()
     // The steady-state hot path: version unchanged, so no copy at all.
     const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < kOps; ++i) {
-        sink += store.refresh(local) ? 1u : 0u;
+        sink += store.refresh(local) == ConfigRefresh::Updated ? 1u : 0u;
     }
     const auto t1 = std::chrono::steady_clock::now();
     const double ns0 = std::chrono::duration<double, std::nano>(t1 - t0).count()

@@ -30,6 +30,8 @@
 #include "data/fits.hpp"
 #include "data/master_lookup.hpp"
 #include "model_status.hpp"
+#include "atlas_data.hpp"
+#include "navigation_registry.hpp"
 #include "watchlist.hpp"
 
 #include <QCoreApplication>
@@ -230,7 +232,7 @@ public:
         auto* v = new QVBoxLayout(this);
 
         auto* head = new QLabel(
-            QStringLiteral("<h3>Broker wiring — what is actually built</h3>"),
+            QStringLiteral("<h3>Broker wiring — FYERS primary / Kite secondary</h3>"),
             this);
         v->addWidget(head);
 
@@ -244,9 +246,12 @@ public:
         // the rows use, and only the parts that cannot change are literal.
         auto* note = new QLabel(
             QStringLiteral(
-                "This is not a toggle between two equal options. Kite has a "
-                "parser, a decoder, order <i>translation</i>, an HTTPS "
-                "transport and %1. <b>XTS is WITHDRAWN</b> — Smit removed it from the plan on 2026-09-04 and Kite is the only venue. <b>Kite still cannot carry an order today</b>: "
+                "FYERS is the configured primary route and Kite is the explicit "
+                "secondary. FYERS has a paper-safe auth vocabulary, but its live "
+                "transport is not yet wired into this desktop. Kite has a "
+                "parser, decoder, order <i>translation</i>, HTTPS transport and %1. "
+                "<b>XTS is withdrawn</b>; it is not a fallback venue. <b>No broker "
+                "can carry an order from this read-only desktop today</b>: "
                 "<code>oms/kite_adapter.hpp</code> builds the POST body and "
                 "nothing in <code>oms/</code> sends it, which is P4-05's "
                 "design rather than an omission.")
@@ -275,20 +280,59 @@ public:
 
         auto* verdict = new QLabel(this);
         verdict->setWordWrap(true);
-        // ONE VENUE NOW. XTS was withdrawn 2026-09-04, so asking whether it
-        // can trade is asking about something that is not coming -- and a
-        // second "NO" on this line reads as a second gap to close.
+        const bool fyers = can_trade(QStringLiteral("FYERS"));
         const bool kite = can_trade(QStringLiteral("Kite"));
         verdict->setText(
-            QStringLiteral("<b>Can place an order today — Kite: %1</b>"
-                           "  <span style='color:#7F8C8D'>(Kite is the only "
-                           "venue; XTS withdrawn)</span>")
-                .arg(kite ? QStringLiteral("yes") : QStringLiteral("NO")));
+            QStringLiteral("<b>Broker priority — FYERS: PRIMARY (%1) · Kite: SECONDARY (%2)</b>"
+                           "  <span style='color:#7F8C8D'>(XTS withdrawn; read-only UI)</span>")
+                .arg(fyers ? QStringLiteral("ready") : QStringLiteral("not ready"),
+                     kite ? QStringLiteral("ready") : QStringLiteral("not ready")));
         verdict->setStyleSheet(
             QStringLiteral("color:%1;padding:6px;")
-                .arg(kite ? QStringLiteral("#1B8A4B")
-                          : QStringLiteral("#C0392B")));
+                .arg(fyers && kite ? QStringLiteral("#1B8A4B")
+                                   : QStringLiteral("#B9770B")));
         v->addWidget(verdict);
+    }
+};
+
+/// A dedicated page makes the configured primary broker discoverable without
+/// forcing an operator to infer it from the wiring table or a status pill.
+class FyersPanel final : public QWidget {
+public:
+    explicit FyersPanel(QWidget* parent = nullptr) : QWidget(parent) {
+        auto* v = new QVBoxLayout(this);
+        v->addWidget(new QLabel(QStringLiteral("<h2>FYERS — Primary broker</h2>"), this));
+
+        const FyersState state = probe_fyers();
+        auto* status = new QLabel(
+            QStringLiteral("<b>%1</b><br>%2")
+                .arg(fyers_label(state.link), state.detail), this);
+        status->setWordWrap(true);
+        status->setStyleSheet(QStringLiteral("padding:8px;color:%1;")
+                                   .arg(fyers_colour(state.link).name()));
+        v->addWidget(status);
+
+        auto* table = fact_table({QStringLiteral("Property"), QStringLiteral("Value")}, this);
+        const QList<QPair<QString, QString>> rows{
+            {QStringLiteral("Configured role"), QStringLiteral("PRIMARY")},
+            {QStringLiteral("Secondary broker"), QStringLiteral("Zerodha Kite")},
+            {QStringLiteral("1-minute history"), QStringLiteral("FYERS resolution 1; authenticated export required")},
+            {QStringLiteral("Live transport"), QStringLiteral("Not enabled in this desktop build")},
+            {QStringLiteral("Order submission"), QStringLiteral("Read-only / paper-safe; no order is sent")},
+        };
+        table->setRowCount(rows.size());
+        for (int i = 0; i < rows.size(); ++i) {
+            put(table, i, 0, rows[i].first);
+            put(table, i, 1, rows[i].second);
+        }
+        table->resizeColumnsToContents();
+        v->addWidget(table, 1);
+
+        auto* note = new QLabel(
+            QStringLiteral("Use this page to confirm broker priority. Credentials are read from the local environment only; token values are never rendered here. The Kite account remains available under Accounts as the secondary route."), this);
+        note->setWordWrap(true);
+        note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        v->addWidget(note);
     }
 };
 
@@ -309,22 +353,23 @@ public:
             this));
 
         const auto rows = model_catalogue();
-        int trained = 0;
+        int fitted = 0, no_edge = 0, synthetic = 0, blocked = 0;
         for (const ModelRow& r : rows) {
-            if (r.state == ModelState::TrainedOnRealData) ++trained;
+            if (r.state == ModelState::TrainedOnRealData) ++fitted;
+            else if (r.state == ModelState::TrainedNoEdge) ++no_edge;
+            else if (r.state == ModelState::ValidatedOnSyntheticOnly) ++synthetic;
+            else if (r.state == ModelState::BlockedOnData) ++blocked;
         }
 
         auto* summary = new QLabel(
             QStringLiteral(
-                "<b>%1 of %2 models are fitted on real data.</b> The binding "
-                "constraint is <i>data</i>, not compute: <code>dataset/</code> "
-                "holds 8,756 daily NIFTY bars, 3,153 sixty-minute, 1,207 "
-                "one-minute across four partial days, 527 daily India VIX — "
-                "and no tick data at all. LibTorch is also absent, and that is "
-                "the smaller problem. Every fit here is IN-SAMPLE: it shows the "
-                "model can be estimated, not that it works out of sample.")
-                .arg(trained)
-                .arg(rows.size()),
+                "<b>MODEL READINESS — %1 catalogue entries.</b> "
+                "%2 have a retained real-data fit; %3 were evaluated on real "
+                "data and found no edge; %4 are fixture-only; %5 are blocked "
+                "on missing inputs. This page reports fit readiness. Model Atlas "
+                "reports whether the numerical engine is built; neither label "
+                "by itself means live-approved.")
+                .arg(rows.size()).arg(fitted).arg(no_edge).arg(synthetic).arg(blocked),
             this);
         summary->setWordWrap(true);
         summary->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
@@ -373,8 +418,8 @@ public:
         train_->setToolTip(
             may(role, Capability::TrainModel)
                 ? QStringLiteral(
-                      "Runs the training harness. Only the Markov chain has "
-                      "data behind it; every other row would train on nothing.")
+                      "Runs the selected model's available evaluation harness. "
+                      "Rows without a wired evaluator are refused explicitly.")
                 : QStringLiteral("Requires the admin role."));
         controls->addWidget(train_);
 
@@ -395,6 +440,39 @@ public:
     }
 
 public:
+    /// Select a stable Atlas identity in the canonical Models workspace.
+    /// Unknown identities are rejected without changing the current selection.
+    [[nodiscard]] bool focus_atlas_model(const QString& id) {
+        if (detail_ == nullptr) return false;
+        const AtlasRow* row = atlas_row_by_id(id);
+        if (row == nullptr) return false;
+        atlas_id_ = id;
+        const QString route = row->page >= 0
+            ? nav_page_id(nav_destination(row->page))
+            : QStringLiteral("models.overview");
+        detail_->setPlainText(QStringLiteral(
+            "MODEL ID: %1\n\n"
+            "%2\n"
+            "Family: %3\n"
+            "Engine: %4\n"
+            "Build state: %5\n"
+            "Workspace: %6\n\n"
+            "%7\n\n"
+            "BUILT describes the numerical implementation and deterministic tests. "
+            "It does not claim a fitted market artefact or live approval; those "
+            "are separate gates in the readiness table above.")
+            .arg(id, QString::fromUtf8(row->model), QString::fromUtf8(row->family),
+                 QString::fromUtf8(row->file),
+                 QString::fromUtf8(atlas_status_text(row->status)), route,
+                 QString::fromUtf8(row->what)));
+        return true;
+    }
+
+    [[nodiscard]] QString selected_atlas_id() const { return atlas_id_; }
+    [[nodiscard]] QString atlas_detail_text() const {
+        return detail_ != nullptr ? detail_->toPlainText() : QString{};
+    }
+
     /// P11Q-08. What the Train button does.
     ///
     /// PUBLIC so `--train` can invoke it, for the same reason `--page` exists:
@@ -661,6 +739,7 @@ private:
     QPlainTextEdit* detail_ = nullptr;
     QPushButton* train_ = nullptr;
     QLabel* status_ = nullptr;
+    QString atlas_id_;
 };
 
 // ---------------------------------------------------------------------------
@@ -982,6 +1061,12 @@ public:
 
     [[nodiscard]] const Watchlist& list() const noexcept { return list_; }
 
+    /// The spec store refused this instrument. The row stays, visibly
+    /// BLOCKED, and emit_pick will never send its spec to the ticket.
+    void block_instrument(unsigned token, const QString& why) {
+        if (list_.block(token, why)) { refresh(); }
+    }
+
 private:
     QPushButton* quotes_ = nullptr;
     QLabel* quote_age_ = nullptr;
@@ -1005,11 +1090,36 @@ private:
         const auto& rows = list_.rows();
         if (row < 0 || row >= static_cast<int>(rows.size())) { return; }
         const WatchRow& r = rows[static_cast<std::size_t>(row)];
-        const InstrumentProfile p = master_.find(r.token);
-        Q_EMIT instrumentPicked(r.token, p.found ? p.symbol : r.symbol);
+        const std::uint32_t token = r.token;
+        const SpecState state = r.spec;
+        const InstrumentProfile p = master_.find(token);
+        Q_EMIT instrumentPicked(token, p.found ? p.symbol : r.symbol);
+        // CX02-B4b (C17-021). A BLOCKED row never reaches the ticket with a
+        // spec -- rule 9: the spec store said no, and a master lookup does not
+        // overrule it. It sends an EMPTY spec instead (lot 0, tick 0, no
+        // exchange), which the ticket takes as a revocation: a row picked
+        // while resolvable and blocked afterwards must not leave its old spec
+        // in the ticket. And a row the master can price is marked FromMaster
+        // before its spec is sent, so the Spec column says WHERE the numbers
+        // came from instead of "watch only" beside a contract the ticket will
+        // accept.
+        if (state == SpecState::Blocked) {
+            Q_EMIT contractPicked(token, p.found ? p.symbol : r.symbol, 0, 0,
+                                  QString());
+            return;
+        }
         if (p.found && p.lot_size > 0 && p.tick_paise > 0
             && !p.kite_exchange.isEmpty()) {
-            Q_EMIT contractPicked(r.token, p.symbol, p.lot_size, p.tick_paise,
+            // CX02-B4d (R-AB-041). NOT resolve(): that word means the
+            // point-in-time spec store agreed, and `desktop/` cannot even
+            // link it. These numbers are the instrument master's, and the row
+            // now says so rather than claiming more than was checked.
+            if (state != SpecState::Resolved && state != SpecState::FromMaster
+                && list_.from_master(token, p.lot_size, p.tick_paise)) {
+                put(table_, row, 12, spec_state_label(SpecState::FromMaster),
+                    QColor(0xB9, 0x77, 0x0B));
+            }
+            Q_EMIT contractPicked(token, p.symbol, p.lot_size, p.tick_paise,
                                   p.kite_exchange);
         }
     }

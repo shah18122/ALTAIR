@@ -45,6 +45,7 @@
 #include <cmath>
 #include <cstdint>
 #include <expected>
+#include <span>
 #include <vector>
 
 namespace altair {
@@ -135,6 +136,46 @@ min_variance(const CovMatrix& s) {
             }
         }
         for (std::size_t i = 0; i < s.p; ++i) { w.w[i] -= step * g[i]; }
+        detail::project_simplex(w.w);
+    }
+    return w;
+}
+
+/// LONG-ONLY MEAN-VARIANCE. The expected-return vector is an input, never a
+/// hidden estimate. Projected gradient ascent solves
+///     maximise mu'w - lambda * w'Sigma w
+/// on the simplex, so a bad or singular covariance cannot manufacture
+/// offsetting leverage. Callers must still compare this hypothesis with 1/N
+/// out of sample; optimisation is not evidence of an edge.
+[[nodiscard]] inline std::expected<Weights, OptError>
+mean_variance(const CovMatrix& s, std::span<const double> expected_returns,
+              double risk_aversion = 1.0) {
+    if (s.p == 0 || expected_returns.size() != s.p
+        || !(risk_aversion > 0.0) || !std::isfinite(risk_aversion)) {
+        return std::unexpected(OptError::BadShape);
+    }
+    double scale = 0.0;
+    for (std::size_t i = 0; i < s.p; ++i) {
+        if (!std::isfinite(expected_returns[i])) {
+            return std::unexpected(OptError::BadShape);
+        }
+        scale += std::fabs(s.at(i, i));
+    }
+    if (!(scale > 0.0) || !std::isfinite(scale)) {
+        return std::unexpected(OptError::Infeasible);
+    }
+    scale /= static_cast<double>(s.p);
+    Weights w = equal_weight(s.p);
+    const double step = 0.25 / (risk_aversion * scale + 1e-12);
+    for (int it = 0; it < 3000; ++it) {
+        std::vector<double> gradient(s.p, 0.0);
+        for (std::size_t i = 0; i < s.p; ++i) {
+            gradient[i] = expected_returns[i];
+            for (std::size_t j = 0; j < s.p; ++j) {
+                gradient[i] -= 2.0 * risk_aversion * s.at(i, j) * w.w[j];
+            }
+            w.w[i] += step * gradient[i];
+        }
         detail::project_simplex(w.w);
     }
     return w;

@@ -70,6 +70,7 @@ struct RunResult {
     bool invariant_held = true;
     bool clock_was_the_tick = true;
     bool breached = false;
+    bool cash_delta_representable = true;
     Notional cash_delta{};
     Qty position{};
     double seconds = 0.0;
@@ -89,10 +90,23 @@ RunResult run_session(const ReplayTick* ticks, std::size_t n,
     cfg.set_version(1);
 
     static ConfigStore store;
-    store.publish(cfg);
+    // CX02-C1: versions must RISE, and run_session runs more than once in a
+    // process (--selftest, then --replay). Publishing version 1 every time
+    // would be refused as stale from the second call on.
+    cfg.set_version(store.version() + 1);
+    if (!store.publish(cfg)) {
+        std::printf("  config publish REFUSED -- the session did not start\n");
+        return r;
+    }
 
     static ConfigSnapshot local;
-    (void)store.refresh(local);
+    // Contended cannot happen here: this thread is the only reader and the
+    // only writer, and the publish above has already returned.
+    if (store.refresh(local) != ConfigRefresh::Updated) {
+        std::printf("  config refresh did not deliver the published snapshot"
+                    " -- the session did not start\n");
+        return r;
+    }
 
     const auto h_every = local.find("strategy.fill_every_n_ticks");
     const auto h_cost  = local.find("strategy.cost_paise");
@@ -180,7 +194,12 @@ RunResult run_session(const ReplayTick* ticks, std::size_t n,
 
     const auto t1 = std::chrono::steady_clock::now();
     r.seconds = std::chrono::duration<double>(t1 - t0).count();
-    r.cash_delta = ledger.cash_delta();
+    const auto cash_delta = ledger.cash_delta();
+    if (cash_delta) {
+        r.cash_delta = *cash_delta;
+    } else {
+        r.cash_delta_representable = false;
+    }
     r.position = ledger.position();
     r.breached = r.breached || ledger.is_breached();
     return r;
@@ -468,13 +487,18 @@ int do_replay(const char* path)
                 static_cast<unsigned long long>(r.logs_decoded));
     std::printf("  final position   : %lld units\n",
                 static_cast<long long>(r.position.raw()));
-    std::printf("  realised delta   : %lld paise\n",
-                static_cast<long long>(r.cash_delta.raw()));
+    if (r.cash_delta_representable) {
+        std::printf("  realised delta   : %lld paise\n",
+                    static_cast<long long>(r.cash_delta.raw()));
+    } else {
+        std::printf("  realised delta   : unrepresentable in int64 paise\n");
+    }
     std::printf("  clock == tick    : %s\n", r.clock_was_the_tick ? "yes" : "NO");
     std::printf("  invariants       : %s\n",
                 r.invariant_held ? "held on every tick" : "BREACHED — run stopped");
 
-    if (!r.invariant_held || !r.clock_was_the_tick || r.ticks != n) {
+    if (!r.invariant_held || !r.clock_was_the_tick || !r.cash_delta_representable
+        || r.ticks != n) {
         return 1;
     }
     return 0;

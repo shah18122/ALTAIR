@@ -216,7 +216,8 @@ https_post_form(std::string_view host, std::string_view target,
         req.set(http::field::user_agent, "altair/0.1");
         req.set(http::field::content_type,
                 "application/x-www-form-urlencoded");
-        req.set("X-Kite-Version", std::string{api_version});
+        if (!api_version.empty())
+            req.set("X-Kite-Version", std::string{api_version});
         req.body() = std::string{body};
         req.prepare_payload();
 
@@ -249,6 +250,80 @@ https_post_form(std::string_view host, std::string_view target,
         // side. Folding a 400 into an error code would turn "your
         // request_token is expired" into "it did not work". Callers check
         // `status`; `HttpError` means the exchange never happened at all.
+        return out;
+    } catch (const std::exception&) {
+        return std::unexpected(HttpError::Unknown);
+    }
+}
+
+/// POST an `application/json` body over TLS.
+///
+/// FYERS v3's authorization-code exchange is JSON rather than a form. This
+/// remains a narrow sibling of `https_post_form`: no cookies, redirects,
+/// retries, or generic broker API surface are added here.
+[[nodiscard]] inline std::expected<HttpResponse, HttpError>
+https_post_json(std::string_view host, std::string_view target,
+                std::string_view body,
+                std::chrono::seconds timeout = std::chrono::seconds{20})
+{
+    namespace beast = boost::beast;
+    namespace http = beast::http;
+    namespace net = boost::asio;
+    namespace ssl = net::ssl;
+    using tcp = net::ip::tcp;
+
+    try {
+        net::io_context ioc;
+        ssl::context ctx{ssl::context::tls_client};
+        ctx.set_verify_mode(ssl::verify_peer);
+        ctx.set_default_verify_paths();
+        if (detail::load_platform_roots(ctx.native_handle()) == 0) {
+            return std::unexpected(HttpError::TlsFailed);
+        }
+
+        tcp::resolver resolver{ioc};
+        beast::ssl_stream<beast::tcp_stream> stream{ioc, ctx};
+        const std::string host_s{host};
+        if (!SSL_set_tlsext_host_name(stream.native_handle(), host_s.c_str())) {
+            return std::unexpected(HttpError::TlsFailed);
+        }
+        stream.set_verify_callback(ssl::host_name_verification(host_s));
+
+        boost::system::error_code ec;
+        const auto results = resolver.resolve(host_s, "443", ec);
+        if (ec) { return std::unexpected(HttpError::ResolveFailed); }
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        beast::get_lowest_layer(stream).connect(results, ec);
+        if (ec) { return std::unexpected(HttpError::ConnectFailed); }
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        stream.handshake(ssl::stream_base::client, ec);
+        if (ec) { return std::unexpected(HttpError::TlsFailed); }
+
+        http::request<http::string_body> req{http::verb::post,
+                                             std::string{target}, 11};
+        req.set(http::field::host, host_s);
+        req.set(http::field::user_agent, "altair/0.1");
+        req.set(http::field::content_type, "application/json");
+        req.body() = std::string{body};
+        req.prepare_payload();
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        http::write(stream, req, ec);
+        if (ec) { return std::unexpected(HttpError::TransportFailed); }
+
+        beast::flat_buffer buffer;
+        http::response_parser<http::string_body> parser;
+        parser.body_limit(1ull * 1024 * 1024);
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        http::read(stream, buffer, parser, ec);
+        if (ec) { return std::unexpected(HttpError::TransportFailed); }
+        auto res = parser.release();
+        HttpResponse out{};
+        out.status = res.result_int();
+        out.body = res.body();
+
+        beast::get_lowest_layer(stream).expires_after(std::chrono::seconds{5});
+        boost::system::error_code shut;
+        stream.shutdown(shut);
         return out;
     } catch (const std::exception&) {
         return std::unexpected(HttpError::Unknown);
@@ -327,7 +402,8 @@ https_get_auth(std::string_view host, std::string_view target,
         req.set(http::field::host, host_s);
         req.set(http::field::user_agent, "altair/0.1");
         req.set(http::field::authorization, std::string{authorization});
-        req.set("X-Kite-Version", std::string{api_version});
+        if (!api_version.empty())
+            req.set("X-Kite-Version", std::string{api_version});
         req.prepare_payload();
 
         beast::get_lowest_layer(stream).expires_after(timeout);

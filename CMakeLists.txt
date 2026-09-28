@@ -33,7 +33,13 @@ option(ALTAIR_NATIVE_ARCH      "Compile for the host CPU"    ON)
 # CMAKE_PREFIX_PATH, desktop/ skips itself and the engine still builds. The
 # default is where aqtinstall put it on this box; it is off C: because C: had
 # 7.8 GB free against a 230 GB disk.
-set(ALTAIR_QT_ROOT "D:/Qt/6.8.3/msvc2022_64" CACHE PATH "Qt 6 install prefix")
+if(WIN32)
+    set(_altair_qt_default "D:/Qt/6.8.3/msvc2022_64")
+else()
+    set(_altair_qt_default "")
+endif()
+set(ALTAIR_QT_ROOT "${_altair_qt_default}" CACHE PATH "Qt 6 install prefix")
+unset(_altair_qt_default)
 if(EXISTS "${ALTAIR_QT_ROOT}")
     list(APPEND CMAKE_PREFIX_PATH "${ALTAIR_QT_ROOT}")
 endif()
@@ -70,6 +76,10 @@ endif()
 
 if(ALTAIR_STRICT_INVARIANTS)
     target_compile_definitions(altair_flags INTERFACE ALTAIR_STRICT_INVARIANTS=1)
+else()
+    # Define the OFF state explicitly so conservation.hpp can reject an
+    # optimised build that would otherwise accidentally omit this safety flag.
+    target_compile_definitions(altair_flags INTERFACE ALTAIR_STRICT_INVARIANTS=0)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -217,6 +227,7 @@ add_subdirectory(models)            # Phase 8 — labels, training, the model zo
 add_subdirectory(flagging)          # Phase 9 — scorecards, drift, auto-correction
 add_subdirectory(server)            # Phase 11 — BACKEND ONLY, renders nothing
 add_subdirectory(desktop)           # Phase 11Q — the Qt UI, in-process
+
 # client/ is RETIRED and deliberately not built — see client/README.md
 add_subdirectory(research)          # Phase 7 — paper pipeline (decides, does not trade)
 add_subdirectory(app)               # main() — the `altair` binary
@@ -224,6 +235,22 @@ add_subdirectory(app)               # main() — the `altair` binary
 if(ALTAIR_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
+
+# Installable artifacts. macOS produces Altair.app plus credential-boundary
+# helpers under Contents/Helpers; signing/notarisation remains an explicit
+# release operation because no certificate is stored in this repository.
+set(CPACK_PACKAGE_NAME "Altair")
+set(CPACK_PACKAGE_VENDOR "Altair")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "Altair-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+if(APPLE)
+    set(CPACK_GENERATOR "DragNDrop")
+elseif(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+include(CPack)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ASAN runtime next to every executable. AFTER every add_subdirectory, because

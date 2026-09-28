@@ -18,6 +18,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <unordered_set>
 
 namespace {
 
@@ -50,6 +51,8 @@ int main(int argc, char** argv)
     }
     std::printf("  %zu entries: %zu built, %zu partial, %zu absent\n\n",
                 altair::ui::kAtlasCount, built, partial, absent);
+    check(built == altair::ui::kAtlasCount && partial == 0 && absent == 0,
+          "all Atlas numerical engines are implemented; training remains a separate gate");
 
     // ---- the table's own invariants ------------------------------------
     //
@@ -59,7 +62,12 @@ int main(int argc, char** argv)
     // than merely populated.
     {
         bool paths_ok = true, absent_clean = true, described = true;
+        std::unordered_set<std::uint64_t> ids;
+        const altair::ui::AtlasRow* monte_carlo = nullptr;
         for (const auto& r : altair::ui::kAtlasRows) {
+            ids.insert(altair::ui::atlas_model_id(r));
+            if (std::strcmp(r.family, "9. Simulation") == 0
+                && std::strcmp(r.model, "Monte Carlo") == 0) monte_carlo = &r;
             const bool has_file = r.file != nullptr && r.file[0] != '\0';
             if (r.status == altair::ui::AtlasStatus::Absent) {
                 if (has_file) { absent_clean = false; }
@@ -76,6 +84,17 @@ int main(int argc, char** argv)
         check(paths_ok, "every built or partial row names a file");
         check(absent_clean, "and no absent row names one");
         check(described, "every row explains what the model answers");
+        check(ids.size() == altair::ui::kAtlasCount,
+              "every model row has a unique stable identity independent of page order");
+        if (monte_carlo != nullptr) {
+            const QString id = QStringLiteral("atlas.%1").arg(QString::number(
+                static_cast<qulonglong>(altair::ui::atlas_model_id(*monte_carlo)), 16));
+            check(altair::ui::atlas_row_by_id(id) == monte_carlo
+                      && monte_carlo->page == 7,
+                  "Monte Carlo stable link resolves to the Analytics workspace");
+        } else {
+            check(false, "Monte Carlo catalogue row exists");
+        }
     }
     // The page-index check is NOT here. It needs the nav list, and pulling
     // main_window.hpp into this target would drag in every chart and panel to
@@ -84,11 +103,27 @@ int main(int argc, char** argv)
     // already holds both facts.
 
     // ---- the widget ------------------------------------------------------
-    int jumped_to = -99;
-    altair::ui::AtlasPanel panel([&jumped_to](int p) { jumped_to = p; });
+    QString opened_id;
+    altair::ui::AtlasPanel panel([&opened_id](QString id) { opened_id = std::move(id); });
 
     check(panel.visible_rows() == static_cast<int>(altair::ui::kAtlasCount),
           "the tree shows every entry before any filter");
+
+    const altair::ui::AtlasRow* missing = nullptr;
+    for (const auto& row : altair::ui::kAtlasRows) {
+        if (row.status == altair::ui::AtlasStatus::Absent) { missing = &row; break; }
+    }
+    if (missing) {
+        panel.set_hide_absent(true);
+        panel.focus_model(QString::fromUtf8(missing->model));
+        check(panel.visible_rows() == 1,
+              "navigation opens the exact absent model and reveals it in the Atlas");
+        check(opened_id.isEmpty(), "filter lookup does not falsely open a route");
+    } else {
+        check(absent == 0,
+              "catalogue may reach zero absent models without inventing a placeholder");
+    }
+    panel.set_search(QString());
 
     // Hiding the absences must remove exactly them.
     panel.set_hide_absent(true);

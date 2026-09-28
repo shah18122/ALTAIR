@@ -304,6 +304,33 @@ void zero_size_is_empty_not_balanced()
     check(!weighted_obi(b).has_value(), "and weighted_obi");
 }
 
+// ── 9 ────────────────────────────────────────────────────────────────────
+void malformed_book_counts_are_unusable()
+{
+    std::printf("\n9 malformed_book_counts_are_unusable\n");
+
+    BookState bad_bid = book(2'500'000, 500, 2'500'050, 500);
+    bad_bid.bid_levels = static_cast<std::uint8_t>(kDepthLevels + 1);
+    check(!has_valid_depth_counts(bad_bid) && !is_tradable(bad_bid),
+          "a direct BookState with too many bid levels is not a valid tradable book");
+    check(best_bid(bad_bid) == nullptr && best_ask(bad_bid) == nullptr
+              && !mid(bad_bid) && !spread(bad_bid),
+          "best-level, mid, and spread accessors refuse malformed state");
+    check(!bid_depth(bad_bid, UINT8_MAX) && !ask_depth(bad_bid, 1)
+              && !obi(bad_bid, UINT8_MAX) && !weighted_obi(bad_bid, UINT8_MAX)
+              && !microprice(bad_bid),
+          "all microstructure estimators return empty rather than trust the bad count");
+
+    BookState bad_ask = book(2'500'000, 500, 2'500'050, 500);
+    bad_ask.ask_levels = UINT8_MAX;
+    check(!has_valid_depth_counts(bad_ask) && !is_tradable(bad_ask)
+              && !ask_depth(bad_ask, UINT8_MAX),
+          "the largest uint8 ask count is also rejected without walking beyond the array");
+
+    check(!detail::sum_side(bad_bid.bid, bad_bid.bid_levels, UINT8_MAX),
+          "the shared summation primitive independently rejects an impossible populated count");
+}
+
 } // namespace
 
 int main()
@@ -317,6 +344,7 @@ int main()
     depth_does_not_imagine_levels();
     weighted_obi_favours_the_touch();
     zero_size_is_empty_not_balanced();
+    malformed_book_counts_are_unusable();
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");
     return failures == 0 ? 0 : 1;

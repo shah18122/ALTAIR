@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
@@ -50,7 +51,7 @@ void test_ledger_sign_conventions()
     check(L.check().has_value(), "conservation holds after the sell");
 
     // Gained Rs 1000.00 on the trade, paid Rs 246.90 in costs.
-    check(L.cash_delta() == Notional{100'000 - 24'690},
+    check(L.cash_delta().value_or(Notional{}) == Notional{100'000 - 24'690},
           "realised = gross gain MINUS costs (== 75'310 paise)");
     // Had costs been CREDITED on the sell this would read 100'000, and every
     // short would look Rs 246.90 better than it was.
@@ -59,6 +60,8 @@ void test_ledger_sign_conventions()
               == Breach::CashConservation,
           "a negative cost is rejected — that is a rebate, not a fill cost");
     check(L.fill_count() == 2, "and the rejected fill was not recorded");
+    check(L.is_breached() && L.latched_breach() == Breach::RefusedFill,
+          "a confirmed fill that cannot be booked latches RefusedFill");
 }
 
 void test_ledger_single_buy()
@@ -74,7 +77,7 @@ void test_ledger_single_buy()
     check(L.fill_count() == 1, "fill counted");
     check(L.fills_notional() == Notional{5000}, "notional == 1000 * 5");
     check(L.cash() == Notional{1'000'000 - 5000 - 50}, "cash reduced by both");
-    check(L.cash_delta() == Notional{-5050}, "cash_delta is negative");
+    check(L.cash_delta().value_or(Notional{}) == Notional{-5050}, "cash_delta is negative");
     check(L.check().has_value(), "conservation holds");
 }
 
@@ -87,7 +90,7 @@ void test_ledger_buy_sell_roundtrip()
     check(L.is_flat(), "round trip returns to flat");
     check(L.fills_notional() == Notional{50'000 - 52'000}, "net notional == -2000");
     check(L.total_costs() == Notional{51}, "costs total 51");
-    check(L.cash_delta() == Notional{2000 - 51}, "winning round trip nets 1949");
+    check(L.cash_delta().value_or(Notional{}) == Notional{2000 - 51}, "winning round trip nets 1949");
     check(L.cash() == Notional{1'000'000 + 1949}, "cash reflects it");
     check(L.check().has_value(), "conservation holds");
 
@@ -95,7 +98,7 @@ void test_ledger_buy_sell_roundtrip()
     ConservationLedger M{Notional{1'000'000}};
     (void)M.on_fill(Qty{100}, Price{520}, Notional{26});
     (void)M.on_fill(Qty{-100}, Price{500}, Notional{25});
-    check(M.cash_delta() == Notional{-2000 - 51}, "losing round trip nets -2051");
+    check(M.cash_delta().value_or(Notional{}) == Notional{-2000 - 51}, "losing round trip nets -2051");
     check(M.check().has_value(), "conservation holds on a loss too");
 }
 
@@ -116,6 +119,34 @@ void test_ledger_cash_adjustment()
 
     check(L.total_costs() == Notional{100}, "an adjustment is not a cost");
     check(L.fills_notional() == Notional{10'000}, "an adjustment is not a fill");
+}
+
+void test_wide_intermediate_cancellation_is_exact()
+{
+    std::printf("\nwide_intermediate_cancellation_is_exact\n");
+    constexpr std::int64_t kMin = std::numeric_limits<std::int64_t>::min();
+    constexpr std::int64_t kMax = std::numeric_limits<std::int64_t>::max();
+
+    // The exact invariant is zero, but cash - initial_cash alone is greater
+    // than INT64_MAX. The checker must evaluate the full equation without UB.
+    ConservationLedger L{Notional{kMin}};
+    check(L.on_cash_adjustment(Notional{kMax}).has_value(),
+          "a large deposit remains representable in the ledger");
+    check(L.on_fill(Qty{-1}, Price{kMax}, Notional{0}).has_value(),
+          "a matching large sell fill remains representable");
+    check(L.cash() == Notional{kMax - 1}, "cash stays within int64 bounds");
+    check(L.check().has_value(),
+          "the full five-term conservation identity cancels exactly");
+    check(L.cash_delta().error() == Breach::Overflow,
+          "cash_delta reports when its standalone result cannot fit int64");
+
+    ConservationLedger N{Notional{0}};
+    check(N.on_cash_adjustment(Notional{kMin}).has_value(),
+          "an exact INT64_MIN cash adjustment is representable");
+    const auto min_delta = N.cash_delta();
+    check(min_delta && *min_delta == Notional{kMin},
+          "cash_delta preserves the exact negative int64 endpoint");
+    check(N.check().has_value(), "the exact negative endpoint still balances");
 }
 
 void test_ledger_equity()
@@ -197,7 +228,7 @@ void test_ledger_conservation_over_many_fills()
     std::printf("        %llu fills, position %lld, cash_delta %lld paise\n",
                 static_cast<unsigned long long>(L.fill_count()),
                 static_cast<long long>(L.position().raw()),
-                static_cast<long long>(L.cash_delta().raw()));
+                static_cast<long long>(L.cash_delta().value_or(Notional{}).raw()));
 }
 
 void test_ledger_overflow_rejects_and_mutates_nothing()
@@ -210,8 +241,10 @@ void test_ledger_overflow_rejects_and_mutates_nothing()
     check(L.position() == Qty{0}, "position untouched");
     check(L.cash() == Notional{0}, "cash untouched");
     check(L.fills_notional() == Notional{0}, "fills untouched");
-    check(!L.is_breached(), "a rejected fill is not itself a breach");
-    check(L.check().has_value(), "and the books still balance");
+    check(L.is_breached() && L.latched_breach() == Breach::RefusedFill,
+          "the confirmed fill refusal latches RefusedFill");
+    check(L.check().error() == Breach::Latched,
+          "the internal checker reports the outstanding latch");
 
     // Overflow on the cost ACCUMULATOR rather than the notional.
     // Note the headroom: a cost of exactly Notional::max() would make
@@ -221,10 +254,18 @@ void test_ledger_overflow_rejects_and_mutates_nothing()
     ConservationLedger M{Notional{0}};
     check(M.on_fill(Qty{1}, Price{1}, huge).has_value(),
           "one enormous cost fits, with room for the notional");
+    const Notional cash_before = M.cash();
+    const Notional fills_before = M.fills_notional();
+    const Notional costs_before = M.total_costs();
+    const Qty position_before = M.position();
     check(M.on_fill(Qty{1}, Price{1}, huge).error() == Breach::Overflow,
           "a second would overflow the cost accumulator");
     check(M.fill_count() == 1, "the second fill was rejected whole");
-    check(M.check().has_value(), "conservation still holds");
+    check(M.cash() == cash_before && M.fills_notional() == fills_before
+              && M.total_costs() == costs_before && M.position() == position_before,
+          "overflow refusal mutates none of the ledger balances");
+    check(M.is_breached() && M.latched_breach() == Breach::RefusedFill,
+          "cost accumulator overflow latches RefusedFill");
 
     // And the guard that the first case would have tripped: an outflow that
     // cannot be represented even though each accumulator individually could.
@@ -233,6 +274,98 @@ void test_ledger_overflow_rejects_and_mutates_nothing()
               == Breach::Overflow,
           "an unrepresentable notional+cost outflow is refused");
     check(N.fill_count() == 0, "and nothing was recorded");
+    check(N.is_breached() && N.latched_breach() == Breach::RefusedFill,
+          "unrepresentable outflow latches RefusedFill");
+}
+
+void test_refused_fill_latches()
+{
+    std::printf("\nrefused_fill_latches\n");
+
+    ConservationLedger L{Notional{1'000'000}};
+    const Notional cash_before = L.cash();
+    const Notional fills_before = L.fills_notional();
+    const Notional costs_before = L.total_costs();
+    const Qty position_before = L.position();
+    const std::uint64_t count_before = L.fill_count();
+
+    const auto refused = L.on_fill(Qty{1}, Price{100}, Notional{-1});
+    check(!refused && refused.error() == Breach::CashConservation,
+          "negative cost retains its original validation error");
+    check(L.is_breached() && L.latched_breach() == Breach::RefusedFill,
+          "negative-cost refusal latches RefusedFill");
+    check(L.breach_count() == 1, "the refused fill is counted once");
+    check(L.cash() == cash_before && L.fills_notional() == fills_before
+              && L.total_costs() == costs_before && L.position() == position_before
+              && L.fill_count() == count_before,
+          "refused fill leaves all balances and fill count unchanged");
+    check(L.on_fill(Qty{1}, Price{100}, Notional{0}).error() == Breach::Latched,
+          "the latched ledger refuses later fills");
+}
+
+void test_reconcile_detects_an_unbooked_fill()
+{
+    std::printf("\nreconcile_detects_an_unbooked_fill\n");
+
+    constexpr Notional initial_cash{1'000'000};
+    ConservationLedger L{initial_cash};
+    const auto result = L.reconcile(Notional{999'895}, Qty{1});
+    check(!result && result.error() == Breach::ExternalMismatch,
+          "an independently observed buy missing from the ledger is detected");
+    check(L.is_breached() && L.latched_breach() == Breach::ExternalMismatch,
+          "an unbooked external fill latches ExternalMismatch");
+    check(L.cash() == initial_cash && L.position() == Qty{0}
+              && L.fill_count() == 0,
+          "reconciliation reports the mismatch without repairing ledger state");
+    check(L.reconcile(initial_cash, Qty{0}).error() == Breach::Latched,
+          "a latched mismatch cannot be cleared by a later matching snapshot");
+}
+
+void test_reconcile_detects_a_booked_fill_the_venue_never_made()
+{
+    std::printf("\nreconcile_detects_a_booked_fill_the_venue_never_made\n");
+
+    constexpr Notional initial_cash{1'000'000};
+    ConservationLedger L{initial_cash};
+    check(L.on_fill(Qty{1}, Price{100}, Notional{5}).has_value(),
+          "the ledger books a fill");
+    const auto result = L.reconcile(initial_cash, Qty{0});
+    check(!result && result.error() == Breach::ExternalMismatch,
+          "an independent flat venue position detects the phantom fill");
+    check(L.is_breached() && L.latched_breach() == Breach::ExternalMismatch,
+          "a venue/ledger disagreement latches ExternalMismatch");
+    check(L.cash() == Notional{999'895} && L.position() == Qty{1}
+              && L.fill_count() == 1,
+          "the phantom-fill report does not mutate the recorded ledger");
+}
+
+void test_reconcile_checks_cash_and_position_independently()
+{
+    std::printf("\nreconcile_checks_cash_and_position_independently\n");
+
+    ConservationLedger cash_mismatch{Notional{1'000}};
+    const auto bad_cash = cash_mismatch.reconcile(Notional{999}, Qty{0});
+    check(!bad_cash && bad_cash.error() == Breach::ExternalMismatch,
+          "cash is compared even when external position matches");
+
+    ConservationLedger position_mismatch{Notional{1'000}};
+    const auto bad_position = position_mismatch.reconcile(Notional{1'000}, Qty{1});
+    check(!bad_position && bad_position.error() == Breach::ExternalMismatch,
+          "position is compared even when external cash matches");
+}
+
+void test_reconcile_accepts_matching_external_snapshot()
+{
+    std::printf("\nreconcile_accepts_matching_external_snapshot\n");
+
+    ConservationLedger L{Notional{1'000'000}};
+    check(L.on_fill(Qty{1}, Price{100}, Notional{5}).has_value(),
+          "the ledger records a confirmed fill");
+    check(L.on_cash_adjustment(Notional{25}).has_value(),
+          "the ledger records an external cash adjustment");
+    const auto result = L.reconcile(L.cash(), L.position());
+    check(result.has_value(), "an exact matching snapshot reconciles");
+    check(!L.is_breached(), "a matching snapshot leaves the ledger unlatched");
 }
 
 void test_ledger_breach_latches_and_blocks()
@@ -313,9 +446,15 @@ int main()
     test_ledger_single_buy();
     test_ledger_buy_sell_roundtrip();
     test_ledger_cash_adjustment();
+    test_wide_intermediate_cancellation_is_exact();
     test_ledger_equity();
     test_ledger_conservation_over_many_fills();
     test_ledger_overflow_rejects_and_mutates_nothing();
+    test_refused_fill_latches();
+    test_reconcile_detects_an_unbooked_fill();
+    test_reconcile_detects_a_booked_fill_the_venue_never_made();
+    test_reconcile_checks_cash_and_position_independently();
+    test_reconcile_accepts_matching_external_snapshot();
     test_ledger_breach_latches_and_blocks();
 
     report_throughput();

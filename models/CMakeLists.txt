@@ -26,6 +26,43 @@ target_link_libraries(altair_models INTERFACE
 )
 
 if(ALTAIR_BUILD_TESTS)
+    # Classical, deterministic research primitives added for the Atlas:
+    # logistic classification, shallow random forests, PCA factors and VAR(1).
+    add_executable(altair_classical_models_test tests/test_classical.cpp)
+    target_link_libraries(altair_classical_models_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_classical COMMAND altair_classical_models_test)
+
+    add_executable(altair_time_series_test tests/test_time_series.cpp)
+    target_link_libraries(altair_time_series_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_time_series COMMAND altair_time_series_test)
+
+    add_executable(altair_fill_probability_test tests/test_fill_probability.cpp)
+    target_link_libraries(altair_fill_probability_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_fill_probability COMMAND altair_fill_probability_test)
+
+    add_executable(altair_hawkes_test tests/test_hawkes.cpp)
+    target_link_libraries(altair_hawkes_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_hawkes COMMAND altair_hawkes_test)
+
+    add_executable(altair_event_study_test tests/test_event_study.cpp)
+    target_link_libraries(altair_event_study_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_event_study COMMAND altair_event_study_test)
+
+    add_executable(altair_sentiment_test tests/test_sentiment.cpp)
+    target_link_libraries(altair_sentiment_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_sentiment COMMAND altair_sentiment_test)
+
+    add_executable(altair_deep_rl_test tests/test_deep_rl.cpp)
+    target_link_libraries(altair_deep_rl_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_deep_rl COMMAND altair_deep_rl_test)
+
+    add_executable(altair_named_factors_test tests/test_named_factors.cpp)
+    target_link_libraries(altair_named_factors_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_named_factors COMMAND altair_named_factors_test)
+
+    add_executable(altair_stream_forecast_test tests/test_stream_forecast.cpp)
+    target_link_libraries(altair_stream_forecast_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_stream_forecast COMMAND altair_stream_forecast_test)
     add_executable(altair_labels_test tests/test_labels.cpp)
     target_link_libraries(altair_labels_test PRIVATE altair_models altair_flags)
     add_test(NAME models_labels COMMAND altair_labels_test)
@@ -33,6 +70,13 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_dataset_test tests/test_dataset.cpp)
     target_link_libraries(altair_dataset_test PRIVATE altair_models altair_flags)
     add_test(NAME models_dataset COMMAND altair_dataset_test)
+
+    # M12. The trainable MLP: hidden-layer backpropagation, checked against a
+    # central finite difference of the objective it descends. Links
+    # altair_backtest for `Block`, the same way the neural tier below does.
+    add_executable(altair_mlp_test tests/test_mlp.cpp)
+    target_link_libraries(altair_mlp_test PRIVATE altair_models altair_backtest altair_flags)
+    add_test(NAME models_mlp COMMAND altair_mlp_test)
 
     add_executable(altair_training_test tests/test_training.cpp)
     target_link_libraries(altair_training_test PRIVATE altair_models altair_flags)
@@ -42,9 +86,17 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_recurrent_test PRIVATE altair_models altair_flags)
     add_test(NAME models_recurrent COMMAND altair_recurrent_test)
 
+    add_executable(altair_trainable_recurrent_test tests/test_trainable_recurrent.cpp)
+    target_link_libraries(altair_trainable_recurrent_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_trainable_recurrent COMMAND altair_trainable_recurrent_test)
+
     add_executable(altair_attention_test tests/test_attention.cpp)
     target_link_libraries(altair_attention_test PRIVATE altair_models altair_flags)
     add_test(NAME models_attention COMMAND altair_attention_test)
+
+    add_executable(altair_transformer_test tests/test_transformer.cpp)
+    target_link_libraries(altair_transformer_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_transformer COMMAND altair_transformer_test)
 
     add_executable(altair_serving_test tests/test_serving.cpp)
     target_link_libraries(altair_serving_test PRIVATE altair_models altair_strategies altair_flags)

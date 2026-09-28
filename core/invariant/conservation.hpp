@@ -53,6 +53,7 @@ ALTAIR_ALLOW_UNCHECKED_LEDGER if you really mean it -- and do not ship it."
 // is a breach you never find.
 
 #include <types/units.hpp>
+#include <types/signed_sum.hpp>
 
 #include <cstdint>
 #include <expected>
@@ -66,7 +67,9 @@ namespace altair {
 enum class Breach : std::uint8_t {
     CashConservation,   // fills + costs + cash_delta != 0
     Overflow,           // an accumulator would exceed int64 paise
-    Latched             // a previous breach has not been cleared
+    Latched,            // a previous breach has not been cleared
+    ExternalMismatch,   // independent external cash/position disagrees
+    RefusedFill         // a confirmed fill could not be booked
 };
 
 namespace detail {
@@ -117,8 +120,9 @@ namespace detail {
 } // namespace detail
 
 // ─────────────────────────────────────────────────────────────────────────
-// ConservationLedger — the single choke point for money, and the proof that
-// nothing went around it.
+// ConservationLedger — the single choke point for internal money bookkeeping.
+// `check()` verifies this ledger's internal accounting identity; only
+// `reconcile()` compares it with an independent external snapshot.
 //
 // SINGLE INSTRUMENT. Portfolio aggregation is P4-03; this is the per-symbol
 // ledger it will be built from.
@@ -139,44 +143,53 @@ public:
     /// PRECONDITION: cost >= 0 — a cost is always a debit. A negative cost is
     /// a rebate and must be modelled as a cash adjustment, not a negative cost.
     /// Returns Latched if a breach is outstanding, Overflow if any accumulator
-    /// would exceed int64 paise. On any error NOTHING is mutated.
+    /// would exceed int64 paise. This is for a confirmed execution: if booking
+    /// that execution is refused, the refusal latches RefusedFill. On any
+    /// error NOTHING is mutated.
     [[nodiscard]] ALTAIR_HOT std::expected<void, Breach>
     on_fill(Qty qty, Price px, Notional cost) noexcept {
         if (breached_) {
             return std::unexpected(Breach::Latched);
         }
+        // The venue has already executed this fill. If it cannot be booked,
+        // the internal ledger is now knowingly incomplete and must stop.
+        const auto refused_fill = [this](Breach why) noexcept
+            -> std::expected<void, Breach> {
+            trip(Breach::RefusedFill);
+            return std::unexpected(why);
+        };
         // A negative cost is a rebate. Accepting one here would keep the
         // identity arithmetically true while making it meaningless.
         if (cost.is_negative()) {
-            return std::unexpected(Breach::CashConservation);
+            return refused_fill(Breach::CashConservation);
         }
 
         // notional_of, not a raw multiply — the overflow check is the point.
         const auto n = notional_of(px, qty);
         if (!n.has_value()) {
-            return std::unexpected(Breach::Overflow);
+            return refused_fill(Breach::Overflow);
         }
         const Notional notional = *n;
 
         // Check EVERY accumulation before applying any of it. A partially
         // applied fill is a guaranteed breach on the next check.
         if (detail::notional_add_overflows(fills_, notional)) {
-            return std::unexpected(Breach::Overflow);
+            return refused_fill(Breach::Overflow);
         }
         if (detail::notional_add_overflows(costs_, cost)) {
-            return std::unexpected(Breach::Overflow);
+            return refused_fill(Breach::Overflow);
         }
         if (detail::notional_add_overflows(notional, cost)) {
-            return std::unexpected(Breach::Overflow);
+            return refused_fill(Breach::Overflow);
         }
         const Notional outflow = notional + cost;
         // Checked as a SUBTRACTION, not as an add of `-outflow`: negating
         // INT64_MIN would be UB before the guard ever ran.
         if (detail::notional_sub_overflows(cash_, outflow)) {
-            return std::unexpected(Breach::Overflow);
+            return refused_fill(Breach::Overflow);
         }
         if (detail::qty_add_overflows(position_, qty)) {
-            return std::unexpected(Breach::Overflow);
+            return refused_fill(Breach::Overflow);
         }
 
         fills_ += notional;
@@ -186,6 +199,23 @@ public:
         // |notional| — and the cost still falls.
         cash_ -= outflow;
         ++fill_count_;
+        return {};
+    }
+
+    /// Compare this single-instrument ledger with an independent external
+    /// snapshot (for example, a broker position/cash statement) using exact
+    /// integer units. The supplied cash and position must cover the same
+    /// accounting scope and instant as this ledger; this method does not
+    /// adjust/rebase either side. A mismatch latches ExternalMismatch.
+    [[nodiscard]] std::expected<void, Breach>
+    reconcile(Notional external_cash, Qty external_position) noexcept {
+        if (breached_) {
+            return std::unexpected(Breach::Latched);
+        }
+        if (external_cash != cash_ || external_position != position_) {
+            trip(Breach::ExternalMismatch);
+            return std::unexpected(Breach::ExternalMismatch);
+        }
         return {};
     }
 
@@ -209,18 +239,32 @@ public:
         return {};
     }
 
-    /// Verify ROADMAP §3.6 law 1, EXACTLY:
+    /// Verify INTERNAL CONSISTENCY, EXACTLY:
     ///     fills + costs + (cash - initial_cash - adjustments) == 0
-    /// UNIT: none. Returns CashConservation on a breach, Latched if one is
-    /// already outstanding. Does NOT latch a new breach by itself.
+    /// This checks only values maintained by this ledger; it does not prove
+    /// agreement with a venue or broker. UNIT: none. Returns CashConservation
+    /// on an internal breach, Latched if one is already outstanding. Does NOT
+    /// latch a new breach by itself.
     [[nodiscard]] ALTAIR_HOT std::expected<void, Breach> check() const noexcept {
         if (breached_) {
             return std::unexpected(Breach::Latched);
         }
+        // Sum all five terms exactly. A left-associated int64 expression can
+        // overflow even when the final identity is zero (for example
+        // INT64_MAX + 1 + INT64_MIN), which would be UB on a trading path.
+        ExactSignedSum residual;
+        residual.add(fills_.raw());
+        residual.add(costs_.raw());
+        residual.add(cash_.raw());
+        residual.subtract(initial_cash_.raw());
+        residual.subtract(adjustments_.raw());
+        std::int64_t residual_value = 0;
+        if (!residual.try_value(residual_value)) {
+            return std::unexpected(Breach::Overflow);
+        }
         // Integer paise, so this is `==` and not an epsilon. A tolerance here
         // would hide exactly the class of bug the invariant exists to catch.
-        const Notional delta = cash_ - initial_cash_ - adjustments_;
-        if (!(fills_ + costs_ + delta).is_zero()) {
+        if (residual_value != 0) {
             return std::unexpected(Breach::CashConservation);
         }
         return {};
@@ -252,8 +296,15 @@ public:
 
     /// Realised cash movement since construction, i.e. cash - initial_cash.
     /// UNIT: paise. At a FLAT position this is realised P&L net of all costs.
-    [[nodiscard]] constexpr Notional cash_delta() const noexcept {
-        return cash_ - initial_cash_;
+    /// Returns Overflow instead of evaluating an unrepresentable subtraction.
+    [[nodiscard]] constexpr std::expected<Notional, Breach>
+    cash_delta() const noexcept {
+        ExactSignedSum delta;
+        delta.add(cash_.raw());
+        delta.subtract(initial_cash_.raw());
+        std::int64_t value = 0;
+        if (!delta.try_value(value)) { return std::unexpected(Breach::Overflow); }
+        return Notional{value};
     }
 
     // ── State. ──

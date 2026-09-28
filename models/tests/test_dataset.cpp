@@ -305,6 +305,25 @@ void shapes_are_checked_and_softmax_subtracts_the_max()
     check(differs, "and a different seed gives different weights");
 }
 
+void targets_scale_down_and_restore_original_units()
+{
+    std::printf("\n4 targets_scale_down_and_restore_original_units\n");
+    const double prices[]{10'000.0, 10'010.0, 9'990.0, 10'020.0,
+                          40'000.0, 40'100.0};
+    TargetScaler scaler;
+    check(scaler.fit(prices, 0, 4).has_value(),
+          "target scale is fitted on the training fold only");
+    const auto scaled = scaler.transform(prices[4]);
+    const auto restored = scaled ? scaler.inverse(*scaled)
+                                 : std::expected<double, DatasetError>{
+                                       std::unexpected(DatasetError::NotFitted)};
+    check(scaled && restored && std::fabs(*scaled) < prices[4]
+          && near(*restored, prices[4], 1e-9),
+          "large price targets train at reduced magnitude and invert to exact original units");
+    check(scaler.fitted_to() == 4 && scaler.mean() < 20'000.0,
+          "holdout price levels do not leak into target scaling statistics");
+}
+
 } // namespace
 
 int main()
@@ -313,6 +332,7 @@ int main()
     fitting_the_scaler_on_everything_leaks_the_test_set();
     a_tensor_has_no_way_to_say_absent();
     shapes_are_checked_and_softmax_subtracts_the_max();
+    targets_scale_down_and_restore_original_units();
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");
     return failures == 0 ? 0 : 1;

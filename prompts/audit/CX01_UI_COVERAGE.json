@@ -1,0 +1,107 @@
+[
+  {
+    "path": "desktop/CMakeLists.txt",
+    "sha256": "97c71b6aceac3e576866579e4eaf7f75efcb89fc36d6c9bd6b44b3a323e7f5fd",
+    "total_lines": 660,
+    "ranges": [
+      [
+        1,
+        660
+      ]
+    ],
+    "status": "fully_read",
+    "reader": "cx01_ui_client",
+    "summary": "Qt Widgets target and read-side direct-link allowlist, conditional dependencies, 15 test target declarations, deployment.",
+    "findings": []
+  },
+  {
+    "path": "desktop/atlas.hpp",
+    "sha256": "f70c1f4d54fd25da671baf24d6cedda19279a7c195e234c2b3aba86e41e0f2d4",
+    "total_lines": 247,
+    "ranges": [
+      [
+        1,
+        247
+      ]
+    ],
+    "status": "fully_read",
+    "reader": "cx01_ui_client",
+    "summary": "85-row searchable family tree and positional nav callback. Family node has missing UserRole; double-click defaults to page 0.",
+    "findings": []
+  },
+  {
+    "path": "desktop/atlas_data.hpp",
+    "sha256": "cf9fed3bca70a00e8953fb75ed5df1ddf4ff48f24e6f0190d5fb46bb9878270c",
+    "total_lines": 460,
+    "ranges": [
+      [
+        1,
+        460
+      ]
+    ],
+    "status": "fully_read",
+    "reader": "cx01_ui_client",
+    "summary": "85 named model rows: statuses 59 built, 8 partial, 18 absent; file-path audit does not establish integration or financial readiness.",
+    "findings": []
+  },
+  {
+    "path": "desktop/tests/test_atlas.cpp",
+    "sha256": "174705be3f0c9a255d3276a7c3d052196e29c095b736233b2517ca034cce8a92",
+    "total_lines": 131,
+    "ranges": [
+      [
+        1,
+        131
+      ]
+    ],
+    "status": "fully_read",
+    "reader": "cx01_ui_client",
+    "summary": "Coverage counts/filtering/description test; does not invoke navigation callback or validate row-page semantics.",
+    "findings": []
+  },
+  {
+    "path": "desktop/main.cpp",
+    "sha256": "3c5a505362c81c9065a6e6f09e75bdcc56b947aedbaf5d44c0d8d05f758d744e",
+    "total_lines": 402,
+    "ranges": [
+      [
+        1,
+        402
+      ]
+    ],
+    "status": "fully_read",
+    "reader": "cx01_ui_client",
+    "summary": "GUI startup, synchronous tape load, dev credential bypass, borrowed tape lifetime, command flags, fullscreen entry.",
+    "findings": []
+  },
+  {
+    "path": "desktop/main_window.hpp",
+    "sha256": "067f43930d3e771199967c2a1ae8650a3482d56e1ded30bf3ce3d90fdb19868c",
+    "total_lines": 1673,
+    "ranges": [
+      [
+        1,
+        1673
+      ]
+    ],
+    "status": "fully_read",
+    "reader": "cx01_ui_client",
+    "summary": "33 flat navigation pages, replay16ms pump, full-history chart rebuild, synchronous compute/report callbacks and processEvents reentrancy, independent Terminal stream. No nav hide/show.",
+    "findings": []
+  },
+  {
+    "path": "desktop/terminal.hpp",
+    "sha256": "31d2fa2b30a802c6e3ea8426025126a637c3a28e9a28376604f432ca3718be02",
+    "total_lines": 541,
+    "ranges": [
+      [
+        1,
+        400
+      ]
+    ],
+    "status": "partial",
+    "reader": "cx01_ui_client",
+    "summary": "Read constructor, terminal wiring/hotkeys and queue display through price application start.",
+    "findings": []
+  }
+]

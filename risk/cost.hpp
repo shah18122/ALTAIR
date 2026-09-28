@@ -75,7 +75,8 @@ enum class CostError : std::uint8_t {
     BadQuantity,    // zero or negative
     BadPrice,       // negative
     Overflow,       // turnover or a charge exceeds int64 paise
-    UnknownSegment  // no charge line for this segment
+    UnknownSegment, // no charge line for this segment
+    UnverifiedSchedule // rates have not been checked against their source
 };
 
 /// Charges for one segment under one schedule.
@@ -271,6 +272,12 @@ line_for(const ChargeSchedule& s, const Trade& t) noexcept {
 [[nodiscard]] ALTAIR_HOT inline std::expected<CostBreakdown, CostError>
 compute_cost(const Trade& t, const ChargeSchedule& sch,
              const BrokerageRule& br) noexcept {
+    // An unverified schedule is not a cost basis. In particular, retaining a
+    // provenance bit on a successful result is not sufficient: callers can
+    // accidentally consume the number and forget to inspect it.
+    if (!sch.verified) {
+        return std::unexpected(CostError::UnverifiedSchedule);
+    }
     if (t.qty.raw() <= 0) {
         return std::unexpected(CostError::BadQuantity);
     }

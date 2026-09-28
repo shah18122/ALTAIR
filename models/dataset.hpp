@@ -184,6 +184,63 @@ private:
     bool fitted_ = false;
 };
 
+/// One-dimensional target standardisation for forecasting/regression.
+/// Fit only on the training fold; `inverse` restores predictions to the
+/// original price/return unit. This is deliberately separate from feature
+/// scaling so a caller cannot accidentally report a scaled target as a price.
+class TargetScaler {
+public:
+    [[nodiscard]] std::expected<void, DatasetError>
+    fit(const double* values, std::size_t from, std::size_t to) noexcept {
+        if (fitted_) return std::unexpected(DatasetError::AlreadyFitted);
+        if (values == nullptr || to <= from || to - from < 2)
+            return std::unexpected(DatasetError::TooFewRows);
+        double sum = 0.0;
+        for (std::size_t i = from; i < to; ++i) {
+            if (!std::isfinite(values[i]))
+                return std::unexpected(DatasetError::ShapeMismatch);
+            sum += values[i];
+        }
+        mean_ = sum / static_cast<double>(to - from);
+        double squared = 0.0;
+        for (std::size_t i = from; i < to; ++i) {
+            const double d = values[i] - mean_;
+            squared += d * d;
+        }
+        scale_ = std::sqrt(squared / static_cast<double>(to - from - 1));
+        if (!(scale_ > 0.0) || !std::isfinite(scale_))
+            return std::unexpected(DatasetError::Degenerate);
+        from_ = from; to_ = to; fitted_ = true;
+        return {};
+    }
+
+    [[nodiscard]] std::expected<double, DatasetError>
+    transform(double value) const noexcept {
+        if (!fitted_) return std::unexpected(DatasetError::NotFitted);
+        if (!std::isfinite(value)) return std::unexpected(DatasetError::ShapeMismatch);
+        return (value - mean_) / scale_;
+    }
+
+    [[nodiscard]] std::expected<double, DatasetError>
+    inverse(double scaled) const noexcept {
+        if (!fitted_) return std::unexpected(DatasetError::NotFitted);
+        if (!std::isfinite(scaled)) return std::unexpected(DatasetError::ShapeMismatch);
+        return mean_ + scaled * scale_;
+    }
+
+    [[nodiscard]] double mean() const noexcept { return mean_; }
+    [[nodiscard]] double scale() const noexcept { return scale_; }
+    [[nodiscard]] std::size_t fitted_from() const noexcept { return from_; }
+    [[nodiscard]] std::size_t fitted_to() const noexcept { return to_; }
+
+private:
+    double mean_ = 0.0;
+    double scale_ = 0.0;
+    std::size_t from_ = 0;
+    std::size_t to_ = 0;
+    bool fitted_ = false;
+};
+
 // ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------

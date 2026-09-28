@@ -12,6 +12,7 @@
 
 #include <risk/optimise.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -58,6 +59,7 @@ int main() {
     using altair::equal_weight;
     using altair::ledoit_wolf;
     using altair::min_variance;
+    using altair::mean_variance;
     using altair::portfolio_variance;
     using altair::risk_parity;
     using altair::sample_covariance;
@@ -232,6 +234,20 @@ int main() {
                             "sizing.\n");
             }
             check(rows.size() >= 3, "at least three portfolios were compared");
+
+            const std::array<double, 20> views = [] {
+                std::array<double, 20> v{};
+                v[0] = 0.02; v[1] = 0.01;
+                return v;
+            }();
+            const auto mv = mean_variance(lw_tr->sigma, views, 5.0);
+            check(mv && std::fabs(mv->sum() - 1.0) < 1e-12,
+                  "mean-variance accepts explicit expected returns and stays fully invested");
+            if (mv) {
+                bool long_only = true;
+                for (const double x : mv->w) if (x < -1e-12) long_only = false;
+                check(long_only, "mean-variance remains long-only under simplex projection");
+            }
         }
     }
 

@@ -47,12 +47,11 @@ namespace altair::ui {
 
 class AtlasPanel final : public QWidget {
 public:
-    /// `go_to_page` opens a nav page by index. Passed in rather than reached
-    /// for, because desktop/ pages do not know about the window that holds
-    /// them -- the same contract KiteLinkPanel uses for its callback.
-    explicit AtlasPanel(std::function<void(int)> go_to_page,
+    /// `open_model` receives the stable Atlas identity. The page host owns
+    /// navigation; this panel never routes by the legacy integer page field.
+    explicit AtlasPanel(std::function<void(QString)> open_model,
                         QWidget* parent = nullptr)
-        : QWidget(parent), go_(std::move(go_to_page)) {
+        : QWidget(parent), open_model_(std::move(open_model)) {
         auto* v = new QVBoxLayout(this);
 
         std::size_t built = 0, partial = 0, absent = 0;
@@ -74,6 +73,9 @@ public:
                 "&nbsp;of %4 entries. "
                 "The absences are listed on purpose: a catalogue that shows "
                 "only what exists teaches you that everything exists.<br>"
+                "<b>BUILT does not mean trained or live-approved.</b> It means "
+                "the numerical engine and its deterministic tests exist. See "
+                "models/TRAINING_MATRIX.md for fit, data and GPU gates.<br>"
                 "<b>PARTIAL is the status that misleads</b> — it means the "
                 "primitive is here and the named model is not, and the row "
                 "says which part is missing.")
@@ -112,7 +114,7 @@ public:
 
         note_ = new QLabel(
             QStringLiteral(
-                "Double-click a row with a page to open it. Every file path "
+                "Double-click a row to open its stable model detail state. Every file path "
                 "above is checked at configure time, so this table cannot "
                 "quietly describe a tree that has moved on."),
             this);
@@ -130,11 +132,9 @@ public:
         connect(tree_, &QTreeWidget::itemDoubleClicked, this,
                 [this](QTreeWidgetItem* item, int) {
                     if (item == nullptr) { return; }
-                    const int page = item->data(0, Qt::UserRole).toInt();
-                    // -1 is "no page runs this", which is most of the absent
-                    // rows and some of the built ones. Doing nothing is
-                    // correct; opening page 0 would be a lie.
-                    if (page >= 0 && go_) { go_(page); }
+                    if (!item->data(0, Qt::UserRole).isValid()) { return; }
+                    const QString id = item->data(0, Qt::UserRole + 2).toString();
+                    if (!id.isEmpty() && open_model_) { open_model_(id); }
                 });
     }
 
@@ -145,6 +145,14 @@ public:
     /// is under test is the filtering rule and nothing else.
     void set_search(const QString& q) { find_->setText(q); }
     void set_hide_absent(bool on) { hide_absent_->setChecked(on); }
+
+    /// Show a catalogue entry selected from navigation, including absent models.
+    void focus_model(const QString& model, bool focus_search = false) {
+        hide_absent_->setChecked(false);
+        find_->setText(model);
+        apply_filter();
+        if (focus_search) { find_->setFocus(); }
+    }
 
     /// For the test: how many rows are visible under the current filter.
     [[nodiscard]] int visible_rows() const {
@@ -180,6 +188,11 @@ private:
             it->setText(2, QString::fromUtf8(r.file));
             it->setText(3, QString::fromUtf8(r.what));
             it->setData(0, Qt::UserRole, r.page);
+            it->setData(0, Qt::UserRole + 1,
+                        QVariant::fromValue<qulonglong>(atlas_model_id(r)));
+            it->setData(0, Qt::UserRole + 2,
+                        QStringLiteral("atlas.%1").arg(
+                            QString::number(static_cast<qulonglong>(atlas_model_id(r)), 16)));
 
             switch (r.status) {
             case AtlasStatus::Implemented:
@@ -193,10 +206,10 @@ private:
                 it->setForeground(0, QColor(QStringLiteral("#7F8C8D")));
                 break;
             }
-            if (r.page >= 0) {
-                it->setToolTip(0, QStringLiteral(
-                    "Double-click to open the page that runs this."));
-            }
+            it->setToolTip(0, QStringLiteral(
+                "Model ID: atlas.%1\nDouble-click to open this exact model detail state.")
+                .arg(QString::number(
+                    static_cast<qulonglong>(atlas_model_id(r)), 16)));
         }
         tree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
         tree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -237,7 +250,7 @@ private:
         }
     }
 
-    std::function<void(int)> go_;
+    std::function<void(QString)> open_model_;
     QLineEdit* find_ = nullptr;
     QCheckBox* hide_absent_ = nullptr;
     QTreeWidget* tree_ = nullptr;

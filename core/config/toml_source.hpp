@@ -10,8 +10,8 @@
 // including it does not drag a TOML parser into the hot path.
 //
 // THE CONSTRAINT THAT SHAPES THIS FILE: ConfigSnapshot stores int64, double
-// and bool, and nothing else. It rides a seqlock, so every entry must be
-// trivially copyable and fixed-size. A string cannot go in one. Strings in
+// and bool, and nothing else. It is copied by the preallocated SnapshotSlots
+// store; entries stay fixed-size. Strings in
 // altair.toml -- env-var NAMES, URLs, paths -- are therefore skipped and
 // counted here, and read separately by cold startup code that can afford a
 // parser. That is a real boundary, not an omission: see D1.

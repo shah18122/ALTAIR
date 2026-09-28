@@ -81,7 +81,8 @@ bool put_scalar(const toml::node& n, const char* key, ConfigSnapshot& out,
         return true;
     }
     if (n.is_string()) {
-        // D1: a string cannot ride a seqlock. Counted, not failed.
+        // D1: a string is outside the fixed-size scalar snapshot schema.
+        // Counted, not failed.
         ++rep.skipped_string;
         note_skipped(rep, key);
         return true;

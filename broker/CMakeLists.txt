@@ -13,10 +13,24 @@
 add_library(altair_broker INTERFACE)
 add_library(altair::broker ALIAS altair_broker)
 
+add_library(altair_credential_store STATIC credential_store.cpp)
+add_library(altair::credential_store ALIAS altair_credential_store)
+target_include_directories(altair_credential_store PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(altair_credential_store PUBLIC altair_flags)
+if(WIN32)
+    target_link_libraries(altair_credential_store PRIVATE Advapi32)
+elseif(APPLE)
+    find_library(ALTAIR_SECURITY_FRAMEWORK Security REQUIRED)
+    target_link_libraries(altair_credential_store PRIVATE
+        "${ALTAIR_SECURITY_FRAMEWORK}")
+endif()
+
 target_include_directories(altair_broker INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(altair_broker INTERFACE
     altair_types
     altair_time
+    altair_lockfree
     altair_flags
 )
 
@@ -45,6 +59,9 @@ else()
 endif()
 
 if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_fyers_webhook_test tests/test_fyers_webhook.cpp)
+    target_link_libraries(altair_fyers_webhook_test PRIVATE altair_broker altair_flags)
+    add_test(NAME fyers_webhook COMMAND altair_fyers_webhook_test)
     add_executable(altair_kite_auth_test tests/test_kite_auth.cpp)
     target_link_libraries(altair_kite_auth_test PRIVATE altair_broker altair_flags)
     add_test(NAME kite_auth COMMAND altair_kite_auth_test)
@@ -76,6 +93,11 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE altair_broker altair_flags)
     add_test(NAME kite_historical COMMAND altair_kite_historical_test)
 
+    add_executable(altair_fyers_historical_test tests/test_fyers_historical.cpp)
+    target_link_libraries(altair_fyers_historical_test PRIVATE
+        altair_broker altair_flags)
+    add_test(NAME fyers_historical COMMAND altair_fyers_historical_test)
+
     # P20-03. The /quote parser. Links altair_broker (the non-net half) only,
     # for the same reason kite_historical does: it is a PARSER, with no
     # transport and no credential in it, so it builds and runs in every preset
@@ -85,4 +107,49 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_kite_quote_test
         PRIVATE altair_broker altair_flags)
     add_test(NAME kite_quote COMMAND altair_kite_quote_test)
+
+    add_executable(altair_fyers_auth_test tests/test_fyers_auth.cpp)
+    target_link_libraries(altair_fyers_auth_test PRIVATE altair_broker altair_flags)
+    add_test(NAME fyers_auth COMMAND altair_fyers_auth_test)
+
+    add_executable(altair_oauth_attempt_test tests/test_oauth_attempt.cpp)
+    target_link_libraries(altair_oauth_attempt_test PRIVATE
+        altair_broker altair_flags)
+    add_test(NAME oauth_attempt COMMAND altair_oauth_attempt_test)
+
+    add_executable(altair_broker_state_store_test tests/test_state_store.cpp)
+    target_link_libraries(altair_broker_state_store_test
+        PRIVATE altair_broker altair_flags)
+    add_test(NAME broker_state_store COMMAND altair_broker_state_store_test)
+
+    add_executable(altair_account_snapshot_test tests/test_account_snapshot.cpp)
+    target_link_libraries(altair_account_snapshot_test PRIVATE
+        altair_broker altair_flags)
+    add_test(NAME account_snapshot COMMAND altair_account_snapshot_test)
+
+    add_executable(altair_account_snapshot_parser_test
+        tests/test_account_snapshot_parser.cpp)
+    target_link_libraries(altair_account_snapshot_parser_test PRIVATE
+        altair_broker altair_flags)
+    add_test(NAME account_snapshot_parser COMMAND altair_account_snapshot_parser_test)
+
+    add_executable(altair_snapshot_lifecycle_test tests/test_snapshot_lifecycle.cpp)
+    target_link_libraries(altair_snapshot_lifecycle_test PRIVATE
+        altair_broker altair_flags)
+    add_test(NAME snapshot_lifecycle COMMAND altair_snapshot_lifecycle_test)
+
+    add_executable(altair_snapshot_publisher_test tests/test_snapshot_publisher.cpp)
+    target_link_libraries(altair_snapshot_publisher_test PRIVATE
+        altair_broker altair_flags)
+    add_test(NAME snapshot_publisher COMMAND altair_snapshot_publisher_test)
+
+    add_executable(altair_broker_service_runtime_test tests/test_service_runtime.cpp)
+    target_link_libraries(altair_broker_service_runtime_test PRIVATE
+        altair_broker altair_flags)
+    add_test(NAME broker_service_runtime COMMAND altair_broker_service_runtime_test)
+
+    add_executable(altair_credential_store_test tests/test_credential_store.cpp)
+    target_link_libraries(altair_credential_store_test
+        PRIVATE altair_credential_store altair_flags)
+    add_test(NAME credential_store COMMAND altair_credential_store_test)
 endif()

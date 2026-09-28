@@ -42,12 +42,33 @@ skip_first_minutes  = 5
 # DATA FEEDS
 # ───────────────────────────────────────────────────────────────────────────
 [feed]
-primary            = "kite"        # kite | xts
-secondary          = "xts"
+primary            = "fyers"       # fyers | kite
+secondary          = "kite"
 failover_enabled   = true
 staleness_ms       = 250           # no tick for this long -> switch primary
 failback_stable_s  = 60            # primary must be healthy this long to return
 record_all_ticks   = true
+
+[broker]
+# FYERS is the configured primary account. Kite is the explicitly selected
+# secondary. An uncertain order is reconciled at the
+# submitting broker; it is never retried blindly at the other broker.
+primary            = "fyers"
+secondary          = "kite"
+execution_failover = "reconcile_only"
+
+[feed.fyers]
+enabled        = true
+# Preference is configured now; live FYERS transport remains gated on verified
+# wire fixtures and account/static-IP readiness.
+# Credentials are read only by broker/ and never stored in this file.
+client_id_env  = "ALTAIR_FYERS_CLIENT_ID"
+secret_env     = "ALTAIR_FYERS_SECRET"
+redirect_url   = "https://altair.thesmitshah.com/fyers/callback"
+# Optional override for the helper; it must exactly match the FYERS app.
+redirect_url_env = "ALTAIR_FYERS_REDIRECT_URI"
+data_mode      = "quote_depth"
+max_subscriptions = 200
 
 [feed.kite]
 enabled     = true
@@ -77,7 +98,7 @@ max_subscriptions = 3000
 # ───────────────────────────────────────────────────────────────────────────
 [instruments]
 refresh_time         = "08:15"     # IST, pre-open
-sources              = ["nse", "bse", "kite", "xts"]
+sources              = ["nse", "bse", "fyers", "kite"]
 require_agreement_on = ["lot_size", "tick_size", "expiry", "strike"]
 on_disagreement      = "block_symbol"   # block_symbol | block_all | warn_only
 snapshot_dir         = "data/instruments"

@@ -1,0 +1,3033 @@
+{
+ "baseline_head": "a34af5c5c9fa8c7498e8cc4df00907548a41e1a5",
+ "date": "2026-09-14",
+ "note": "Disjoint reviewer assignment. Hashing and assignment are not reading.",
+ "total_files": 481,
+ "total_lines": 141880,
+ "groups": {
+  "G01_core_a_build": {
+   "files": [
+    {
+     "path": ".gitignore",
+     "lines": 130,
+     "sha256": "7522757dc0ac49a1917bb52e828c2fe70c96e0fafd765346251e50de3ec16b6d",
+     "module": ".gitignore"
+    },
+    {
+     "path": "CMakeLists.txt",
+     "lines": 247,
+     "sha256": "40ad2f10005de08a8493bc4b95c2c73a8d34cd976bc5a8dee2c7112fc3addf8f",
+     "module": "CMakeLists.txt"
+    },
+    {
+     "path": "CMakePresets.json",
+     "lines": 197,
+     "sha256": "a0bc1451cdad386821d361e94af5d8173e77d44db2b480ad28854ea1c09826ee",
+     "module": "CMakePresets.json"
+    },
+    {
+     "path": "build.bat",
+     "lines": 93,
+     "sha256": "9ad540310ef5a486feaecb7f10430d86b7934fa9ca2752199630eead7f9bb4de",
+     "module": "build.bat"
+    },
+    {
+     "path": "cmake/AsanRuntime.cmake",
+     "lines": 114,
+     "sha256": "fbb179160d9271b366a413112b4b7cf13d24f0f6765d6f6412f91fd1d66c7919",
+     "module": "cmake"
+    },
+    {
+     "path": "cmake/AtlasAudit.cmake",
+     "lines": 120,
+     "sha256": "93a7abfb8e522988e58b91e64652359c983221584d1e580813e54fcaaacd9b81",
+     "module": "cmake"
+    },
+    {
+     "path": "cmake/BoundsAudit.cmake",
+     "lines": 183,
+     "sha256": "bbb2ce363557c1a472426b5a69ee3367728eac3584c9def7c5dfcad85b957281",
+     "module": "cmake"
+    },
+    {
+     "path": "cmake/NamespaceAudit.cmake",
+     "lines": 141,
+     "sha256": "b7e9cdc5d3f88fd6c5cfcaaeb2ed46b5583fc4656f84d7529420037fa7a17f72",
+     "module": "cmake"
+    },
+    {
+     "path": "core/CMakeLists.txt",
+     "lines": 39,
+     "sha256": "8e819c3e6c3394ee86bcc98c78b00d8a274e85a49d05376b63ec62416ca5511c",
+     "module": "core"
+    },
+    {
+     "path": "core/cache_topology.hpp",
+     "lines": 97,
+     "sha256": "3af53ee1fdc9f005615bcf00f88f82b11581c818a2f584ba3dda1aedcb9afbdc",
+     "module": "core"
+    },
+    {
+     "path": "core/mem/CMakeLists.txt",
+     "lines": 21,
+     "sha256": "cc82435787ff9ca6752546095de1f1b78cfde0fab7b4288daa0b7514be54710f",
+     "module": "core"
+    },
+    {
+     "path": "core/mem/arena.hpp",
+     "lines": 156,
+     "sha256": "2e1b9818d9bd8b3af7ac9164a57af287192402ee1370d2e662367189423d2c4a",
+     "module": "core"
+    },
+    {
+     "path": "core/mem/page_alloc.cpp",
+     "lines": 227,
+     "sha256": "8fc691fe984fead09fcdda05018f1322836b818be94d11370eca75cadd890e38",
+     "module": "core"
+    },
+    {
+     "path": "core/mem/page_alloc.hpp",
+     "lines": 105,
+     "sha256": "eaed070105607995bbf589886987874e7cdf2545403363a539a6b11a556fe711",
+     "module": "core"
+    },
+    {
+     "path": "core/mem/pool.hpp",
+     "lines": 167,
+     "sha256": "2d8addb0530625b1b2523264cf624e632b5209abe08c2d66db656c8af020b318",
+     "module": "core"
+    },
+    {
+     "path": "core/mem/tests/test_arena_pool.cpp",
+     "lines": 358,
+     "sha256": "cd30caafacc391e4acfb84bdc107a9740821ec71688b34b310839d55ba68e28f",
+     "module": "core"
+    },
+    {
+     "path": "core/mem/tests/test_page_alloc.cpp",
+     "lines": 228,
+     "sha256": "e762e3a16b706d04309de44e69fe6c0aede5b7f62a4ffb53d1e0c5db3b5c65cc",
+     "module": "core"
+    },
+    {
+     "path": "core/testing/latency_gate.hpp",
+     "lines": 86,
+     "sha256": "09246a5bc802e70beebc8c006073878b0cb0667f04996ec50d8183881817cabe",
+     "module": "core"
+    },
+    {
+     "path": "core/time/CMakeLists.txt",
+     "lines": 27,
+     "sha256": "3653a2f121ae880a179b77fd443aaa4d778761767febe238a0a3837e6ada77a2",
+     "module": "core"
+    },
+    {
+     "path": "core/time/exchange_ts.hpp",
+     "lines": 251,
+     "sha256": "8319956f7ad9e833077dd2d50dbf62ac1bc4d27d61bc433a117e820e4b1e346a",
+     "module": "core"
+    },
+    {
+     "path": "core/time/tests/test_exchange_ts.cpp",
+     "lines": 263,
+     "sha256": "95730063ce4c06f02fb27ccf0888927af2f5c62f59d7575e8af65441c450d1b0",
+     "module": "core"
+    },
+    {
+     "path": "core/time/tests/test_timestamp.cpp",
+     "lines": 250,
+     "sha256": "8fece7edca1e3647b5dd779ba0f3f45e5cfce100cfb425dc2595d0965a73a1ff",
+     "module": "core"
+    },
+    {
+     "path": "core/time/tests/test_tsc_clock.cpp",
+     "lines": 329,
+     "sha256": "b471636972a9dc3e4090276a82ea4a606c52f61de66f1fe73eff6e94bfd3cf00",
+     "module": "core"
+    },
+    {
+     "path": "core/time/timestamp.hpp",
+     "lines": 341,
+     "sha256": "4632be74903c8cb807eb01f42e939997cc95c40ebab96a31e575bae6498a24c2",
+     "module": "core"
+    },
+    {
+     "path": "core/time/tsc_clock.cpp",
+     "lines": 348,
+     "sha256": "eaf8df6c58e25bc17c4642409fcd0a2d0db55be43cc2e9f6daa7f2e106988168",
+     "module": "core"
+    },
+    {
+     "path": "core/time/tsc_clock.hpp",
+     "lines": 158,
+     "sha256": "3f8039ba186307f5e3b13d639c94c4bd4fa94812ab88cbc23dd71226dfc28e9b",
+     "module": "core"
+    },
+    {
+     "path": "core/types/CMakeLists.txt",
+     "lines": 15,
+     "sha256": "ce22b9ecfed8771ff433c1e7d480419c34494d13a894a8bcee3f1c35ca02eb61",
+     "module": "core"
+    },
+    {
+     "path": "core/types/tests/test_units.cpp",
+     "lines": 247,
+     "sha256": "6232fd2b709107bf9b34864058a5112da5d1a7fde4de94f412769ed5797b6b7f",
+     "module": "core"
+    },
+    {
+     "path": "core/types/units.hpp",
+     "lines": 477,
+     "sha256": "e4ef6a4c1a1bb82fb4172a957fc983fd5d601e5e65d134754770b56771f70e8a",
+     "module": "core"
+    },
+    {
+     "path": "tests/CMakeLists.txt",
+     "lines": 18,
+     "sha256": "7be148e5b39284d268091b51797f1961ed8d91d6f76b384ed4e12a4cad32d516",
+     "module": "tests"
+    },
+    {
+     "path": "tests/data/.gitkeep",
+     "lines": 2,
+     "sha256": "f66c5e3938a5b08c6054e1ea7f14ae879bf402238bc92d5fe6a89f4450290204",
+     "module": "tests"
+    },
+    {
+     "path": "tests/smoke.cpp",
+     "lines": 48,
+     "sha256": "5eee9678c560582249200654789384a32427cae07184ab90ac7a8d31f96cef11",
+     "module": "tests"
+    },
+    {
+     "path": "tests/testkit/.gitkeep",
+     "lines": 1,
+     "sha256": "1620fb9e64eb8fc7c0393cc5860b77e19b9fe0ad46f8d0b0ccf2868e4392a45f",
+     "module": "tests"
+    },
+    {
+     "path": "vcpkg.json",
+     "lines": 73,
+     "sha256": "3e4e7899e07d79f41fecea7b002789996fcaae327c0abb527a733fa9e8c75264",
+     "module": "vcpkg.json"
+    }
+   ],
+   "file_count": 34,
+   "lines": 5557
+  },
+  "G02_core_b": {
+   "files": [
+    {
+     "path": "core/config/CMakeLists.txt",
+     "lines": 47,
+     "sha256": "a0ecd49049dea41f3872129477e08b734b1b40f89548b068fed3195e1e0b69de",
+     "module": "core"
+    },
+    {
+     "path": "core/config/config.hpp",
+     "lines": 314,
+     "sha256": "8672d6f9d62a9b7c84b8ccb9ac462ac44e14f129046123c2f9338432ab890ad7",
+     "module": "core"
+    },
+    {
+     "path": "core/config/store.hpp",
+     "lines": 79,
+     "sha256": "067e6f8b7bfd86dc8590101b53e20dcab715ab4dd33bbbfe1c1ae31650c94d52",
+     "module": "core"
+    },
+    {
+     "path": "core/config/tests/test_config.cpp",
+     "lines": 432,
+     "sha256": "8e0a8d9e265f1dcebd11b27def294ddc34c085d90dacfaf1af3824bbdb40df48",
+     "module": "core"
+    },
+    {
+     "path": "core/config/tests/test_toml_source.cpp",
+     "lines": 266,
+     "sha256": "4eac93c5fe5474c988951b4be852fa2807ce23ec3bf7b8593a9f626f29ef7448",
+     "module": "core"
+    },
+    {
+     "path": "core/config/toml_source.cpp",
+     "lines": 209,
+     "sha256": "0ea48ef430810026d7930ccebe739fb576a3060065f6049c5b120f3a0162096a",
+     "module": "core"
+    },
+    {
+     "path": "core/config/toml_source.hpp",
+     "lines": 67,
+     "sha256": "eb516b86f86e257a7794474911f93fc7488cc7f9423159d1fc52f7ac1bd57f84",
+     "module": "core"
+    },
+    {
+     "path": "core/invariant/CMakeLists.txt",
+     "lines": 16,
+     "sha256": "36ee0bdfcc62087ccee2711ab04380836c461b8218e69e1b044d06736d74b621",
+     "module": "core"
+    },
+    {
+     "path": "core/invariant/conservation.hpp",
+     "lines": 315,
+     "sha256": "2c72b0c7060188c42e4f85448440ca44040cea32691460c3a5f6e1cd8841d6d6",
+     "module": "core"
+    },
+    {
+     "path": "core/invariant/tests/test_conservation.cpp",
+     "lines": 329,
+     "sha256": "d1c390a7f27b655fbae3c40acb6c1ac13d22786a4c4275d41767da191b0d174d",
+     "module": "core"
+    },
+    {
+     "path": "core/lockfree/CMakeLists.txt",
+     "lines": 21,
+     "sha256": "f6691e10d8df0b5610dda07fa2151032a50078f38ae567da3c83c84f715a7074",
+     "module": "core"
+    },
+    {
+     "path": "core/lockfree/mpsc_ring.hpp",
+     "lines": 139,
+     "sha256": "0526b413ab1d762156ac080b5759c082045506921ff75aff999f900c5c9fb392",
+     "module": "core"
+    },
+    {
+     "path": "core/lockfree/seqlock.hpp",
+     "lines": 107,
+     "sha256": "66b94e590e51bc41f14a33405bb858b63143ddeb76c28facbe44bd7298bfc4da",
+     "module": "core"
+    },
+    {
+     "path": "core/lockfree/spsc_ring.hpp",
+     "lines": 160,
+     "sha256": "032c9ecefb166fd118ca7b5059189c1945fe78f461b571997dd8a4048238a657",
+     "module": "core"
+    },
+    {
+     "path": "core/lockfree/tests/test_mpsc_seqlock.cpp",
+     "lines": 403,
+     "sha256": "172bfec75b86ead838d3849be8d7752344edbb9059814ed6097bb5f4d8eccb54",
+     "module": "core"
+    },
+    {
+     "path": "core/lockfree/tests/test_spsc_ring.cpp",
+     "lines": 257,
+     "sha256": "814625ca847d3cedd5cce6b3658e996d2d203f1a4e972dce515adbb1d010edb5",
+     "module": "core"
+    },
+    {
+     "path": "core/log/CMakeLists.txt",
+     "lines": 21,
+     "sha256": "a2eb01d3d66051b0f26874e9d589e1cfaab0984873919d55d27109106c40e3f8",
+     "module": "core"
+    },
+    {
+     "path": "core/log/binlog.hpp",
+     "lines": 294,
+     "sha256": "d2de78968e744ef9098c367c3e650b8de51957bea1cae101e179d487e3e17cc7",
+     "module": "core"
+    },
+    {
+     "path": "core/log/decoder.hpp",
+     "lines": 264,
+     "sha256": "3dd72392600befde452790b15c3838e4685abe17224204cf3b179894a6f88469",
+     "module": "core"
+    },
+    {
+     "path": "core/log/tests/test_binlog.cpp",
+     "lines": 454,
+     "sha256": "98ddd1c8d9294dcf9f9d40b57265661b021753e6b8216516f31708f93206ce04",
+     "module": "core"
+    }
+   ],
+   "file_count": 20,
+   "lines": 4194
+  },
+  "G03_feed_book": {
+   "files": [
+    {
+     "path": "book/CMakeLists.txt",
+     "lines": 28,
+     "sha256": "b8b2c7edc1b892f67a46c0c2144c8129c85bc68142ae056b5864d177d35135e6",
+     "module": "book"
+    },
+    {
+     "path": "book/flow.hpp",
+     "lines": 262,
+     "sha256": "e236ac56535743055bca0b47ea1db25ba92bde77679b8682898008b333e1d84a",
+     "module": "book"
+    },
+    {
+     "path": "book/l2_book.hpp",
+     "lines": 234,
+     "sha256": "3a0ea205a9cf810ee8ab6176f3a5df3f14cb3d736114def57bb0cd20ae6ae88b",
+     "module": "book"
+    },
+    {
+     "path": "book/microstructure.hpp",
+     "lines": 185,
+     "sha256": "53ffe071dc1fbe440f8053b5120127c5e3f46c06564bf3df293e2a4f4bc5af68",
+     "module": "book"
+    },
+    {
+     "path": "book/tests/test_flow.cpp",
+     "lines": 327,
+     "sha256": "b742f4aa8f9fc2494bb48f3ad5bf5661347fa092be3d54519683c000994afc4b",
+     "module": "book"
+    },
+    {
+     "path": "book/tests/test_l2_book.cpp",
+     "lines": 368,
+     "sha256": "ba1ce132131d262287cd32b64cc4ae74b668dcf4c461f6b9150f4c830a438155",
+     "module": "book"
+    },
+    {
+     "path": "book/tests/test_microstructure.cpp",
+     "lines": 323,
+     "sha256": "ea1a4c8e59ba0fe99184091a2f19a95162ab35e0fecd96dc30742ac7dee693c9",
+     "module": "book"
+    },
+    {
+     "path": "feed/CMakeLists.txt",
+     "lines": 42,
+     "sha256": "1b898015a14435c77606763f89011d80f691b137312307c27edf5e7c8dc5233b",
+     "module": "feed"
+    },
+    {
+     "path": "feed/failover.hpp",
+     "lines": 203,
+     "sha256": "1ebe9320a9381d0e8afc694819f98e47117c1a7e37979ff874a85e4281a3c28c",
+     "module": "feed"
+    },
+    {
+     "path": "feed/kite_decoder.hpp",
+     "lines": 283,
+     "sha256": "92ba60afa4bf39f50043da927ec5bc168c0885d21b81e6913b015c81b57bf216",
+     "module": "feed"
+    },
+    {
+     "path": "feed/normaliser.hpp",
+     "lines": 192,
+     "sha256": "6e4e99f70e3631e71f84cae80370643937a1c408670822b7727b363a2a6e04ce",
+     "module": "feed"
+    },
+    {
+     "path": "feed/replay.hpp",
+     "lines": 190,
+     "sha256": "596b908a3beaea66b48a8c1680da7ac03f5814baeb9af078d8404ddc060786db",
+     "module": "feed"
+    },
+    {
+     "path": "feed/tests/test_failover.cpp",
+     "lines": 308,
+     "sha256": "4b0150ddda3204d1a498054f5d78fe01ce66ce3852504601e43ec0e0b9f081ad",
+     "module": "feed"
+    },
+    {
+     "path": "feed/tests/test_kite_decoder.cpp",
+     "lines": 568,
+     "sha256": "cf2e045df8404c708e8ba87b9dda2773f1a68d755d52283a00809dbdc96ffa9f",
+     "module": "feed"
+    },
+    {
+     "path": "feed/tests/test_normaliser.cpp",
+     "lines": 381,
+     "sha256": "e4d2ce509e74ac3d6344e8a83a6895144b5dae7b010063b72e8237723fd602b6",
+     "module": "feed"
+    },
+    {
+     "path": "feed/tests/test_replay.cpp",
+     "lines": 340,
+     "sha256": "9cbab78b03603b70860a14f685fafa34b25330f1bcb51634b3281005db1a5226",
+     "module": "feed"
+    },
+    {
+     "path": "feed/tests/test_tick.cpp",
+     "lines": 298,
+     "sha256": "9941a6b93e429e5e8b27aba07e616ecf6d1fcf5f53c3de0feeb066ab0fe3494a",
+     "module": "feed"
+    },
+    {
+     "path": "feed/tests/test_tick_store.cpp",
+     "lines": 399,
+     "sha256": "6691abcd7990a63f394e05722603ba981ccdbee0c383f6c712033b7eaf1ea9ba",
+     "module": "feed"
+    },
+    {
+     "path": "feed/tick.hpp",
+     "lines": 224,
+     "sha256": "9e6a193d4daf8344351aada574858886e19bb08a8f6e40e929cb005d69cf8d64",
+     "module": "feed"
+    },
+    {
+     "path": "feed/tick_store.hpp",
+     "lines": 277,
+     "sha256": "ca400530e9213622e5915cc087773e77e7cf4e0dd3d0ac99f4db2d8165ac9c12",
+     "module": "feed"
+    }
+   ],
+   "file_count": 20,
+   "lines": 5432
+  },
+  "G04_instruments_research": {
+   "files": [
+    {
+     "path": "instruments/CMakeLists.txt",
+     "lines": 56,
+     "sha256": "32ab7d83a19b3473d5c8ede833e42138ee9226cdebf1cc436eeb1052fed64b06",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/contract_spec.hpp",
+     "lines": 432,
+     "sha256": "58d55489eb05fc26acd827a36563a75e99bae2a08bd682e9fc04fb6d163fe255",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/kite_dump.hpp",
+     "lines": 611,
+     "sha256": "52d8b082f1934db9b8bfe572190221d0ef560d687318ffee58be746b7fc9ab05",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/nse_equity_master.hpp",
+     "lines": 322,
+     "sha256": "413960840a8e06dd7b8a39de2c3b0809c886ad02772c90f587662453d8ab944a",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/nse_mktlots.hpp",
+     "lines": 286,
+     "sha256": "33dda2f1867a610e2d1ed2b98df9f7a852dc6f3f40ac44aa3184e1be55a738fa",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/reconcile.hpp",
+     "lines": 575,
+     "sha256": "bc37a673cb3fc24430536604d08afc4c71348501e3652eaff4e03efcfe51765a",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/snapshot.hpp",
+     "lines": 247,
+     "sha256": "242cd6ed607fb0879a093effee0236bcac1f6e63f6e333140be005455f90c1e1",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/tests/test_kite_dump.cpp",
+     "lines": 532,
+     "sha256": "3a841193e9a0b3ab91e1606edd51005339b0b03dc86245d0e6a30fe037b602ad",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/tests/test_nse_equity_master.cpp",
+     "lines": 295,
+     "sha256": "5af26900d7af7c5a14fcdbcc121c4545c1b9361080fa8ba7b41b310ded9b9088",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/tests/test_nse_mktlots.cpp",
+     "lines": 263,
+     "sha256": "3d41fc2402e50fd081ce85a3d9d0d22ef414a8b39135585c02654d307da03b92",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/tests/test_reconcile.cpp",
+     "lines": 445,
+     "sha256": "4184180363e55c8d1fb01a09cb5f9c66319ed1e06f6d946255f86880ca233071",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/tests/test_snapshot.cpp",
+     "lines": 357,
+     "sha256": "4aa470def52b4b2a9e9739d92ec86e20a6a05747624dcd4cb2cf37ebdfd97130",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/tests/test_spec_store.cpp",
+     "lines": 350,
+     "sha256": "f383f19a1e44bb8566ed877a9679a836cdf2b693c7c1468c9236189556ff6f57",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/tests/test_udiff_master.cpp",
+     "lines": 340,
+     "sha256": "fa7b9762c82632cb8a9f3c67d70356dc9a4b08c1ce29ca10163cc2ddc39f2a4e",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/tests/test_universe.cpp",
+     "lines": 335,
+     "sha256": "53e639cdb7113225de128b93753b148979873c1f2aa1fd2c4ebece3009dfb9a1",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/udiff_master.hpp",
+     "lines": 308,
+     "sha256": "642ecc6deb22bf04f46dfc9a51a552959a803fe72e591960e6bcd9c7eb60c85d",
+     "module": "instruments"
+    },
+    {
+     "path": "instruments/universe.hpp",
+     "lines": 178,
+     "sha256": "97a65b798d452c380112f9d8b03e6820bbb5df532c78fe8390b807c819db6dfa",
+     "module": "instruments"
+    },
+    {
+     "path": "research/CMakeLists.txt",
+     "lines": 26,
+     "sha256": "b53b8881f0dc2bd961fd6463f1d715dc511799382c528f2a1d53aee3c0451780",
+     "module": "research"
+    },
+    {
+     "path": "research/feature_card.hpp",
+     "lines": 382,
+     "sha256": "2b36e4fd625f1183a944297723e6d2b1654e54000900b74648d244691e550214",
+     "module": "research"
+    },
+    {
+     "path": "research/papers/README.md",
+     "lines": 93,
+     "sha256": "0d9bd5d7513aaa9cc67e27845f8e92f4f8732133f64e7049c9f11357e593a84c",
+     "module": "research"
+    },
+    {
+     "path": "research/papers/inbox/.gitkeep",
+     "lines": 1,
+     "sha256": "9a145a16d434d71c24371f1ff014cd8b695f63f112f8f01b51351c0f6d5c52bd",
+     "module": "research"
+    },
+    {
+     "path": "research/papers/index.md",
+     "lines": 23,
+     "sha256": "14a8bec649f8b2fea12693ecc59c0c70fc51ea7065a5bc09e6c9a9887a41883c",
+     "module": "research"
+    },
+    {
+     "path": "research/papers/registry.json",
+     "lines": 5,
+     "sha256": "4c983e348cc251bd160e9d44b88d2561198bbab12e17423286d288084d32f29d",
+     "module": "research"
+    },
+    {
+     "path": "research/replication.hpp",
+     "lines": 342,
+     "sha256": "13521da09c37d008861eb4290c760df31653b3f82747b139cb949536a48dcdc0",
+     "module": "research"
+    },
+    {
+     "path": "research/tests/test_research.cpp",
+     "lines": 356,
+     "sha256": "dad6e7fb4d202189af078729c08cc68988c9d2fad15541342d7ed53964432b06",
+     "module": "research"
+    },
+    {
+     "path": "research/tools/ingest_bars.py",
+     "lines": 332,
+     "sha256": "ae442236e725d6e7da0c5b4e4e7c9304f0383f3560ea5fd5f0443f2b28c02d1f",
+     "module": "research"
+    }
+   ],
+   "file_count": 26,
+   "lines": 7492
+  },
+  "G05_features_backtest_flagging": {
+   "files": [
+    {
+     "path": "backtest/CMakeLists.txt",
+     "lines": 45,
+     "sha256": "4cc1ca8f1adbbc0b32898c0ebe78179e5ac0abeb531f585592373830f9d42d4e",
+     "module": "backtest"
+    },
+    {
+     "path": "backtest/engine.hpp",
+     "lines": 386,
+     "sha256": "f11ebdae8781a9daa8f4c680658d2d3d4f254c8068f67f684675a3d4cc2a85c2",
+     "module": "backtest"
+    },
+    {
+     "path": "backtest/mc_pricing.hpp",
+     "lines": 254,
+     "sha256": "1c188ce1310b9af5b3fcbecf7d9ad18cc3000cc7e3e106c904200845cae27cbf",
+     "module": "backtest"
+    },
+    {
+     "path": "backtest/montecarlo.hpp",
+     "lines": 459,
+     "sha256": "636f47907f2f14798be9e88990278b0613d1292f8f644d96fdf036d8826f736e",
+     "module": "backtest"
+    },
+    {
+     "path": "backtest/tests/test_engine.cpp",
+     "lines": 446,
+     "sha256": "d4336bf6e0e93fbed60ee655455a38c402bdc465c2dbda78ec278a427cf2bfc4",
+     "module": "backtest"
+    },
+    {
+     "path": "backtest/tests/test_mc_pricing.cpp",
+     "lines": 175,
+     "sha256": "3a2437702c5331d88e2bfb33822e6c9a0f65fbda2750e9027071981f1628296f",
+     "module": "backtest"
+    },
+    {
+     "path": "backtest/tests/test_montecarlo.cpp",
+     "lines": 397,
+     "sha256": "789f5070e0ef4fbd4953e3a1d4fa93304a56104a91bc2ead125e732e2d0d2ffc",
+     "module": "backtest"
+    },
+    {
+     "path": "backtest/tests/test_validation.cpp",
+     "lines": 454,
+     "sha256": "529f1fc4625fc8138d4f419c26e8377858cf7cc9f5c5ffb06ea6a4909bd17d37",
+     "module": "backtest"
+    },
+    {
+     "path": "backtest/validation.hpp",
+     "lines": 320,
+     "sha256": "5b9973b6c04168a983db349f30206cbdd2015bd2cd574297e0fa9c84fa4da4bf",
+     "module": "backtest"
+    },
+    {
+     "path": "features/CMakeLists.txt",
+     "lines": 35,
+     "sha256": "32c90f1887c3fb29412b85c22724ac3a000abb6e76547ce1ad798ef2c27255f0",
+     "module": "features"
+    },
+    {
+     "path": "features/book_flow.hpp",
+     "lines": 187,
+     "sha256": "1edf3d12423e06885fa1d0674fedf2d2881a62c679bc2551a42095ef376472cc",
+     "module": "features"
+    },
+    {
+     "path": "features/kinematics.hpp",
+     "lines": 264,
+     "sha256": "720cbd4aec215e1e19c65a447a8565b60ffd21c369693f77e2f93abb999107a9",
+     "module": "features"
+    },
+    {
+     "path": "features/options_calendar.hpp",
+     "lines": 384,
+     "sha256": "980c8eaf7b441682b7812705920e1d53383154b858ba002276bae486dc8522c9",
+     "module": "features"
+    },
+    {
+     "path": "features/registry.hpp",
+     "lines": 352,
+     "sha256": "9a5f77103562cace9df23b862818f70bd5c6f4975552642522435c36900640f0",
+     "module": "features"
+    },
+    {
+     "path": "features/tests/test_book_flow.cpp",
+     "lines": 239,
+     "sha256": "f5a8b1c21add0661bebdcb7c97e754fff98d9e7a84341286f7b388064f1ad579",
+     "module": "features"
+    },
+    {
+     "path": "features/tests/test_kinematics.cpp",
+     "lines": 312,
+     "sha256": "bdf90f067d0d11ef267e35de51212ac0f849a848550cbe8488afbae1892f70c3",
+     "module": "features"
+    },
+    {
+     "path": "features/tests/test_options_calendar.cpp",
+     "lines": 416,
+     "sha256": "b621d051344a4676b8b4b623a50413a8b32972e79879fc641c5e4d6002301c58",
+     "module": "features"
+    },
+    {
+     "path": "features/tests/test_registry.cpp",
+     "lines": 318,
+     "sha256": "4c925e43efa23d7e36d21529f89883eece4d852893fb46a5b1258c11ce649df3",
+     "module": "features"
+    },
+    {
+     "path": "features/vector.hpp",
+     "lines": 139,
+     "sha256": "c072ea332a33ed370f69c7d25f4dc5d852518223038319073e2bdaf7404c867d",
+     "module": "features"
+    },
+    {
+     "path": "flagging/CMakeLists.txt",
+     "lines": 26,
+     "sha256": "456b03caf9db0974877219196f41c3deda6f3c213dd122b14aeb51e7371838f4",
+     "module": "flagging"
+    },
+    {
+     "path": "flagging/deploy.hpp",
+     "lines": 451,
+     "sha256": "9c2119593f802d39c6f04c792571d22291324d3542dd3980b8c68058f98a2e17",
+     "module": "flagging"
+    },
+    {
+     "path": "flagging/drift.hpp",
+     "lines": 389,
+     "sha256": "3a44961d952844a12bcdff4b717e3d1ce5361c603fa839c4b323cf869f63ef77",
+     "module": "flagging"
+    },
+    {
+     "path": "flagging/scorecard.hpp",
+     "lines": 310,
+     "sha256": "d6c60946a26859e64fa45239a077bf363a428c1ca6ab76044e5cd49d1701c516",
+     "module": "flagging"
+    },
+    {
+     "path": "flagging/tests/test_flagging.cpp",
+     "lines": 577,
+     "sha256": "b866342419075f2db48ea9a5e8c2ef18debc9525764e2298f9c0b4e9a105165d",
+     "module": "flagging"
+    }
+   ],
+   "file_count": 24,
+   "lines": 7335
+  },
+  "G06_analytics_a": {
+   "files": [
+    {
+     "path": "analytics/CMakeLists.txt",
+     "lines": 104,
+     "sha256": "bd171367dfbee1a26e735c070b0b5ff49b8974e785ed266cff3454923072f392",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/american.hpp",
+     "lines": 269,
+     "sha256": "c1e9bbebd96bae8f21397af211d56b395a424b2ecb7fddd4efb1bbb6ce1d5316",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/bench/bench_chain.cpp",
+     "lines": 185,
+     "sha256": "71634be6fc75de722415353bccc593a6065b62c78d80842f05d3ff93991ee18c",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/chain_soa.hpp",
+     "lines": 245,
+     "sha256": "4f4ff924589129fe53d29c2f474d3607a4d94838cb06752e827e648658d30379",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/derivatives.hpp",
+     "lines": 405,
+     "sha256": "e9e91465d9979e3822eb8b4718daef20e3458eb551919f3b185b2ff79579d6e8",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/ewma.hpp",
+     "lines": 356,
+     "sha256": "a8afea455f00fb34edede431fdc0810e121a48cac88c70878fedbdf63f5d7d8e",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/garch.hpp",
+     "lines": 302,
+     "sha256": "4c8004c0c5e1e9f90713e9685525813ce56249102d00846607bb294670ce3e24",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/greeks.hpp",
+     "lines": 400,
+     "sha256": "9a4684019e4f380f600441dd0d95742d7256ff979191d93c923820e5fafaaef6",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/greeks2.hpp",
+     "lines": 209,
+     "sha256": "bea642c17dbd5800a8f01526f4382c14af193c1a6713ed3bbb1f61143fb46bc9",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/hmm.hpp",
+     "lines": 303,
+     "sha256": "edda539b9518f10405adf0a6247e8817df39ffcda9cbaf74636f22c8699e2f21",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_american.cpp",
+     "lines": 395,
+     "sha256": "133eace07944e660c606f1af5da7fb4bf7a38d3b27bd709f971c3fb45fc5263b",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_chain_soa.cpp",
+     "lines": 229,
+     "sha256": "603e5a47d97f3492505b09cc62395b0c9acef628e879dbbd7fab47fadcaf6b24",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_derivatives.cpp",
+     "lines": 387,
+     "sha256": "cd9c951ed368c17cb9c6f8cdbdf4bf325ab7696a6e04c575c926a0aa749a2730",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_ewma.cpp",
+     "lines": 443,
+     "sha256": "b0b97874ed3d0eadb5e6b392c89d27bb73b6ba38c101f7e2306a4542f296d2ef",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_garch.cpp",
+     "lines": 278,
+     "sha256": "0ac1fe32909bb921f1cd60c6e243f9b8ed6ff66c70af0d958d07af162b9e0822",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_greeks.cpp",
+     "lines": 357,
+     "sha256": "583c799ce288d2bb82025337aacde8d289090e5309f69034dd364a0d3cc20512",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_greeks2.cpp",
+     "lines": 373,
+     "sha256": "b715003b32770ab8c5565f9a3db539683d8111fd9937716dbd58533342fe81df",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_surface_hmm.cpp",
+     "lines": 313,
+     "sha256": "c09e86f0aa846e07e7735e4d92838da7ae731b6c1abc7a156d55a0460e16015a",
+     "module": "analytics"
+    }
+   ],
+   "file_count": 18,
+   "lines": 5553
+  },
+  "G07_analytics_b": {
+   "files": [
+    {
+     "path": "analytics/hurst.hpp",
+     "lines": 313,
+     "sha256": "9e2b0f089419746ec9fbc3ad9b06e390ad78368c58368f737d7ea44651b883a5",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/iv.hpp",
+     "lines": 364,
+     "sha256": "6e120596c23e22c9cc41e177d34d098c839c466c05a0caf7176cc0dbd7255db9",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/kalman.hpp",
+     "lines": 156,
+     "sha256": "226b8d3d4f0ee635238a9302748e53819f251c180ade9c715b0fc9ae5cab1459",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/rolling.hpp",
+     "lines": 376,
+     "sha256": "2e3f9f8ad6e7bbc44479a4ec343719b15757de2ee4d678f9a4633fd37d50d87c",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/sabr.hpp",
+     "lines": 244,
+     "sha256": "aaf07459bb82caad97370f8d2d172468a92253a8fc750feaf4d6971b91eafeff",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/svi.hpp",
+     "lines": 315,
+     "sha256": "021ed04ab0f3f9c47b4faaa140eb62bb702eb268cccb347fb29abb1686eb3441",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/svi_fit.hpp",
+     "lines": 428,
+     "sha256": "22b758f4d6d954d55b6f654def4287f24962c3831180190042e4706a909267ba",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_hurst.cpp",
+     "lines": 337,
+     "sha256": "968c7f8207928fdf5299ddefb17fe854c0a594c10da9489f7e9f181249a3b70f",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_iv.cpp",
+     "lines": 517,
+     "sha256": "6188ec7f3935df5ed0e756123f9cf04fa1908afeb854aefd06eb66908d623548",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_kalman.cpp",
+     "lines": 324,
+     "sha256": "d7a0215cd64f9645a023f4bca3f5aa1409d14f18b456a5ecb01c1c560946bcde",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_rolling.cpp",
+     "lines": 603,
+     "sha256": "ca55dd83c96de517880c1f64ad9cd5ddc14b5caa610888c86c4e7d154c284b98",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_svi.cpp",
+     "lines": 421,
+     "sha256": "a09991771f1a856264740df89785695a9364961dde28bbd1f7e08fd17054b748",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_svi_fit.cpp",
+     "lines": 477,
+     "sha256": "9a6e2228b3c7804d794624247b5c8509ca54512a61ffb9af80da0312721da53d",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/tests/test_vix.cpp",
+     "lines": 457,
+     "sha256": "10a77fcb884217575f73dd755384c3e52d85e2a81080cfa7f11cbad384b6f617",
+     "module": "analytics"
+    },
+    {
+     "path": "analytics/vix.hpp",
+     "lines": 325,
+     "sha256": "c45f1a64864c6a0da05b5a4d63e3752095eaac519f6f9f235d0f7a61ce64ab41",
+     "module": "analytics"
+    }
+   ],
+   "file_count": 15,
+   "lines": 5657
+  },
+  "G08_models_serving_forecast": {
+   "files": [
+    {
+     "path": "models/CMakeLists.txt",
+     "lines": 197,
+     "sha256": "d4c0514fac5bc786a62231aa15cca7bb314f2ed4f04c17b2bb411f4b36b89e4e",
+     "module": "models"
+    },
+    {
+     "path": "models/aggregator.hpp",
+     "lines": 209,
+     "sha256": "c6f6e5747fee4697d7c517a1fd96d54f29076726b120d7c16f4d076ee1bd82e2",
+     "module": "models"
+    },
+    {
+     "path": "models/calibration.hpp",
+     "lines": 377,
+     "sha256": "4ece695c455302b1899cfb75cf4188dd532988aec10ccd5115d0082108e2efba",
+     "module": "models"
+    },
+    {
+     "path": "models/conformal.hpp",
+     "lines": 497,
+     "sha256": "6a274037f1be606de1f21886ea57aecde8bdcb20261dd730d3db8c266c6b2d72",
+     "module": "models"
+    },
+    {
+     "path": "models/dataset.hpp",
+     "lines": 313,
+     "sha256": "4d6ecda50715800fe00c1eaa8b74dd0f45a0eed7c4e8e3473d9efcc969f5f015",
+     "module": "models"
+    },
+    {
+     "path": "models/forecast_scorecard.hpp",
+     "lines": 434,
+     "sha256": "da6ffe8a2d6f3ddbe15fb5c73678af3e02fc335461e6713cec6a50e80e2f3ed3",
+     "module": "models"
+    },
+    {
+     "path": "models/horizon_eval.hpp",
+     "lines": 350,
+     "sha256": "ceed6ac0d13d680462868e7288bd042d5301cda3ff8cddbbfd3e239bd0e75e87",
+     "module": "models"
+    },
+    {
+     "path": "models/labels.hpp",
+     "lines": 366,
+     "sha256": "6c56c9880ae4cb451d8a3453da2837f6ed3cfe2775b16b63d6240ff0b199eabf",
+     "module": "models"
+    },
+    {
+     "path": "models/registry.hpp",
+     "lines": 273,
+     "sha256": "bf7c7a0641ff21e1a7c50045774b273e601b13774884a7f409656dd234126851",
+     "module": "models"
+    },
+    {
+     "path": "models/serving.hpp",
+     "lines": 223,
+     "sha256": "2c6cf62594799782e899b550defce80856332ca8d19d5c092dba6653b042ed90",
+     "module": "models"
+    },
+    {
+     "path": "models/spot_forecast.hpp",
+     "lines": 626,
+     "sha256": "e93c909a7de95272da2b875e7663529930f6d8846526fc5b2b6be8ee449c88cc",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_calibration.cpp",
+     "lines": 328,
+     "sha256": "27fb70b812db2455f4e624afa35eb620a7aa789d1e33feb580908adfc99c8452",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_calibration_real.cpp",
+     "lines": 219,
+     "sha256": "7da6d54369afd3d161a75c9fac1fd54935e2b98063b3861c56fab02feba5f322",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_conformal.cpp",
+     "lines": 501,
+     "sha256": "adfa74e73e2937e290d15e28eab0e763eb4091e313ae79fab454701d50e4bf0b",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_dataset.cpp",
+     "lines": 319,
+     "sha256": "d1756f6ffa946b95e02f6c0599762237bc12fe039d637747f945c6f958458787",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_forecast_scorecard.cpp",
+     "lines": 258,
+     "sha256": "d410d72ec86d1588823f7219cfdb09757c888ba8d9b6c3c1ea4fa72ce1a9f297",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_horizon_eval.cpp",
+     "lines": 508,
+     "sha256": "9ce1c9f09d53fcebcbc4ad499660e2d273eba61c4804da2cbfabe8999f57aa96",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_labels.cpp",
+     "lines": 368,
+     "sha256": "d1670bbc32103c2b2c171285792efc690c67096efd3792749ba88a13e4717912",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_rich_features.cpp",
+     "lines": 279,
+     "sha256": "2cc2778b7db34921adec5b958b489a392c9a43292cfa769943865e4ea39431fe",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_serving.cpp",
+     "lines": 456,
+     "sha256": "a1b33f364bdc816b3fb5c6e0efb8ff33df4d0fb59155f9facc8715c4270b41ff",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_spot_forecast.cpp",
+     "lines": 267,
+     "sha256": "4596a99266c52474d7418cdb901476a8a4ec5577f1f97c40adda6a56896dd168",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_training.cpp",
+     "lines": 402,
+     "sha256": "3ced021c12fa34cd4aef76b8822118cb7ad6940ee6a8b4257af6400470702878",
+     "module": "models"
+    },
+    {
+     "path": "models/training.hpp",
+     "lines": 339,
+     "sha256": "53143041f8c1fa71aa5be156947e994de4bfd4ac87b1f4fc4d657880c6f966b3",
+     "module": "models"
+    }
+   ],
+   "file_count": 23,
+   "lines": 8109
+  },
+  "G09_models_families": {
+   "files": [
+    {
+     "path": "models/attention.hpp",
+     "lines": 282,
+     "sha256": "3ea4e9f3afc5b95b132a99c997d0f7ea15638a3fa4b005b07de0892daaaddac2",
+     "module": "models"
+    },
+    {
+     "path": "models/dcf.hpp",
+     "lines": 389,
+     "sha256": "60de935e1bb7ff43f3bacd1d66ba1970c3a076c55112b11df6886dcbd27f5658",
+     "module": "models"
+    },
+    {
+     "path": "models/gbdt.hpp",
+     "lines": 502,
+     "sha256": "beeadf6c088345566c829632142cb510018b678b76d21f7dd93f535a247519fa",
+     "module": "models"
+    },
+    {
+     "path": "models/markov.hpp",
+     "lines": 481,
+     "sha256": "d1e7e9139b10aaa619d92be2bcada7199d10c41c04c1b47a472fdfa7a36911d3",
+     "module": "models"
+    },
+    {
+     "path": "models/markov_eval.hpp",
+     "lines": 402,
+     "sha256": "b6c6540d9dece27b84cfe71b3f65a3e7197d76fa8c6f9d224cb4c4eb1dcffcc8",
+     "module": "models"
+    },
+    {
+     "path": "models/mlp.hpp",
+     "lines": 253,
+     "sha256": "177f52a680f447fd12c6dddd7d6bfba667fb5383d0dbb60170976537ec8d9073",
+     "module": "models"
+    },
+    {
+     "path": "models/recurrent.hpp",
+     "lines": 447,
+     "sha256": "d7987ff9e886d02024652c7f46a50b04bc19c6dee38cc7c0010bb8f427146137",
+     "module": "models"
+    },
+    {
+     "path": "models/regime_rl.hpp",
+     "lines": 336,
+     "sha256": "4944d2e381d12b37a950099327d60568d6e6744daf85b040e2bd99b96b1bb812",
+     "module": "models"
+    },
+    {
+     "path": "models/tensor.hpp",
+     "lines": 223,
+     "sha256": "f9079da42e12528a59f1a8f55ba63fe1e3d5439ffc2208be28585cbf3bd75d7b",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_attention.cpp",
+     "lines": 340,
+     "sha256": "11020fa71cebcae781cd321ba15a893c57818ef3524ec9461f5893092cee06bd",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_dcf_sensitivity.cpp",
+     "lines": 255,
+     "sha256": "f95fad8c4bf67c1c25c353002dfa1026552c232521b6cfc0987f25c79e1747e3",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_gbdt.cpp",
+     "lines": 468,
+     "sha256": "c9f872c0abb336cd5af74b4dc522a80e94ee6966fb0a043af1d484abf146fc39",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_markov.cpp",
+     "lines": 379,
+     "sha256": "e74a1ec8973c2977fa20b1e8776779e76b453a132892b1dd0cf66c7e07f0a827",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_markov_eval.cpp",
+     "lines": 277,
+     "sha256": "5452cc1c74fb11fa62c16c82a2b220972c66f6d658a9c9584b156db05e1aecc4",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_neural_5m.cpp",
+     "lines": 524,
+     "sha256": "959f3f18c8596716f61d35b5f0d550c3caea5e9c17156181c3752c0b5d1baf88",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_recurrent.cpp",
+     "lines": 405,
+     "sha256": "86197c1e7e1b8daffe6963501992a4e9380efbef3c861d5828a7556334715ff6",
+     "module": "models"
+    },
+    {
+     "path": "models/tests/test_regime_rl.cpp",
+     "lines": 375,
+     "sha256": "a1618d0d1cf8257421f1da61536885e234f3d3a13144090f51895199d3ef4ea5",
+     "module": "models"
+    }
+   ],
+   "file_count": 17,
+   "lines": 6338
+  },
+  "G10_strategies_a": {
+   "files": [
+    {
+     "path": "strategies/CMakeLists.txt",
+     "lines": 96,
+     "sha256": "0aa13299d797b0075268fb15c419f352027d24bb2d54bc6fc48a0a72ffa3704e",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/basis.hpp",
+     "lines": 403,
+     "sha256": "bb5184b00062bb2d83d0f893eadaee292b460c57414a582729787c76541b8119",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/calendar.hpp",
+     "lines": 328,
+     "sha256": "ecb0871056fa72006cb6ad9dbb9f988f2ee26d435a32ce515743ccf5bf9d4733",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/cointegration.hpp",
+     "lines": 486,
+     "sha256": "515934ed3029e01835d564d3ba08ef5f57eeb156306de4720be962795ade711c",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/fundamentals.hpp",
+     "lines": 297,
+     "sha256": "bb9f923fe87b5d04e5c6f757c22e217bd4db5624dd896dd082da70a40ff6496e",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/meanrev.hpp",
+     "lines": 210,
+     "sha256": "3c72529c06aab4fa2ad3c5eaeda2ae0f9896d4278065b9013fc616545b49b31f",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/momentum.hpp",
+     "lines": 317,
+     "sha256": "a10c869e74d3aa01874034a3af9e88be83ffa825bb0596b26d89c07081c6417f",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_basis.cpp",
+     "lines": 408,
+     "sha256": "39fb7140660da06eb89b21675eb37a3f28adb02fa55fb01558bd78957e1f5128",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_calendar.cpp",
+     "lines": 400,
+     "sha256": "a8fc9215cbe76f1e8417dd4ea538ae560b0c587c6ff6027f39bba1e3b98b745c",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_cointegration.cpp",
+     "lines": 363,
+     "sha256": "2b04d1b84d9521a6ef93521f0ef4d946c86969574c53c828b2fac59a4cb8772f",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_directional.cpp",
+     "lines": 546,
+     "sha256": "e17ea47adca9db34e5328f770adaf3764ce2ed7a235b9de9a92b2623047e3292",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_directional_real.cpp",
+     "lines": 501,
+     "sha256": "23fcc2544df5d50bda059c0c392ccc791711bb1d455397cf25720609383d3584",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_fundamentals.cpp",
+     "lines": 313,
+     "sha256": "4b5538ad6a6cf71dc05b9186b9b6110cea275f868a0d2cf5a5560e75ea9a75cb",
+     "module": "strategies"
+    }
+   ],
+   "file_count": 13,
+   "lines": 4668
+  },
+  "G11_strategies_b": {
+   "files": [
+    {
+     "path": "strategies/oppty_log.hpp",
+     "lines": 318,
+     "sha256": "226c5725ed1a3bae844f3c4725497872704897b98af0f679a0ffc9ae362393d5",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/overnight.hpp",
+     "lines": 419,
+     "sha256": "a8573d85022159c105c20ab44337dae98f19dd11a7f47fd344452ae2c04dc544",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/parity.hpp",
+     "lines": 450,
+     "sha256": "37c6b4daa52788e9c0c5926ee1161f5b2c2f0eaa37594a878e11dcd39b49cc15",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/regime.hpp",
+     "lines": 336,
+     "sha256": "facbf528b6062dfaa7634ecd6176582ec6df271ac4694be13c5bea1cde65e84e",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/score.hpp",
+     "lines": 303,
+     "sha256": "23d6c3fdee7d3dfb7ae38dfbfaa9910eed55888ae437714847c93b26c4a9796c",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_oppty_log.cpp",
+     "lines": 321,
+     "sha256": "2fd7edddcb933f03e833c7fbd8ca5b1e758c89593047fd0d00c5e05380adbbcc",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_overnight.cpp",
+     "lines": 416,
+     "sha256": "a606d5867e3f596ad713bd95e8673b27f8208ad2de9ffcb349fafa4830528360",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_overnight_real.cpp",
+     "lines": 460,
+     "sha256": "b75c56cc657e05af44fc44153a533cb18e938450f05a16cd2b1b58e1dc8a0377",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_parity.cpp",
+     "lines": 444,
+     "sha256": "5fa112770d93e0aa114df4222a3faa4f728a7dfc2b509ea8ee6b43233a37de37",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_regime.cpp",
+     "lines": 361,
+     "sha256": "981333fab1dcf1dd1d0481841be9ec3aa37171d00e58a4abd5d0be4a0bacb9b5",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_regime_real.cpp",
+     "lines": 412,
+     "sha256": "b02053895dabd8383a8ac9135df9ebb16e3f32ceb86fab0defd3074f68177dea",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/tests/test_score.cpp",
+     "lines": 334,
+     "sha256": "431f8b4e6b995d9771f7f10797acdf6b75dea861e80b02f665f962c57542cb1c",
+     "module": "strategies"
+    },
+    {
+     "path": "strategies/vix_forecast.hpp",
+     "lines": 220,
+     "sha256": "b58e832c05667c290959b8880f6cd050f3c02c54dcdc6ee21063e488aa566b07",
+     "module": "strategies"
+    }
+   ],
+   "file_count": 13,
+   "lines": 4794
+  },
+  "G12_risk_charges": {
+   "files": [
+    {
+     "path": "config/charges.toml",
+     "lines": 229,
+     "sha256": "e09ddd15aa83fe4e25a64553ccb8b8313882344cf10c2d4cc88ca86ca6764dde",
+     "module": "config"
+    },
+    {
+     "path": "config/lot_size_history.csv",
+     "lines": 92,
+     "sha256": "c23f6191df4f7dbe4249b1f24a9c27eda881dc9cf889340d755641a5431fc0f9",
+     "module": "config"
+    },
+    {
+     "path": "risk/CMakeLists.txt",
+     "lines": 96,
+     "sha256": "961c8db549ac5367542129db04ebebfaa22b0e6dc866bca9a4ee23ff606070e9",
+     "module": "risk"
+    },
+    {
+     "path": "risk/charges_toml.cpp",
+     "lines": 368,
+     "sha256": "c7e2185058b57fec4bbf8bb6cc178ef10cba6dcafa301ca74aac9213d96f4c85",
+     "module": "risk"
+    },
+    {
+     "path": "risk/charges_toml.hpp",
+     "lines": 114,
+     "sha256": "816b8124bb659c2ecdd5c2df5aacc24e6e5bca1b11720f63ea9c292069e1fb12",
+     "module": "risk"
+    },
+    {
+     "path": "risk/cost.hpp",
+     "lines": 401,
+     "sha256": "9c24efead2aea0411f8aa70658740e7fa7db3404466d4b6de80f45580ec2da07",
+     "module": "risk"
+    },
+    {
+     "path": "risk/covariance.hpp",
+     "lines": 220,
+     "sha256": "359479f2e60b2bc766bd772703b7694d1253ac1ca84de0e95eb5c5690098e890",
+     "module": "risk"
+    },
+    {
+     "path": "risk/hedge.hpp",
+     "lines": 242,
+     "sha256": "eef02e496ed53e388515e44e67ca8cee7ad961529a20ed64aedb9ebd7ca0994e",
+     "module": "risk"
+    },
+    {
+     "path": "risk/limits.hpp",
+     "lines": 345,
+     "sha256": "bf0e4aba6be8192c0966808d4ef9438cb6894cc5a1eb2cf73bc9d8e79ca0cc9d",
+     "module": "risk"
+    },
+    {
+     "path": "risk/neutralise.hpp",
+     "lines": 277,
+     "sha256": "fe950d77a3f796632f32aac036d36ae809deaa3ea470c5689bb75a248006c60e",
+     "module": "risk"
+    },
+    {
+     "path": "risk/optimise.hpp",
+     "lines": 190,
+     "sha256": "4083ebb404e7fbffd4b31886ed7e81e5180e1391df5d62f1ab81c0b1d7267675",
+     "module": "risk"
+    },
+    {
+     "path": "risk/portfolio.hpp",
+     "lines": 327,
+     "sha256": "3de638c1beabef2137e9a57c4d8ea6954cff2ba1fbd267f4ab4819110f01f1fb",
+     "module": "risk"
+    },
+    {
+     "path": "risk/sizing.hpp",
+     "lines": 351,
+     "sha256": "76b3913569d2f80c9729996dabf9bcfb52f4376eff1d8520bb8ee922cbb09b81",
+     "module": "risk"
+    },
+    {
+     "path": "risk/slippage.hpp",
+     "lines": 318,
+     "sha256": "6579e4441ba08e8341bf2bd372dd216d2c1ac2485a9ce9e40f20f5ec1a3a571c",
+     "module": "risk"
+    },
+    {
+     "path": "risk/stress.hpp",
+     "lines": 223,
+     "sha256": "483d9656aae27934518366d73c6b7f0f02f5c791e4676c9e6567267187e4828f",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_charges_toml.cpp",
+     "lines": 253,
+     "sha256": "5592bb545d97756f78932b8755d646debed51ecddbadea52bed6d240bc2f0aaf",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_cost.cpp",
+     "lines": 431,
+     "sha256": "fb0af471f511f97ce6aa881dc05f72f877682f2d135a5bad620bce22b4e418bb",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_hedge_book.cpp",
+     "lines": 518,
+     "sha256": "55aa22399bfa4c6c297d6b2de14301433e683830fe74d111d77f3200e08c2a01",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_limits.cpp",
+     "lines": 385,
+     "sha256": "3d6634b29e5b6e6ab46e611805b2b22dbf54c4ec894e43ad62a44add0d47aa49",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_optimise.cpp",
+     "lines": 251,
+     "sha256": "54e03b83d8e70325c56b4626cc12625fd382d7b32b1b56c7fdfea6c508a4e86a",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_portfolio.cpp",
+     "lines": 372,
+     "sha256": "df4a71e532a7a4ee59ab95269ecec439a5604ca9805ed71b441265cfd6708243",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_sizing.cpp",
+     "lines": 451,
+     "sha256": "65abc59968bc41eae5bb0c636ec46d617288445092084c4a6724380c509d503b",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_slippage.cpp",
+     "lines": 440,
+     "sha256": "a967789e29371add7a97219d01ce9a195392ceb3bf42656c30bf1671ad7d6168",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_stress.cpp",
+     "lines": 225,
+     "sha256": "c593b09f34c4333c1549047de2749df368297ee3a7d3a7a23a60bd6260f602c4",
+     "module": "risk"
+    },
+    {
+     "path": "risk/tests/test_var.cpp",
+     "lines": 196,
+     "sha256": "3299bb6a3932b37638f231636c6aa16d1235ee067c6082744134134cf6c91daa",
+     "module": "risk"
+    },
+    {
+     "path": "risk/var.hpp",
+     "lines": 225,
+     "sha256": "b7c007e771167c53154249f9b52a11e0726379b50e620c685f3d97697c92ba62",
+     "module": "risk"
+    }
+   ],
+   "file_count": 26,
+   "lines": 7540
+  },
+  "G13_oms": {
+   "files": [
+    {
+     "path": "oms/CMakeLists.txt",
+     "lines": 71,
+     "sha256": "d1370958811ad922c0ae3334d0ac25a010ce528f58a0a46f75ac8f71755f40ef",
+     "module": "oms"
+    },
+    {
+     "path": "oms/capacity.hpp",
+     "lines": 127,
+     "sha256": "96bb0f258840bc7e9aefb36d193ce162ddc793dc8e976f4f66f79073a66c4119",
+     "module": "oms"
+    },
+    {
+     "path": "oms/execution.hpp",
+     "lines": 313,
+     "sha256": "231b11a398a565f441fd88da1c5112688e8e1f4e7b1bd3a23126fecb506a2262",
+     "module": "oms"
+    },
+    {
+     "path": "oms/exit_ladder.hpp",
+     "lines": 257,
+     "sha256": "89f2be58138f9d2d90cd94599762e105ec32a8a5a311bdf2a2b1ecb357cd1ec4",
+     "module": "oms"
+    },
+    {
+     "path": "oms/kite_adapter.hpp",
+     "lines": 351,
+     "sha256": "aa733023e5c20199b3ebd8b9d0ceddc9e100ffb302aeff05c1479e4f1c4deec7",
+     "module": "oms"
+    },
+    {
+     "path": "oms/order_intent.hpp",
+     "lines": 310,
+     "sha256": "f99d7efef4036a9e549c0e7eccf926e7e383f7793eabfe84cba6213ddb5f51ed",
+     "module": "oms"
+    },
+    {
+     "path": "oms/order_state.hpp",
+     "lines": 310,
+     "sha256": "ae8ead10133b95fe361db6aa4f75cf4baef36b41ae5c2784f61dfb782a33063f",
+     "module": "oms"
+    },
+    {
+     "path": "oms/reconcile.hpp",
+     "lines": 242,
+     "sha256": "7e4b4c7bd003b1370cad6c18a78516b8b4d7a67278a25f84be7e061a70c8fcb1",
+     "module": "oms"
+    },
+    {
+     "path": "oms/shortfall.hpp",
+     "lines": 251,
+     "sha256": "4003350c7f78aef506a7bf69c55f14691281e74027cc3942b5a031fb18513672",
+     "module": "oms"
+    },
+    {
+     "path": "oms/tests/test_capacity.cpp",
+     "lines": 148,
+     "sha256": "e1190bc19160f82ea01c90b0c5271643f4114f4353abaf39f4d36cacb713f461",
+     "module": "oms"
+    },
+    {
+     "path": "oms/tests/test_execution.cpp",
+     "lines": 278,
+     "sha256": "a9c68d5dbc8c34b00f59b9d64aabe0be09b7a4763c819691b11008ca72828f4d",
+     "module": "oms"
+    },
+    {
+     "path": "oms/tests/test_exit_ladder.cpp",
+     "lines": 306,
+     "sha256": "cb307046c8182bb7b879ef11a91b808ad26362ecf38fd0a4c27661de405a2a79",
+     "module": "oms"
+    },
+    {
+     "path": "oms/tests/test_kite_adapter.cpp",
+     "lines": 315,
+     "sha256": "2dcf8444d485880bce8d0d9d368c7739aa73e965c44dec178230f413ce5a65b8",
+     "module": "oms"
+    },
+    {
+     "path": "oms/tests/test_order_intent.cpp",
+     "lines": 213,
+     "sha256": "29fc711a3d440ae38873802ebb255c99a111b6931d3ba0de5a90f25eb79ff798",
+     "module": "oms"
+    },
+    {
+     "path": "oms/tests/test_order_state.cpp",
+     "lines": 320,
+     "sha256": "b37d7cc758802c82e175dd578d64f83848bbcc380995a62ed10d265ec26b8b50",
+     "module": "oms"
+    },
+    {
+     "path": "oms/tests/test_reconcile.cpp",
+     "lines": 285,
+     "sha256": "b1486ee24d982df17ec812d4224d79f571a15047d71cd813a13d68e7ea3e2ee2",
+     "module": "oms"
+    },
+    {
+     "path": "oms/tests/test_throttle.cpp",
+     "lines": 286,
+     "sha256": "21122bca89a40ec3f0db992aef3d98f0ba0031b1ee8fdf32495e34dc4d74f56e",
+     "module": "oms"
+    },
+    {
+     "path": "oms/tests/vectors/intents.jsonl",
+     "lines": 3,
+     "sha256": "b58ed16e4fb9459fd3a93cfa1a88e70a46f58aee48db440b716e27208fd2ba0e",
+     "module": "oms"
+    },
+    {
+     "path": "oms/throttle.hpp",
+     "lines": 265,
+     "sha256": "baab707f8384f346f1242db3284b4de8793c1de9fcc1a16be43020089ae4cb67",
+     "module": "oms"
+    }
+   ],
+   "file_count": 19,
+   "lines": 4651
+  },
+  "G14_broker_kite_tools": {
+   "files": [
+    {
+     "path": "app/kite_account_main.cpp",
+     "lines": 229,
+     "sha256": "adad1c18515a126c6138a892c6502c85ffa833969fe578bd851b06e16004e8b6",
+     "module": "app"
+    },
+    {
+     "path": "app/kite_fetch_main.cpp",
+     "lines": 566,
+     "sha256": "6a26d19afdaa62dc4525147670a6ef8e18dde9cdab0b351ac24658badc772bd9",
+     "module": "app"
+    },
+    {
+     "path": "app/kite_login_main.cpp",
+     "lines": 219,
+     "sha256": "8585f66fcef7b502db9c0777eda6ef41d319d1c824f2ac04e37758042dfa3db9",
+     "module": "app"
+    },
+    {
+     "path": "app/kite_quote_main.cpp",
+     "lines": 298,
+     "sha256": "d0d4aaa2ec9b49d562d68a00c60407066a25a4ea28fd233b62d103eb83273368",
+     "module": "app"
+    },
+    {
+     "path": "app/kite_ticker_main.cpp",
+     "lines": 407,
+     "sha256": "66bb5cd601a9cf076adf530c809c17c46ec062963cfa1db1e7d6a9579d102726",
+     "module": "app"
+    },
+    {
+     "path": "app/kite_update_main.cpp",
+     "lines": 452,
+     "sha256": "4a58c49e6b16b76c74aa93a80e575bc09811fd9e5f531b22367fd27c4e8f01ca",
+     "module": "app"
+    },
+    {
+     "path": "app/session_file.hpp",
+     "lines": 206,
+     "sha256": "73d03a4de61fb3ab3940da039a40963cd516b1cb898f08bbba563413479e2395",
+     "module": "app"
+    },
+    {
+     "path": "broker/CMakeLists.txt",
+     "lines": 88,
+     "sha256": "ec7efe3dff897ccf91c14fb3ada5fc1783fe0943eee8daea0cde369b99c2b9a2",
+     "module": "broker"
+    },
+    {
+     "path": "broker/https_client.hpp",
+     "lines": 370,
+     "sha256": "095829dd39b24800ee33d4068fc5737389a29740181bbc4d6d58acab08a45e3a",
+     "module": "broker"
+    },
+    {
+     "path": "broker/kite_api.hpp",
+     "lines": 226,
+     "sha256": "2ede6ef36eb062c159c2b1b24899c816634ffcf53f93d767df2abd3688717c3b",
+     "module": "broker"
+    },
+    {
+     "path": "broker/kite_historical.hpp",
+     "lines": 550,
+     "sha256": "0e1132811ee6c882be16d1a8a8052b3e1633de875c58d858b1d75c5bc3a17785",
+     "module": "broker"
+    },
+    {
+     "path": "broker/kite_login.hpp",
+     "lines": 248,
+     "sha256": "4b36eb9e124b0965daefce6f5a444ef10303c304ded787390ec3f1c71cb29869",
+     "module": "broker"
+    },
+    {
+     "path": "broker/kite_quote.hpp",
+     "lines": 298,
+     "sha256": "52952a2c6fcfc4104c42c8cda49add54b63e06601efe0aa81e53174981c28b79",
+     "module": "broker"
+    },
+    {
+     "path": "broker/kite_session.hpp",
+     "lines": 131,
+     "sha256": "edfb1398cc9c183c6939dc746d06be70d775ccaa5634ea442de2492797b5c04c",
+     "module": "broker"
+    },
+    {
+     "path": "broker/kite_ticker.hpp",
+     "lines": 376,
+     "sha256": "33f8a1c49b8fecb7a77f6f801866b21a5985acef4b0f4ec9dbdab663495329ce",
+     "module": "broker"
+    },
+    {
+     "path": "broker/sha256.hpp",
+     "lines": 187,
+     "sha256": "e9b911eefae15d82a3b7e436e9e3d8d32b51ee7a2c6d7d4eb747d69eda10db95",
+     "module": "broker"
+    },
+    {
+     "path": "broker/tests/test_kite_api.cpp",
+     "lines": 211,
+     "sha256": "5f56c42d41a375cff73023c1bc267aeaa85a2d805da5cadfbc0df107acf0d63d",
+     "module": "broker"
+    },
+    {
+     "path": "broker/tests/test_kite_auth.cpp",
+     "lines": 263,
+     "sha256": "e6d35f0190fb89e6ebb2fb693c7070633c508833b9dfc76217dc093800de8d95",
+     "module": "broker"
+    },
+    {
+     "path": "broker/tests/test_kite_historical.cpp",
+     "lines": 205,
+     "sha256": "17b925e8890fa57609acebdf0591bd0ba85deae39c6142a5a1de74ca90a3dcca",
+     "module": "broker"
+    },
+    {
+     "path": "broker/tests/test_kite_quote.cpp",
+     "lines": 227,
+     "sha256": "97788aea766ad8f476b02175169b8ff9eeb0323d77a0e95be1b9b665fc5b2df4",
+     "module": "broker"
+    },
+    {
+     "path": "broker/tests/test_kite_ticker.cpp",
+     "lines": 134,
+     "sha256": "a2c434a4ccc82380b7dec8bd58aacb98d708ba2f47173724d72c94bb6a6cd40a",
+     "module": "broker"
+    },
+    {
+     "path": "broker/tools/kite_callback.py",
+     "lines": 316,
+     "sha256": "e2f1484f259f74df2a8efe417cc41b9f2d4a1bad6d900d6a7b43655b2200ff8a",
+     "module": "broker"
+    },
+    {
+     "path": "broker/tools/set_kite_secret.ps1",
+     "lines": 109,
+     "sha256": "6428dd126c5eaede717aa39f204b06005e545f8dde4e937fa5264150d2fa0ace",
+     "module": "broker"
+    }
+   ],
+   "file_count": 23,
+   "lines": 6316
+  },
+  "G15_app_server": {
+   "files": [
+    {
+     "path": "app/CMakeLists.txt",
+     "lines": 140,
+     "sha256": "80091d44422f72974564b7f7a073d321e8ff24e7517fa08ef8b3a5cba261796b",
+     "module": "app"
+    },
+    {
+     "path": "app/instruments_demo.cpp",
+     "lines": 500,
+     "sha256": "b7b7b9b07cdfa4636e8427259c0f7bd1476c405b687107915667236557ddaf44",
+     "module": "app"
+    },
+    {
+     "path": "app/instruments_demo.hpp",
+     "lines": 20,
+     "sha256": "30a3f89fc262c841e18e404bcd64dc8a0ef8bf49cd77a4c545a7620c8388dbd2",
+     "module": "app"
+    },
+    {
+     "path": "app/main.cpp",
+     "lines": 532,
+     "sha256": "1614eb27c786d29ad1582761fcb0ef70a5683d56568b86f59f584b87b7b9cba8",
+     "module": "app"
+    },
+    {
+     "path": "app/monitor.hpp",
+     "lines": 320,
+     "sha256": "6ffbd446232482b6cda71b4e5c98d31ad70bdc2d51c4fb2618fa422679d9406b",
+     "module": "app"
+    },
+    {
+     "path": "app/note_reconcile.hpp",
+     "lines": 335,
+     "sha256": "6703dd630d63d099a2d760805c6d9d60fbfcf45d5a4c5c24c3832dc341f75882",
+     "module": "app"
+    },
+    {
+     "path": "app/price_service_main.cpp",
+     "lines": 472,
+     "sha256": "6dced0fef428b6c2ae1549da05b2c0d12d6efc94531ccca84217df3e78d71e90",
+     "module": "app"
+    },
+    {
+     "path": "app/tests/test_monitor.cpp",
+     "lines": 266,
+     "sha256": "8361950d99922c7dc2642c670c33d485ad55d3277281345530e9e13b39ec6fb2",
+     "module": "app"
+    },
+    {
+     "path": "app/tests/test_note_reconcile.cpp",
+     "lines": 315,
+     "sha256": "f396b7b983e8cc068abd15dc93ae543cdd9a4214a6c6a2788f326412275e508d",
+     "module": "app"
+    },
+    {
+     "path": "app/tests/test_warm_restart.cpp",
+     "lines": 192,
+     "sha256": "21ab9aa91463ae3dc4b1cec650666d87700694df9b50ce22e0ee216bbfa517a4",
+     "module": "app"
+    },
+    {
+     "path": "app/warm_restart.hpp",
+     "lines": 252,
+     "sha256": "16641128e69d9718c9204e1aa5525ca2f0bfbe2d62f5602602f939a5e0fb03e9",
+     "module": "app"
+    },
+    {
+     "path": "server/CMakeLists.txt",
+     "lines": 74,
+     "sha256": "c6fb51ddec6bf70761d9817b5f97411cc5eb9e22c28879a51bee963f9f797387",
+     "module": "server"
+    },
+    {
+     "path": "server/price_bus.hpp",
+     "lines": 266,
+     "sha256": "f4d9de235a8206f8bda29579b06c8a9cfc28e75bfa8e10048d8ba72057a8b8fe",
+     "module": "server"
+    },
+    {
+     "path": "server/price_payload.hpp",
+     "lines": 211,
+     "sha256": "3d47cba0538c785f8a13292d00f1b78f394c79b1ab321c9c2d40d9545fe15ae8",
+     "module": "server"
+    },
+    {
+     "path": "server/protocol.hpp",
+     "lines": 452,
+     "sha256": "62660056b9e477ff5d5014a02d7eaff861ce8f8580febeef31be8f2926a86f88",
+     "module": "server"
+    },
+    {
+     "path": "server/tests/emit_vectors.cpp",
+     "lines": 243,
+     "sha256": "a1ee60ba5e69f32a612ef59b48e3ef6b6328e89f5ca7140af54ec3e6aa2a7c07",
+     "module": "server"
+    },
+    {
+     "path": "server/tests/test_price_bus.cpp",
+     "lines": 281,
+     "sha256": "4c44844cb4aac3edc426bc840961980527f6c1c2168e16d88b559fde118e8231",
+     "module": "server"
+    },
+    {
+     "path": "server/tests/test_price_payload.cpp",
+     "lines": 248,
+     "sha256": "4e53bdbd25def9e7d9055ee97124aaea5da8096f122bb678089bfd7d25590b1d",
+     "module": "server"
+    },
+    {
+     "path": "server/tests/test_protocol.cpp",
+     "lines": 427,
+     "sha256": "802cbb0d47e1bde88ccbeff88155145b8038cdd5230a198506c0ac0a68057e2e",
+     "module": "server"
+    },
+    {
+     "path": "server/tests/vectors/frames.txt",
+     "lines": 15,
+     "sha256": "88add22a2a3c8318bf7151efd63e565cd9d735a9190c670a22cfd90012a80a3d",
+     "module": "server"
+    }
+   ],
+   "file_count": 20,
+   "lines": 5561
+  },
+  "G16_desktop_quant_pages": {
+   "files": [
+    {
+     "path": "desktop/analytics_panel.hpp",
+     "lines": 235,
+     "sha256": "e290f1a3361ba331db117e61cdb985e1301a2d075d8955b84d5fd3ba38f7a65b",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/chart/candles.hpp",
+     "lines": 306,
+     "sha256": "352776f621973fbbd62d3b2899028c34346bfa297c4f96ea13c486fc6996d946",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/chart/chart_widget.hpp",
+     "lines": 484,
+     "sha256": "29d0a065c3f83a01520fffd34cfd24cdbc874425a91e1060c3865fd6493d75cc",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/cost_panel.hpp",
+     "lines": 349,
+     "sha256": "75e956abc07a9da01e02c75bb23ff9d377f75db199b01a66f4830cc28d5c3f48",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/data/fits.hpp",
+     "lines": 390,
+     "sha256": "e791c859cc9a694fbf51b130486ca7b53c15936a49782fbdb30a2f6bcc2605eb",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/data/series_io.hpp",
+     "lines": 133,
+     "sha256": "ba0cb8c459de98d89f87c3e3d2c1e7e35c5739554d92e1aca27cd37c0e885a1a",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/model_status.hpp",
+     "lines": 373,
+     "sha256": "1a77de4979ea861f94d19142e75fdd90171d31723dd0992d7ef97c8aa0ed77ff",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/quant_pages.hpp",
+     "lines": 4258,
+     "sha256": "08cae1d91d477fa63f97322e082c1fe623f2b9b3fb391b4b0b866f263b5f2e8f",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_chart.cpp",
+     "lines": 379,
+     "sha256": "87bf06666d3eac1556d9ffb534fd0da2a688e6bb92c3aabed0e6a536dec950cf",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_fits.cpp",
+     "lines": 211,
+     "sha256": "e7c205203687546682319dddda8d06a0d9e8051df35924d84402f0e89a872435",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_options_page.cpp",
+     "lines": 181,
+     "sha256": "d80c2d5facfb7da29bb56dfc6fd0edaa74819ff2e5c45f22cecbb3ee431affc5",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_overnight_page.cpp",
+     "lines": 207,
+     "sha256": "e16be906cf194f4d478b31aea8bd160c03f2b6f5a050bb39991205a7046eaa22",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_pages.cpp",
+     "lines": 583,
+     "sha256": "dbb01a123e1438b234e2fc5d014c46d40f843a7c545e2d0bee09790bf6224c40",
+     "module": "desktop"
+    }
+   ],
+   "file_count": 13,
+   "lines": 8089
+  },
+  "G17_desktop_shell_terminal": {
+   "files": [
+    {
+     "path": "desktop/CMakeLists.txt",
+     "lines": 660,
+     "sha256": "97c71b6aceac3e576866579e4eaf7f75efcb89fc36d6c9bd6b44b3a323e7f5fd",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/chain_panel.hpp",
+     "lines": 335,
+     "sha256": "61afaf9647d4076588e0d3cd9b98aa333b93ab6926e3a641d979ae8354aeac12",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/kill_switch.hpp",
+     "lines": 300,
+     "sha256": "8f4f4a5e0b70dac9f999846066d65da582ae226458da58b3e7913be60112064a",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/live_forecast.hpp",
+     "lines": 764,
+     "sha256": "f80a81d2e60dd04be9a4740ae27f96f544ba1714db8b5b345dc9d38d7d5878f7",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/main.cpp",
+     "lines": 402,
+     "sha256": "3c5a505362c81c9065a6e6f09e75bdcc56b947aedbaf5d44c0d8d05f758d744e",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/main_window.hpp",
+     "lines": 1673,
+     "sha256": "067f43930d3e771199967c2a1ae8650a3482d56e1ded30bf3ce3d90fdb19868c",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/option_chain.hpp",
+     "lines": 519,
+     "sha256": "7cfa153aedb0f20674794114b50a2fdb1b087af5e112fb952128a22b3bc0de65",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/order_ticket.hpp",
+     "lines": 500,
+     "sha256": "068261b44727227eda4323d1f96c86d8edd189c3596184b3cd63a636811a0e7e",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/panels.hpp",
+     "lines": 1310,
+     "sha256": "589689d84f1284d9b956aea34cf7a17c69d293bd8a5f9f1c738657ce33d5fda1",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/terminal.hpp",
+     "lines": 541,
+     "sha256": "31d2fa2b30a802c6e3ea8426025126a637c3a28e9a28376604f432ca3718be02",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_order_ticket.cpp",
+     "lines": 183,
+     "sha256": "f2bb11ca9201b8e7fb037b1d49b611d63a1b348261b500481857c20c86241e03",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_terminal.cpp",
+     "lines": 324,
+     "sha256": "040736857c92bb543c7489a026b5b0fd2312c04a1740c3169f72a70d0b11a3da",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/watchlist.hpp",
+     "lines": 215,
+     "sha256": "a4deb0747e01daab266da403abff68b992fbd855dfb9f741434949c2de1a8a4b",
+     "module": "desktop"
+    }
+   ],
+   "file_count": 13,
+   "lines": 7726
+  },
+  "G18_desktop_widgets_data": {
+   "files": [
+    {
+     "path": "desktop/account_widgets.hpp",
+     "lines": 192,
+     "sha256": "2692a7094c9a3fb41874fb6eebad80d879aea0dff7972e3759ba4a1170d0c541",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/assets/altair_eagle.svg",
+     "lines": 85,
+     "sha256": "be8e5d792ed90cb686da16fe24e2f94ab4b714a673dcda8c4c7e2ebf7692d371",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/atlas.hpp",
+     "lines": 247,
+     "sha256": "f70c1f4d54fd25da671baf24d6cedda19279a7c195e234c2b3aba86e41e0f2d4",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/atlas_data.hpp",
+     "lines": 460,
+     "sha256": "cf9fed3bca70a00e8953fb75ed5df1ddf4ff48f24e6f0190d5fb46bb9878270c",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/audit_panel.hpp",
+     "lines": 273,
+     "sha256": "ef885247b10a01a1a339c8a6e224eede63761dbf4bc596e5428f2944cdfb0bfe",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/auth.hpp",
+     "lines": 224,
+     "sha256": "4e07f4a59e858a2bc2d46662be8167768a1d3de44cd5a3603e9ae636b5c9d06e",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/broker_status.hpp",
+     "lines": 292,
+     "sha256": "77d9b855443eb8f802e7be125edf4fdf40745bdfb3e89df764ee22524030451e",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/data/bar_csv.hpp",
+     "lines": 478,
+     "sha256": "1a529dbfbbd168fe7d0fcea2c745bef6b366a7b29c2a1d2bdcb0dc8a33d1c1af",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/data/master_lookup.hpp",
+     "lines": 183,
+     "sha256": "c563759c52caf4686aa70109f9d4e75027b4771ac852ab31accbed0af25f41a6",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/data/real_tape.hpp",
+     "lines": 204,
+     "sha256": "9ea14abd9680d515d555340b27413061e298bec18e738997cbc4ccd06256fe1e",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/depth_ladder.hpp",
+     "lines": 265,
+     "sha256": "0165f9243736ee09450f38e53a6a63cc652eff02440488751359c6f9cb8777b2",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/feed_status.hpp",
+     "lines": 410,
+     "sha256": "0790240b12c2b778a3eda1fff34ee424cb512b72c3024e4afc59ed414c803e14",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/filter.hpp",
+     "lines": 417,
+     "sha256": "f5fe8318307a9d516544426b7fbd0c3dc17b37f5b449f0c2809ddba4a3bf80eb",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/format.hpp",
+     "lines": 57,
+     "sha256": "7796ecd3d6c6d643751551ba4a508b645836acf5b26be22d077ce478bc0c006b",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/kite_link.hpp",
+     "lines": 428,
+     "sha256": "38bc71f8a765d2a60e4f1377cb6d8f38c8dde742fcd825e0ac83c8e6703f0e45",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/kite_panel.hpp",
+     "lines": 783,
+     "sha256": "fa79a152c01ff51edb015478b1dad5e30e5555561ab3b6c53ce8607215512218",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/live_feed.hpp",
+     "lines": 315,
+     "sha256": "0c983adde216b743cc343cd774f3e6096a7d714127e36bbd32f7976727007d1b",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/market_clock.hpp",
+     "lines": 150,
+     "sha256": "375a8ac59c8606c5aa5d2c097ae29a5225f42db3c91699b37a2c61600bf7121a",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/price_client.hpp",
+     "lines": 248,
+     "sha256": "bb14f426498f493bacc3442b18b51d6521a47e7f21f32a3beb752b98fb16460d",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_atlas.cpp",
+     "lines": 131,
+     "sha256": "174705be3f0c9a255d3276a7c3d052196e29c095b736233b2517ca034cce8a92",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_bar_csv.cpp",
+     "lines": 345,
+     "sha256": "98205c82b80ef6a2ddc6b59bb3ffd438d48d87c22da5399e3420092bfd93a9fe",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_broker_status.cpp",
+     "lines": 213,
+     "sha256": "7a030cd0b2925f26032b9451a29180a48caf528a681a9f095264eb1f6740d6ce",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_depth_ladder.cpp",
+     "lines": 166,
+     "sha256": "73a91926e7d01159ef894c54d49333069cf27f82a7fbb00d58295d550e6a23b0",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_filter.cpp",
+     "lines": 288,
+     "sha256": "f2dc4d8c13b316760edb24ec1c7e6b5cd5d9345311496e30ddeacc3b33007fe9",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_kite_link.cpp",
+     "lines": 126,
+     "sha256": "d1b0035aa6d8ce2e429cb5a13bba68fa1d453e6ba29a81e5a391d357785333b6",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_kite_panel.cpp",
+     "lines": 150,
+     "sha256": "2a07608b44498c7172fa8193a565d0cc1d4497d9ae0af9cae2990066df6ac309",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tests/test_price_client.cpp",
+     "lines": 298,
+     "sha256": "6c76fd402910c144f2f5ebaf176bcc7a918136506d45f7f38a0cce97a3024a7e",
+     "module": "desktop"
+    },
+    {
+     "path": "desktop/tick_model.hpp",
+     "lines": 383,
+     "sha256": "80383e4c67c55779c850c195fbd4d32d53a1edf1fda106d2fc0db624dd503bdd",
+     "module": "desktop"
+    }
+   ],
+   "file_count": 28,
+   "lines": 7811
+  },
+  "G19_client_a": {
+   "files": [
+    {
+     "path": "client/README.md",
+     "lines": 80,
+     "sha256": "43d7e5a3f6fd31748235a0ddae7cd73a80cfb5644656d5f70ced1ce2a275d448",
+     "module": "client"
+    },
+    {
+     "path": "client/package-lock.json",
+     "lines": 50,
+     "sha256": "a761940ae648353ee4a7e8fcc455831bd6f4d3036cd23d1558a351857c04da70",
+     "module": "client"
+    },
+    {
+     "path": "client/package.json",
+     "lines": 20,
+     "sha256": "b37d45005bb640002775dfc07fdbd02c5094ec401688fd34a49304b153f904ea",
+     "module": "client"
+    },
+    {
+     "path": "client/src/export/csv.ts",
+     "lines": 138,
+     "sha256": "d37e42f1a0936a69f3ff5da1e55087242943ef875681df60224b0b0bccd32af5",
+     "module": "client"
+    },
+    {
+     "path": "client/src/export/rows.ts",
+     "lines": 194,
+     "sha256": "583ea2dc6316fd08a223cdb04c918a04c6c7144850830c656f88d418892ea217",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/aggregate.ts",
+     "lines": 375,
+     "sha256": "1dd3c97cbfacff056eaa0579ec5bdb60b4c28fe1ca1478d70a442c7f991b6467",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/columns.ts",
+     "lines": 169,
+     "sha256": "30274bb3be4e45c18a86244e987e922f2a90be12b38e0c5833c0d5d4c66a825e",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/expr.ts",
+     "lines": 485,
+     "sha256": "a16930a76492b8c8fed288f21866d8a0814550dd35a5ced11d1997d12ee06a88",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/filter.ts",
+     "lines": 339,
+     "sha256": "60d47565db5641bbfe91ce0aea2778afd0c2a05b6c11ab404a374bd1cd0cc7af",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/format.ts",
+     "lines": 231,
+     "sha256": "a5d8826a69caf474f9de2063ae25ed0f5c6e24fc1c24e6108f17c08a5e2f38f2",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/group.ts",
+     "lines": 147,
+     "sha256": "b0083577d7023d30f8d370308dcf1a4cae5f824f2449c9566548216d2fac98ac",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/keymap.ts",
+     "lines": 259,
+     "sha256": "f11fd272a63a7351c22f14941c394fdc94ef9e457ecab7f56bb81196843b62a9",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/selection.ts",
+     "lines": 197,
+     "sha256": "e20387e86513b603c8d22999a7a247468ce6debff51febe0ebab3012365e6ad9",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/sparkline.ts",
+     "lines": 148,
+     "sha256": "3e10f30694f6e73dd5dac1dcc559937bcd2ebe005c806703f46eb3b5d1135e5e",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/store.ts",
+     "lines": 194,
+     "sha256": "aa9c1a2d1202167762e19a2e47737dc896b691417080802371e6fa8cf49b6a91",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/url.ts",
+     "lines": 222,
+     "sha256": "22dd86024a2ec4cc30ede039acae6ef3b20770d3cefdc0edcccf0a3dc8088c8b",
+     "module": "client"
+    },
+    {
+     "path": "client/src/grid/viewport.ts",
+     "lines": 207,
+     "sha256": "7dcaa4fc95fe5544917019cb525af27142df23d7be71a16ac2b75ee31c7f252d",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/aggregate.test.ts",
+     "lines": 350,
+     "sha256": "cb36aa86ec5cad5ba518b31ea60b534aed58b6fd47e608006da09a95a2028be4",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/columns.test.ts",
+     "lines": 312,
+     "sha256": "64221488f73da2288432f366e0621dd5206c576b196ddd4a30404833d97e22b1",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/export.test.ts",
+     "lines": 327,
+     "sha256": "fcc214aa8356e726680b220af96f61d8567004dc90491857d5f4d5d88ba21217",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/filter.test.ts",
+     "lines": 350,
+     "sha256": "5bdadddd8ff35a0a3a69208bb02c717590333b29ac0e3bff929be2ae2156f37c",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/format.test.ts",
+     "lines": 296,
+     "sha256": "9f0f80a3ea64a4d7156ceda6a646eb3b5e0b26c2b6a695c410e64fa2ae8da679",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/grid.test.ts",
+     "lines": 332,
+     "sha256": "b4d8692d135e5c39701602273162a36dd95f803a3c1ef222145870b3cf1562f2",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/selection.test.ts",
+     "lines": 330,
+     "sha256": "d05f5367649dc6421dcbeba63e9b9196be74403b9d0dc6b41a03583b891919d6",
+     "module": "client"
+    },
+    {
+     "path": "client/tsconfig.json",
+     "lines": 34,
+     "sha256": "21905ede9804fb1ec5e6cdcf06ea12dba071c295e9b5290afbce90884e35d3a7",
+     "module": "client"
+    }
+   ],
+   "file_count": 25,
+   "lines": 5786
+  },
+  "G20_client_b": {
+   "files": [
+    {
+     "path": "client/src/chart/candles.ts",
+     "lines": 245,
+     "sha256": "46f104fb1a7cfffd993174600f4cb49b05e58b52998150ffe25d044402e4753c",
+     "module": "client"
+    },
+    {
+     "path": "client/src/chart/footprint.ts",
+     "lines": 173,
+     "sha256": "655e52d408aabbd8c21670b2e27d1fbc14ce2484b0461d8af7f1cffd9ae1924a",
+     "module": "client"
+    },
+    {
+     "path": "client/src/chart/ladder.ts",
+     "lines": 248,
+     "sha256": "5b5c5e6e3d51ea1c1246d679bd9406050fedfa96a11a7874d346cf9f7b645876",
+     "module": "client"
+    },
+    {
+     "path": "client/src/chart/replay.ts",
+     "lines": 272,
+     "sha256": "f87da468035f784cbda78ef5becf55a35f917a19a658673479fd70448b97b597",
+     "module": "client"
+    },
+    {
+     "path": "client/src/chart/scale.ts",
+     "lines": 170,
+     "sha256": "026c0e74aae64452c3431bc38e6c227cc6de2426faadef5e1239b0f2c4664f93",
+     "module": "client"
+    },
+    {
+     "path": "client/src/chart/surface.ts",
+     "lines": 331,
+     "sha256": "f53239b2e6758dbf106808a7a9b90290faee6a8e1bf2179e0e04f9407969335f",
+     "module": "client"
+    },
+    {
+     "path": "client/src/layout.ts",
+     "lines": 280,
+     "sha256": "edd53c703ef2ed5ea114a180e0362d2ffe7b986bf3250a217a8516e21ad55202",
+     "module": "client"
+    },
+    {
+     "path": "client/src/panels/audit.ts",
+     "lines": 174,
+     "sha256": "dbf88754f36841f0656b9eceeef61fe6b4dfed1e12aea22edb85ae805edf619f",
+     "module": "client"
+    },
+    {
+     "path": "client/src/panels/strategy.ts",
+     "lines": 321,
+     "sha256": "c9d9fc3d532a6b1dd56165dc9be1e08157f14e98b6a6d4693f3159e801b3e4e2",
+     "module": "client"
+    },
+    {
+     "path": "client/src/protocol.ts",
+     "lines": 294,
+     "sha256": "775244569ebfa6f8dacd61c7f0269e9467da06fb86237196c42a61eab0fc5fe8",
+     "module": "client"
+    },
+    {
+     "path": "client/src/session.ts",
+     "lines": 268,
+     "sha256": "88b7dab700a01e2fc5cb3302999967ebd4d60f62dd95e70924bdbd3fcbbadde1",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/chart.test.ts",
+     "lines": 318,
+     "sha256": "e69916ecf8ae5d3853853fc3747c3a1e38662a2cdf430ca13d952e137b8dba21",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/conformance.test.ts",
+     "lines": 303,
+     "sha256": "a120a8c10ce84701f99460f1f2c0ab09036297895e3810476378ff6a0f0f0cbd",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/ladder.test.ts",
+     "lines": 374,
+     "sha256": "149418352ac14ab1b96a4b9e13f43a256b1b9139578e43b4a82d933c03ec4455",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/panels.test.ts",
+     "lines": 375,
+     "sha256": "062bac66102fd795d587d590b4303f713dfc9d893391a4f2fcaf02b9c29f0f36",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/replay.test.ts",
+     "lines": 306,
+     "sha256": "0b4969b6cccd413e0676b3fab983a159971fcff576bdab4e80e75a5300d91acb",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/shell.test.ts",
+     "lines": 292,
+     "sha256": "46c5bb41649e92f513acad9319935e63a60abeea9cdfcd683688265f42254ee5",
+     "module": "client"
+    },
+    {
+     "path": "client/tests/surface.test.ts",
+     "lines": 249,
+     "sha256": "985033897c675a58cbbcf1beb029da350e9cc6d87c3ac3478a7ec585b23c2547",
+     "module": "client"
+    }
+   ],
+   "file_count": 18,
+   "lines": 4993
+  },
+  "G21_docs_cards_p0": {
+   "files": [
+    {
+     "path": "prompts/P0-01_core_types.md",
+     "lines": 571,
+     "sha256": "4e1cac99dd508fe7bdeaac204e660f4f22bb25066a936ffb5d59e8097d9263ea",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-01c1_correction.md",
+     "lines": 183,
+     "sha256": "e22ea9feaf8393377c0d94f7e60377f507d4f1cfe09a60d4959f9d55de156cb2",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-02_core_time_timestamp.md",
+     "lines": 520,
+     "sha256": "f5ae118dbc405ac35dba03de9114618b02d8a532ba6aaf95c0765c363816f3b7",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-03_core_time_tsc_clock.md",
+     "lines": 476,
+     "sha256": "f159e2f3836d8a3ea70d57ff1a56d567ae5fc3bd42c6d216d11ee3beb598b82d",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-04_core_time_exchange_ts.md",
+     "lines": 562,
+     "sha256": "49012f359773d3f6731213603b9660f651292ce42c05d828b30fe71d1bb9c47d",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-05a_core_mem_page_alloc.md",
+     "lines": 425,
+     "sha256": "eaa29b6f62ebe60573d1b6836e4d9403dfd88a2a52e2454ae065620fd98b50aa",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-05b_core_mem_arena_pool.md",
+     "lines": 582,
+     "sha256": "5522582289dfb1113997c6200d4fe6011ea087136d1317f2daa2904e1061645b",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-06a_core_lockfree_spsc_ring.md",
+     "lines": 436,
+     "sha256": "e84cc01212b721d7fbb51ee4ce8e6f0549c13c97afaa2eee3bfc45d6777f7711",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-06b_core_lockfree_mpsc_seqlock.md",
+     "lines": 512,
+     "sha256": "f9da46805e9f12b1b51bd86abd4e5fc5923e9163b9e712a453527b4a21fd6456",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-07_core_log.md",
+     "lines": 653,
+     "sha256": "6f579a9748a5b30fe6ce675f260b42a816d772fee5038f8343117f3640b50b9c",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-08a_core_config_store.md",
+     "lines": 627,
+     "sha256": "b34724d942c1bae5e1c99e4721c854bdc742b645f0529e25adb30c6abc271bf1",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-09a_core_invariant.md",
+     "lines": 522,
+     "sha256": "441ce74089a400b0a97b2d25dd977a96bff4d08997c36d7a54c888682ff9e566",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-09b_feed_replay.md",
+     "lines": 446,
+     "sha256": "75a5d4c8f3b9bd5cee439f690789339b9e0e5b8f7a689e1dbe8a1f8e1f1176d7",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P0-10_app_entry_point.md",
+     "lines": 361,
+     "sha256": "0560b0cb853ec4f2b480312a61f86dfe04a42e4c11bcf77283a56098e9ea0687",
+     "module": "prompts"
+    }
+   ],
+   "file_count": 14,
+   "lines": 6876
+  },
+  "G22_docs_cards_rest_config_ops": {
+   "files": [
+    {
+     "path": "config/altair.toml",
+     "lines": 243,
+     "sha256": "83e9bab8cc80cf6b95a36a32a7912e8310e1b080b509587d4060125093c8b25b",
+     "module": "config"
+    },
+    {
+     "path": "config/fetch_banknifty.ps1",
+     "lines": 125,
+     "sha256": "c41d459fc05e6a3ac23bc07c89f09496ed2ec041aa72cb9ceff452ba21cc171d",
+     "module": "config"
+    },
+    {
+     "path": "config/nse_calendar.csv",
+     "lines": 255,
+     "sha256": "f8b8959f100bc74498ffad8e40c5afcee344954e9f1a9b0f898457615b6b0931",
+     "module": "config"
+    },
+    {
+     "path": "config/tools_gen_nse_calendar.py",
+     "lines": 162,
+     "sha256": "a15325984debfaae32fa29bc4e34c65500ee6c2696e9098d7906efaee4113fbe",
+     "module": "config"
+    },
+    {
+     "path": "ops/README.md",
+     "lines": 26,
+     "sha256": "9555fd3fbf7e1a423f2a2a1ae9bbd7a877bc19ce5cbbb233233155af86db57f5",
+     "module": "ops"
+    },
+    {
+     "path": "ops/disaster-recovery.md",
+     "lines": 196,
+     "sha256": "0d04be767613e4dc115aa2c6a0b05335c48948d3ad190e20bb8d3b64ad2f34ae",
+     "module": "ops"
+    },
+    {
+     "path": "ops/go-live.md",
+     "lines": 156,
+     "sha256": "17d0c6033d5e82c7f936d71401c0f3522ec565c6293acffecc5b1b40732ba4b4",
+     "module": "ops"
+    },
+    {
+     "path": "ops/linux-deployment.md",
+     "lines": 196,
+     "sha256": "b6ca6ea3a27866f598e205a9ba770a615ac34796e762c7b54d1e2d54ed850b02",
+     "module": "ops"
+    },
+    {
+     "path": "prompts/P1-01_instruments_spec_store.md",
+     "lines": 571,
+     "sha256": "f8c836d5cda124ca1feb5ecd5d3a45c83681a219e101e909dc630bc03a52b1e0",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P1-02a_nse_fo_master.md",
+     "lines": 247,
+     "sha256": "ea679fa3302ba3768fe7814d4a0777c4c469cf64994c07b096c02f440e302ab9",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P1-02b_nse_mktlots.md",
+     "lines": 196,
+     "sha256": "23b79e6d4dbfa6df4f30cc14152fb16da8a90dfcf37a30718cfaff580d518061",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P1-02c_nse_equity_master.md",
+     "lines": 195,
+     "sha256": "84498075ece4be144f8b7eddf109aa2cd75fd20e920cb8d33963cfd504181e95",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P1-03a_bse_masters.md",
+     "lines": 225,
+     "sha256": "839512bd1506806df63cd44d895c4c891ced2e74a1ce70354ff8738f1c6a1ce1",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P1-04_instruments_kite_dump.md",
+     "lines": 515,
+     "sha256": "db86e14eacdecd49893b34f444ca3ba3b385e6566927554f81a7e447cd58babe",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P1-06_instruments_reconcile.md",
+     "lines": 374,
+     "sha256": "1402be1af4c39851425a8b40c410d75cc33dc997de38d72013e0dbb99ab9189e",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P1-08a_snapshot_policy.md",
+     "lines": 295,
+     "sha256": "e98c02af3180b120cd2181da94ea7d0ad33abde3b4130a2e89ba71af3ac0ce75",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P1-08b_master_fetch.md",
+     "lines": 103,
+     "sha256": "1cd6541cbc24774bd509c93786fc18c16e4df5c888de79ebb2af32ce3963f07b",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P1-09_universe.md",
+     "lines": 80,
+     "sha256": "5b061274753abb99afd5d8f65fff90de0bd7f7394603aa43184326017bdd1fbe",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P2-01_tick_normalised.md",
+     "lines": 217,
+     "sha256": "be8885ba94433248b3df2b036da8c122bf9957de8128c9a0b78802bf6647dd07",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P2-02_kite_decoder.md",
+     "lines": 269,
+     "sha256": "c4e2627524383b22d5874de1e9a83f2c78842372a8745682848e42206a3c1c51",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P2-04_normaliser.md",
+     "lines": 257,
+     "sha256": "b24971e5e5b90f5a89e1400787edb6940f0944e1dac63374a191a1bdb8d18b1b",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P2-05_failover.md",
+     "lines": 64,
+     "sha256": "4894464c9560bda5085a8ccad6628f0c9644f825f6cd0047b92539cea8809665",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P2-06_tick_store.md",
+     "lines": 73,
+     "sha256": "0890fcba9c2d67dcde2192893c28b4311fb3d8b2e8a8f98a92b61949fcde3270",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P2-08_l2_book.md",
+     "lines": 213,
+     "sha256": "e36fa3d8dde5938d69e0bc8b5055799b7755a6ef3f06231258fd21884a693baa",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P2-09a_microstructure.md",
+     "lines": 182,
+     "sha256": "9e47b0b287e40aece0093c710e8c53cc7b91cf4093adf01d351dcd052ec6e52f",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P2-09b_flow.md",
+     "lines": 76,
+     "sha256": "5d9c0fb73ca5f659588d44242f8cb621b92b621c6fc4c1c3063830606274b8aa",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P2-10_kite_auth.md",
+     "lines": 138,
+     "sha256": "0b21dedbf00775edf00459e656bff88dc9c86d43aff437b1f8e921d6eb1b2a7b",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-01_greeks.md",
+     "lines": 92,
+     "sha256": "d04a7f0635de21caed303deed318a49d9ee7df203163ba888d00afcbd56c728c",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-02_greeks2.md",
+     "lines": 44,
+     "sha256": "51141d99ce75c2c0045e8e354ac70ac0399c581d18a733bcb2bdbc246bde9142",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-03_american.md",
+     "lines": 44,
+     "sha256": "35becf8adf78895b39975395c16fea4186e33468e50a42e66ac658588f4d1b17",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-04_iv.md",
+     "lines": 170,
+     "sha256": "d96ba4aa1f053ed50c23b9b7bfc230a81feb15d16a90de5eddd679744dda54d2",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-05a_svi.md",
+     "lines": 60,
+     "sha256": "7a8539be881f638bb4cb650143ef5da9b40a8eeaa2695d85321cadb6d358d9f2",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-05b_svi_fit.md",
+     "lines": 68,
+     "sha256": "aae733f53f66e7c8760434a071669c5e769e6dfdbeb5ce9335fed6196c66ccfc",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-06a_rolling.md",
+     "lines": 62,
+     "sha256": "b7fc0c74279760782b19b790e2b64f413cd7350a6ece2da55f53bccb020c08b6",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-06b_ewma.md",
+     "lines": 60,
+     "sha256": "f384659168656e02642ebbf2c74d1a9ae3c9fd10d14f68dbb9e4ebe941d33c33",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-06c_hurst.md",
+     "lines": 55,
+     "sha256": "478094cb0dcb73f5a96e859af8309a5f04cc54a856ec3ee1d45f8c96af6a6fd0",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-07_derivatives.md",
+     "lines": 51,
+     "sha256": "92d647457f87b9499c2e5df07458efd5ec8e6c725e1a21f5860ffdf12420c522",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-08_vix.md",
+     "lines": 48,
+     "sha256": "65acd77478f614f5f728a433526011fa4680384281c6197b1e4e4da1986da615",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-09_cost.md",
+     "lines": 86,
+     "sha256": "404d7b7bcc090403afd3f52ef1ced87ddb52877d34b674c1b3c1e96cca6add3b",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P3-10_slippage.md",
+     "lines": 52,
+     "sha256": "fd79dc5df0b060d24958698fe420dba919ff29ebaac759e51b83a188c6b4ae65",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P4-01_sizing.md",
+     "lines": 48,
+     "sha256": "4e9fb49fc02a1ba438e14273e6ba9f7fa33b56e8710616643d7359f5485b69bf",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P4-02_limits.md",
+     "lines": 44,
+     "sha256": "a26ca4baad81393f70da65cb17b1deca6aa0e7d9f6aa3f2dbca8657fa2869d67",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P4-04_order_state.md",
+     "lines": 52,
+     "sha256": "a89d8591b68a09dfdcf85dd7c72f6fda6bb57aae483bb36f375216b440881e9b",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/P7-00_dataset_bar_ingest.md",
+     "lines": 103,
+     "sha256": "1e05e4742befe0098647348439944cc50c38e7c5caa62ca19861415b9bb28431",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/PHASE13_PLAN.md",
+     "lines": 262,
+     "sha256": "825859aa19c8ff6580cb661762a0f6a3c8cadb7e4d504e407df789c9b46c6a21",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/ROADMAP_GAP.md",
+     "lines": 233,
+     "sha256": "f81b4765e5b2533f8b42b9880bfff040dee1624b36b419fd722c0e70391cd34a",
+     "module": "prompts"
+    }
+   ],
+   "file_count": 46,
+   "lines": 7283
+  },
+  "LEAD": {
+   "files": [
+    {
+     "path": ".commandcode/taste/coding-style/taste.md",
+     "lines": 20,
+     "sha256": "4f434707b51b5174d9e61caa9423e516c605c5c02a9e08a810520f5a3f6a3b35",
+     "module": ".commandcode"
+    },
+    {
+     "path": ".commandcode/taste/taste.md",
+     "lines": 0,
+     "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "module": ".commandcode"
+    },
+    {
+     "path": ".commandcode/taste/tooling/taste.md",
+     "lines": 6,
+     "sha256": "e549a229518bdcaf176912d96f1b3fd807b2f8672d8dcbd5888088ecb41a9071",
+     "module": ".commandcode"
+    },
+    {
+     "path": ".commandcode/taste/workflow/taste.md",
+     "lines": 15,
+     "sha256": "28c0b90d71a361b9ef8617f72492687fab159f658c1349e95ce4c581ca4556e6",
+     "module": ".commandcode"
+    },
+    {
+     "path": "CLAUDE.md",
+     "lines": 365,
+     "sha256": "41eb9ea4caedfb9dad5de288c85974661fa494b89a83969cde63493b8057ff79",
+     "module": "CLAUDE.md"
+    },
+    {
+     "path": "README.md",
+     "lines": 115,
+     "sha256": "e67550f6152c7b69f2161e4971be748d334133c5172591d982cf0e6f90ddcb51",
+     "module": "README.md"
+    },
+    {
+     "path": "ROADMAP.md",
+     "lines": 1344,
+     "sha256": "1182c5ab51c4d020c47e6172e4e11d2f8a08cf9a51899f8177f2bd9be7363401",
+     "module": "ROADMAP.md"
+    },
+    {
+     "path": "change_by_codex.txt",
+     "lines": 41,
+     "sha256": "bf51230975396ef1a69e846b46c7bce3f7b4191ff2da63430591646366daa074",
+     "module": "change_by_codex.txt"
+    },
+    {
+     "path": "idea.txt",
+     "lines": 559,
+     "sha256": "6c53b8e30a87b80e27365997da222c72c375117aa2e4d4b047d2ca4ad1764079",
+     "module": "idea.txt"
+    },
+    {
+     "path": "prompts/CODEX_COMPLETION_PLAN.md",
+     "lines": 231,
+     "sha256": "78a2a4281d5dd7ec417f676a4bbce95490be272894429445d5bc5c1077c49fdf",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/CODEX_PROJECT_MEMORY.md",
+     "lines": 145,
+     "sha256": "faa80c7705160f89c25e3da3ceb51eae0e8b34db7123ae14d1c00f38732348f2",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/LEDGER.md",
+     "lines": 1079,
+     "sha256": "b593a3c69b7b9a860f0b0f6c52a1e366dd68cc6be82fffa52308dfefc7084245",
+     "module": "prompts"
+    },
+    {
+     "path": "prompts/PROTOCOL.md",
+     "lines": 199,
+     "sha256": "870562743ebb8a747f073b2b887ec1756bc5cbdb5d4c0e2551342eb8b7f04894",
+     "module": "prompts"
+    }
+   ],
+   "file_count": 13,
+   "lines": 4119
+  }
+ }
+}

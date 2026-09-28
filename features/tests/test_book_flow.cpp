@@ -171,6 +171,69 @@ void a_crossed_book_is_data_and_its_levels_are_absent()
                 " distinction into the vector.\n");
 }
 
+void reused_vector_drops_values_from_missing_or_unusable_books()
+{
+    std::printf("\nreused_vector_drops_values_from_missing_or_unusable_books\n");
+
+    const BookSlots slots = all_slots();
+    FeatureVector v{1, 9, Timestamp{0}};
+    constexpr FeatureIndex kUnrelated = 8;
+    check(v.set(kUnrelated, 42.5).has_value(),
+          "an unrelated feature starts present in the shared vector");
+
+    auto normal = build_book(normal_book(), slots, v);
+    check(normal.has_value() && v.has(0) && v.has(7),
+          "a successful book populates its configured features");
+    check(v.value(kUnrelated).has_value()
+              && v.value(kUnrelated).value() == 42.5,
+          "the unrelated feature is present alongside the book values");
+
+    const auto book_slots_absent = [&]() {
+        for (FeatureIndex i = 0; i < 8; ++i) {
+            if (v.has(i)) { return false; }
+        }
+        return true;
+    };
+    const auto unrelated_preserved = [&]() {
+        const auto value = v.value(kUnrelated);
+        return value.has_value() && value.value() == 42.5;
+    };
+
+    const BookState empty{};
+    const auto no_liquidity = build_book(empty, slots, v);
+    check(!no_liquidity && no_liquidity.error() == BookFeatureError::NoLiquidity,
+          "an empty update keeps its established NoLiquidity meaning");
+    check(book_slots_absent(),
+          "an empty book clears every previous book-family value");
+    check(unrelated_preserved(), "empty-book clearing preserves unrelated features");
+
+    normal = build_book(normal_book(), slots, v);
+    check(normal.has_value() && v.has(0) && v.has(7),
+          "a fresh book repopulates its own slots before the next update");
+    BookState crossed = normal_book();
+    crossed.crossed = true;
+    const auto crossed_result = build_book(crossed, slots, v);
+    check(!crossed_result && crossed_result.error() == BookFeatureError::Crossed,
+          "a crossed update still reports Crossed");
+    check(!v.has(0) && !v.has(1) && !v.has(2) && !v.has(3)
+              && !v.has(4) && !v.has(5) && !v.has(6)
+              && v.has(7) && v.value(7).value() == 1.0,
+          "a crossed book leaves only its valid crossed flag present");
+    check(unrelated_preserved(), "crossed-book clearing preserves unrelated features");
+
+    normal = build_book(normal_book(), slots, v);
+    check(normal.has_value() && v.has(0) && v.has(7),
+          "another fresh book repopulates stale values before the stale update");
+    BookState stale = normal_book();
+    stale.flags = set_flag(stale.flags, TickFlag::Stale);
+    const auto stale_result = build_book(stale, slots, v);
+    check(!stale_result && stale_result.error() == BookFeatureError::Stale,
+          "a stale but non-crossed book has its own status");
+    check(book_slots_absent(),
+          "a stale book does not expose prior values or claim it crossed");
+    check(unrelated_preserved(), "stale-book clearing preserves unrelated features");
+}
+
 // ── 4 ────────────────────────────────────────────────────────────────────
 void the_flow_family_reports_its_own_sample_counts()
 {
@@ -232,6 +295,7 @@ int main()
     a_normal_book_fills_the_family();
     an_empty_book_is_not_a_balanced_book();
     a_crossed_book_is_data_and_its_levels_are_absent();
+    reused_vector_drops_values_from_missing_or_unusable_books();
     the_flow_family_reports_its_own_sample_counts();
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");

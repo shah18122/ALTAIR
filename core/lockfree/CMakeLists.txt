@@ -1,4 +1,4 @@
-# core/lockfree — SPSC ring (P0-06a), MPSC ring + seqlock (P0-06b).
+# core/lockfree — SPSC ring (P0-06a), MPSC ring (P0-06b).
 # Header-only: the INTERFACE library carries the include root so consumers
 # write `#include <lockfree/spsc_ring.hpp>`.
 
@@ -14,8 +14,16 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE altair_lockfree altair_flags Threads::Threads)
     add_test(NAME spsc_ring COMMAND altair_spsc_ring_test)
 
-    add_executable(altair_mpsc_seqlock_test tests/test_mpsc_seqlock.cpp)
-    target_link_libraries(altair_mpsc_seqlock_test
+    add_executable(altair_mpsc_ring_test tests/test_mpsc_seqlock.cpp)
+    target_link_libraries(altair_mpsc_ring_test
         PRIVATE altair_lockfree altair_flags Threads::Threads)
-    add_test(NAME mpsc_seqlock COMMAND altair_mpsc_seqlock_test)
+    add_test(NAME mpsc_ring COMMAND altair_mpsc_ring_test)
+
+    # CX02-C1. Slot publication: the writer never writes a slot a reader can
+    # be copying (C02-002 / C21-003), and a contended read is refused rather
+    # than spun (C02-003). Interleavings are forced through a test hook.
+    add_executable(altair_snapshot_slots_test tests/test_snapshot_slots.cpp)
+    target_link_libraries(altair_snapshot_slots_test
+        PRIVATE altair_lockfree altair_flags Threads::Threads)
+    add_test(NAME snapshot_slots COMMAND altair_snapshot_slots_test)
 endif()

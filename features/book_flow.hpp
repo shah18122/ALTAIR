@@ -74,7 +74,9 @@ enum class BookFeatureError : std::uint8_t {
     /// The book is crossed; the level features are not comparable.
     Crossed,
     /// A mid could not be formed, so nothing scaled by it can be.
-    NoMid
+    NoMid,
+    /// The normaliser marked the book's exchange timestamp implausible.
+    Stale
 };
 
 /// Write the book family.
@@ -85,6 +87,18 @@ enum class BookFeatureError : std::uint8_t {
 [[nodiscard]] inline std::expected<int, BookFeatureError>
 build_book(const BookState& b, const BookSlots& s, FeatureVector& out) noexcept
 {
+    // FeatureVector instances are reused across ticks. Clear only the slots
+    // owned by this builder before any return, so missing/crossed/stale data
+    // cannot inherit a previous book's plausible-looking values.
+    out.clear(s.imbalance);
+    out.clear(s.weighted_imbalance);
+    out.clear(s.microprice_offset);
+    out.clear(s.spread);
+    out.clear(s.spread_bps);
+    out.clear(s.bid_depth);
+    out.clear(s.ask_depth);
+    out.clear(s.crossed);
+
     const DepthLevel* bb = best_bid(b);
     const DepthLevel* ba = best_ask(b);
     if (bb == nullptr || ba == nullptr) {
@@ -96,14 +110,17 @@ build_book(const BookState& b, const BookSlots& s, FeatureVector& out) noexcept
         if (i != kSkip && out.set(i, v)) { ++written; }
     };
 
-    // The crossed flag is written FIRST and unconditionally, because it is the
-    // one thing that is still meaningful on a crossed book -- and a model that
-    // sees the level features absent needs to know why.
-    const bool is_crossed = !is_tradable(b);
-    put(s.crossed, is_crossed ? 1.0 : 0.0);
-    if (is_crossed) {
+    // The crossed flag is meaningful only when the book is actually crossed.
+    // Do not infer it from is_tradable(): stale data is also not tradable, but
+    // is not evidence that the market itself crossed.
+    if (b.crossed) {
+        put(s.crossed, 1.0);
         return std::unexpected(BookFeatureError::Crossed);
     }
+    if (has_flag(b.flags, TickFlag::Stale)) {
+        return std::unexpected(BookFeatureError::Stale);
+    }
+    put(s.crossed, 0.0);
 
     if (const auto v = obi(b))          { put(s.imbalance, *v); }
     if (const auto v = weighted_obi(b)) { put(s.weighted_imbalance, *v); }

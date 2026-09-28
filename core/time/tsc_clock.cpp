@@ -16,6 +16,13 @@
 #  define ALTAIR_X86 0
 #endif
 
+#if defined(__APPLE__)
+#  define ALTAIR_APPLE 1
+#  include <mach/mach_time.h>
+#else
+#  define ALTAIR_APPLE 0
+#endif
+
 #if ALTAIR_X86
 #  if defined(_MSC_VER)
 #    include <intrin.h>
@@ -218,7 +225,30 @@ TscClock::TscClock(const TscCalibration& cal) noexcept : cal_(cal) {}
 
 std::expected<TscClock, ClockError> TscClock::create() noexcept
 {
-#if !ALTAIR_X86
+#if ALTAIR_APPLE
+    mach_timebase_info_data_t info{};
+    if (::mach_timebase_info(&info) != KERN_SUCCESS || info.numer == 0
+        || info.denom == 0) {
+        return std::unexpected(ClockError::AppleClockUnavailable);
+    }
+    const double ns_per_tick = static_cast<double>(info.numer)
+                             / static_cast<double>(info.denom);
+    const std::uint64_t q32 = to_q32(ns_per_tick);
+    if (!(ns_per_tick > 0.0) || q32 == 0) {
+        return std::unexpected(ClockError::AppleClockUnavailable);
+    }
+    TscCalibration cal{};
+    cal.ns_per_tick = ns_per_tick;
+    cal.ns_per_tick_q32 = q32;
+    // The timebase ratio is supplied by the kernel, but anchoring it to UTC is
+    // still a measurement. Carry at least one steady-clock tick of uncertainty.
+    cal.ns_per_tick_stderr = steady_tick_ns();
+    cal.samples = 1;
+    cal.source = ClockSource::AppleMonotonic;
+    cal.anchor_ticks = static_cast<std::uint64_t>(::mach_absolute_time());
+    cal.anchor = Timestamp{system_unix_ns()};
+    return TscClock{cal};
+#elif !ALTAIR_X86
     return std::unexpected(ClockError::NotX86);
 #else
     if (!cpu::has_invariant_tsc()) {
@@ -303,8 +333,12 @@ TscClock TscClock::create_fallback() noexcept
 
 ALTAIR_HOT std::uint64_t TscClock::now_ticks() const noexcept
 {
-    return cal_.source == ClockSource::InvariantTsc ? cpu::read_tsc_ordered()
-                                                    : steady_ns();
+    if (cal_.source == ClockSource::InvariantTsc) return cpu::read_tsc_ordered();
+#if ALTAIR_APPLE
+    if (cal_.source == ClockSource::AppleMonotonic)
+        return static_cast<std::uint64_t>(::mach_absolute_time());
+#endif
+    return steady_ns();
 }
 
 ALTAIR_HOT Duration TscClock::ticks_to_duration(std::uint64_t ticks) const noexcept
