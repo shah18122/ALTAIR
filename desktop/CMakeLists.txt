@@ -863,6 +863,9 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DEV_CREDENTIALS)
     set_target_properties(altair_terminal_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_terminal COMMAND altair_terminal_test)
+    # Check [5] prices the option chain from the instrument master and
+    # dataset/ (neither in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(desktop_terminal PROPERTIES LABELS dataset)
 
     # P26-01. The Link Kite panel's two pure functions: token redaction and
     # pulling the login URL out of the subprocess's usage text. The QProcess
