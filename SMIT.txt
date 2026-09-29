@@ -179,9 +179,19 @@ P8 Windows-local acceptance          DONE    ops/phase8-acceptance.md
 P8-01..04 external acceptance        GATED   entitled accounts, live feed, Mac
 Phase 9 (flagging/drift/deploy)      LOCAL   on disk, exit criteria not re-checked
 Phase 10 (DCF, cointegration, VIX)   LOCAL   on disk, exit criteria not re-checked
-P11Q-07 fit models on existing data  OPEN
-P11Q-08 walk-forward training harness OPEN   models/training.hpp exists, card open
-P12-01..06 Linux deploy, supervision OPEN    engine/helpers now compile on Linux
+P11Q-07 fit models on existing data  DONE    desktop/data/fits.hpp; desktop_fits
+                                             (label `dataset`, needs dataset/)
+P11Q-08 walk-forward training harness DONE   Models page "Train selected model"
+                                             (panels.hpp, ModelJobController) on
+                                             models/training.hpp
+P12-01 Linux tuning                  PLAN    builds + tests green on Linux CI;
+                                             tuning unmeasured (ops/linux-deployment.md)
+P12-02 warm restart                  DONE    app/warm_restart.hpp, test warm_restart
+P12-03 monitoring + alerting         DONE    app/monitor.hpp, test monitor
+P12-04 contract-note reconciliation  DONE    app/note_reconcile.hpp, test note_reconcile
+P12-05 disaster recovery runbook     DONE    ops/disaster-recovery.md (kill file
+                                             path still to be decided)
+P12-06 go-live checklist             GATED   ops/go-live.md: NOT READY by design
 Live order submission                OFF     by design (see section 1)
 
 Tests:
@@ -211,11 +221,11 @@ Tests:
  5. Decide the live order-route default, then (and only then) review enabling
     live submission.
  6. Mac tier P1-01..06 on Apple Silicon.
- 7. Open audit findings: C22-002, C22-003 (no runtime C++ reads
-    config/altair.toml), C22-005, C22-006, C01-006, C01-008.
+ 7. Audit findings: CLOSED 2026-09-29 (section 12).
  8. Benchmark tier: find_package(benchmark) is commented out while
     ALTAIR_BUILD_BENCH defaults ON; only analytics/bench builds.
- 9. P11Q-07/08, Phase 12, and re-check Phase 9/10 exit criteria.
+ 9. Re-check Phase 9/10 exit criteria; P12-01 tuning on the target box;
+    decide the kill-file path (ops/disaster-recovery.md).
 10. The FYERS redirect URL must match the app registration exactly. Code uses
     https://altair.thesmitshah.com/fyers/callback; an older plan named
     https://www.thesmitshah.com/fyersredirect.
@@ -395,3 +405,51 @@ Models page (desktop/panels.hpp, models.overview)
     because CI forced QT_QPA_PLATFORM=offscreen, which is not deployed next to
     the windeployqt'd DLLs; on Windows that is a modal "no platform plugin"
     dialog. The global setting is removed and per-test timeout cut to 300 s.
+
+
+------------------------------------------------------------------------------
+12. CHANGE LOG -- 2026-09-29 (latency, races, bugs, CI)
+------------------------------------------------------------------------------
+Latency (FYERS hot path)
+  The HSM socket used to render every update to SDK-shaped JSON and parse it
+  back. Now: HsmUpdate -> to_fyers_fields() -> FyersAdapter::on_fields() ->
+  build_fyers_event(), one rule set shared with the JSON decoder. JSON is only
+  rendered for --jsonl recording and the golden tests.
+    feed/fyers_hsm.hpp      HsmUpdate, hsm_paise() (exact, refuses sub-paisa),
+                            flat 64K topic table instead of unordered_map,
+                            spec id resolved once at subscribe (cookie).
+    feed/fyers_decoder.hpp  FyersFields + build_fyers_event().
+    feed/fyers_adapter.hpp  on_fields(): same epoch checks as on_message.
+  Measured: 4788 ns -> 64 ns per update, identical Ticks and depth
+  (new test in feed/tests/test_fyers_hsm.cpp compares both paths).
+Locks and races
+  - Engine code holds no mutex; 46 ALTAIR_HOT files scanned: no lock,
+    allocation or I/O on the hot path.
+  - TSan: every threaded test is labelled `concurrency` (SPSC/MPSC rings,
+    snapshot slots, config store, binlog, model serving, price bus, dataset
+    merge): 8/8 clean. models/serving.hpp's TearableModel is a deliberate
+    torn-read demonstration and is excluded from TSan by attribute.
+Bugs found by ASan/UBSan and fixed
+  - instruments/fyers_identity.hpp bind(): memcpy read past a short
+    underlying string (global-buffer-overflow).
+  - core/time/tests/test_tsc_clock.cpp: signed overflow in the benchmark sink.
+  - feed/fyers_decoder.hpp: >5 depth levels now refuse (was a silent clamp).
+Audit findings closed
+  C01-006  exchange_ts: optional max_past_lag, TsReject::Stale + counter.
+  C01-008  TscClock: drift_from_system(), reanchored() (returns a new clock;
+           no mutation under readers). Test: rate kept across re-anchor.
+  C22-003  `altair --config [file]` loads and range-checks config/altair.toml
+           (test engine_config_toml, builds where tomlplusplus is found).
+  C22-005  disaster-recovery.md no longer promises a KILL file nothing reads.
+  C22-002, C22-006  moot (the cards they named are gone).
+Data in git
+  dataset/, data/masters/, data/instruments.csv and data/instruments/ are no
+  longer ignored (.gitattributes marks them generated, no diffs). Credential
+  and session files stay ignored (checked with git check-ignore).
+CI (.github/workflows/ci.yml)
+  linux GCC 13 (+ tomlplusplus), linux Clang 18 + libc++, ASan+UBSan (full
+  suite), TSan (`-L concurrency`), Windows MSVC + Qt 6.8.3. The `dataset`
+  tier runs automatically once dataset/ is in the repo. macos-arm64.yml stays
+  manual (parked).
+Local results: GCC 167/167, Clang 18 + libc++ 164/164 (no tomlplusplus),
+ctest -LE 'dataset|experiment'.

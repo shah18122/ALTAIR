@@ -108,7 +108,11 @@ int main() {
         hsm::HsmSession& s = c.lite ? lite : full;
         std::vector<std::string> got;
         const auto r = s.on_frame(bytes_of(c.frame), c.frame.size(),
-                                  [&got](std::string_view j) { got.emplace_back(j); });
+                                  [&got, &s](const hsm::HsmUpdate& u) {
+                                      std::string j;
+                                      hsm::render_sdk_json(u, s.lite(), j);
+                                      got.push_back(std::move(j));
+                                  });
         if (r.event != hsm::HsmEvent::Data)
             got.emplace_back(std::string{"EVENT:"} + hsm::event_text(r.event));
         bool ok = static_cast<int>(got.size()) == c.count;
@@ -131,7 +135,11 @@ int main() {
         hsm::HsmSession s{false};
         map_all(s);
         std::vector<std::string> got;
-        const auto emit = [&got](std::string_view j) { got.emplace_back(j); };
+        const auto emit = [&got, &s](const hsm::HsmUpdate& u) {
+            std::string j;
+            hsm::render_sdk_json(u, s.lite(), j);
+            got.push_back(std::move(j));
+        };
         for (const auto& c : fyers_golden::kCases)
             if (c.name == "auth_ok" || c.name == "snap")
                 (void)s.on_frame(bytes_of(c.frame), c.frame.size(), emit);
@@ -152,7 +160,7 @@ int main() {
             hsm::HsmSession s{false};
             map_all(s);
             std::vector<std::uint8_t> copy(bytes_of(snap.frame), bytes_of(snap.frame) + n);
-            const auto r = s.on_frame(copy.data(), copy.size(), [](std::string_view) {});
+            const auto r = s.on_frame(copy.data(), copy.size(), [](const hsm::HsmUpdate&) {});
             if (r.event != hsm::HsmEvent::Malformed) bounded = false;
         }
         check(bounded, "every truncated data frame is reported malformed, never over-read");
@@ -183,6 +191,66 @@ int main() {
         check(id.has_value() && accepted && popped && tick.value.last.raw() == 61235
                   && tick.kind == FyersEventKind::Trade,
               "socket JSON flows through FyersDataAdapter into a Tick at 612.35 rupees");
+    }
+
+    // ---- one decoder, two inputs: the typed path equals the JSON path ------
+    {
+        static SpecStore specs;
+        ContractSpec spec{};
+        std::memcpy(spec.symbol, "NSE:SBIN-EQ", 12);
+        std::memcpy(spec.underlying, "SBIN", 5);
+        spec.lot_size = LotSize{1};
+        spec.tick_size = Price{5};
+        spec.price_scale = 100;
+        spec.valid_from = Timestamp{1};
+        spec.valid_to = Timestamp::max();
+        spec.snapshot_at = Timestamp{1};
+        spec.source_hash = 1;
+        const auto id = specs.add(spec);
+        FyersDataAdapter<4, 16, 16> via_json{specs, 11};
+        FyersDataAdapter<4, 16, 16> via_fields{specs, 11};
+        const auto e1 = via_json.connected();
+        const auto e2 = via_fields.connected();
+        hsm::HsmSession s{false};
+        s.map_topic("sf|nse_cm|3045", "NSE:SBIN-EQ", static_cast<std::uint32_t>(*id));
+        s.map_topic("dp|nse_cm|3045", "NSE:SBIN-EQ", static_cast<std::uint32_t>(*id));
+        const auto emit = [&](const hsm::HsmUpdate& u) {
+            std::string j;
+            hsm::render_sdk_json(u, false, j);
+            (void)via_json.on_message(j, Timestamp{5}, e1);
+            FyersFields f{};
+            if (hsm::to_fyers_fields(u, static_cast<InstrumentId>(u.cookie), f))
+                (void)via_fields.on_fields(f, Timestamp{5}, e2);
+        };
+        for (const auto& c : fyers_golden::kCases)
+            if (c.name == "auth_ok" || c.name == "snap" || c.name == "upd")
+                (void)s.on_frame(bytes_of(c.frame), c.frame.size(), emit);
+        bool same = true;
+        int ticks = 0, depths = 0;
+        FeedEnvelope<Tick> a{}, b{};
+        while (via_json.try_pop(a)) {
+            same = same && via_fields.try_pop(b) && a.kind == b.kind
+                && a.value.id == b.value.id && a.value.last.raw() == b.value.last.raw()
+                && a.value.volume.raw() == b.value.volume.raw()
+                && a.value.last_qty.raw() == b.value.last_qty.raw()
+                && a.value.exchange_ts == b.value.exchange_ts
+                && a.value.flags == b.value.flags;
+            ++ticks;
+        }
+        FeedEnvelope<DepthUpdate> da{}, db{};
+        while (via_json.try_pop(da)) {
+            same = same && via_fields.try_pop(db) && da.value.bid_levels == db.value.bid_levels
+                && da.value.bid[0].px.raw() == db.value.bid[0].px.raw()
+                && da.value.ask[4].px.raw() == db.value.ask[4].px.raw()
+                && da.value.bid[2].qty.raw() == db.value.bid[2].qty.raw()
+                && da.value.ask[1].orders == db.value.ask[1].orders;
+            ++depths;
+        }
+        check(same && ticks == 2 && depths == 1 && !via_fields.try_pop(b),
+              "the typed socket path yields the same Ticks and depth as the JSON path");
+        check(hsm::hsm_paise(61235, 2, 1, b.value.last) && b.value.last.raw() == 61235
+                  && !hsm::hsm_paise(123457, 4, 1, b.value.last),
+              "wire integers convert to paise exactly, and sub-paisa prices are refused");
     }
 
     std::printf("\n%s (%d failure%s)\n", failures == 0 ? "ALL PASS" : "FAILED",

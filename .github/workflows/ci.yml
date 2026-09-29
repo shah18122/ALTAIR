@@ -5,9 +5,9 @@
 #                                macOS break shows up here in minutes
 #   windows (MSVC + Qt 6.8.3)    the primary platform: engine and the Qt desktop
 #
-# Tests labelled `dataset` read dataset/, which is local market data and not in
-# git, so CI runs `ctest -LE dataset`. Run the full suite, data tier included,
-# on a machine that has dataset/: `ctest --test-dir <build>`.
+# Tests labelled `dataset` read dataset/ and the instrument masters. When they
+# are in the checkout CI runs them too; without them it runs `ctest -LE dataset`.
+# The `experiment` label (long market measurements) never runs in CI.
 name: CI
 
 on:
@@ -40,7 +40,9 @@ jobs:
             cc: gcc
             cxx: g++
             stdlib: ""
-            packages: ""
+            # Ubuntu's tomlplusplus is a compiled libstdc++ library, so only
+            # the GCC job gets it (the TOML loader tests and `altair --config`).
+            packages: libtomlplusplus-dev
           - name: Clang 18 / libc++
             cc: clang
             cxx: clang++
@@ -69,7 +71,61 @@ jobs:
         run: cmake --build build -j 4
 
       - name: Test
-        run: ctest --test-dir build -LE dataset -j 4 --timeout 600 --output-on-failure
+        run: |
+          if [ -d dataset ]; then exclude='experiment'; else exclude='dataset|experiment'; fi
+          echo "excluding labels: $exclude"
+          ctest --test-dir build -LE "$exclude" -j 4 --timeout 600 --output-on-failure
+
+  sanitizers:
+    name: linux (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Memory errors and undefined behaviour, over the whole suite.
+          - name: ASan + UBSan
+            option: ALTAIR_ENABLE_ASAN
+            select: ""
+          # Data races, over every test that runs threads (label `concurrency`).
+          - name: TSan
+            option: ALTAIR_ENABLE_TSAN
+            select: concurrency
+    env:
+      ASAN_OPTIONS: detect_leaks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ninja-build libboost-dev libssl-dev libtomlplusplus-dev
+          # TSan cannot map its shadow memory with the 24.04 kernel's default
+          # 32-bit mmap randomisation.
+          sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -D${{ matrix.option }}=ON \
+            -DALTAIR_BUILD_TESTS=ON -DALTAIR_BUILD_BENCH=OFF -DALTAIR_NATIVE_ARCH=OFF
+
+      - name: Build
+        run: cmake --build build -j 4
+
+      - name: Test
+        run: |
+          if [ -n "${{ matrix.select }}" ]; then
+            sel=(-L "${{ matrix.select }}")
+          elif [ -d dataset ]; then
+            sel=(-LE experiment)
+          else
+            sel=(-LE 'dataset|experiment')
+          fi
+          ctest --test-dir build "${sel[@]}" -j 4 --timeout 1200 --output-on-failure
 
   windows:
     name: windows (MSVC, Qt 6.8.3 desktop)
@@ -99,4 +155,5 @@ jobs:
           & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
           cmake --preset default "-DALTAIR_QT_ROOT=C:/Qt/$env:QT_VERSION/msvc2022_64"
           cmake --build --preset default
-          ctest --preset default -LE dataset -j 2 --timeout 300
+          $exclude = if (Test-Path dataset) { 'experiment' } else { 'dataset|experiment' }
+          ctest --preset default -LE $exclude -j 2 --timeout 300 --output-on-failure

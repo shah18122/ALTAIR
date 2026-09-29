@@ -12,6 +12,17 @@ target_link_libraries(altair PRIVATE
     altair_flags
 )
 
+# C22-003: `altair --config` reads config/altair.toml through the TOML loader
+# when tomlplusplus is available, and a test keeps the shipped file in schema.
+if(TARGET altair_config_toml)
+    target_link_libraries(altair PRIVATE altair_config_toml)
+    target_compile_definitions(altair PRIVATE ALTAIR_HAVE_TOML=1)
+    if(ALTAIR_BUILD_TESTS)
+        add_test(NAME engine_config_toml
+                 COMMAND altair --config ${CMAKE_SOURCE_DIR}/config/altair.toml)
+    endif()
+endif()
+
 install(TARGETS altair RUNTIME DESTINATION bin)
 
 # P2-03. The desktop talks to this process over a private stdin pipe. It is the
@@ -247,4 +258,6 @@ if(ALTAIR_BUILD_TESTS)
     target_include_directories(altair_dataset_merge_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME dataset_merge COMMAND altair_dataset_merge_test)
+    # Runs threads: the TSan CI job runs exactly the `concurrency` label.
+    set_tests_properties(dataset_merge PROPERTIES LABELS concurrency)
 endif()

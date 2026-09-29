@@ -35,6 +35,8 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_config_test
         PRIVATE altair_config altair_flags Threads::Threads)
     add_test(NAME config COMMAND altair_config_test)
+    # Runs threads: the TSan CI job runs exactly the `concurrency` label.
+    set_tests_properties(config PROPERTIES LABELS concurrency)
 
     if(tomlplusplus_FOUND)
         add_executable(altair_toml_source_test tests/test_toml_source.cpp)

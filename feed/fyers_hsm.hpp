@@ -23,6 +23,7 @@
 // owns the credential.
 #pragma once
 
+#include <feed/fyers_decoder.hpp>
 #include <feed/fyers_index_map.hpp>
 
 #include <algorithm>
@@ -478,30 +479,54 @@ inline constexpr std::array<std::string_view, 30> kDepthFields{
     "bid_order1", "bid_order2", "bid_order3", "bid_order4", "bid_order5",
     "ask_order1", "ask_order2", "ask_order3", "ask_order4", "ask_order5"};
 
+enum class HsmTopic : std::uint8_t { Scrip, Index, Depth };
+
+/// One decoded update, as a view of the session's per-topic state. Values are
+/// the raw wire integers in the SDK's field order (kScripFields / kIndexFields
+/// / kDepthFields); price = value / (10^precision * multiplier) rupees.
+/// Valid only inside the emit callback.
+struct HsmUpdate {
+    HsmTopic topic{};
+    std::string_view symbol;        ///< FYERS symbol, e.g. "NSE:SBIN-EQ"
+    std::uint32_t cookie{};         ///< caller's id from map_topic()
+    const std::int32_t* value{};
+    std::uint32_t present{};        ///< bit i: value[i] was sent
+    std::uint16_t multiplier{1};
+    std::uint8_t precision{};
+    [[nodiscard]] bool has(std::size_t i) const noexcept { return (present >> i) & 1u; }
+};
+
+inline constexpr std::uint32_t kNoCookie = 0xFFFF'FFFFu;
+
 /// Stateful decoder for one connection. Holds the last value of every field
 /// per topic because FYERS sends a snapshot and then only changed fields.
 class HsmSession {
 public:
-    explicit HsmSession(bool lite) : lite_(lite) { json_.reserve(1024); }
+    explicit HsmSession(bool lite) : lite_(lite), by_id_(65536, kNoSlot) {}
 
-    /// topic ("sf|nse_cm|3045") -> FYERS symbol ("NSE:SBIN-EQ"). Kept across
-    /// reconnects; the snapshot state is not.
-    void map_topic(std::string topic, std::string symbol) {
-        symbols_[std::move(topic)] = std::move(symbol);
+    /// topic ("sf|nse_cm|3045") -> FYERS symbol ("NSE:SBIN-EQ"), plus an
+    /// opaque cookie handed back with every update (the ticker passes the
+    /// resolved InstrumentId, so nothing is looked up by name per update).
+    /// Kept across reconnects; the snapshot state is not.
+    void map_topic(std::string topic, std::string symbol,
+                   std::uint32_t cookie = kNoCookie) {
+        symbols_[std::move(topic)] = Mapped{std::move(symbol), cookie};
     }
+    [[nodiscard]] bool lite() const noexcept { return lite_; }
     [[nodiscard]] std::size_t mapped() const noexcept { return symbols_.size(); }
 
     /// Forget per-connection state (topic ids, values, ack counter).
     void reset() noexcept {
-        by_id_.clear();
+        std::fill(by_id_.begin(), by_id_.end(), kNoSlot);
         topics_.clear();
         ack_every_ = 0;
         since_ack_ = 0;
     }
     [[nodiscard]] std::uint32_t ack_every() const noexcept { return ack_every_; }
 
-    /// Decode one binary WebSocket message. `emit(std::string_view json)` is
-    /// called for every update, with the SDK's on_message JSON.
+    /// Decode one binary WebSocket message. `emit(const HsmUpdate&)` is called
+    /// for every update the SDK would report; render_sdk_json() turns it into
+    /// the SDK's on_message JSON, to_fyers_fields() into the decoder's input.
     template <typename Emit>
     [[nodiscard]] FrameResult on_frame(const std::uint8_t* p, std::size_t n, Emit&& emit) {
         FrameResult r{};
@@ -526,10 +551,16 @@ public:
     }
 
 private:
-    enum class Kind : std::uint8_t { Scrip, Index, Depth };
+    using Kind = HsmTopic;
+    static constexpr std::uint32_t kNoSlot = 0xFFFF'FFFFu;
+    struct Mapped {
+        std::string symbol;
+        std::uint32_t cookie{kNoCookie};
+    };
     struct Topic {
         Kind kind{};
         std::string symbol;
+        std::uint32_t cookie{kNoCookie};
         std::array<std::int32_t, 32> value{};
         std::uint32_t present{};        // bit i: field i has a value
         std::uint16_t multiplier{1};
@@ -629,15 +660,16 @@ private:
 
         const auto mapped = symbols_.find(name);
         if (mapped == symbols_.end()) { ++r.unknown_topic; return true; }
-        t.symbol = mapped->second;
-        auto slot = by_id_.find(id);
-        if (slot == by_id_.end()) {
+        t.symbol = mapped->second.symbol;
+        t.cookie = mapped->second.cookie;
+        std::uint32_t& slot = by_id_[id];
+        if (slot == kNoSlot) {
             topics_.push_back(std::move(t));
-            slot = by_id_.emplace(id, topics_.size() - 1).first;
+            slot = static_cast<std::uint32_t>(topics_.size() - 1);
         } else {
-            topics_[slot->second] = std::move(t);
+            topics_[slot] = std::move(t);
         }
-        publish(topics_[slot->second], r, emit);
+        publish(topics_[slot], r, emit);
         return true;
     }
 
@@ -649,9 +681,9 @@ private:
         const std::size_t fields = p[at + 3];
         at += 4;
         if (at + fields * 4 > n) return false;
-        const auto slot = by_id_.find(id);
-        if (slot == by_id_.end()) { at += fields * 4; ++r.unknown_topic; return true; }
-        Topic& t = topics_[slot->second];
+        const std::uint32_t slot = by_id_[id];
+        if (slot == kNoSlot) { at += fields * 4; ++r.unknown_topic; return true; }
+        Topic& t = topics_[slot];
         const std::size_t known = t.kind == Kind::Scrip ? kScripFields.size()
                                 : t.kind == Kind::Index ? kIndexFields.size()
                                                         : kDepthFields.size();
@@ -675,9 +707,9 @@ private:
         const std::uint16_t id = be16(p + at + 1);
         const std::int32_t v = bei32(p + at + 3);
         at += 7;
-        const auto slot = by_id_.find(id);
-        if (slot == by_id_.end()) { ++r.unknown_topic; return true; }
-        Topic& t = topics_[slot->second];
+        const std::uint32_t slot = by_id_[id];
+        if (slot == kNoSlot) { ++r.unknown_topic; return true; }
+        Topic& t = topics_[slot];
         if (t.kind == Kind::Depth || v == kAbsent) return true;
         if ((t.present & 1u) && t.value[0] == v) return true;
         t.value[0] = v; t.present |= 1u;
@@ -695,118 +727,192 @@ private:
         return true;
     }
 
-    // ---- JSON in the SDK's __response_output() shape -----------------------
-
-    static double pow10(unsigned p) noexcept {
-        double v = 1.0;
-        for (unsigned i = 0; i < p; ++i) v *= 10.0;
-        return v;
-    }
-    /// Python's repr() of a float for the magnitudes prices take: shortest
-    /// round-trip digits, fixed notation, always a decimal point.
-    void put_float(double v) {
-        char buf[64];
-        const auto res = std::to_chars(buf, buf + sizeof buf, v, std::chars_format::fixed);
-        std::string_view s{buf, static_cast<std::size_t>(res.ptr - buf)};
-        json_.append(s);
-        if (s.find('.') == std::string_view::npos) json_.append(".0");
-    }
-    /// Python's round(x, digits): correctly rounded decimal, back to double.
-    static double py_round(double x, int digits) {
-        char buf[64];
-        std::snprintf(buf, sizeof buf, "%.*f", digits, x);
-        return std::strtod(buf, nullptr);
-    }
-    void key(std::string_view k) {
-        if (json_.size() > 1) json_.push_back(',');
-        json_.push_back('"'); json_.append(k); json_.append("\":");
-    }
-    void put_string(std::string_view s) {
-        json_.push_back('"');
-        for (char c : s) {
-            if (c == '"' || c == '\\') json_.push_back('\\');
-            json_.push_back(c);
-        }
-        json_.push_back('"');
-    }
-    void put_int(std::int64_t v) {
-        char buf[24];
-        const auto res = std::to_chars(buf, buf + sizeof buf, v);
-        json_.append(buf, res.ptr);
-    }
-
     template <typename Emit>
     void publish(const Topic& t, FrameResult& r, Emit& emit) {
         if (t.multiplier == 0) return;   // the SDK divides by it
-        const double scale = pow10(t.precision) * static_cast<double>(t.multiplier);
-        const auto scaled = [&](std::size_t i) { return static_cast<double>(t.value[i]) / scale; };
-        const auto has = [&](std::size_t i) { return (t.present >> i) & 1u; };
-        const char* type = t.kind == Kind::Scrip ? "sf" : t.kind == Kind::Index ? "if" : "dp";
-
-        json_.assign("{");
-        if (lite_) {
-            // Lite mode only ever reports ltp; the SDK emits nothing for depth.
-            if (t.kind == Kind::Depth || !has(0)) return;
-            key("ltp"); put_float(scaled(0));
-            key("symbol"); put_string(t.symbol);
-            key("type"); put_string(type);
-        } else if (t.kind == Kind::Depth) {
-            for (std::size_t i = 0; i < kDepthFields.size(); ++i) {
-                if (!has(i)) continue;
-                key(kDepthFields[i]);
-                if (i < 10) put_float(scaled(i)); else put_int(t.value[i]);
-            }
-            key("type"); put_string(type);
-            key("symbol"); put_string(t.symbol);
-        } else if (t.kind == Kind::Index) {
-            bool change_done = false;
-            for (std::size_t i = 0; i < kIndexFields.size(); ++i) {
-                if (has(i)) {
-                    key(kIndexFields[i]);
-                    if (i == 2) put_int(t.value[i]); else put_float(scaled(i));
-                }
-                if (!change_done && has(0) && has(1) && i >= 1 && t.value[1] != 0) {
-                    const double ch = py_round(scaled(0) - scaled(1), 2);
-                    key("ch"); put_float(ch);
-                    key("chp"); put_float(py_round(ch / scaled(1) * 100.0, 2));
-                    change_done = true;
-                }
-            }
-            key("type"); put_string(type);
-            key("symbol"); put_string(t.symbol);
-        } else {
-            static constexpr std::uint32_t kScaled =
-                (1u << 0) | (1u << 6) | (1u << 7) | (1u << 11) | (1u << 13)
-                | (1u << 14) | (1u << 19) | (1u << 20);
-            for (std::size_t i = 0; i < kScripFields.size(); ++i) {
-                if (!has(i) || i == 12 || i == 15 || i == 16) continue; // OI, Yhigh, Ylow popped
-                key(kScripFields[i]);
-                if (i == 17 || i == 18) put_int(0);                     // circuits zeroed
-                else if ((kScaled >> i) & 1u) put_float(scaled(i));
-                else put_int(t.value[i]);
-            }
-            key("type"); put_string(type);
-            key("symbol"); put_string(t.symbol);
-            if (!has(17)) { key("lower_ckt"); put_int(0); }
-            if (!has(18)) { key("upper_ckt"); put_int(0); }
-            if (has(0) && has(20) && t.value[20] != 0) {
-                const double ch = py_round(scaled(0) - scaled(20), 4);
-                key("ch"); put_float(ch);
-                key("chp"); put_float(py_round(ch / scaled(20) * 100.0, 4));
-            }
-        }
-        json_.push_back('}');
+        // Lite mode only ever reports ltp; the SDK emits nothing for depth or
+        // for a topic whose ltp has not arrived.
+        if (lite_ && (t.kind == Kind::Depth || !((t.present >> 0) & 1u))) return;
+        HsmUpdate u;
+        u.topic = t.kind;
+        u.symbol = t.symbol;
+        u.cookie = t.cookie;
+        u.value = t.value.data();
+        u.present = t.present;
+        u.multiplier = t.multiplier;
+        u.precision = t.precision;
         ++r.messages;
-        emit(std::string_view{json_});
+        emit(static_cast<const HsmUpdate&>(u));
     }
 
     bool lite_;
     std::uint32_t ack_every_{};
     std::uint32_t since_ack_{};
-    std::unordered_map<std::string, std::string> symbols_;
-    std::unordered_map<std::uint16_t, std::size_t> by_id_;
+    std::unordered_map<std::string, Mapped> symbols_;
+    std::vector<std::uint32_t> by_id_;   // topic id -> index into topics_, flat
     std::vector<Topic> topics_;
-    std::string json_;
 };
+
+// ---------------------------------------------------------------------------
+// Renderers
+// ---------------------------------------------------------------------------
+
+namespace detail {
+
+inline double pow10(unsigned p) noexcept {
+    double v = 1.0;
+    for (unsigned i = 0; i < p; ++i) v *= 10.0;
+    return v;
+}
+/// Python's repr() of a float for the magnitudes prices take: shortest
+/// round-trip digits, fixed notation, always a decimal point.
+inline void put_float(std::string& out, double v) {
+    char buf[64];
+    const auto res = std::to_chars(buf, buf + sizeof buf, v, std::chars_format::fixed);
+    std::string_view s{buf, static_cast<std::size_t>(res.ptr - buf)};
+    out.append(s);
+    if (s.find('.') == std::string_view::npos) out.append(".0");
+}
+/// Python's round(x, digits): correctly rounded decimal, back to double.
+inline double py_round(double x, int digits) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.*f", digits, x);
+    return std::strtod(buf, nullptr);
+}
+inline void key(std::string& out, std::string_view k) {
+    if (out.size() > 1) out.push_back(',');
+    out.push_back('"'); out.append(k); out.append("\":");
+}
+inline void put_string(std::string& out, std::string_view s) {
+    out.push_back('"');
+    for (char c : s) {
+        if (c == '"' || c == '\\') out.push_back('\\');
+        out.push_back(c);
+    }
+    out.push_back('"');
+}
+inline void put_int(std::string& out, std::int64_t v) {
+    char buf[24];
+    const auto res = std::to_chars(buf, buf + sizeof buf, v);
+    out.append(buf, res.ptr);
+}
+
+} // namespace detail
+
+/// The SDK's on_message JSON for one update (FyersDataSocket
+/// __response_output). For --jsonl recordings and the golden tests; the
+/// ticker's hot path uses to_fyers_fields() instead.
+inline void render_sdk_json(const HsmUpdate& u, bool lite, std::string& out) {
+    using namespace detail;
+    const double scale = pow10(u.precision) * static_cast<double>(u.multiplier);
+    const auto scaled = [&](std::size_t i) { return static_cast<double>(u.value[i]) / scale; };
+    const char* type = u.topic == HsmTopic::Scrip ? "sf" : u.topic == HsmTopic::Index ? "if" : "dp";
+    out.assign("{");
+    if (lite) {
+        key(out, "ltp"); put_float(out, scaled(0));
+        key(out, "symbol"); put_string(out, u.symbol);
+        key(out, "type"); put_string(out, type);
+    } else if (u.topic == HsmTopic::Depth) {
+        for (std::size_t i = 0; i < kDepthFields.size(); ++i) {
+            if (!u.has(i)) continue;
+            key(out, kDepthFields[i]);
+            if (i < 10) put_float(out, scaled(i)); else put_int(out, u.value[i]);
+        }
+        key(out, "type"); put_string(out, type);
+        key(out, "symbol"); put_string(out, u.symbol);
+    } else if (u.topic == HsmTopic::Index) {
+        bool change_done = false;
+        for (std::size_t i = 0; i < kIndexFields.size(); ++i) {
+            if (u.has(i)) {
+                key(out, kIndexFields[i]);
+                if (i == 2) put_int(out, u.value[i]); else put_float(out, scaled(i));
+            }
+            if (!change_done && u.has(0) && u.has(1) && i >= 1 && u.value[1] != 0) {
+                const double ch = py_round(scaled(0) - scaled(1), 2);
+                key(out, "ch"); put_float(out, ch);
+                key(out, "chp"); put_float(out, py_round(ch / scaled(1) * 100.0, 2));
+                change_done = true;
+            }
+        }
+        key(out, "type"); put_string(out, type);
+        key(out, "symbol"); put_string(out, u.symbol);
+    } else {
+        static constexpr std::uint32_t kScaled =
+            (1u << 0) | (1u << 6) | (1u << 7) | (1u << 11) | (1u << 13)
+            | (1u << 14) | (1u << 19) | (1u << 20);
+        for (std::size_t i = 0; i < kScripFields.size(); ++i) {
+            if (!u.has(i) || i == 12 || i == 15 || i == 16) continue; // OI, Yhigh, Ylow popped
+            key(out, kScripFields[i]);
+            if (i == 17 || i == 18) put_int(out, 0);                   // circuits zeroed
+            else if ((kScaled >> i) & 1u) put_float(out, scaled(i));
+            else put_int(out, u.value[i]);
+        }
+        key(out, "type"); put_string(out, type);
+        key(out, "symbol"); put_string(out, u.symbol);
+        if (!u.has(17)) { key(out, "lower_ckt"); put_int(out, 0); }
+        if (!u.has(18)) { key(out, "upper_ckt"); put_int(out, 0); }
+        if (u.has(0) && u.has(20) && u.value[20] != 0) {
+            const double ch = py_round(scaled(0) - scaled(20), 4);
+            key(out, "ch"); put_float(out, ch);
+            key(out, "chp"); put_float(out, py_round(ch / scaled(20) * 100.0, 4));
+        }
+    }
+    out.push_back('}');
+}
+
+/// Wire integer -> paise, exactly: value / (10^precision * multiplier) rupees.
+/// False when the price is not a whole number of paise (the JSON path's
+/// parse_paise refuses the same prices) or the scale is out of range.
+[[nodiscard]] inline bool hsm_paise(std::int32_t value, std::uint8_t precision,
+                                    std::uint16_t multiplier, Price& out) noexcept {
+    if (multiplier == 0 || precision > 9) return false;
+    std::int64_t denom = multiplier;
+    for (unsigned i = 0; i < precision; ++i) denom *= 10;
+    const std::int64_t num = static_cast<std::int64_t>(value) * 100;
+    if (num % denom != 0) return false;
+    out = Price{num / denom};
+    return true;
+}
+
+/// The decoder's typed input for one update, without JSON. `id` is the
+/// instrument the caller resolved for this topic (map_topic's cookie).
+/// Same fields the JSON path reads, plus open interest, which the SDK's JSON
+/// drops. Returns false for an update the decoder has nothing to take from.
+[[nodiscard]] inline bool to_fyers_fields(const HsmUpdate& u, InstrumentId id,
+                                          FyersFields& f) noexcept {
+    f = FyersFields{};
+    f.id = id;
+    if (u.topic == HsmTopic::Depth) {
+        f.type = FyersMessageType::DepthUpdate;
+        for (std::size_t i = 0; i < kDepthLevels; ++i) {
+            if (!u.has(i) || !u.has(5 + i) || !u.has(10 + i) || !u.has(15 + i)) break;
+            if (!hsm_paise(u.value[i], u.precision, u.multiplier, f.bid_px[i])
+                || !hsm_paise(u.value[5 + i], u.precision, u.multiplier, f.ask_px[i])
+                || u.value[10 + i] < 0 || u.value[15 + i] < 0)
+                break;
+            f.bid_qty[i] = Qty{u.value[10 + i]};
+            f.ask_qty[i] = Qty{u.value[15 + i]};
+            if (u.has(20 + i) && u.value[20 + i] >= 0)
+                f.bid_orders[i] = static_cast<std::uint32_t>(u.value[20 + i]);
+            if (u.has(25 + i) && u.value[25 + i] >= 0)
+                f.ask_orders[i] = static_cast<std::uint32_t>(u.value[25 + i]);
+            ++f.levels;
+        }
+        return true;
+    }
+    f.type = u.topic == HsmTopic::Index ? FyersMessageType::IndexUpdate
+                                        : FyersMessageType::SymbolUpdate;
+    if (u.has(0))
+        f.ltp_state = hsm_paise(u.value[0], u.precision, u.multiplier, f.ltp)
+                          ? FyersFields::LtpState::Ok
+                          : FyersFields::LtpState::Invalid;
+    if (u.topic == HsmTopic::Scrip) {
+        if (u.has(1) && u.value[1] >= 0) { f.has_volume = true; f.volume = Qty{u.value[1]}; }
+        if (u.has(2)) f.last_traded_time_s = u.value[2];
+        if (u.has(8) && u.value[8] >= 0) { f.has_last_qty = true; f.last_qty = Qty{u.value[8]}; }
+        if (u.has(12)) { f.has_oi = true; f.oi = u.value[12]; }
+    }
+    return true;
+}
 
 } // namespace altair::fyers_hsm

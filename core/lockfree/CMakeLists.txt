@@ -13,11 +13,15 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_spsc_ring_test
         PRIVATE altair_lockfree altair_flags Threads::Threads)
     add_test(NAME spsc_ring COMMAND altair_spsc_ring_test)
+    # Runs threads: the TSan CI job runs exactly the `concurrency` label.
+    set_tests_properties(spsc_ring PROPERTIES LABELS concurrency)
 
     add_executable(altair_mpsc_ring_test tests/test_mpsc_seqlock.cpp)
     target_link_libraries(altair_mpsc_ring_test
         PRIVATE altair_lockfree altair_flags Threads::Threads)
     add_test(NAME mpsc_ring COMMAND altair_mpsc_ring_test)
+    # Runs threads: the TSan CI job runs exactly the `concurrency` label.
+    set_tests_properties(mpsc_ring PROPERTIES LABELS concurrency)
 
     # CX02-C1. Slot publication: the writer never writes a slot a reader can
     # be copying (C02-002 / C21-003), and a contended read is refused rather
@@ -26,4 +30,6 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_snapshot_slots_test
         PRIVATE altair_lockfree altair_flags Threads::Threads)
     add_test(NAME snapshot_slots COMMAND altair_snapshot_slots_test)
+    # Runs threads: the TSan CI job runs exactly the `concurrency` label.
+    set_tests_properties(snapshot_slots PROPERTIES LABELS concurrency)
 endif()

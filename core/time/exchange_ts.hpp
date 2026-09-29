@@ -38,7 +38,8 @@ enum class TsReject : std::uint8_t {
     BeforeFloor,      // earlier than the configured plausible floor
     AfterCeiling,     // later than local_now + max_future_skew (LOOK-AHEAD guard)
     Regressed,        // earlier than the last admitted timestamp from this source
-    OutsideSession    // a valid instant, but not inside the trading window
+    OutsideSession,   // a valid instant, but not inside the trading window
+    Stale             // older than local_now - max_past_lag (C01-006)
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -179,6 +180,14 @@ public:
 
         /// Only consulted when enforce_session is true.
         SessionWindow session;
+
+        /// C01-006. Reject a timestamp more than this far BEHIND local_now:
+        /// data that old is not "fresh", whatever the watermark says (a fresh
+        /// gate, a reset() after reconnect, or require_monotonic=false all
+        /// left it unbounded). UNIT: nanoseconds. ZERO MEANS NO BOUND -- the
+        /// default, so existing configs keep their behaviour until a feed
+        /// states its own lag budget.
+        Duration max_past_lag{};
     };
 
     struct Stats {
@@ -187,13 +196,15 @@ public:
         std::uint64_t after_ceiling;
         std::uint64_t regressed;
         std::uint64_t outside_session;
+        std::uint64_t stale;
     };
 
     constexpr explicit PlausibilityGate(Config cfg) noexcept : cfg_(cfg) {}
 
     /// Decide whether to believe `exchange_ts`, given our own clock reading.
     /// UNIT: both arguments are ns since the Unix epoch, UTC.
-    /// Checks run in a fixed order — floor, ceiling, monotonic, session — and
+    /// Checks run in a fixed order — floor, ceiling, staleness, monotonic,
+    /// session — and
     /// the FIRST failure is reported. Exactly one counter moves per call.
     /// PRECONDITION: local_now comes from a clock this process trusts.
     [[nodiscard]] ALTAIR_HOT constexpr std::expected<Timestamp, TsReject>
@@ -209,6 +220,14 @@ public:
         if (exchange_ts > local_now + cfg_.max_future_skew) {
             ++stats_.after_ceiling;
             return std::unexpected(TsReject::AfterCeiling);
+        }
+
+        // C01-006: too far behind our clock to be called fresh. Exactly
+        // max_past_lag behind is still admitted.
+        if (cfg_.max_past_lag.raw() > 0
+            && exchange_ts < local_now - cfg_.max_past_lag) {
+            ++stats_.stale;
+            return std::unexpected(TsReject::Stale);
         }
 
         // An exact repeat is admitted: two trades can share a millisecond.

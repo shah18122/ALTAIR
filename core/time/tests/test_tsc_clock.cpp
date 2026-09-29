@@ -262,7 +262,9 @@ void report_latency()
     }
 
     constexpr int kIters = 100'000;
-    std::int64_t sink = 0;   // defeats dead-code elimination without volatile
+    // Unsigned: summing ~1.8e18 ns timestamps overflows within a few adds, and
+    // signed overflow is UB (UBSan). Unsigned wrap is defined.
+    std::uint64_t sink = 0;   // defeats dead-code elimination without volatile
 
     // Bracketing a call with two ordered TSC reads costs a full RDTSCP itself.
     // Measure that apparatus first and subtract it, or we report our own
@@ -273,7 +275,7 @@ void report_latency()
     pay.reserve(kIters);
 
     for (int i = 0; i < 10'000; ++i) {   // warm up: page in, settle frequency
-        sink += clk.now().ns_since_epoch();
+        sink += static_cast<std::uint64_t>(clk.now().ns_since_epoch());
     }
 
     for (int i = 0; i < kIters; ++i) {
@@ -283,7 +285,7 @@ void report_latency()
     }
     for (int i = 0; i < kIters; ++i) {
         const std::uint64_t a = clk.now_ticks();
-        sink += clk.now().ns_since_epoch();
+        sink += static_cast<std::uint64_t>(clk.now().ns_since_epoch());
         const std::uint64_t b = clk.now_ticks();
         pay.push_back(to_nanos(clk.ticks_to_duration(b - a)));
     }
@@ -315,6 +317,21 @@ void report_latency()
 
 } // namespace
 
+// C01-008: re-anchoring keeps the rate and pulls now() back to UTC.
+static void test_reanchor_keeps_rate()
+{
+    const TscClock c = TscClock::create_fallback();
+    const TscClock r = c.reanchored();
+    check(r.source() == c.source(), "reanchored() keeps the clock source");
+    check(r.calibration().ns_per_tick_q32 == c.calibration().ns_per_tick_q32,
+          "reanchored() keeps the calibrated rate");
+    check(r.calibration().anchor >= c.calibration().anchor,
+          "reanchored() moves the anchor forward, never back");
+    const auto drift = r.drift_from_system().raw();
+    check(drift > -1'000'000'000LL && drift < 1'000'000'000LL,
+          "a fresh anchor is within one second of the system clock");
+}
+
 int main()
 {
     std::printf("altair core/time tsc_clock tests\n");
@@ -326,6 +343,7 @@ int main()
     test_tsc_uncertainty_propagates();
     test_tsc_timestamp_anchor();
     test_tsc_fallback_clock();
+    test_reanchor_keeps_rate();
 
     report_latency();
 

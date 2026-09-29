@@ -89,9 +89,9 @@ ctest --test-dir build -LE dataset      # what CI runs
 ctest --test-dir build -L dataset       # the real-data tier only
 ```
 
-Tests labelled `dataset` read `dataset/`, which is local market data and not
-in git. They fail loudly when it is missing, so CI excludes them. Run them on a
-machine that has the data.
+Tests labelled `dataset` read `dataset/` (market data, tracked in git). They
+fail loudly when it is missing; CI runs them only when `dataset/` is present.
+Tests labelled `concurrency` are the threaded ones that CI runs under TSan.
 
 ## FYERS quick start
 
@@ -112,7 +112,7 @@ produced by FYERS' official SDK.
 
 | Workflow | Runs | What it proves |
 |---|---|---|
-| [`ci.yml`](.github/workflows/ci.yml) | Push to `main`, every PR | Linux GCC 13 and Clang 18/libc++ build and test; Windows MSVC builds the engine and the Qt 6.8.3 desktop and runs the tests |
+| [`ci.yml`](.github/workflows/ci.yml) | Push to `main`, every PR | Linux GCC 13 and Clang 18/libc++ build and test; ASan+UBSan over the suite and TSan over the `concurrency` tests; Windows MSVC builds the engine and the Qt 6.8.3 desktop and runs the tests |
 | [`macos-arm64.yml`](.github/workflows/macos-arm64.yml) | Manual for now (Actions → Run workflow), parked until the macOS compile errors are fixed | Phase 1 evidence on real Apple Silicon: native build and tests, Darwin memory and clock paths, `Altair.app` bundle and launch |
 
 ## Engineering rules (short form)
