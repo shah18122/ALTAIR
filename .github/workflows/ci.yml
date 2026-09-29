@@ -1,0 +1,99 @@
+# Build and test on every push to main and every pull request.
+#
+#   linux (GCC 13 / libstdc++)   engine, broker helpers, all tests
+#   linux (Clang 18 / libc++)    the same with Apple's standard library, so a
+#                                macOS break shows up here in minutes
+#   windows (MSVC + Qt 6.8.3)    the primary platform: engine and the Qt desktop
+#
+# Tests labelled `dataset` read dataset/, which is local market data and not in
+# git, so CI runs `ctest -LE dataset`. Run the full suite, data tier included,
+# on a machine that has dataset/: `ctest --test-dir <build>`.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  linux:
+    name: linux (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC 13 / libstdc++
+            cc: gcc
+            cxx: g++
+            stdlib: ""
+            packages: ""
+          - name: Clang 18 / libc++
+            cc: clang
+            cxx: clang++
+            stdlib: "-stdlib=libc++"
+            packages: libc++-18-dev libc++abi-18-dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ninja-build libboost-dev libssl-dev ${{ matrix.packages }}
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DALTAIR_BUILD_TESTS=ON -DALTAIR_BUILD_BENCH=OFF -DALTAIR_NATIVE_ARCH=OFF \
+            -DCMAKE_CXX_FLAGS="${{ matrix.stdlib }}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${{ matrix.stdlib }}"
+
+      - name: Build
+        run: cmake --build build -j 4
+
+      - name: Test
+        run: ctest --test-dir build -LE dataset -j 4 --timeout 600 --output-on-failure
+
+  windows:
+    name: windows (MSVC, Qt 6.8.3 desktop)
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      QT_VERSION: "6.8.3"
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Qt
+        shell: pwsh
+        run: |
+          python -m pip install aqtinstall
+          python -m aqt install-qt windows desktop $env:QT_VERSION win64_msvc2022_64 -O C:\Qt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Configure, build and test (MSVC x64, default preset)
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          cmake --preset default "-DALTAIR_QT_ROOT=C:/Qt/$env:QT_VERSION/msvc2022_64"
+          cmake --build --preset default
+          ctest --preset default -LE dataset -j 2 --timeout 600

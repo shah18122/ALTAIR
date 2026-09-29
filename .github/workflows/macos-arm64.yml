@@ -9,12 +9,22 @@ name: macOS arm64 (Phase 1)
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+# `shell: bash` (not the implicit default) runs with -eo pipefail, so a failed
+# build piped through tee fails the step instead of passing it.
+defaults:
+  run:
+    shell: bash
 
 jobs:
   engine:
@@ -45,7 +55,8 @@ jobs:
       - name: Test (full suite)
         run: |
           set +e
-          ctest --preset macos-arm64 -j 3 2>&1 | tee evidence/ctest.txt
+          # dataset/ is local market data, not in git: see ci.yml.
+          ctest --preset macos-arm64 -LE dataset -j 3 2>&1 | tee evidence/ctest.txt
           echo "CTEST_EXIT=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
 
       - name: P1-02 / P1-03 detail (Darwin page allocation, Apple clock)

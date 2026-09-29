@@ -30,7 +30,10 @@ int main()
 {
     std::printf("altair smoke test\n");
 
-#if __cplusplus >= 202302L
+    // Past C++20 (202002L) is C++23 mode. Compilers that predate the final
+    // standard report their own draft value there (GCC 13: 202100L), so
+    // requiring exactly 202302L failed a correct -std=c++23 build.
+#if __cplusplus > 202002L
     check(true, "C++23 mode");
 #else
     check(false, "C++23 mode");

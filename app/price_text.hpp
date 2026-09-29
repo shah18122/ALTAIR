@@ -35,11 +35,22 @@
 #pragma once
 
 #include <charconv>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <system_error>
+
+#if defined(_LIBCPP_VERSION)
+#  include <clocale>
+#  if defined(__APPLE__)
+#    include <xlocale.h>
+#  else
+#    include <locale.h>
+#  endif
+#endif
 
 namespace altair::dataset {
 
@@ -106,14 +117,52 @@ format_price(double v, char* out, std::size_t cap) noexcept {
     return static_cast<std::size_t>(r.ptr - out);
 }
 
+/// std::from_chars(first, last, double&) with its contract: the WHOLE range
+/// is one decimal number (no leading space, no leading '+'), correctly
+/// rounded and independent of the process locale.
+///
+/// libc++ (Apple's toolchain, and clang builds that choose it) does not
+/// provide floating-point from_chars, so there it goes through strtod_l in the
+/// "C" locale. Plain strtod would follow LC_NUMERIC, which Qt sets from the
+/// user's environment -- a "1,5" locale would silently misread every price.
+/// "inf"/"nan" are refused on that path; every caller refuses them anyway.
+[[nodiscard]] inline bool parse_exact_double(const char* first, const char* last,
+                                             double& out) noexcept {
+#if !defined(_LIBCPP_VERSION)
+    const auto r = std::from_chars(first, last, out);
+    return r.ec == std::errc{} && r.ptr == last;
+#else
+    constexpr std::size_t kMaxChars = 63;   // no price or close is longer
+    const auto n = static_cast<std::size_t>(last - first);
+    if (first == nullptr || n == 0 || n > kMaxChars) return false;
+    char buf[kMaxChars + 1];
+    for (std::size_t i = 0; i < n; ++i) {
+        const char c = first[i];
+        const bool after_exp = i > 0 && (first[i - 1] == 'e' || first[i - 1] == 'E');
+        const bool ok = (c >= '0' && c <= '9') || c == '.' || c == 'e' || c == 'E'
+                     || (c == '-' && (i == 0 || after_exp)) || (c == '+' && after_exp);
+        if (!ok) return false;
+        buf[i] = c;
+    }
+    buf[n] = '\0';
+    static const locale_t c_locale = ::newlocale(LC_ALL_MASK, "C", nullptr);
+    if (c_locale == nullptr) return false;
+    char* end = nullptr;
+    errno = 0;
+    const double v = ::strtod_l(buf, &end, c_locale);
+    if (end != buf + n || errno == ERANGE) return false;
+    out = v;
+    return true;
+#endif
+}
+
 /// Does `text` parse to exactly `v`? The property every writer here must
 /// keep, exposed so a test can hold ANY formatter to it -- including the old
 /// `%g` one, which it must reject.
 [[nodiscard]] inline bool round_trips(const char* text, std::size_t len,
                                       double v) noexcept {
     double back = 0.0;
-    const auto r = std::from_chars(text, text + len, back);
-    return r.ec == std::errc{} && r.ptr == text + len && back == v;
+    return parse_exact_double(text, text + len, back) && back == v;
 }
 
 } // namespace altair::dataset

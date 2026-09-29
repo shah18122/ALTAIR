@@ -340,3 +340,44 @@ Windows host cannot:
   P1-06 go/no-go    written from the CI evidence + P1-05 once measured.
 Where to look: Actions tab -> "macOS arm64 (Phase 1)" -> job summary and the
 phase1-evidence-engine / phase1-evidence-desktop artifacts.
+
+
+------------------------------------------------------------------------------
+11. CHANGE LOG -- 2026-09-29
+------------------------------------------------------------------------------
+CI and docs
+  .github/workflows/ci.yml          Linux GCC 13, Linux Clang 18 + libc++,
+                                    Windows MSVC + Qt 6.8.3 desktop. Runs
+                                    `ctest -LE dataset`.
+  .github/workflows/macos-arm64.yml  Phase 1 evidence on Apple Silicon;
+                                    pipefail so a failed build can't pass.
+  README.md                          written: overview, brokers, build per OS,
+                                    tests, FYERS quick start, CI.
+  tests labelled `dataset`          7 tests that read dataset/ (not in git):
+                                    strategies_directional_real,
+                                    strategies_overnight_real, models_markov,
+                                    models_spot_forecast, models_calibration_real,
+                                    models_horizon, models_rich_features_experiment.
+                                    They still fail loudly without the data;
+                                    CI excludes them, the same way sanitizer
+                                    presets exclude the `experiment` label.
+Portability fixes (found by the first macOS run and a local libc++ build)
+  app/price_text.hpp        parse_exact_double(): from_chars for double where
+                            available, strtod_l in the "C" locale on libc++
+                            (no floating from_chars there; Qt sets LC_NUMERIC).
+  app/dataset_merge.hpp     uses it.
+  oms/tests/test_capacity.cpp  missing #include <algorithm>.
+  tests/smoke.cpp           "C++23 mode" accepts any __cplusplus past C++20
+                            (GCC 13 reports 202100L for -std=c++23).
+  Result: 164/164 on GCC 13 and on Clang 18 + libc++ (CI selection).
+Models page (desktop/panels.hpp, models.overview)
+  - one KPI card per readiness state, in the table's state colours;
+  - a filter over every column;
+  - Atlas deep links: a card with the four gates (implementation, training,
+    evaluation, live), an "Open in Model Atlas" button, and the matching
+    readiness row selected so its real fit shows;
+  - real-data rows with no in-app fit view now say so instead of an empty pane;
+  - "Train selected model" runs on ModelJobController's worker thread, so the
+    window no longer freezes during the 26-fold walk-forward.
+  Verified: compiles against the Qt headers here. The full desktop build runs
+  in CI (Windows MSVC + Qt 6.8.3, macOS + Qt 6.8.3).
