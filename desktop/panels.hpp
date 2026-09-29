@@ -29,6 +29,7 @@
 #include "format.hpp"
 #include "data/fits.hpp"
 #include "data/master_lookup.hpp"
+#include "model_job.hpp"
 #include "model_status.hpp"
 #include "atlas_data.hpp"
 #include "navigation_registry.hpp"
@@ -64,6 +65,10 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <functional>
+#include <stdexcept>
+#include <utility>
 
 namespace altair::ui {
 
@@ -344,13 +349,22 @@ class ModelPanel final : public QWidget {
     Q_OBJECT
 
 public:
+    /// Set by the main window: open a navigation page by its stable id.
+    std::function<void(const QString&)> on_open_page;
+
     explicit ModelPanel(Role role, QWidget* parent = nullptr)
-        : QWidget(parent) {
+        : QWidget(parent), jobs_(this), can_train_(may(role, Capability::TrainModel)) {
         auto* v = new QVBoxLayout(this);
-        v->addWidget(new QLabel(
-            QStringLiteral("<h3>Models — what each one has, and what is "
-                           "missing</h3>"),
-            this));
+        v->setContentsMargins(16, 12, 16, 12);
+        v->setSpacing(10);
+        auto* title = new QLabel(
+            QStringLiteral("<span style='font-size:18px;font-weight:700'>Models</span>"
+                           "<br><span style='color:#8B949E'>What each model has, what "
+                           "is missing, and what it says when fitted on the data "
+                           "that is here.</span>"),
+            this);
+        title->setWordWrap(true);
+        v->addWidget(title);
 
         const auto rows = model_catalogue();
         int fitted = 0, no_edge = 0, synthetic = 0, blocked = 0;
@@ -360,6 +374,31 @@ public:
             else if (r.state == ModelState::ValidatedOnSyntheticOnly) ++synthetic;
             else if (r.state == ModelState::BlockedOnData) ++blocked;
         }
+        const int never = static_cast<int>(rows.size()) - fitted - no_edge
+                          - synthetic - blocked;
+
+        // One card per readiness state, in the state's own table colour, so
+        // the counts and the rows below read as the same thing.
+        auto* kpis = new QHBoxLayout;
+        kpis->setSpacing(10);
+        const auto kpi = [this, kpis](int n, const QString& label, ModelState s) {
+            auto* card = new QLabel(
+                QStringLiteral("<span style='font-size:20px;font-weight:700;"
+                               "color:%1'>%2</span><br>"
+                               "<span style='color:#8B949E'>%3</span>")
+                    .arg(model_state_colour(s).name()).arg(n).arg(label),
+                this);
+            card->setStyleSheet(QStringLiteral(
+                "background:#161B22;border:1px solid #30363D;"
+                "border-radius:10px;padding:10px 14px;"));
+            kpis->addWidget(card, 1);
+        };
+        kpi(fitted, QStringLiteral("real-data fit"), ModelState::TrainedOnRealData);
+        kpi(no_edge, QStringLiteral("fitted, no edge"), ModelState::TrainedNoEdge);
+        kpi(synthetic, QStringLiteral("fixture-only"), ModelState::ValidatedOnSyntheticOnly);
+        kpi(blocked, QStringLiteral("blocked on data"), ModelState::BlockedOnData);
+        kpi(never, QStringLiteral("never trained"), ModelState::NeverTrained);
+        v->addLayout(kpis);
 
         auto* summary = new QLabel(
             QStringLiteral(
@@ -372,8 +411,14 @@ public:
                 .arg(rows.size()).arg(fitted).arg(no_edge).arg(synthetic).arg(blocked),
             this);
         summary->setWordWrap(true);
-        summary->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        summary->setStyleSheet(QStringLiteral("color:#8B949E;"));
         v->addWidget(summary);
+
+        filter_ = new QLineEdit(this);
+        filter_->setPlaceholderText(
+            QStringLiteral("Filter by model, card, instrument, state or data\u2026"));
+        filter_->setClearButtonEnabled(true);
+        v->addWidget(filter_);
 
         auto* t = fact_table({QStringLiteral("Model"), QStringLiteral("Card"),
                               QStringLiteral("Instrument"),
@@ -393,6 +438,8 @@ public:
         }
         t->resizeColumnsToContents();
         v->addWidget(t, 1);
+        connect(filter_, &QLineEdit::textChanged, this,
+                [this](const QString& text) { apply_filter(text); });
 
         // THE FIT PANE. Selecting a row runs the model, if it has data.
         //
@@ -401,8 +448,33 @@ public:
         // typed cannot tell you when a fit stops working. These numbers come
         // out of the model on the click.
         connect(t, &QTableWidget::currentCellChanged, this,
-                [this](int row, int, int, int) { show_fit(row); });
+                [this](int row, int, int, int) {
+                    // A manual pick replaces any Atlas card from a deep link.
+                    if (!focusing_ && atlas_box_ != nullptr) atlas_box_->hide();
+                    show_fit(row);
+                });
         table_ = t;
+
+        // THE ATLAS CARD. Model Atlas routes a model with no workspace of its
+        // own here; the card states its four gates separately so "the engine
+        // is built" is never read as "trained" or "approved".
+        atlas_box_ = new QWidget(this);
+        auto* atlas_row = new QHBoxLayout(atlas_box_);
+        atlas_row->setContentsMargins(0, 0, 0, 0);
+        atlas_card_ = new QLabel(atlas_box_);
+        atlas_card_->setWordWrap(true);
+        atlas_card_->setTextFormat(Qt::RichText);
+        atlas_card_->setStyleSheet(QStringLiteral(
+            "background:#161B22;border:1px solid #30363D;"
+            "border-radius:10px;padding:10px 14px;"));
+        atlas_row->addWidget(atlas_card_, 1);
+        auto* open_atlas = new QPushButton(QStringLiteral("Open in Model Atlas"), atlas_box_);
+        connect(open_atlas, &QPushButton::clicked, this, [this] {
+            if (on_open_page) on_open_page(QStringLiteral("models.atlas"));
+        });
+        atlas_row->addWidget(open_atlas, 0, Qt::AlignTop);
+        atlas_box_->hide();
+        v->addWidget(atlas_box_);
 
         detail_ = new QPlainTextEdit(this);
         detail_->setReadOnly(true);
@@ -414,7 +486,7 @@ public:
         auto* controls = new QHBoxLayout;
         train_ = new QPushButton(QStringLiteral("Train selected model"), this);
         // A capability, not a role check written out at the call site.
-        train_->setEnabled(may(role, Capability::TrainModel));
+        train_->setEnabled(can_train_);
         train_->setToolTip(
             may(role, Capability::TrainModel)
                 ? QStringLiteral(
@@ -450,6 +522,53 @@ public:
         const QString route = row->page >= 0
             ? nav_page_id(nav_destination(row->page))
             : QStringLiteral("models.overview");
+
+        // Training and evaluation come from the readiness catalogue, matched
+        // on the engine header; the Atlas knows only whether the engine is built.
+        const auto rows = model_catalogue();
+        int match = -1;
+        for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+            if (!rows[static_cast<std::size_t>(i)].header.isEmpty()
+                && rows[static_cast<std::size_t>(i)].header == QString::fromUtf8(row->file)) {
+                match = i;
+                break;
+            }
+        }
+        const ModelRow* m = match >= 0 ? &rows[static_cast<std::size_t>(match)] : nullptr;
+        const QString training = m != nullptr
+            ? model_state_label(m->state)
+            : QStringLiteral("no fitted artefact (not in the readiness catalogue)");
+        const QString evaluation = m != nullptr && m->card.startsWith(QStringLiteral("P8-13"))
+            ? QStringLiteral("walk-forward available: press \u201cTrain selected model\u201d")
+            : QStringLiteral("no out-of-sample evaluator wired");
+        atlas_card_->setText(QStringLiteral(
+            "<b>%1</b> <span style='color:#8B949E'>\u00b7 %2 \u00b7 %3</span><br>"
+            "<span style='color:#8B949E'>%4</span>"
+            "<table cellspacing='0' cellpadding='3' style='margin-top:6px'>"
+            "<tr><td style='color:#8B949E'>Implementation</td><td>%5</td></tr>"
+            "<tr><td style='color:#8B949E'>Training</td><td>%6</td></tr>"
+            "<tr><td style='color:#8B949E'>Evaluation</td><td>%7</td></tr>"
+            "<tr><td style='color:#8B949E'>Live</td><td>not approved \u2014 live "
+            "order dispatch is disabled by design</td></tr></table>")
+            .arg(QString::fromUtf8(row->model).toHtmlEscaped(),
+                 QString::fromUtf8(row->family).toHtmlEscaped(), id.toHtmlEscaped(),
+                 QString::fromUtf8(row->what).toHtmlEscaped(),
+                 QString::fromUtf8(atlas_status_text(row->status)),
+                 training.toHtmlEscaped(), evaluation));
+        atlas_box_->show();
+
+        if (m != nullptr && table_ != nullptr) {
+            // Show its real fit, in the pane that already knows how to.
+            if (filter_ != nullptr) filter_->clear();
+            focusing_ = true;
+            table_->setCurrentCell(match, 0);
+            focusing_ = false;
+            show_fit(match);
+            return true;
+        }
+        focusing_ = true;
+        if (table_ != nullptr) table_->clearSelection();
+        focusing_ = false;
         detail_->setPlainText(QStringLiteral(
             "MODEL ID: %1\n\n"
             "%2\n"
@@ -460,7 +579,7 @@ public:
             "%7\n\n"
             "BUILT describes the numerical implementation and deterministic tests. "
             "It does not claim a fitted market artefact or live approval; those "
-            "are separate gates in the readiness table above.")
+            "are separate gates in the card above.")
             .arg(id, QString::fromUtf8(row->model), QString::fromUtf8(row->family),
                  QString::fromUtf8(row->file),
                  QString::fromUtf8(atlas_status_text(row->status)), route,
@@ -509,27 +628,49 @@ public:
             return;
         }
 
-        status_->setText(QStringLiteral("Running 26 folds over the real "
-                                        "series\u2026"));
-        QApplication::processEvents();
+        status_->setText(QStringLiteral("Running 26 walk-forward folds over the "
+                                        "real series in the background\u2026"));
+        train_->setEnabled(false);
+        const QString path = QStringLiteral(ALTAIR_DATASET_DIR)
+                           + QStringLiteral("/spot/nifty/1d/all.csv");
+        // ModelJobController fits on a worker thread and publishes only the
+        // newest job's result: the window stays responsive, and a stale run
+        // can never overwrite a newer one.
+        (void)jobs_.submit(
+            QStringLiteral("walk-forward Markov, %1").arg(path),
+            [path](const ModelJobContext&) -> ModelJobPayload {
+                const LoadResult d = load_bars_csv(
+                    path, 24LL * 3600 * 1'000'000'000LL,
+                    DailyStamp::SessionClose, true);
+                if (!d.ok()) throw std::runtime_error(d.error.toStdString());
+                // 2,000 bars of initial training and 500-bar test blocks,
+                // alpha 0.5. Every one is a modelling choice and every one is
+                // passed explicitly -- see markov_eval.hpp.
+                const WalkForwardFit w = walk_forward_markov(d.bars, 5, 2000, 500, 0.5);
+                if (!w.ok) throw std::runtime_error(w.error.toStdString());
+                auto [report, verdict] = format_walk_forward(w);
+                ModelJobPayload out{std::move(report)};
+                out.rows.push_back({QStringLiteral("verdict"), std::move(verdict)});
+                return out;
+            },
+            [this](int, const QString& text) {
+                if (!text.isEmpty()) status_->setText(text + QStringLiteral("\u2026"));
+            },
+            [this](const ModelJobResult& r) {
+                train_->setEnabled(can_train_);
+                if (!r.error.isEmpty()) { status_->setText(r.error); return; }
+                if (r.cancelled) { status_->setText(QStringLiteral("Cancelled.")); return; }
+                detail_->setPlainText(r.payload.report);
+                status_->setText(r.payload.rows.empty() ? QString()
+                                                        : r.payload.rows.front().value);
+            });
+    }
 
-        const QString root = QStringLiteral(ALTAIR_DATASET_DIR);
-        const LoadResult d = load_bars_csv(
-            root + QStringLiteral("/spot/nifty/1d/all.csv"),
-            24LL * 3600 * 1'000'000'000LL, DailyStamp::SessionClose, true);
-        if (!d.ok()) {
-            status_->setText(d.error);
-            return;
-        }
-        // 2,000 bars of initial training and 500-bar test blocks, alpha 0.5.
-        // Every one is a modelling choice and every one is passed explicitly
-        // rather than defaulted inside the model -- see markov_eval.hpp.
-        const WalkForwardFit w = walk_forward_markov(d.bars, 5, 2000, 500, 0.5);
-        if (!w.ok) {
-            status_->setText(w.error);
-            return;
-        }
-
+private:
+    /// The walk-forward report and its one-line verdict. Pure: it runs on the
+    /// job's worker thread and touches no widget.
+    [[nodiscard]] static std::pair<QString, QString>
+    format_walk_forward(const WalkForwardFit& w) {
         QString o;
         o += QStringLiteral("WALK-FORWARD \u2014 the out-of-sample answer "
                             "(P8-14), computed now\n\n");
@@ -574,9 +715,7 @@ public:
             "training median\n  |return| stays inflated by the volatile 1990s, "
             "so \"never large\" is free. Let\n  the old data fall out and the "
             "chain wins that comparison instead.\n");
-        detail_->setPlainText(o);
-
-        status_->setText(
+        const QString verdict =
             w.no_directional_edge
                 ? QStringLiteral(
                       "<b style='color:#F85149'>No directional edge under "
@@ -593,7 +732,8 @@ public:
                       "constant baseline.</b> CLAUDE.md puts the ceiling at "
                       "52\u201355%% and anything above it is overfit until "
                       "proven otherwise \u2014 and this is still pre-cost, so "
-                      "rule 5 has not been applied."));
+                      "rule 5 has not been applied.");
+        return {o, verdict};
     }
 
 private:
@@ -731,11 +871,37 @@ private:
                 "exactly where the\nnumber is needed, which is the dangerous "
                 "direction. P10-07 measured this on\nsynthetic data at 2.0x; "
                 "on the real series it is larger.\n\nIN-SAMPLE.");
+        } else {
+            out += QStringLiteral(
+                "Fitted on real data by its own test (%1, %2). This page has no "
+                "in-app fit view for it yet, so nothing is recomputed here; run "
+                "that test for the numbers rather than trusting a stale string.")
+                       .arg(m.card, m.header);
         }
         detail_->setPlainText(out);
     }
 
+    /// Hide rows whose text does not contain `text` (case-insensitive).
+    void apply_filter(const QString& text) {
+        if (table_ == nullptr) return;
+        const QString needle = text.trimmed();
+        for (int r = 0; r < table_->rowCount(); ++r) {
+            bool hit = needle.isEmpty();
+            for (int c = 0; !hit && c < table_->columnCount(); ++c) {
+                const QTableWidgetItem* it = table_->item(r, c);
+                hit = it != nullptr && it->text().contains(needle, Qt::CaseInsensitive);
+            }
+            table_->setRowHidden(r, !hit);
+        }
+    }
+
+    ModelJobController jobs_;
+    bool can_train_ = false;
+    bool focusing_ = false;
     QTableWidget* table_ = nullptr;
+    QLineEdit* filter_ = nullptr;
+    QWidget* atlas_box_ = nullptr;
+    QLabel* atlas_card_ = nullptr;
     QPlainTextEdit* detail_ = nullptr;
     QPushButton* train_ = nullptr;
     QLabel* status_ = nullptr;
@@ -1166,6 +1332,8 @@ private:
         QStringList tried;
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../app/") + exe;
+        tried << QCoreApplication::applicationDirPath()
+                     + QStringLiteral("/../Helpers/") + exe;
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../../net/app/") + exe;
 #ifdef ALTAIR_SOURCE_DIR

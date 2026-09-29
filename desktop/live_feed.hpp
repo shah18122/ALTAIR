@@ -127,6 +127,8 @@ public Q_SLOTS:
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../app/") + exe;
         tried << QCoreApplication::applicationDirPath()
+                     + QStringLiteral("/../Helpers/") + exe;
+        tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../../net/app/") + exe;
 #ifdef ALTAIR_SOURCE_DIR
         tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;

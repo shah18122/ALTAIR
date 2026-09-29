@@ -231,6 +231,8 @@ private:
         candidates << QCoreApplication::applicationDirPath()
                           + QStringLiteral("/../app/") + executable;
         candidates << QCoreApplication::applicationDirPath()
+                          + QStringLiteral("/../Helpers/") + executable;
+        candidates << QCoreApplication::applicationDirPath()
                           + QStringLiteral("/../../net/app/") + executable;
 #ifdef ALTAIR_SOURCE_DIR
         candidates << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/")

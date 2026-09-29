@@ -381,8 +381,7 @@ update_empty_answer_streak(const std::filesystem::path& state_path,
     }
     if (end == at) { return std::nullopt; }
     double v = 0.0;
-    const auto r = std::from_chars(line.data() + at, line.data() + end, v);
-    if (r.ec != std::errc{} || r.ptr != line.data() + end
+    if (!parse_exact_double(line.data() + at, line.data() + end, v)
         || !std::isfinite(v)) {
         return std::nullopt;
     }

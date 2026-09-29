@@ -1042,6 +1042,10 @@ private:
         terminal_ = new TerminalPage(role_, user_);
         pages_->addWidget(terminal_);
         models_panel_ = new ModelPanel(role_);
+        models_panel_->on_open_page = [this](const QString& id) {
+            const int page = nav_page_index(id);
+            if (page >= 0 && page < pages_->count()) show_page(page);
+        };
         pages_->addWidget(models_panel_);
 
         {

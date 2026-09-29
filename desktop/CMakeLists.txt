@@ -584,6 +584,8 @@ if(ALTAIR_BUILD_TESTS)
     set_target_properties(altair_overnight_page_test
         PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_overnight_page COMMAND altair_overnight_page_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(desktop_overnight_page PROPERTIES LABELS dataset)
 
     # P23-02. The Options page. Checks the pricer and the IV solver are
     # inverses to within the TICK -- the tolerance is derived from vega, not
@@ -639,6 +641,8 @@ if(ALTAIR_BUILD_TESTS)
     endif()
     set_target_properties(altair_pages_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_pages COMMAND altair_pages_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(desktop_pages PROPERTIES LABELS dataset)
 
     qt_add_executable(altair_model_job_test
         tests/test_model_job.cpp
@@ -859,6 +863,9 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DEV_CREDENTIALS)
     set_target_properties(altair_terminal_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_terminal COMMAND altair_terminal_test)
+    # Check [5] prices the option chain from the instrument master and
+    # dataset/ (neither in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(desktop_terminal PROPERTIES LABELS dataset)
 
     # P26-01. The Link Kite panel's two pure functions: token redaction and
     # pulling the login URL out of the subprocess's usage text. The QProcess
@@ -887,6 +894,8 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     set_target_properties(altair_bar_csv_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_bar_csv COMMAND altair_bar_csv_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(desktop_bar_csv PROPERTIES LABELS dataset)
 
     # P11Q-07. Fits the two models the available data can fit, on that data.
     qt_add_executable(altair_fits_test tests/test_fits.cpp)
@@ -899,6 +908,8 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     set_target_properties(altair_fits_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_fits COMMAND altair_fits_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(desktop_fits PROPERTIES LABELS dataset)
     # THE QT BIN DIR IS PREPENDED AT TEST TIME, NOT FROZEN AT CONFIGURE TIME.
     #
     # These three used `ENVIRONMENT "PATH=${ALTAIR_QT_ROOT}/bin;$ENV{PATH}"`,
@@ -926,6 +937,14 @@ if(ALTAIR_BUILD_TESTS)
             PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${ALTAIR_QT_ROOT}/bin")
     endif()
+endif()
+
+# macOS: the bundle is Altair.app, because app/ installs every helper into
+# Altair.app/Contents/Helpers and the desktop finds them at ../Helpers from
+# Contents/MacOS. Named after the target it came out as altair_desktop.app and
+# the helpers landed in a second, empty bundle (P1-04, first macOS CI run).
+if(APPLE)
+    set_target_properties(altair_desktop PROPERTIES OUTPUT_NAME "Altair")
 endif()
 
 set_target_properties(altair_desktop PROPERTIES

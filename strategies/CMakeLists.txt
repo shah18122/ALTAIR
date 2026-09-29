@@ -79,6 +79,8 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_directional_real_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME strategies_directional_real COMMAND altair_directional_real_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(strategies_directional_real PROPERTIES LABELS dataset)
 
     # P22-01/02. The overnight gap. Two binaries for the same reason as
     # P21: the synthetic one proves the arithmetic on data whose answer is
@@ -92,6 +94,8 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_overnight_real_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME strategies_overnight_real COMMAND altair_overnight_real_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(strategies_overnight_real PROPERTIES LABELS dataset)
 
     # P6-03b. The regime detector on 36 years of REAL daily NIFTY rather than
     # on a synthetic series with a regime built into it. The Models page has

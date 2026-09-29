@@ -4,6 +4,7 @@
 // ceiling. This test builds both models and shows the linear one allocating
 // without limit on the same inputs where the square-root law produces a bound.
 
+#include <algorithm>
 #include <oms/capacity.hpp>
 
 #include <cmath>

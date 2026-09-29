@@ -63,6 +63,7 @@ namespace altair::ui {
     const QString app = QCoreApplication::applicationDirPath();
     tried << app + QStringLiteral("/") + exe;
     tried << app + QStringLiteral("/../app/") + exe;
+    tried << app + QStringLiteral("/../Helpers/") + exe;
     tried << app + QStringLiteral("/../../net/app/") + exe;
 #ifdef ALTAIR_SOURCE_DIR
     tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;

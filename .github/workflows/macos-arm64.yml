@@ -1,0 +1,176 @@
+# Phase 1 (Mac portability) evidence on real Apple Silicon.
+#
+# GitHub's macos-15 runners are arm64 Macs, so this closes the native
+# build/test half of P1-01..P1-03 and the bundle half of P1-04 without owning
+# a Mac. It cannot close P1-05: these runners expose no usable Metal/MPS GPU,
+# so the CPU-vs-MPS training measurement still needs real hardware.
+# Results land in the job summary and in the "phase1-evidence-*" artifacts.
+name: macOS arm64 (Phase 1)
+
+# PARKED: manual runs only (Actions -> "macOS arm64 (Phase 1)" -> Run workflow)
+# until the remaining macOS compile errors are fixed. It then goes back on
+# push/pull_request.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+# `shell: bash` (not the implicit default) runs with -eo pipefail, so a failed
+# build piped through tee fails the step instead of passing it.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  engine:
+    name: Engine + helpers + tests (macos-arm64 preset)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          brew install ninja boost openssl@3
+          mkdir -p evidence
+          {
+            echo "## Host"; sw_vers; uname -m
+            sysctl -n machdep.cpu.brand_string; sysctl -n hw.memsize
+            echo "## Toolchain"; xcrun clang++ --version; cmake --version | head -1
+          } | tee evidence/host.txt
+
+      - name: Configure
+        run: |
+          cmake --preset macos-arm64 \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" 2>&1 | tee evidence/configure.txt
+
+      - name: Build
+        run: |
+          set +e
+          # -k 0: keep going, so one run reports every compile error at once.
+          cmake --build --preset macos-arm64 -j 4 -- -k 0 > evidence/build.txt 2>&1
+          rc=$?
+          tail -40 evidence/build.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::compiler errors"
+            grep -n -A6 -E ' error: |^FAILED: ' evidence/build.txt | head -200
+            echo "::endgroup::"
+            { echo "### Build errors"; echo '```'
+              grep -E ' error: ' evidence/build.txt | sed -E 's#^.*/ALTAIR/ALTAIR/##' | sort -u | head -60
+              echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
+
+      - name: Test (full suite)
+        run: |
+          set +e
+          # dataset/ is local market data, not in git: see ci.yml.
+          ctest --preset macos-arm64 -LE dataset -j 3 2>&1 | tee evidence/ctest.txt
+          echo "CTEST_EXIT=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+
+      - name: P1-02 / P1-03 detail (Darwin page allocation, Apple clock)
+        if: always()
+        run: |
+          ctest --test-dir build/macos-arm64 -V -R '^(page_alloc|arena_pool|time|tsc_clock|exchange_ts)$' \
+            2>&1 | tee evidence/p1-02-p1-03.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Phase 1 engine evidence (Apple Silicon)"
+            echo '```'; cat evidence/host.txt; echo '```'
+            echo '```'; grep -E 'tests passed|tests failed|\*\*\*Failed|Timeout' evidence/ctest.txt || true; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase1-evidence-engine
+          path: evidence/
+
+      - name: Fail on test failures
+        if: env.CTEST_EXIT != '0'
+        run: exit 1
+
+  desktop:
+    name: Desktop bundle (P1-04)
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      QT_VERSION: "6.8.3"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain and Qt
+        run: |
+          brew install ninja boost openssl@3
+          python3 -m pip install --break-system-packages aqtinstall
+          python3 -m aqt install-qt mac desktop "$QT_VERSION" clang_64 -O "$HOME/Qt"
+          echo "ALTAIR_QT_ROOT=$HOME/Qt/$QT_VERSION/macos" >> "$GITHUB_ENV"
+
+      - name: Configure and build the bundle
+        run: |
+          mkdir -p evidence
+          cmake --preset macos-arm64 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
+            2>&1 | tee evidence/configure.txt
+          set +e
+          cmake --build --preset macos-arm64 -j 4 -- -k 0 > evidence/build.txt 2>&1
+          rc=$?
+          tail -40 evidence/build.txt
+          if [ "$rc" -ne 0 ]; then
+            { echo "### Build errors"; echo '```'
+              grep -E ' error: ' evidence/build.txt | sed -E 's#^.*/ALTAIR/ALTAIR/##' | sort -u | head -60
+              echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            grep -E ' error: ' evidence/build.txt | sort -u | head -60
+          fi
+          exit "$rc"
+
+      - name: Stage outside the checkout
+        run: |
+          cmake --install build/macos-arm64 --prefix "$RUNNER_TEMP/stage" 2>&1 | tail -50 | tee evidence/install.txt
+          APP="$RUNNER_TEMP/stage/Altair.app"
+          {
+            echo "## Bundle layout"
+            ls -la "$APP/Contents" "$APP/Contents/MacOS"
+            echo "## Helpers"; ls -la "$APP/Contents/Helpers" || echo "NO HELPERS DIRECTORY"
+            echo "## Qt frameworks"; ls "$APP/Contents/Frameworks" || echo "NO FRAMEWORKS"
+            echo "## Architecture"; file "$APP/Contents/MacOS/Altair"
+            echo "## Linked libraries"; otool -L "$APP/Contents/MacOS/Altair"
+          } 2>&1 | tee evidence/bundle.txt
+          # P1-04: the broker helpers must be inside the bundle the desktop runs from.
+          for h in altair_fyers_login altair_fyers_account altair_fyers_ticker altair_credential_helper; do
+            test -x "$APP/Contents/Helpers/$h" || { echo "MISSING helper: $h"; exit 1; }
+          done
+
+      - name: Launch from outside the checkout (offscreen, 20 s)
+        run: |
+          cd "$RUNNER_TEMP"
+          set +e
+          QT_QPA_PLATFORM=offscreen perl -e 'alarm 20; exec @ARGV or die "cannot exec: $!\n"' \
+            "$RUNNER_TEMP/stage/Altair.app/Contents/MacOS/Altair" \
+            > "$GITHUB_WORKSPACE/evidence/launch.txt" 2>&1
+          code=$?
+          echo "exit code: $code (142 = still running after 20 s, i.e. launched and stayed up)" \
+            | tee -a "$GITHUB_WORKSPACE/evidence/launch.txt"
+          test "$code" -eq 142
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### P1-04 desktop bundle"
+            echo '```'; grep -A3 -E '## (Helpers|Architecture)' evidence/bundle.txt || true; echo '```'
+            echo '```'; tail -5 evidence/launch.txt || true; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase1-evidence-desktop
+          path: evidence/

@@ -149,8 +149,12 @@ P0-01..03 contracts, baseline, nav   DONE    desktop/navigation_registry.hpp:
                                              order; Live Grid/Chart kept only as
                                              hidden records; "ratio spread" is an
                                              alias of Pair Trading.
-P1-01..04 Mac portability            GATED   code present; needs Apple Silicon
-P1-05..06 MPS measurement, go/no-go  GATED   needs Apple GPU
+P1-01..04 Mac portability            LOCAL   code present. NEW 2026-09-29: native
+                                             evidence now comes from GitHub's
+                                             Apple Silicon runners, via
+                                             .github/workflows/macos-arm64.yml
+                                             (see section 10)
+P1-05..06 MPS measurement, go/no-go  GATED   needs an Apple GPU (CI runners have none)
 P2-01..08, P2-11 broker portal       DONE    FYERS OAuth + read-only account
                                              live-verified on Windows 2026-09-26
 P2-09 publication bridge             LOCAL   needs an entitled live account run
@@ -311,3 +315,83 @@ Changed
   desktop/*.hpp (10 files)         brighter red/green for dark backgrounds
 Removed
   final.md, remaining_work.md, prompts/ (recover from commit 8f5d85b)
+
+
+------------------------------------------------------------------------------
+10. PHASE 1 -- MAC PORTABILITY (in progress since 2026-09-29)
+------------------------------------------------------------------------------
+Approach: GitHub-hosted macos-15 runners are arm64 Apple Silicon Macs, and
+they are free for this public repo. They provide the native evidence that a
+Windows host cannot:
+  P1-01 presets    `cmake --preset macos-arm64` configures and compiles on
+                   arm64 (Homebrew Boost/OpenSSL). The deployment target was
+                   raised from 13.0 to 13.3 because libc++ only ships
+                   floating-point std::to_chars from macOS 13.3.
+  P1-02 page alloc  page_alloc / arena_pool tests run natively (Darwin mmap).
+  P1-03 clock       time / tsc_clock / exchange_ts tests run natively
+                    (mach_absolute_time path).
+  P1-04 bundle      Qt 6.8.3 (aqtinstall), Altair.app built, installed OUTSIDE
+                    the checkout, layout/helpers/frameworks/arch recorded, and
+                    launched offscreen for 20 s.
+                    Still open: a Finder launch and a real broker-helper run.
+  P1-05 MPS         NOT possible on CI runners (no Metal GPU). Needs a real
+                    Apple Silicon Mac plus a chosen backend (LibTorch+MPS or
+                    Metal); the CPU trainer stays the reference.
+  P1-06 go/no-go    written from the CI evidence + P1-05 once measured.
+Where to look: Actions tab -> "macOS arm64 (Phase 1)" -> job summary and the
+phase1-evidence-engine / phase1-evidence-desktop artifacts.
+
+
+------------------------------------------------------------------------------
+11. CHANGE LOG -- 2026-09-29
+------------------------------------------------------------------------------
+CI and docs
+  .github/workflows/ci.yml          Linux GCC 13, Linux Clang 18 + libc++,
+                                    Windows MSVC + Qt 6.8.3 desktop. Runs
+                                    `ctest -LE dataset`.
+  .github/workflows/macos-arm64.yml  Phase 1 evidence on Apple Silicon;
+                                    pipefail so a failed build can't pass.
+  README.md                          written: overview, brokers, build per OS,
+                                    tests, FYERS quick start, CI.
+  tests labelled `dataset`          7 tests that read dataset/ (not in git):
+                                    strategies_directional_real,
+                                    strategies_overnight_real, models_markov,
+                                    models_spot_forecast, models_calibration_real,
+                                    models_horizon, models_rich_features_experiment.
+                                    They still fail loudly without the data;
+                                    CI excludes them, the same way sanitizer
+                                    presets exclude the `experiment` label.
+Portability fixes (found by the first macOS run and a local libc++ build)
+  app/price_text.hpp        parse_exact_double(): from_chars for double where
+                            available, strtod_l in the "C" locale on libc++
+                            (no floating from_chars there; Qt sets LC_NUMERIC).
+  app/dataset_merge.hpp     uses it.
+  oms/tests/test_capacity.cpp  missing #include <algorithm>.
+  tests/smoke.cpp           "C++23 mode" accepts any __cplusplus past C++20
+                            (GCC 13 reports 202100L for -std=c++23).
+  Result: 164/164 on GCC 13 and on Clang 18 + libc++ (CI selection).
+Models page (desktop/panels.hpp, models.overview)
+  - one KPI card per readiness state, in the table's state colours;
+  - a filter over every column;
+  - Atlas deep links: a card with the four gates (implementation, training,
+    evaluation, live), an "Open in Model Atlas" button, and the matching
+    readiness row selected so its real fit shows;
+  - real-data rows with no in-app fit view now say so instead of an empty pane;
+  - "Train selected model" runs on ModelJobController's worker thread, so the
+    window no longer freezes during the 26-fold walk-forward.
+  Verified: compiles against the Qt headers here. The full desktop build runs
+  in CI (Windows MSVC + Qt 6.8.3, macOS + Qt 6.8.3).
+
+  CI follow-up (2026-09-29, later)
+  - broker/CMakeLists.txt: the net half (and so every app/ helper) now needs
+    OpenSSL AND Boost. It used to key on OpenSSL alone, which breaks machines
+    with OpenSSL but no Boost, such as GitHub's Windows image.
+  - macos-arm64.yml is parked: manual runs only until the remaining macOS
+    compile errors are fixed (P1 continues later).
+  - Windows CI result (686ab23): the full MSVC build of the engine and the
+    Qt 6.8.3 desktop SUCCEEDS; 179/190 tests passed. Of the 11 failures, 4 are
+    desktop tests that read dataset/ (now labelled `dataset`; desktop_terminal
+    too, whose option-chain check needs the instrument master and dataset/). The other 7 hung
+    because CI forced QT_QPA_PLATFORM=offscreen, which is not deployed next to
+    the windeployqt'd DLLs; on Windows that is a modal "no platform plugin"
+    dialog. The global setting is removed and per-test timeout cut to 300 s.

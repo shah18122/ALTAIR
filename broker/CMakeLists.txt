@@ -35,8 +35,13 @@ target_link_libraries(altair_broker INTERFACE
 )
 
 # The networked half. Only defined when the net feature actually built.
+#
+# It needs BOTH OpenSSL and Boost (Asio/Beast). Keying it on OpenSSL alone
+# broke any machine that has OpenSSL but no Boost -- GitHub's Windows image
+# is one -- because every helper under app/ then failed to find Beast.
 find_package(OpenSSL QUIET)
-if(OpenSSL_FOUND)
+find_package(Boost CONFIG QUIET COMPONENTS headers)
+if(OpenSSL_FOUND AND Boost_FOUND)
     add_library(altair_broker_net INTERFACE)
     add_library(altair::broker_net ALIAS altair_broker_net)
     target_include_directories(altair_broker_net
@@ -44,7 +49,8 @@ if(OpenSSL_FOUND)
     target_link_libraries(altair_broker_net INTERFACE
         altair_broker
         OpenSSL::SSL
-        OpenSSL::Crypto)
+        OpenSSL::Crypto
+        Boost::headers)
     if(WIN32)
         # CertOpenSystemStore / CertEnumCertificatesInStore. Needed because
         # OpenSSL's default verify paths are empty on Windows, so the platform
@@ -52,10 +58,10 @@ if(OpenSSL_FOUND)
         target_link_libraries(altair_broker_net INTERFACE crypt32)
     endif()
     set(ALTAIR_HAVE_NET ON CACHE INTERNAL "broker net half is available")
-    message(STATUS "altair: broker net half ENABLED (OpenSSL found)")
+    message(STATUS "altair: broker net half ENABLED (OpenSSL + Boost ${Boost_VERSION})")
 else()
-    message(STATUS "altair: broker net half disabled (no OpenSSL) -- "
-                   "configure with --preset net for P2-10c")
+    message(STATUS "altair: broker net half disabled (needs OpenSSL and "
+                   "Boost) -- configure with --preset net for P2-10c")
 endif()
 
 if(ALTAIR_BUILD_TESTS)

@@ -111,6 +111,8 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_markov_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_markov COMMAND altair_markov_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(models_markov PROPERTIES LABELS dataset)
 
     # P8-14. Walk-forward evaluation of the same chain. Links altair_backtest
     # for WalkForwardSpec -- the split discipline is defined once, in the
@@ -157,6 +159,8 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_spot_forecast_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_spot_forecast COMMAND altair_spot_forecast_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(models_spot_forecast PROPERTIES LABELS dataset)
 
     # P33-01. The forecast SCORECARD and its decision maker. Needs no dataset:
     # it is checked against two synthetic series whose answer is known before
@@ -214,7 +218,7 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME models_rich_features_experiment
              COMMAND altair_rich_features_test --experiment)
     set_tests_properties(models_rich_features_experiment PROPERTIES
-        LABELS experiment TIMEOUT 1800)
+        LABELS "experiment;dataset" TIMEOUT 1800)
 
     # P35-02b. The same calibration on the REAL NIFTY daily series.
     #
@@ -229,6 +233,8 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_calibration_real_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_calibration_real COMMAND altair_calibration_real_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(models_calibration_real PROPERTIES LABELS dataset)
 
     # P8-15. Horizon forecast net of cost, on the real 60-minute series.
     add_executable(altair_horizon_test tests/test_horizon_eval.cpp)
@@ -237,6 +243,8 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_horizon_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME models_horizon COMMAND altair_horizon_test)
+    # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
+    set_tests_properties(models_horizon PROPERTIES LABELS dataset)
 
     # P8-16. Trains the neural tier on the real 5-minute series. Links
     # altair_backtest for the walk-forward split, like P8-14 and P8-15.
