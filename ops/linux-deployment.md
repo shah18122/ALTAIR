@@ -1,9 +1,11 @@
 # Linux deployment — CPU isolation, hugepages, io_uring, NIC tuning
 
-**P12-01.** Status: **PLAN, NOT PROCEDURE.** Altair has never been compiled on
-Linux. Nothing below has been measured on this project. Read it as a design
-with named numbers, and expect the first afternoon of real contact to change
-several of them.
+**P12-01.** Status: **PLAN, NOT PROCEDURE.** Steps 1 and 2 of the order below
+are done: since 2026-09-29 the engine and helpers build and pass `ctest` on
+Linux in CI (GCC 13, Clang 18 + libc++, ASan+UBSan, TSan). The tuning itself
+(isolation, hugepages, io_uring, NIC) has still not been measured on this
+project. Read it as a design with named numbers, and expect the first
+afternoon of real contact to change several of them.
 
 ---
 
@@ -49,7 +51,7 @@ Order of operations, and it is not negotiable:
    conversions, and this codebase is full of `std::int64_t` paise flowing into
    `double` analytics.
 2. Get `ctest` green there. The same suite as MSVC — see the live baseline in
-   `remaining_work.md`. The "93 tests" this line used to name is from P12-01's
+   SMIT.txt section 5. The "93 tests" this line used to name is from P12-01's
    original writing and is long superseded.
 3. Confirm the conservation invariant still holds bit-for-bit. It is integer
    arithmetic, so it must; if it does not, something is undefined behaviour and

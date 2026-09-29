@@ -60,6 +60,8 @@ if(ALTAIR_BUILD_TESTS)
             target_link_libraries(altair_price_bus_test PRIVATE ws2_32 mswsock)
         endif()
         add_test(NAME price_bus COMMAND altair_price_bus_test)
+        # Runs threads: the TSan CI job runs exactly the `concurrency` label.
+        set_tests_properties(price_bus PROPERTIES LABELS concurrency)
         message(STATUS "altair: price bus ENABLED (Boost ${Boost_VERSION})")
     else()
         message(STATUS "altair: price bus test skipped -- no Boost. It needs "

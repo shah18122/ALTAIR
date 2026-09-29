@@ -101,6 +101,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_serving_test tests/test_serving.cpp)
     target_link_libraries(altair_serving_test PRIVATE altair_models altair_strategies altair_flags)
     add_test(NAME models_serving COMMAND altair_serving_test)
+    # Runs threads: the TSan CI job runs exactly the `concurrency` label.
+    set_tests_properties(models_serving PROPERTIES LABELS concurrency)
 
     # P8-13. The ONLY model test that runs against real market data, because a
     # Markov chain over daily return states is the only model in this tree the

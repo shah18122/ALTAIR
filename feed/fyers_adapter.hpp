@@ -145,28 +145,36 @@ public:
         const auto decoded = decode_fyers_message(json, specs_, received,
             decoder_seq_, &tick, 1, &depth, 1);
         if (!decoded) { ++stats_.decode_errors; return false; }
-        if (decoded->ticks != 0) {
-            FyersEventKind kind = FyersEventKind::Quote;
-            const auto type = fyers_detail::value(json, "type");
-            if (type == "if") { kind = FyersEventKind::Index; ++stats_.indices; }
-            else if (!fyers_detail::value(json, "last_traded_qty").empty()) {
-                kind = FyersEventKind::Trade; ++stats_.trades;
-            } else { ++stats_.quotes; }
-            if (!ticks_.try_push({tick, epoch_, kind})) {
-                ++stats_.backpressure_drops;
-                return false;
-            }
-            return true;
+        FyersEventKind kind = FyersEventKind::Quote;
+        const auto type = fyers_detail::value(json, "type");
+        if (type == "if") kind = FyersEventKind::Index;
+        else if (!fyers_detail::value(json, "last_traded_qty").empty())
+            kind = FyersEventKind::Trade;
+        return publish(*decoded, tick, depth, kind);
+    }
+
+    /// The binary-socket entry (feed/fyers_hsm.hpp -> to_fyers_fields): the
+    /// same epoch, decode, backpressure and counting rules as on_message(),
+    /// without formatting and re-parsing JSON, and with the instrument id
+    /// already resolved once per topic instead of by symbol on every update.
+    [[nodiscard]] bool on_fields(const FyersFields& fields, Timestamp received,
+                                 std::uint64_t callback_epoch) noexcept {
+        if (!connected_ || callback_epoch == 0 || callback_epoch != epoch_) {
+            ++stats_.stale_epoch;
+            return false;
         }
-        if (decoded->depths != 0) {
-            if (!depths_.try_push({depth, epoch_, FyersEventKind::Depth})) {
-                ++stats_.backpressure_drops;
-                return false;
-            }
-            ++stats_.depths;
-            return true;
-        }
-        return true; // valid update for an unknown/blocked instrument was counted by decoder
+        ++stats_.messages;
+        ++stats_.sequence_unavailable;   // the socket numbers frames, not updates
+        Tick tick{};
+        DepthUpdate depth{};
+        const auto decoded = build_fyers_event(fields, specs_, received,
+            decoder_seq_, &tick, 1, &depth, 1);
+        if (!decoded) { ++stats_.decode_errors; return false; }
+        const FyersEventKind kind =
+            fields.type == FyersMessageType::IndexUpdate ? FyersEventKind::Index
+            : fields.has_last_qty                        ? FyersEventKind::Trade
+                                                         : FyersEventKind::Quote;
+        return publish(*decoded, tick, depth, kind);
     }
 
     [[nodiscard]] bool try_pop(FeedEnvelope<Tick>& value) noexcept {
@@ -178,6 +186,29 @@ public:
     [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
 
 private:
+    [[nodiscard]] bool publish(const FyersDecodeResult& decoded, const Tick& tick,
+                               const DepthUpdate& depth, FyersEventKind kind) noexcept {
+        if (decoded.ticks != 0) {
+            if (kind == FyersEventKind::Index) ++stats_.indices;
+            else if (kind == FyersEventKind::Trade) ++stats_.trades;
+            else ++stats_.quotes;
+            if (!ticks_.try_push({tick, epoch_, kind})) {
+                ++stats_.backpressure_drops;
+                return false;
+            }
+            return true;
+        }
+        if (decoded.depths != 0) {
+            if (!depths_.try_push({depth, epoch_, FyersEventKind::Depth})) {
+                ++stats_.backpressure_drops;
+                return false;
+            }
+            ++stats_.depths;
+            return true;
+        }
+        return true; // valid update for an unknown/blocked instrument was counted by decoder
+    }
+
     [[nodiscard]] static bool valid_symbol(std::string_view symbol) noexcept {
         if (symbol.empty() || symbol.size() >= FyersSubscription::kSymbolBytes) return false;
         for (const unsigned char c : symbol)

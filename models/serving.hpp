@@ -338,12 +338,21 @@ private:
 /// Writes new weights over the slot a reader may be using. This is what the
 /// obvious implementation does, and the test counts how many inferences it
 /// tears.
+// The torn-read demonstration below is a DELIBERATE data race: it exists to
+// show what the safe swap prevents. ThreadSanitizer is told to ignore exactly
+// these two functions, so a TSan run stays meaningful for everything else.
+#if defined(__GNUC__) || defined(__clang__)
+#  define ALTAIR_DELIBERATE_RACE __attribute__((no_sanitize("thread")))
+#else
+#  define ALTAIR_DELIBERATE_RACE
+#endif
+
 template <std::size_t Features>
 struct TearableModel {
     double w[Features] = {};
     double bias = 0.0;
 
-    [[nodiscard]] double operator()(const double* x,
+    [[nodiscard]] ALTAIR_DELIBERATE_RACE double operator()(const double* x,
                                     std::size_t n) const noexcept {
         double acc = bias;
         for (std::size_t i = 0; i < n && i < Features; ++i) {
@@ -353,7 +362,7 @@ struct TearableModel {
     }
     /// Overwrite in place, one coefficient at a time -- exactly what a memcpy
     /// over live weights looks like to a concurrent reader.
-    void overwrite(double value) noexcept {
+    ALTAIR_DELIBERATE_RACE void overwrite(double value) noexcept {
         for (std::size_t i = 0; i < Features; ++i) { w[i] = value; }
     }
 };

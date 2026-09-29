@@ -26,16 +26,34 @@ quarter.
 
 ## 1. Immediate — stop new orders
 
-The kill switch is one file, one flag, checked every loop (ROADMAP §13 rule 5).
+> **Corrected 2026-09-29 (audit C22-005).** This section used to say
+> `touch /var/lib/altair/KILL`, and `config/altair.toml` says
+> `kill_switch_file = "run/KILL"`. **No code watches either path.** What exists
+> today is:
+>
+> - `risk::KillSwitch` (`risk/limits.hpp`), in process. It is tripped by, for
+>   example, a reconciliation mismatch (`oms/reconcile.hpp`) and checked by the
+>   exit ladder (`oms/exit_ladder.hpp`).
+> - The desktop **Kill Switch** page, which writes `data/kill_request.json`
+>   (with the instant and the user, under a lock file) relative to the checkout.
+> - **Live order submission is disabled** behind the shared dispatch permit, so
+>   no process can place a live order right now whatever the kill state is.
+>
+> BEFORE GO-LIVE, one path must be decided (run/KILL relative to the state
+> dir), created by the deploy step (so its directory exists), and polled every
+> loop by the process that owns the dispatch permit. Until then the procedure
+> below is the TARGET design, not something to rely on.
+
+Target design: the kill switch is one file, one flag, checked every loop
+(ROADMAP §13 rule 5).
 
 ```bash
-touch /var/lib/altair/KILL
+touch run/KILL          # relative to engine.state_dir's parent; see above
 ```
 
-That is the whole mechanism, and it is deliberately that simple: no RPC, no
-socket, no authentication, nothing that can itself be down. It works when the
-UI is frozen, when the process is unresponsive to signals, and when you are on
-a phone over SSH.
+It is deliberately that simple: no RPC, no socket, no authentication,
+nothing that can itself be down. It would work when the UI is frozen, when the
+process is unresponsive to signals, and when you are on a phone over SSH.
 
 **What it does:** stops new order submission and flattens per the configured
 policy in `oms/`.

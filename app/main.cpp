@@ -15,6 +15,9 @@
 
 #include <config/config.hpp>
 #include <config/store.hpp>
+#if defined(ALTAIR_HAVE_TOML)
+#  include <config/toml_source.hpp>
+#endif
 #include <feed/replay.hpp>
 #include <invariant/conservation.hpp>
 #include <lockfree/spsc_ring.hpp>
@@ -205,6 +208,66 @@ RunResult run_session(const ReplayTick* ticks, std::size_t n,
     return r;
 }
 
+// C22-003. config/altair.toml had no C++ consumer: every key in it was
+// documentation. This loads it through the tested TOML loader and refuses a
+// file that lacks, or mistypes, the keys the feed and risk layers depend on.
+// Strings (engine.mode, feed.primary) are skipped by the loader by design (D1),
+// so only numeric and boolean keys are checked here.
+int run_config_check(const char* path)
+{
+#if !defined(ALTAIR_HAVE_TOML)
+    std::printf("altair --config: this build has no TOML support "
+                "(configure with tomlplusplus / the vcpkg preset)\n");
+    (void)path;
+    return 2;
+#else
+    static ConfigSnapshot cfg;
+    const auto report = load_toml_file(path, cfg);
+    if (!report) {
+        std::printf("altair --config: %s could not be loaded (error %d)\n",
+                    path, static_cast<int>(report.error()));
+        return 1;
+    }
+    std::printf("altair --config: %s\n  %zu values loaded, %zu strings skipped, "
+                "%zu other skipped, %zu tables\n", path, report->loaded,
+                report->skipped_string, report->skipped_other, report->tables);
+
+    struct IntRule { const char* key; std::int64_t lo; std::int64_t hi; };
+    // FYERS allows 5,000 symbols per data socket; the others are sanity bounds.
+    static constexpr IntRule kInts[] = {
+        {"schema_version", 1, 1},
+        {"session.skip_first_minutes", 0, 60},
+        {"feed.staleness_ms", 1, 60'000},
+        {"feed.failback_stable_s", 1, 3'600},
+        {"feed.fyers.max_subscriptions", 1, 5'000},
+        {"feed.kite.max_subscriptions", 1, 3'000},
+        {"risk.max_open_positions", 1, 1'000},
+    };
+    static constexpr const char* kBools[] = {
+        "feed.failover_enabled", "feed.fyers.enabled", "feed.kite.enabled",
+    };
+    int bad = 0;
+    for (const IntRule& r : kInts) {
+        const auto h = cfg.find(r.key);
+        const auto v = h ? cfg.get_int(*h) : std::expected<std::int64_t, ConfigError>{
+                                                 std::unexpected(h.error())};
+        const bool ok = v && *v >= r.lo && *v <= r.hi;
+        std::printf("  %-32s %s", r.key, ok ? "ok  " : "BAD ");
+        if (v) std::printf("%lld\n", static_cast<long long>(*v));
+        else std::printf("(missing or not an integer)\n");
+        if (!ok) ++bad;
+    }
+    for (const char* key : kBools) {
+        const auto h = cfg.find(key);
+        const bool ok = h && cfg.get_bool(*h).has_value();
+        std::printf("  %-32s %s\n", key, ok ? "ok" : "BAD (missing or not a bool)");
+        if (!ok) ++bad;
+    }
+    std::printf(bad == 0 ? "  config OK\n" : "  %d key(s) invalid\n", bad);
+    return bad == 0 ? 0 : 1;
+#endif
+}
+
 void print_usage()
 {
     std::printf(
@@ -213,6 +276,7 @@ void print_usage()
         "  altair --replay <file>            replay a session with the null strategy\n"
         "  altair --gen <file> [--ticks N]   generate a synthetic session (default 100000)\n"
         "  altair --selftest                 run the built-in checks\n"
+        "  altair --config [file]            load and validate config/altair.toml\n"
         "  altair --help                     this message\n\n"
         "This build opens no socket and reads no credential.\n"
         "Live feeds arrive in Phase 2; execution in Phase 4.\n");
@@ -518,6 +582,9 @@ int main(int argc, char** argv)
     if (std::strcmp(cmd, "--help") == 0) {
         print_usage();
         return 0;
+    }
+    if (std::strcmp(cmd, "--config") == 0) {
+        return run_config_check(argc >= 3 ? argv[2] : "config/altair.toml");
     }
     if (std::strcmp(cmd, "--selftest") == 0) {
         return run_selftest();

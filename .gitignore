@@ -50,9 +50,11 @@ config/*.local.toml
 **/fyers_webhook_events.jsonl
 
 # ── DATA — large, regenerable, or licensed ───────────────────────────────
-dataset/
+# dataset/ (historical OHLCV) and the instrument masters are tracked since
+# 2026-09-29 at the owner's request, so CI can run the `dataset` test tier.
+# Everything pulled WITH a credential stays out: ticks, account, quotes,
+# sessions, order intents (see below).
 data/ticks/
-data/instruments/
 data/fundamentals/
 data/archive/
 *.parquet
@@ -97,15 +99,12 @@ __pycache__/
 *.pyc
 venv/
 
-# Exchange and broker master files — large, regenerable, refreshed daily.
-# Downloaded by broker/tools; the SCHEMAS they taught us live in the cards.
-data/masters/
+# Exchange and broker master files are tracked with dataset/ (see DATA above).
 
 # client/ devDependencies. TypeScript only, and it never ships.
 node_modules/
 
-# P2-12e: the Kite instrument master, 8.8 MB and regenerable in one call.
-data/instruments.csv
+# P2-12e: the Kite instrument master (8.8 MB) is tracked with dataset/.
 
 # Account and quote snapshots hold live account state and market data
 # pulled with a credential. Same rule as kite_session.json: they are
@@ -116,6 +115,9 @@ data/instruments.csv
 # Same rule: pulled with a credential, and a tick store is a recording of a
 # real session on a real account.
 **/kite_ticks.json
+# The FYERS live-feed status file and its optional JSONL recording: same rule.
+**/fyers_ticks.json
+**/fyers*.jsonl
 # P33-01. The Live Forecast page fetches a recent window into this scratch
 # directory on every click. Same rule as every other file on this list: it is
 # market data pulled with a credential and regenerable from the API.

@@ -242,6 +242,26 @@ void test_plausibility_counters_and_order()
     check(g.last_admitted() == Timestamp::epoch(), "reset clears the watermark");
 }
 
+// C01-006 regression: a tick far behind local_now is not fresh.
+static void test_plausibility_staleness()
+{
+    PlausibilityGate::Config c{kFloor, kSkew, false, false, {}};
+    c.max_past_lag = duration::seconds(5);
+    PlausibilityGate g{c};
+    const Timestamp now = kFloor + duration::hours(24);
+    const auto edge = g.admit(now - duration::seconds(5), now);
+    check(edge.has_value(), "exactly max_past_lag behind is admitted");
+    const auto late = g.admit(now - duration::seconds(5) - Duration{1}, now);
+    check(!late && late.error() == TsReject::Stale,
+          "one nanosecond beyond max_past_lag is Stale");
+    check(g.stats().stale == 1 && g.stats().admitted == 1,
+          "exactly one counter moves per call");
+
+    PlausibilityGate unbounded{PlausibilityGate::Config{kFloor, kSkew, false, false, {}}};
+    check(unbounded.admit(now - duration::hours(3), now).has_value(),
+          "max_past_lag zero keeps the old unbounded behaviour");
+}
+
 int main()
 {
     std::printf("altair core/time exchange_ts tests\n");
@@ -253,6 +273,7 @@ int main()
     test_plausibility_monotonic();
     test_plausibility_session_window();
     test_plausibility_counters_and_order();
+    test_plausibility_staleness();
 
     if (failures == 0) {
         std::printf("PASS\n");

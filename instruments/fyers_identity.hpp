@@ -90,8 +90,13 @@ public:
             return std::unexpected(FyersIdentityError::InvalidOption);
 
         FyersCanonicalKey key{};
-        std::memcpy(key.underlying, record.underlying, sizeof(key.underlying));
-        key.underlying[kMaxUnderlyingLen] = '\0';
+        // Copy the validated length only. record.underlying is a C string, not
+        // a kMaxUnderlyingLen+1 array: copying sizeof(key.underlying) read past
+        // the end of every shorter name (ASan: global-buffer-overflow).
+        const std::size_t underlying_len =
+            detail::spec_str_len(record.underlying, kMaxUnderlyingLen);
+        std::memcpy(key.underlying, record.underlying, underlying_len);
+        key.underlying[underlying_len] = '\0';
         key.exchange = record.exchange;
         key.segment = record.segment;
         key.option = record.option;

@@ -254,32 +254,38 @@ int main(int argc, char** argv) {
     std::vector<std::string> topics;
     std::vector<std::string> registered;   // SpecStore id i is registered[i]
     for (const auto& [symbol, fytoken] : tokens->valid) {
+        // Same stated limitation as altair_kite_ticker: the scale (100 per
+        // rupee) is right for NSE/BSE equity, F&O and indices; lot and tick
+        // are placeholders nothing downstream of this binary sizes with.
+        std::uint32_t cookie = hsm::kNoCookie;
+        if (symbol.size() > altair::kMaxSymbolLen) {
+            std::printf("    %s is longer than the spec store's symbol field -- skipped\n",
+                        symbol.c_str());
+        } else {
+            altair::ContractSpec cs{};
+            std::memcpy(cs.symbol, symbol.c_str(), symbol.size() + 1);
+            cs.lot_size = altair::LotSize{1};
+            cs.tick_size = altair::Price{1};
+            cs.price_scale = 100;
+            cs.valid_from = altair::Timestamp{1};
+            cs.valid_to = altair::Timestamp::max();
+            cs.snapshot_at = altair::Timestamp{1};
+            if (const auto id = g_specs.add(cs)) {
+                registered.push_back(symbol);
+                // Resolved ONCE here: updates carry the id as the topic's
+                // cookie, so nothing is looked up by name on the hot path.
+                cookie = static_cast<std::uint32_t>(*id);
+            }
+        }
         for (int pass = 0; pass < (depth ? 2 : 1); ++pass) {
             const auto type = pass == 0 ? hsm::DataType::SymbolUpdate : hsm::DataType::DepthUpdate;
             auto topic = hsm::topic_for(symbol, fytoken, type);
             if (topic.empty()) continue;
-            decoder.map_topic(topic, symbol);
+            decoder.map_topic(topic, symbol, cookie);
             topics.push_back(std::move(topic));
             (void)g_adapter.subscribe(symbol, pass == 0 ? altair::FyersDataMode::SymbolUpdate
                                                         : altair::FyersDataMode::DepthUpdate);
         }
-        // Same stated limitation as altair_kite_ticker: the scale (100 per
-        // rupee) is right for NSE/BSE equity, F&O and indices; lot and tick
-        // are placeholders nothing downstream of this binary sizes with.
-        if (symbol.size() > altair::kMaxSymbolLen) {
-            std::printf("    %s is longer than the spec store's symbol field -- skipped\n",
-                        symbol.c_str());
-            continue;
-        }
-        altair::ContractSpec cs{};
-        std::memcpy(cs.symbol, symbol.c_str(), symbol.size() + 1);
-        cs.lot_size = altair::LotSize{1};
-        cs.tick_size = altair::Price{1};
-        cs.price_scale = 100;
-        cs.valid_from = altair::Timestamp{1};
-        cs.valid_to = altair::Timestamp::max();
-        cs.snapshot_at = altair::Timestamp{1};
-        if (g_specs.add(cs)) registered.push_back(symbol);
     }
     if (topics.empty()) { std::printf("\n  nothing subscribable\n"); return 3; }
 
@@ -316,12 +322,20 @@ int main(int argc, char** argv) {
     std::vector<std::int64_t> last_paise(registered.size(), -1);
     std::uint64_t epoch = 0;
 
-    const auto emit = [&](std::string_view json) {
+    std::string json_line;
+    altair::FyersFields fields{};
+    const auto emit = [&](const hsm::HsmUpdate& u) {
         ++messages;
-        if (jsonl) jsonl << json << '\n';
         const altair::Timestamp recv{std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count()};
-        (void)g_adapter.on_message(json, recv, epoch);
+        // JSON is only produced for the recording; the feed path is typed.
+        if (jsonl) {
+            hsm::render_sdk_json(u, lite, json_line);
+            jsonl << json_line << '\n';
+        }
+        if (u.cookie != hsm::kNoCookie
+            && hsm::to_fyers_fields(u, static_cast<altair::InstrumentId>(u.cookie), fields))
+            (void)g_adapter.on_fields(fields, recv, epoch);
         altair::FeedEnvelope<altair::Tick> t{};
         while (g_adapter.try_pop(t)) {
             ++ticks;

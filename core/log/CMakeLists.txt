@@ -18,4 +18,6 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_binlog_test
         PRIVATE altair_log altair_flags Threads::Threads)
     add_test(NAME binlog COMMAND altair_binlog_test)
+    # Runs threads: the TSan CI job runs exactly the `concurrency` label.
+    set_tests_properties(binlog PROPERTIES LABELS concurrency)
 endif()

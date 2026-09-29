@@ -1,0 +1,4 @@
+# Market data: no line diffs in reviews, collapsed in GitHub stats.
+dataset/** -diff linguist-generated
+data/masters/** -diff linguist-generated
+data/instruments.csv -diff linguist-generated

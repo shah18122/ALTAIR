@@ -331,6 +331,21 @@ TscClock TscClock::create_fallback() noexcept
     return TscClock{cal};
 }
 
+Duration TscClock::drift_from_system() const noexcept
+{
+    const std::int64_t system = system_unix_ns();
+    return Duration{system - now().ns_since_epoch()};
+}
+
+TscClock TscClock::reanchored() const noexcept
+{
+    TscCalibration cal = cal_;
+    // Ticks first, then UTC, exactly as create() anchors.
+    cal.anchor_ticks = now_ticks();
+    cal.anchor       = Timestamp{system_unix_ns()};
+    return TscClock{cal};
+}
+
 ALTAIR_HOT std::uint64_t TscClock::now_ticks() const noexcept
 {
     if (cal_.source == ClockSource::InvariantTsc) return cpu::read_tsc_ordered();

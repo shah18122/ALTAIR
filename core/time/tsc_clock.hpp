@@ -142,6 +142,19 @@ public:
     /// PRECONDITION: none. Always >= 1 ns, never zero.
     [[nodiscard]] Duration uncertainty_of(Duration measured) const noexcept;
 
+    /// C01-008. System clock minus now(): how far this clock has wandered
+    /// from UTC since its anchor (calibration error accumulates with time).
+    /// UNIT: nanoseconds, positive when this clock runs slow. COLD PATH: it
+    /// reads the system clock.
+    [[nodiscard]] Duration drift_from_system() const noexcept;
+
+    /// C01-008. A new clock with the SAME calibrated rate and a fresh
+    /// (ticks, UTC) anchor read back to back, as create() does. It returns a
+    /// new value instead of mutating: a TscClock is shared across threads
+    /// without synchronisation, so the owner swaps in the result the way it
+    /// publishes any other snapshot (e.g. between sessions). COLD PATH.
+    [[nodiscard]] TscClock reanchored() const noexcept;
+
     /// The calibration record behind this clock.
     [[nodiscard]] const TscCalibration& calibration() const noexcept;
 
