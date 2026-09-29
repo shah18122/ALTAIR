@@ -77,7 +77,10 @@ jobs:
     timeout-minutes: 120
     env:
       QT_VERSION: "6.8.3"
-      QT_QPA_PLATFORM: offscreen
+      # No global QT_QPA_PLATFORM: tests that want the offscreen plugin set it
+      # (with its plugin path) in desktop/CMakeLists.txt. Forcing it on every
+      # test made Qt fail to find the plugin next to the windeployqt'd DLLs,
+      # and on Windows that failure is a modal dialog -- a 10-minute hang.
     steps:
       - uses: actions/checkout@v4
 
@@ -96,4 +99,4 @@ jobs:
           & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
           cmake --preset default "-DALTAIR_QT_ROOT=C:/Qt/$env:QT_VERSION/msvc2022_64"
           cmake --build --preset default
-          ctest --preset default -LE dataset -j 2 --timeout 600
+          ctest --preset default -LE dataset -j 2 --timeout 300

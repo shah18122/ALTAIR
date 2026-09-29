@@ -388,3 +388,9 @@ Models page (desktop/panels.hpp, models.overview)
     with OpenSSL but no Boost, such as GitHub's Windows image.
   - macos-arm64.yml is parked: manual runs only until the remaining macOS
     compile errors are fixed (P1 continues later).
+  - Windows CI result (686ab23): the full MSVC build of the engine and the
+    Qt 6.8.3 desktop SUCCEEDS; 179/190 tests passed. Of the 11 failures, 4 are
+    desktop tests that read dataset/ (now labelled `dataset`). The other 7 hung
+    because CI forced QT_QPA_PLATFORM=offscreen, which is not deployed next to
+    the windeployqt'd DLLs; on Windows that is a modal "no platform plugin"
+    dialog. The global setting is removed and per-test timeout cut to 300 s.
