@@ -354,14 +354,14 @@ clear_kill_request(const QString& path, const KillRequest& was,
     switch (k.state) {
     case HaltFileState::Absent:
         return QStringLiteral(
-            "<b style='color:#1B8A4B'>No halt requested.</b> There is no "
+            "<b style='color:#3FB950'>No halt requested.</b> There is no "
             "request file. This says nothing about whether the engine's "
             "own <code>KillSwitch</code> has tripped — "
             "<code>enforce_conservation</code> trips that when the paise "
             "do not balance, and this window cannot see it.");
     case HaltFileState::Present:
         return QStringLiteral(
-                   "<b style='color:#C0392B'>HALT REQUESTED</b><br>"
+                   "<b style='color:#F85149'>HALT REQUESTED</b><br>"
                    "at %1 UTC by <b>%2</b><br>reason: %3<br><br>"
                    "<i>Requested, not executed.</i> Nothing consumes this "
                    "file yet.")
@@ -375,7 +375,7 @@ clear_kill_request(const QString& path, const KillRequest& was,
         break;
     }
     return QStringLiteral(
-        "<b style='color:#C0392B'>HALT STATE UNKNOWN</b><br>"
+        "<b style='color:#F85149'>HALT STATE UNKNOWN</b><br>"
         "The request file <code>" ALTAIR_KILL_REQUEST_FILE "</code> could not "
         "be read, is not a halt request, or sits in a directory this process "
         "cannot examine. Treat the system as HALTED until someone has looked "
@@ -395,7 +395,7 @@ clear_kill_request(const QString& path, const KillRequest& was,
     if (action_error.isEmpty()) {
         return halt_state_text(k);
     }
-    return QStringLiteral("<b style='color:#C0392B'>%1</b><br><br>%2")
+    return QStringLiteral("<b style='color:#F85149'>%1</b><br><br>%2")
         .arg(action_error.toHtmlEscaped(), halt_state_text(k));
 }
 
@@ -497,7 +497,7 @@ public:
         request_ = new QPushButton(QStringLiteral("REQUEST HALT"), this);
         request_->setEnabled(may(role_, Capability::RequestKillSwitch));
         request_->setStyleSheet(QStringLiteral(
-            "background:#C0392B;color:white;font-weight:bold;padding:8px;"));
+            "background:#DA3633;color:white;font-weight:bold;padding:8px;"));
         connect(request_, &QPushButton::clicked, this,
                 &KillSwitchPanel::do_request);
         v->addWidget(request_);

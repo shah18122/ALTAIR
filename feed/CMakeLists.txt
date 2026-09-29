@@ -47,4 +47,10 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_fyers_adapter_test tests/test_fyers_adapter.cpp)
     target_link_libraries(altair_fyers_adapter_test PRIVATE altair_feed altair_flags)
     add_test(NAME fyers_adapter COMMAND altair_fyers_adapter_test)
+
+    # FYERS data-socket (HSM) protocol, checked against the official SDK's
+    # own frames and on_message output (tests/fyers_hsm_golden.hpp).
+    add_executable(altair_fyers_hsm_test tests/test_fyers_hsm.cpp)
+    target_link_libraries(altair_fyers_hsm_test PRIVATE altair_feed altair_flags)
+    add_test(NAME fyers_hsm COMMAND altair_fyers_hsm_test)
 endif()

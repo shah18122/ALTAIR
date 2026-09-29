@@ -70,6 +70,16 @@ if(ALTAIR_HAVE_NET)
     target_compile_definitions(altair_fyers_account PRIVATE
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+    # The live FYERS data feed: the official HSM socket protocol
+    # (feed/fyers_hsm.hpp) over broker/fyers_data_socket.hpp into the existing
+    # FyersDataAdapter. Read-only; a separate process for the same reason as
+    # altair_kite_ticker.
+    add_executable(altair_fyers_ticker fyers_ticker_main.cpp)
+    target_link_libraries(altair_fyers_ticker PRIVATE
+        altair_broker_net altair_feed altair_instruments altair_flags)
+    target_compile_definitions(altair_fyers_ticker PRIVATE
+        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
     add_executable(altair_fyers_history fyers_history_main.cpp)
     target_link_libraries(altair_fyers_history PRIVATE
         altair_broker_net altair_flags)
@@ -154,7 +164,7 @@ if(ALTAIR_HAVE_NET)
     install(TARGETS
         altair_kite_login altair_fyers_login altair_kite_fetch
         altair_kite_account altair_fyers_account altair_kite_update altair_kite_ticker
-        altair_kite_quote altair_fyers_history altair_fyers_webhook
+        altair_kite_quote altair_fyers_history altair_fyers_webhook altair_fyers_ticker
         RUNTIME DESTINATION "${_altair_helper_destination}")
     if(TARGET altair_price_service)
         install(TARGETS altair_price_service
@@ -164,6 +174,8 @@ if(ALTAIR_HAVE_NET)
 
     if(ALTAIR_BUILD_TESTS)
         add_test(NAME fyers_account_dry_run COMMAND altair_fyers_account)
+        add_test(NAME fyers_ticker_dry_run COMMAND altair_fyers_ticker
+            --symbols NSE:SBIN-EQ,NSE:NIFTY50-INDEX --depth --seconds 5)
         add_test(NAME kite_account_dry_run COMMAND altair_kite_account)
         add_test(NAME fyers_history_dry_run COMMAND altair_fyers_history
             --symbol NSE:SBIN-EQ --from 2026-09-01 --to 2026-09-02

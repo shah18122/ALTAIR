@@ -264,7 +264,8 @@ https_post_form(std::string_view host, std::string_view target,
 [[nodiscard]] inline std::expected<HttpResponse, HttpError>
 https_post_json(std::string_view host, std::string_view target,
                 std::string_view body,
-                std::chrono::seconds timeout = std::chrono::seconds{20})
+                std::chrono::seconds timeout = std::chrono::seconds{20},
+                std::string_view authorization = {})
 {
     namespace beast = boost::beast;
     namespace http = beast::http;
@@ -304,6 +305,9 @@ https_post_json(std::string_view host, std::string_view target,
         req.set(http::field::host, host_s);
         req.set(http::field::user_agent, "altair/0.1");
         req.set(http::field::content_type, "application/json");
+        // FYERS' symbol-token endpoint is a JSON POST that needs the session.
+        if (!authorization.empty())
+            req.set(http::field::authorization, std::string{authorization});
         req.body() = std::string{body};
         req.prepare_payload();
         beast::get_lowest_layer(stream).expires_after(timeout);

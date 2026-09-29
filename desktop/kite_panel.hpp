@@ -421,7 +421,7 @@ private:
         const auto doc = QJsonDocument::fromJson(raw, &err);
         if (err.error != QJsonParseError::NoError || !doc.isObject()) {
             head_->setText(QStringLiteral(
-                "<b style='color:#C0392B'>SNAPSHOT DID NOT PARSE</b> — %1")
+                "<b style='color:#F85149'>SNAPSHOT DID NOT PARSE</b> — %1")
                     .arg(err.errorString()));
             return;
         }

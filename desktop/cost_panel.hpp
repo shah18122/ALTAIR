@@ -140,7 +140,7 @@ private:
         const auto rep = load_charges_file(ALTAIR_CHARGES_TOML, schedules_);
         if (!rep) {
             note_->setText(
-                QStringLiteral("<span style='color:#C0392B'>config/charges.toml "
+                QStringLiteral("<span style='color:#F85149'>config/charges.toml "
                                "did not load: %1</span>")
                     .arg(QString::fromLatin1(charges_error_text(rep.error()))));
             return;
@@ -152,8 +152,8 @@ private:
             " Every rate below is read from that file; none is a literal. "
             "<b style='color:%2'>last_verified: %3</b> — %4")
             .arg(rep->schedules)
-            .arg(verified_ ? QStringLiteral("#1B8A4B")
-                           : QStringLiteral("#C0392B"))
+            .arg(verified_ ? QStringLiteral("#3FB950")
+                           : QStringLiteral("#F85149"))
             .arg(verified_ ? QStringLiteral("set") : QStringLiteral("UNVERIFIED"))
             .arg(verified_
                      ? QStringLiteral("checked against a circular.")

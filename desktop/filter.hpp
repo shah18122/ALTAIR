@@ -321,7 +321,7 @@ public:
             layout->addWidget(operand_);
 
             error_ = new QLabel(this);
-            error_->setStyleSheet(QStringLiteral("color:#C0392B;"));
+            error_->setStyleSheet(QStringLiteral("color:#F85149;"));
             error_->setVisible(false);
             layout->addWidget(error_);
         }
