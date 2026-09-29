@@ -1,0 +1,268 @@
+{
+  "symbol": "nifty",
+  "segment": "spot",
+  "source": "TradingView export",
+  "dropped_columns_reason": "Monte Carlo forecast overlay is forward-looking; divergence labels repaint; RSI is a black box that cannot carry a feature_version. See ingest_bars.py.",
+  "ingests": [
+    {
+      "at": "2026-08-31T14:34:56+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 15_8469f.csv",
+          "sha256_16": "d4154e5c2881a3f4",
+          "rows": 1207,
+          "first": "2026-06-23T13:45:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:34:56+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1D_11c7c.csv",
+          "sha256_16": "49207dfd4792f026",
+          "rows": 8756,
+          "first": "1990-07-03",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:34:56+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1_a5bf2.csv",
+          "sha256_16": "73ccc1cfdc433bd0",
+          "rows": 1207,
+          "first": "2026-08-26T13:16:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:34:56+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 60_6bc66.csv",
+          "sha256_16": "b7bbc3448f3caffa",
+          "rows": 3131,
+          "first": "2024-11-07T15:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:35:54+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 15_8469f.csv",
+          "sha256_16": "d4154e5c2881a3f4",
+          "rows": 1207,
+          "first": "2026-06-23T13:45:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:35:54+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1D_11c7c.csv",
+          "sha256_16": "49207dfd4792f026",
+          "rows": 8756,
+          "first": "1990-07-03",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:35:54+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1_a5bf2.csv",
+          "sha256_16": "73ccc1cfdc433bd0",
+          "rows": 1207,
+          "first": "2026-08-26T13:16:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:35:54+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 60_6bc66.csv",
+          "sha256_16": "b7bbc3448f3caffa",
+          "rows": 3131,
+          "first": "2024-11-07T15:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:36:08+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 15_8469f.csv",
+          "sha256_16": "d4154e5c2881a3f4",
+          "rows": 1207,
+          "first": "2026-06-23T13:45:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:36:08+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1D_11c7c.csv",
+          "sha256_16": "49207dfd4792f026",
+          "rows": 8756,
+          "first": "1990-07-03",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:36:08+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1_a5bf2.csv",
+          "sha256_16": "73ccc1cfdc433bd0",
+          "rows": 1207,
+          "first": "2026-08-26T13:16:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:36:08+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 60_6bc66.csv",
+          "sha256_16": "b7bbc3448f3caffa",
+          "rows": 3131,
+          "first": "2024-11-07T15:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:19+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 15_8469f.csv",
+          "sha256_16": "d4154e5c2881a3f4",
+          "rows": 1207,
+          "first": "2026-06-23T13:45:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:19+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1D_11c7c.csv",
+          "sha256_16": "49207dfd4792f026",
+          "rows": 8756,
+          "first": "1990-07-03",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:19+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1_a5bf2.csv",
+          "sha256_16": "73ccc1cfdc433bd0",
+          "rows": 1207,
+          "first": "2026-08-26T13:16:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:19+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 60_6bc66.csv",
+          "sha256_16": "b7bbc3448f3caffa",
+          "rows": 3131,
+          "first": "2024-11-07T15:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:24+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 15_8469f.csv",
+          "sha256_16": "d4154e5c2881a3f4",
+          "rows": 1207,
+          "first": "2026-06-23T13:45:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:24+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1D_11c7c.csv",
+          "sha256_16": "49207dfd4792f026",
+          "rows": 8756,
+          "first": "1990-07-03",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:24+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 1_a5bf2.csv",
+          "sha256_16": "73ccc1cfdc433bd0",
+          "rows": 1207,
+          "first": "2026-08-26T13:16:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:24+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_NIFTY, 60_6bc66.csv",
+          "sha256_16": "b7bbc3448f3caffa",
+          "rows": 3131,
+          "first": "2024-11-07T15:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    }
+  ]
+}

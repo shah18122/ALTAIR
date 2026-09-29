@@ -1,0 +1,65 @@
+{
+  "symbol": "banknifty",
+  "segment": "spot",
+  "source": "github.com/sandeepkapri/BankNifty-Data (MIT). Upstream provider not named by the repository.",
+  "trust": "The 1-minute file is trusted BY ASSOCIATION: the same author's NIFTY minute file was compared bar-for-bar against our Kite pull (846,741 shared bars, max disagreement 0.65 points, zero bars over 1 point). Nothing else in the repository inherits that.",
+  "volume": "ABSENT upstream. Written as an EMPTY field, never 0.",
+  "dedupe": "3694 duplicate (day, minute) rows dropped, first occurrence kept; 3 of them carried OHLC differing from their first copy. 85 sessions were affected, 81 of them in late 2023 at 45 repeated minutes each.",
+  "derivation": "5m/15m/60m/1d are RESAMPLED HERE from the deduped 1-minute file. Buckets anchor on EACH SESSION'S OWN FIRST BAR, not a fixed 09:15, because Muhurat sessions open in the evening. The vendor also ships 5m/15m/1h/2h/3h files; they stop in April 2024 while the minute file runs to April 2026, so resampling is both more current and internally consistent.",
+  "muhurat_sessions": [
+    "2015-11-11",
+    "2016-10-30",
+    "2017-10-19",
+    "2018-11-07",
+    "2019-10-27",
+    "2020-11-14",
+    "2021-11-04",
+    "2022-10-24",
+    "2023-11-12",
+    "2024-11-01",
+    "2025-10-21"
+  ],
+  "vendor_daily_pre2015": {
+    "file": "1d/vendor_pre2015.csv",
+    "rows": 3733,
+    "first": "2000-01-01",
+    "last": "2015-01-08",
+    "flat_ohlc_rows": 1368,
+    "DO_NOT_CONCATENATE": "This is a DIFFERENT SERIES from 1d/all.csv, not an earlier part of it. Over the 2,292 days where both exist the closes differ with median |diff| 19.25 points -- symmetric, no bias (median signed -0.60, 49% positive), and the vendor close is inside our intraday range on 100% of days. Two independent series. Splicing them makes a discontinuity at the join that nobody will ever find again.",
+    "ALSO": "BankNifty launched in September 2003 with a base of 1000 on 2000-01-01, so everything before late 2003 is a BACK-COMPUTED index that never traded. And 1368 rows have O=H=L=C, i.e. close-only data with the close copied into all four fields: every high/low measure over that period reads a range of zero."
+  },
+  "ingests": [
+    {
+      "at": "2026-09-08T12:42:30.783989+00:00",
+      "file": "bank-nifty-1m-data.csv",
+      "sha256_16": "5826b09aa9149440",
+      "rows_in_file": 1046599,
+      "rows_kept": 1042905,
+      "sessions": 2793,
+      "first": "2015-01-09",
+      "last": "2026-04-22",
+      "written": {
+        "1m": {
+          "bars": 1042905,
+          "files": 136
+        },
+        "5m": {
+          "bars": 208598,
+          "files": 136
+        },
+        "15m": {
+          "bars": 69539,
+          "files": 136
+        },
+        "60m": {
+          "bars": 19473,
+          "files": 136
+        },
+        "1d": {
+          "bars": 2793,
+          "files": 1
+        }
+      }
+    }
+  ]
+}
