@@ -519,3 +519,25 @@ Known limits (stated on screen): snapshots, not ticks (Refresh or Auto 60 s);
 monthly expiries need data/instruments.csv; per-contract SPAN is not in
 FYERS' read-only API; brokerage assumed Rs 20/order (options flat, intraday
 and futures min(Rs 20, 0.03%), delivery 0); Kite account rows not wired.
+
+
+------------------------------------------------------------------------------
+14. DATA AUDIT -- 2026-09-29
+------------------------------------------------------------------------------
+Owner's request: verify the data (1) against the broker and (2) across all
+timeframes of the dataset itself, with an instrument-wise sheet.
+  app/data_audit.hpp, app/data_audit_main.cpp   altair_data_audit
+  app/xlsx_writer.hpp                           dependency-free .xlsx writer
+  ops/broker_audit.ps1                          FYERS + Kite fetch, then audit
+  app/fyers_history_main.cpp                    --continuous (cont_flag=1), 350 ms pacing
+  ops/data-audit.md                             how to run; findings
+  .gitignore                                    data/broker_audit/, data/verified/,
+                                                data/fyers_quotes.json
+Tests: data_audit (unit, incl. xlsx), data_audit_dataset (whole real dataset,
+label `dataset`).
+Findings (cross-timeframe, run here): see ops/data-audit.md. Headlines:
+INDIA VIX 1m has 2,547 impossible-OHLC bars (2018-12..2019); NIFTY 1m has
+seconds-stamped bars (2015) and wrong extremes on circuit days (2020-03);
+NIFTY FUT intraday for Jul..25 Aug 2026 is the next-month contract;
+BANKNIFTY's other timeframes are resampled from its 1m (not independent).
+Broker comparison: run ops/broker_audit.ps1 on the PC (needs sessions).

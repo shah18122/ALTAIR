@@ -111,6 +111,7 @@ node_modules/
 # regenerable from the API and must never enter git.
 **/kite_account.json
 **/kite_quotes.json
+**/fyers_quotes.json
 # P32-07. The live tick status file and any tick store the ticker writes.
 # Same rule: pulled with a credential, and a tick store is a recording of a
 # real session on a real account.
@@ -122,6 +123,11 @@ node_modules/
 # directory on every click. Same rule as every other file on this list: it is
 # market data pulled with a credential and regenerable from the API.
 data/live_forecast_scratch/
+# Data audit (ops/broker_audit.ps1, altair_data_audit): broker candles pulled
+# with a credential, and the report / merged CSVs derived from dataset/. All
+# regenerable; broker data is not ours to publish.
+data/broker_audit/
+data/verified/
 
 # P36 hygiene. OPERATIONAL STATE, NOT SOURCE -- and git must not be able to
 # DELIVER either of these.

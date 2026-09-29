@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace {
 struct Session { std::string client; std::string access; };
@@ -85,11 +86,14 @@ void usage(const char* executable) {
     std::printf(
         "FYERS read-only OHLCV audit fetch (dry-run by default).\n\n"
         "  %s --symbol NSE:NIFTY50-INDEX --resolution 1 --from YYYY-MM-DD\n"
-        "     --to YYYY-MM-DD --out PATH [--force] [--go]\n\n"
+        "     --to YYYY-MM-DD --out PATH [--continuous] [--force] [--go]\n\n"
         "  %s --symbol NSE:SBIN-EQ --from YYYY-MM-DD --to YYYY-MM-DD\n"
         "     --out-1m PATH --out-5m PATH [--go]\n\n"
         "The first form fetches one documented FYERS resolution. The audit form\n"
-        "fetches separate 1m and 5m files. Provider day limits are chunked.\n"
+        "fetches separate 1m and 5m files. Provider day limits are chunked, and\n"
+        "chunks are sent 350 ms apart (FYERS allows 200 requests a minute).\n"
+        "--continuous sets cont_flag=1: a futures symbol returns the stitched\n"
+        "near-month series instead of that one contract.\n"
         "Existing files are never overwritten unless --force is explicit.\n",
         executable, executable);
 }
@@ -97,7 +101,7 @@ void usage(const char* executable) {
 
 int main(int argc, char** argv) {
     std::string symbol, from, to, out1, out5, resolution, out_path;
-    bool go = false, force = false;
+    bool go = false, force = false, continuous = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg{argv[i]};
         auto value = [&](std::string& target) {
@@ -113,6 +117,7 @@ int main(int argc, char** argv) {
         else if (arg == "--resolution") { if (!value(resolution)) return 2; }
         else if (arg == "--out") { if (!value(out_path)) return 2; }
         else if (arg == "--force") force = true;
+        else if (arg == "--continuous") continuous = true;
         else if (arg == "--go") go = true;
         else if (arg == "--help" || arg == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
@@ -129,7 +134,7 @@ int main(int argc, char** argv) {
         if (!chunks) return false;
         for (const auto& chunk : *chunks) {
             const auto request = altair::fyers_history::uri(
-                symbol, iv, chunk.from, chunk.to);
+                symbol, iv, chunk.from, chunk.to, continuous);
             if (!request) return false;
             std::printf("GET https://api-t1.fyers.in%s\n", request->c_str());
         }
@@ -158,9 +163,12 @@ int main(int argc, char** argv) {
         const auto chunks = altair::fyers_history::chunk_requests(iv, from, to);
         if (!chunks) return std::nullopt;
         std::vector<altair::RawCandle> all;
+        bool first_chunk = true;
         for (const auto& chunk : *chunks) {
+            if (!first_chunk) std::this_thread::sleep_for(std::chrono::milliseconds{350});
+            first_chunk = false;
             const auto request = altair::fyers_history::uri(
-                symbol, iv, chunk.from, chunk.to);
+                symbol, iv, chunk.from, chunk.to, continuous);
             if (!request) return std::nullopt;
             const auto response = altair::https_get_auth("api-t1.fyers.in", *request,
                 *authorization, "", std::chrono::seconds{30});

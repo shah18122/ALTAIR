@@ -117,6 +117,19 @@ The live socket implements FYERS' HSM protocol natively in C++.
 `feed/tests/test_fyers_hsm.cpp` checks it byte for byte against vectors
 produced by FYERS' official SDK.
 
+## Data audit
+
+`altair_data_audit` checks `dataset/` across timeframes (every coarser bar
+rebuilt from every finer one), against its other sources, and against FYERS
+and Kite candles, and writes `data/verified/data_audit.xlsx` (one sheet per
+instrument) plus one merged CSV per instrument per timeframe. On Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops\broker_audit.ps1
+```
+
+See [ops/data-audit.md](ops/data-audit.md) for the checks and the findings.
+
 ## CI
 
 | Workflow | Runs | What it proves |

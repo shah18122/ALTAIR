@@ -273,3 +273,21 @@ if(ALTAIR_BUILD_TESTS)
     # Runs threads: the TSan CI job runs exactly the `concurrency` label.
     set_tests_properties(dataset_merge PROPERTIES LABELS concurrency)
 endif()
+
+# Data audit: dataset/ checked across timeframes, against its other sources
+# (_superseded_*) and against broker candles (ops/broker_audit.ps1). Offline:
+# it reads files and writes data/verified/ (data_audit.xlsx + merged CSVs).
+add_executable(altair_data_audit data_audit_main.cpp)
+target_link_libraries(altair_data_audit PRIVATE altair_flags)
+target_include_directories(altair_data_audit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_data_audit_test tests/test_data_audit.cpp)
+    target_link_libraries(altair_data_audit_test PRIVATE altair_flags)
+    target_include_directories(altair_data_audit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME data_audit COMMAND altair_data_audit_test)
+    # The whole audit over the real dataset/ (label `dataset`: runs where the
+    # data is). Writes its report under the build tree, never into data/.
+    add_test(NAME data_audit_dataset COMMAND altair_data_audit
+        --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/data_audit_out --no-merged)
+    set_tests_properties(data_audit_dataset PROPERTIES LABELS dataset TIMEOUT 600)
+endif()
