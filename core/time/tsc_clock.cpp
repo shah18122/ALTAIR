@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 #if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
 #  define ALTAIR_X86 1
@@ -259,23 +260,49 @@ std::expected<TscClock, ClockError> TscClock::create() noexcept
     constexpr int kSamples = 5;
     constexpr std::uint64_t kWindowNs = 10'000'000ull;   // 10 ms
 
+    // EACH ENDPOINT IS BRACKETED. A steady read and a TSC read taken back to
+    // back can be split by the scheduler, and 1 ms of preemption is 10% of a
+    // 10 ms window: one skewed sample, a spread far past the 0.1% check
+    // below, and create() refusing the clock on any loaded box (seen as a
+    // tsc_clock failure under `ctest -j4`). So each endpoint is read
+    // steady-TSC-steady and re-read while the steady pair is more than
+    // kMaxBracketNs apart; the endpoint's steady time is the pair's midpoint.
+    // 2 us bounds the endpoint error to 0.02% of the window, and an
+    // uncontended bracket is ~100 ns, so a clean read is rarely retried.
+    constexpr std::uint64_t kMaxBracketNs = 2'000ull;
+    constexpr int kMaxEndpointTries = 1000;
+    struct Endpoint { std::uint64_t steady; std::uint64_t tsc; };
+    const auto endpoint = []() -> std::optional<Endpoint> {
+        for (int attempt = 0; attempt < kMaxEndpointTries; ++attempt) {
+            const std::uint64_t a = steady_ns();
+            const std::uint64_t t = cpu::read_tsc_ordered();
+            const std::uint64_t b = steady_ns();
+            if (b >= a && b - a <= kMaxBracketNs) return Endpoint{a + (b - a) / 2, t};
+        }
+        return std::nullopt;
+    };
+
     double ratio[kSamples] = {};
 
     for (int i = 0; i < kSamples; ++i) {
-        const std::uint64_t r0 = steady_ns();
-        const std::uint64_t t0 = cpu::read_tsc_ordered();
-
-        std::uint64_t r1 = r0;
-        while (r1 - r0 < kWindowNs) {
-            r1 = steady_ns();
+        const auto e0 = endpoint();
+        if (!e0) {
+            return std::unexpected(ClockError::CalibrationUnstable);
         }
-        const std::uint64_t t1 = cpu::read_tsc_ordered();
+        std::uint64_t r = e0->steady;
+        while (r - e0->steady < kWindowNs) {
+            r = steady_ns();
+        }
+        const auto e1 = endpoint();
+        if (!e1) {
+            return std::unexpected(ClockError::CalibrationUnstable);
+        }
 
-        const std::uint64_t dt = t1 - t0;
+        const std::uint64_t dt = e1->tsc - e0->tsc;
         if (dt == 0) {
             return std::unexpected(ClockError::CalibrationUnstable);
         }
-        ratio[i] = static_cast<double>(r1 - r0) / static_cast<double>(dt);
+        ratio[i] = static_cast<double>(e1->steady - e0->steady) / static_cast<double>(dt);
     }
 
     double mean = 0.0;

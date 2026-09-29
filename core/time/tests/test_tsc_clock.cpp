@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <thread>
@@ -181,23 +182,25 @@ void test_tsc_uncertainty_propagates()
     const auto& clk = clock_under_test();
 
     const Duration u1  = clk.uncertainty_of(duration::millis(1));
-    const Duration u10 = clk.uncertainty_of(duration::millis(10));
-
     check(to_nanos(u1) > 0, "uncertainty of 1 ms is never zero");
-    check(to_nanos(u10) > to_nanos(u1), "uncertainty grows with the span");
 
-    // Check the SCALING where the proportional term dominates. sigma(d) is
-    // |d|*rel + ns_per_tick, so at 1 ms the constant one-tick term and the
-    // integer rounding of a ~1 ns result are the same order as the signal:
-    // a tight calibration can put sigma(1ms) at 1.49 ns (rounding to 1) and
-    // sigma(10ms) at 10.67 (rounding to 11), and a "< 11x" bound then fails.
-    // That cost a 1-in-20 flake under CPU load. At 100 ms / 1000 ms the
-    // 0.47 ns floor is negligible and the ratio is meaningful.
-    const Duration u100  = clk.uncertainty_of(duration::millis(100));
-    const Duration u1000 = clk.uncertainty_of(duration::millis(1000));
-    check(to_nanos(u1000) < to_nanos(u100) * 11,
+    // Check GROWTH and SCALING where the proportional term dominates.
+    // sigma(d) is |d|*rel + ns_per_tick, rounded to whole ns. At fixed spans
+    // (1 ms / 10 ms, later 100 ms / 1000 ms) a tight calibration puts the
+    // proportional term below the rounding of a ~1 ns result and the checks
+    // flake: 1-in-20 under CPU load once, and again after calibration
+    // endpoints were bracketed (rel fell to ~2e-8). So the span is taken from
+    // the calibration: the one where |d|*rel is 100 ns. rel is floored at
+    // 1e-9 by create(), so the span is at most 100 s and 10x fits in int64.
+    const auto& cal = clk.calibration();
+    const double rel = cal.ns_per_tick_stderr / cal.ns_per_tick;
+    const std::int64_t base = std::llround(100.0 / rel);
+    const Duration ua = clk.uncertainty_of(Duration{base});
+    const Duration ub = clk.uncertainty_of(Duration{base * 10});
+    check(to_nanos(ub) > to_nanos(ua), "uncertainty grows with the span");
+    check(to_nanos(ub) < to_nanos(ua) * 11,
           "10x span gives at most ~11x error (measured where it is meaningful)");
-    check(to_nanos(u1000) > to_nanos(u100) * 9,
+    check(to_nanos(ub) > to_nanos(ua) * 9,
           "10x span gives at least ~9x error");
 
     check(clk.uncertainty_of(duration::millis(-5)) == clk.uncertainty_of(duration::millis(5)),
@@ -205,9 +208,9 @@ void test_tsc_uncertainty_propagates()
     check(clk.uncertainty_of(Duration{0}) > Duration{0},
           "even a zero span carries the one-tick floor");
 
-    std::printf("        sigma(1ms) = %lld ns, sigma(10ms) = %lld ns\n",
-                static_cast<long long>(to_nanos(u1)),
-                static_cast<long long>(to_nanos(u10)));
+    std::printf("        sigma(1ms) = %lld ns; sigma(%lld ns) = %lld ns, sigma(10x) = %lld ns\n",
+                static_cast<long long>(to_nanos(u1)), static_cast<long long>(base),
+                static_cast<long long>(to_nanos(ua)), static_cast<long long>(to_nanos(ub)));
 }
 
 void test_tsc_timestamp_anchor()
