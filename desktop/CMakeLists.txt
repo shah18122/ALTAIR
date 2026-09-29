@@ -928,6 +928,14 @@ if(ALTAIR_BUILD_TESTS)
     endif()
 endif()
 
+# macOS: the bundle is Altair.app, because app/ installs every helper into
+# Altair.app/Contents/Helpers and the desktop finds them at ../Helpers from
+# Contents/MacOS. Named after the target it came out as altair_desktop.app and
+# the helpers landed in a second, empty bundle (P1-04, first macOS CI run).
+if(APPLE)
+    set_target_properties(altair_desktop PROPERTIES OUTPUT_NAME "Altair")
+endif()
+
 set_target_properties(altair_desktop PROPERTIES
     WIN32_EXECUTABLE ON      # no console window behind the UI
     MACOSX_BUNDLE ON

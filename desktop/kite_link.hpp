@@ -105,6 +105,9 @@ namespace altair::ui {
 #endif
     QStringList tried;
     tried << QCoreApplication::applicationDirPath() + QStringLiteral("/") + exe;
+    // Altair.app/Contents/MacOS -> Contents/Helpers (packaged macOS)
+    tried << QCoreApplication::applicationDirPath()
+                 + QStringLiteral("/../Helpers/") + exe;
     // build/<preset>/desktop -> build/net/app
     tried << QCoreApplication::applicationDirPath()
                  + QStringLiteral("/../../net/app/") + exe;
@@ -374,6 +377,8 @@ private:
         QStringList tried;
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../app/") + exe;
+        tried << QCoreApplication::applicationDirPath()
+                     + QStringLiteral("/../Helpers/") + exe;
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../../net/app/") + exe;
 #ifdef ALTAIR_SOURCE_DIR

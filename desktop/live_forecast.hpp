@@ -137,6 +137,7 @@ struct FetchResult {
     const QString app = QCoreApplication::applicationDirPath();
     tried << app + QLatin1Char('/') + executable;
     tried << app + QStringLiteral("/../app/") + executable;
+    tried << app + QStringLiteral("/../Helpers/") + executable;
     tried << app + QStringLiteral("/../../net/app/") + executable;
 #ifdef ALTAIR_SOURCE_DIR
     tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + executable;

@@ -116,16 +116,20 @@ jobs:
             ls -la "$APP/Contents" "$APP/Contents/MacOS"
             echo "## Helpers"; ls -la "$APP/Contents/Helpers" || echo "NO HELPERS DIRECTORY"
             echo "## Qt frameworks"; ls "$APP/Contents/Frameworks" || echo "NO FRAMEWORKS"
-            echo "## Architecture"; file "$APP/Contents/MacOS/altair_desktop"
-            echo "## Linked libraries"; otool -L "$APP/Contents/MacOS/altair_desktop"
+            echo "## Architecture"; file "$APP/Contents/MacOS/Altair"
+            echo "## Linked libraries"; otool -L "$APP/Contents/MacOS/Altair"
           } 2>&1 | tee evidence/bundle.txt
+          # P1-04: the broker helpers must be inside the bundle the desktop runs from.
+          for h in altair_fyers_login altair_fyers_account altair_fyers_ticker altair_credential_helper; do
+            test -x "$APP/Contents/Helpers/$h" || { echo "MISSING helper: $h"; exit 1; }
+          done
 
       - name: Launch from outside the checkout (offscreen, 20 s)
         run: |
           cd "$RUNNER_TEMP"
           set +e
-          QT_QPA_PLATFORM=offscreen perl -e 'alarm 20; exec @ARGV' \
-            "$RUNNER_TEMP/stage/Altair.app/Contents/MacOS/altair_desktop" \
+          QT_QPA_PLATFORM=offscreen perl -e 'alarm 20; exec @ARGV or die "cannot exec: $!\n"' \
+            "$RUNNER_TEMP/stage/Altair.app/Contents/MacOS/Altair" \
             > "$GITHUB_WORKSPACE/evidence/launch.txt" 2>&1
           code=$?
           echo "exit code: $code (142 = still running after 20 s, i.e. launched and stayed up)" \
