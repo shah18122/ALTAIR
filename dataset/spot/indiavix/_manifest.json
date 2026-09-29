@@ -1,0 +1,268 @@
+{
+  "symbol": "indiavix",
+  "segment": "spot",
+  "source": "TradingView export",
+  "dropped_columns_reason": "Monte Carlo forecast overlay is forward-looking; divergence labels repaint; RSI is a black box that cannot carry a feature_version. See ingest_bars.py.",
+  "ingests": [
+    {
+      "at": "2026-08-31T14:34:56+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 15_a1626.csv",
+          "sha256_16": "cc411f462f5a8597",
+          "rows": 527,
+          "first": "2026-07-31T15:00:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:34:56+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1D_52c20.csv",
+          "sha256_16": "f0a40714d040a995",
+          "rows": 527,
+          "first": "2024-07-18",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:34:56+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1_3cb78.csv",
+          "sha256_16": "029d8afd90f7c1c4",
+          "rows": 1445,
+          "first": "2026-08-26T10:09:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:34:56+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 60_ab499.csv",
+          "sha256_16": "b5d5bfeb84fb41a8",
+          "rows": 527,
+          "first": "2026-05-14T14:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:35:54+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 15_a1626.csv",
+          "sha256_16": "cc411f462f5a8597",
+          "rows": 527,
+          "first": "2026-07-31T15:00:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:35:54+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1D_52c20.csv",
+          "sha256_16": "f0a40714d040a995",
+          "rows": 527,
+          "first": "2024-07-18",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:35:54+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1_3cb78.csv",
+          "sha256_16": "029d8afd90f7c1c4",
+          "rows": 1445,
+          "first": "2026-08-26T10:09:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:35:54+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 60_ab499.csv",
+          "sha256_16": "b5d5bfeb84fb41a8",
+          "rows": 527,
+          "first": "2026-05-14T14:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:36:08+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 15_a1626.csv",
+          "sha256_16": "cc411f462f5a8597",
+          "rows": 527,
+          "first": "2026-07-31T15:00:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:36:08+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1D_52c20.csv",
+          "sha256_16": "f0a40714d040a995",
+          "rows": 527,
+          "first": "2024-07-18",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:36:08+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1_3cb78.csv",
+          "sha256_16": "029d8afd90f7c1c4",
+          "rows": 1445,
+          "first": "2026-08-26T10:09:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:36:08+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 60_ab499.csv",
+          "sha256_16": "b5d5bfeb84fb41a8",
+          "rows": 527,
+          "first": "2026-05-14T14:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:19+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 15_a1626.csv",
+          "sha256_16": "cc411f462f5a8597",
+          "rows": 527,
+          "first": "2026-07-31T15:00:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:19+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1D_52c20.csv",
+          "sha256_16": "f0a40714d040a995",
+          "rows": 527,
+          "first": "2024-07-18",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:19+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1_3cb78.csv",
+          "sha256_16": "029d8afd90f7c1c4",
+          "rows": 1445,
+          "first": "2026-08-26T10:09:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:19+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 60_ab499.csv",
+          "sha256_16": "b5d5bfeb84fb41a8",
+          "rows": 527,
+          "first": "2026-05-14T14:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:24+00:00",
+      "timeframe": "15m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 15_a1626.csv",
+          "sha256_16": "cc411f462f5a8597",
+          "rows": 527,
+          "first": "2026-07-31T15:00:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:24+00:00",
+      "timeframe": "1d",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1D_52c20.csv",
+          "sha256_16": "f0a40714d040a995",
+          "rows": 527,
+          "first": "2024-07-18",
+          "last": "2026-08-31"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:24+00:00",
+      "timeframe": "1m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 1_3cb78.csv",
+          "sha256_16": "029d8afd90f7c1c4",
+          "rows": 1445,
+          "first": "2026-08-26T10:09:00+05:30",
+          "last": "2026-08-31T15:29:00+05:30"
+        }
+      ]
+    },
+    {
+      "at": "2026-08-31T14:38:24+00:00",
+      "timeframe": "60m",
+      "files": [
+        {
+          "file": "NSE_INDIAVIX, 60_ab499.csv",
+          "sha256_16": "b5d5bfeb84fb41a8",
+          "rows": 527,
+          "first": "2026-05-14T14:15:00+05:30",
+          "last": "2026-08-31T15:15:00+05:30"
+        }
+      ]
+    }
+  ]
+}
