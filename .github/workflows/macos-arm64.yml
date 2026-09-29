@@ -7,10 +7,10 @@
 # Results land in the job summary and in the "phase1-evidence-*" artifacts.
 name: macOS arm64 (Phase 1)
 
+# PARKED: manual runs only (Actions -> "macOS arm64 (Phase 1)" -> Run workflow)
+# until the remaining macOS compile errors are fixed. It then goes back on
+# push/pull_request.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:

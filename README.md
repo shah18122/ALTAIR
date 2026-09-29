@@ -113,7 +113,7 @@ produced by FYERS' official SDK.
 | Workflow | Runs | What it proves |
 |---|---|---|
 | [`ci.yml`](.github/workflows/ci.yml) | Push to `main`, every PR | Linux GCC 13 and Clang 18/libc++ build and test; Windows MSVC builds the engine and the Qt 6.8.3 desktop and runs the tests |
-| [`macos-arm64.yml`](.github/workflows/macos-arm64.yml) | Push to `main`, every PR | Phase 1 evidence on real Apple Silicon: native build and tests, Darwin memory and clock paths, `Altair.app` bundle and launch |
+| [`macos-arm64.yml`](.github/workflows/macos-arm64.yml) | Manual for now (Actions → Run workflow), parked until the macOS compile errors are fixed | Phase 1 evidence on real Apple Silicon: native build and tests, Darwin memory and clock paths, `Altair.app` bundle and launch |
 
 ## Engineering rules (short form)
 

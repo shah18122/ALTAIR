@@ -381,3 +381,10 @@ Models page (desktop/panels.hpp, models.overview)
     window no longer freezes during the 26-fold walk-forward.
   Verified: compiles against the Qt headers here. The full desktop build runs
   in CI (Windows MSVC + Qt 6.8.3, macOS + Qt 6.8.3).
+
+  CI follow-up (2026-09-29, later)
+  - broker/CMakeLists.txt: the net half (and so every app/ helper) now needs
+    OpenSSL AND Boost. It used to key on OpenSSL alone, which breaks machines
+    with OpenSSL but no Boost, such as GitHub's Windows image.
+  - macos-arm64.yml is parked: manual runs only until the remaining macOS
+    compile errors are fixed (P1 continues later).
