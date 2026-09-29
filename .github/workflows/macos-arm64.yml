@@ -50,7 +50,21 @@ jobs:
             -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" 2>&1 | tee evidence/configure.txt
 
       - name: Build
-        run: cmake --build --preset macos-arm64 -j 4 2>&1 | tail -200 | tee evidence/build-tail.txt
+        run: |
+          set +e
+          # -k 0: keep going, so one run reports every compile error at once.
+          cmake --build --preset macos-arm64 -j 4 -- -k 0 > evidence/build.txt 2>&1
+          rc=$?
+          tail -40 evidence/build.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::compiler errors"
+            grep -n -A6 -E ' error: |^FAILED: ' evidence/build.txt | head -200
+            echo "::endgroup::"
+            { echo "### Build errors"; echo '```'
+              grep -E ' error: ' evidence/build.txt | sed -E 's#^.*/ALTAIR/ALTAIR/##' | sort -u | head -60
+              echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
 
       - name: Test (full suite)
         run: |
@@ -105,7 +119,17 @@ jobs:
           mkdir -p evidence
           cmake --preset macos-arm64 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
             2>&1 | tee evidence/configure.txt
-          cmake --build --preset macos-arm64 -j 4 2>&1 | tail -200 | tee evidence/build-tail.txt
+          set +e
+          cmake --build --preset macos-arm64 -j 4 -- -k 0 > evidence/build.txt 2>&1
+          rc=$?
+          tail -40 evidence/build.txt
+          if [ "$rc" -ne 0 ]; then
+            { echo "### Build errors"; echo '```'
+              grep -E ' error: ' evidence/build.txt | sed -E 's#^.*/ALTAIR/ALTAIR/##' | sort -u | head -60
+              echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            grep -E ' error: ' evidence/build.txt | sort -u | head -60
+          fi
+          exit "$rc"
 
       - name: Stage outside the checkout
         run: |
