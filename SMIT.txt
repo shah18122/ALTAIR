@@ -170,6 +170,10 @@ P3-05 FYERS history audit            DONE    live 2026-09-28: 750 NIFTY 1m bars,
                                              588 overlapped, 4 close diffs,
                                              max 0.15 points
 P4-01..02 account-first Terminal     DONE
+P4-03..07 GETS/Greeksoft Terminal    DONE    NEW 2026-09-29: GETS workspace in the
+                                             Terminal (section 13). Positions/funds
+                                             now fed from FYERS (was never wired).
+                                             Live-account visual check still open.
 P5 Pair Trading selector             DONE    formulas deliberately not chosen
 P6-01..06 Atlas / models             DONE    85/85 numerical engines, 0 partial.
                                              NOT market-trained or validated.
@@ -212,7 +216,10 @@ Tests:
     Expect "Authentication done", "Subscribed", ticks > 0. If FYERS refuses
     the socket token, re-run altair_fyers_login (tokens are daily). --source
     changes the client name sent at auth if FYERS objects to it.
- 2. Build the desktop on Windows (Qt 6.8) and check the new theme on every
+ 2. On your PC: build.bat net, open Terminal -> Positions & Greeks, press
+    Refresh FYERS. Put the Kite master at data/instruments.csv so monthly
+    expiries and lot sizes resolve (section 13).
+ 2b. Build the desktop on Windows (Qt 6.8) and check the new theme on every
     page. All colours are tokens in desktop/theme.hpp.
  3. Put the FYERS ticker under the continuous supervisor / price service
     (today it is a bounded sample, like the Kite ticker).
@@ -453,3 +460,62 @@ CI (.github/workflows/ci.yml)
   manual (parked).
 Local results: GCC 167/167, Clang 18 + libc++ 164/164 (no tomlplusplus),
 ctest -LE 'dataset|experiment'.
+
+
+------------------------------------------------------------------------------
+13. GETS-STYLE TERMINAL -- 2026-09-29
+------------------------------------------------------------------------------
+Requirement 6 ("GETS/Greeksoft terminal", P4-04..P4-07). Before this, the
+Terminal had the P4-05 positions table and P4-06 funds strip, but nothing fed
+them in the running app (apply_account() had no caller; FYERS positions were
+never typed, and FYERS funds use fund_limit ids the parser did not read), and
+none of GETS' Greek, RMS or market screens existed. P4-04's column spec was
+written but never built.
+
+Terminal -> "Positions & Greeks" is now a tabbed GETS workspace:
+  Positions & Funds  the existing P4-05/06 tables, now fed a typed FYERS
+                     snapshot on every refresh, with instrument names.
+  Greek Watch        GETS Greek market watch: user IV (editable), days left,
+                     expiry, strike, type, units, theoretical, IV, LTP, trade
+                     price, MtoM, Delta/DVal, Gamma/GVal, Vega/VVal,
+                     Theta/TVal, spot, lot, time value, status. MAIN (compact)
+                     and Full profiles. Positions plus a persisted watch list.
+  Greek Summary      per underlying x expiry, then a total: MtoM, call/put IV,
+                     delta, gamma, vega, theta, delta-neutral lots, EQ posn.
+  Simulation         spot +-range in steps, IV shift, days forward: P&L now,
+                     P&L at expiry, Greeks, hedge lots (GETS GreekSimulation).
+  Expense & Margin   per instrument buy/sell qty, value, average, orders,
+                     charges (risk/cost.hpp + config/charges.toml), realised
+                     net; the account's fund limits.
+  Trade History      the FYERS trade book.
+  RMS                margin use vs warn/stop thresholds, open positions vs
+                     limit, MtoM vs loss limit, realised P&L, pending and
+                     rejected orders with the broker's reason.
+  Top Movers         gainers/losers, scrip based or index based, top N.
+  Index Info         LTP, change, OHLC, previous close, day-range position.
+
+Engine and data (all read-only, no order path):
+  instruments/fyers_symbol.hpp   FYERS ticker -> underlying, expiry, strike,
+                                 CE/PE; refuses ambiguous readings; monthly
+                                 tickers carry no day (master required).
+  risk/option_book.hpp           leg IV/Greeks (BS on spot), grouped summary,
+                                 scenario grid, per-order expenses.
+  broker/fyers_api.hpp           /api/v3/tradebook, /data/quotes target (50
+                                 symbols per request, percent-encoded).
+  app/fyers_account_main.cpp     also fetches the trade book.
+  app/fyers_quotes_main.cpp      NEW altair_fyers_quotes -> data/fyers_quotes.json.
+  config/market_watch.txt        indices + stocks for Top Movers / Index Info.
+  desktop/gets_data.hpp, gets_tables.hpp, gets_workspace.hpp; terminal.hpp.
+Tests: fyers_symbol, option_book, fyers_auth (quotes/tradebook),
+fyers_quotes_dry_run, desktop_gets (fixtures; also run under ASan/UBSan).
+
+Also fixed while validating: TSC calibration read each endpoint as an
+unbracketed steady/TSC pair, so preemption skewed a sample and create()
+refused the clock on a loaded box (tsc_clock failed once under ctest -j4).
+Endpoints are now bracketed and re-read; the uncertainty test measures
+growth at a span derived from the calibration. 60/60 passes under load.
+
+Known limits (stated on screen): snapshots, not ticks (Refresh or Auto 60 s);
+monthly expiries need data/instruments.csv; per-contract SPAN is not in
+FYERS' read-only API; brokerage assumed Rs 20/order (options flat, intraday
+and futures min(Rs 20, 0.03%), delivery 0); Kite account rows not wired.

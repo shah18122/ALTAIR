@@ -91,6 +91,14 @@ if(ALTAIR_HAVE_NET)
     target_compile_definitions(altair_fyers_ticker PRIVATE
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+    # GETS screens: READ-ONLY /data/quotes snapshot (spot, option LTPs,
+    # change and OHLC) for the Terminal's Greek, movers and index tabs.
+    add_executable(altair_fyers_quotes fyers_quotes_main.cpp)
+    target_link_libraries(altair_fyers_quotes PRIVATE
+        altair_broker_net altair_flags)
+    target_compile_definitions(altair_fyers_quotes PRIVATE
+        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
     add_executable(altair_fyers_history fyers_history_main.cpp)
     target_link_libraries(altair_fyers_history PRIVATE
         altair_broker_net altair_flags)
@@ -176,6 +184,7 @@ if(ALTAIR_HAVE_NET)
         altair_kite_login altair_fyers_login altair_kite_fetch
         altair_kite_account altair_fyers_account altair_kite_update altair_kite_ticker
         altair_kite_quote altair_fyers_history altair_fyers_webhook altair_fyers_ticker
+        altair_fyers_quotes
         RUNTIME DESTINATION "${_altair_helper_destination}")
     if(TARGET altair_price_service)
         install(TARGETS altair_price_service
@@ -187,6 +196,9 @@ if(ALTAIR_HAVE_NET)
         add_test(NAME fyers_account_dry_run COMMAND altair_fyers_account)
         add_test(NAME fyers_ticker_dry_run COMMAND altair_fyers_ticker
             --symbols NSE:SBIN-EQ,NSE:NIFTY50-INDEX --depth --seconds 5)
+        add_test(NAME fyers_quotes_dry_run COMMAND altair_fyers_quotes
+            --symbols-file ${CMAKE_SOURCE_DIR}/config/market_watch.txt
+            --symbols NSE:NIFTY26SEP25000CE)
         add_test(NAME kite_account_dry_run COMMAND altair_kite_account)
         add_test(NAME fyers_history_dry_run COMMAND altair_fyers_history
             --symbol NSE:SBIN-EQ --from 2026-09-01 --to 2026-09-02

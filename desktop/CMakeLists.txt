@@ -99,6 +99,9 @@ qt_add_executable(altair_desktop
     # generated for a different target and fails with unresolved vtable
     # symbols rather than anything that names the cause.
     terminal.hpp
+    gets_data.hpp
+    gets_tables.hpp
+    gets_workspace.hpp
     # P37-04. Q_OBJECT: it is a QObject with signals, so AUTOMOC must see it
     # in THIS target's list or the link fails on an unresolved vtable.
     price_client.hpp
@@ -813,6 +816,28 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_funds_summary COMMAND altair_funds_summary_test)
     if(WIN32)
         set_tests_properties(desktop_funds_summary PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
+    # GETS-style Terminal: FYERS account/quote decoding, the Greek book, every
+    # tab's rows and the typed snapshot the position table accepts. Fixtures
+    # only; no dataset, broker or network.
+    qt_add_executable(altair_gets_test
+        tests/test_gets.cpp
+        gets_data.hpp
+        gets_tables.hpp
+        gets_workspace.hpp
+        funds_summary.hpp
+        position_table.hpp)
+    target_link_libraries(altair_gets_test PRIVATE
+        altair_flags altair_types altair_time altair_instruments altair_analytics
+        altair_risk Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_gets_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_gets_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_gets COMMAND altair_gets_test)
+    if(WIN32)
+        set_tests_properties(desktop_gets PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 

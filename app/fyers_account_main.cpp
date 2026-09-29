@@ -108,8 +108,23 @@ json_string(std::string_view body, std::string_view key) {
     return out;
 }
 
+/// A section body is embedded verbatim only when it is a successful JSON
+/// object; anything else is written as null so the file always parses.
+[[nodiscard]] bool embeddable(const Fetched& item) {
+    std::string_view body{item.body};
+    while (!body.empty() && (body.front() == ' ' || body.front() == '\n'
+                             || body.front() == '\r' || body.front() == '\t'))
+        body.remove_prefix(1);
+    while (!body.empty() && (body.back() == ' ' || body.back() == '\n'
+                             || body.back() == '\r' || body.back() == '\t'))
+        body.remove_suffix(1);
+    return item.status == 200 && body.size() >= 2 && body.front() == '{'
+        && body.back() == '}' && altair::broker_view::snapshot_detail::success(body);
+}
+
 [[nodiscard]] bool write_snapshot(const std::string& path,
                                   const std::vector<Fetched>& fetched,
+                                  const Fetched& tradebook,
                                   std::time_t observed,
                                   const altair::broker_view::AccountSnapshot& snapshot) {
     using altair::broker_view::SnapshotSection;
@@ -155,9 +170,15 @@ json_string(std::string_view body, std::string_view key) {
             if (sections[i]->status == SnapshotSectionStatus::Present
                 && item.status == 200 && !item.body.empty()) out << item.body;
             else out << "null";
-            out << (i + 1 == fetched.size() ? "\n" : ",\n");
+            out << ",\n";
         }
-        out << "}\n";
+        // GETS trade history and expense report. Not part of the typed
+        // snapshot; a failed trade book leaves the account sections intact.
+        out << "  \"tradebook_status\": " << tradebook.status << ",\n"
+            << "  \"tradebook\": ";
+        if (embeddable(tradebook)) out << tradebook.body;
+        else out << "null";
+        out << "\n}\n";
         if (!out) return false;
     }
     std::filesystem::remove(destination, ec);
@@ -200,6 +221,9 @@ int main(int argc, char** argv) {
         fetched.push_back({endpoint.name, endpoint.path, 0, {}});
         std::printf("    GET https://api-t1.fyers.in%s\n", endpoint.path);
     }
+    Fetched tradebook{altair::fyers::kTradebookEndpoint.name,
+                      altair::fyers::kTradebookEndpoint.path, 0, {}};
+    std::printf("    GET https://api-t1.fyers.in%s\n", tradebook.path);
     if (!go) {
         std::printf("\n  DRY RUN. No request was sent and no file was written.\n");
         return 0;
@@ -231,6 +255,16 @@ int main(int argc, char** argv) {
         std::printf("    %-10s HTTP %u  %zu bytes\n",
                     item.name, item.status, item.body.size());
     }
+    if (const auto response = altair::https_get_auth(
+            "api-t1.fyers.in", tradebook.path, *authorization, "",
+            std::chrono::seconds{20})) {
+        tradebook.status = response->status;
+        tradebook.body = response->body;
+        std::printf("    %-10s HTTP %u  %zu bytes\n",
+                    tradebook.name, tradebook.status, tradebook.body.size());
+    } else {
+        std::printf("    %-10s TRANSPORT FAILED\n", tradebook.name);
+    }
 
     const std::time_t now = std::time(nullptr);
     const auto seconds = static_cast<std::int64_t>(now);
@@ -254,7 +288,7 @@ int main(int argc, char** argv) {
         std::printf("\n  FYERS responses did not form a valid typed account snapshot; not writing.\n");
         return 1;
     }
-    if (!write_snapshot(output, fetched, now, *typed)) {
+    if (!write_snapshot(output, fetched, tradebook, now, *typed)) {
         std::printf("\n  could not replace %s.\n", output.c_str());
         return 1;
     }

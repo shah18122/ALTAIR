@@ -39,6 +39,11 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_cost_test PRIVATE altair_risk altair_flags)
     add_test(NAME cost COMMAND altair_cost_test)
 
+    # GETS Greek screens: leg IV/Greeks, summary, what-if grid, expenses.
+    add_executable(altair_option_book_test tests/test_option_book.cpp)
+    target_link_libraries(altair_option_book_test PRIVATE altair_risk altair_flags)
+    add_test(NAME option_book COMMAND altair_option_book_test)
+
     add_executable(altair_slippage_test tests/test_slippage.cpp)
     target_link_libraries(altair_slippage_test PRIVATE altair_risk altair_flags)
     add_test(NAME slippage COMMAND altair_slippage_test)

@@ -99,11 +99,20 @@ Tests labelled `concurrency` are the threaded ones that CI runs under TSan.
 altair_fyers_login                     # browser OAuth -> data/fyers_session.json
 altair_fyers_account --go              # read-only account snapshot
 altair_fyers_history --symbol NSE:NIFTY50-INDEX --from 2026-09-01 --to 2026-09-26 --go
+altair_fyers_quotes --go --symbols-file config/market_watch.txt   # -> data/fyers_quotes.json
 altair_fyers_ticker --go --depth --seconds 60 \
     --symbols NSE:NIFTY50-INDEX,NSE:SBIN-EQ    # live stream -> data/fyers_ticks.json
 ```
 
-In the desktop, open **Live Feed**, choose **FYERS (primary)** and press **Listen**.
+In the desktop, open **Terminal → Positions & Greeks** and press **Refresh FYERS**
+for the GETS-style workspace: positions and funds, Greek market watch (IV and
+Greeks per contract, user IV override), portfolio Greek summary, what-if
+simulation, expense and margin, trade history, RMS, top movers and index
+information. It runs `altair_fyers_account` and `altair_fyers_quotes` (both
+read-only). Put the Kite instrument master at `data/instruments.csv` so monthly
+expiries and lot sizes resolve.
+
+For ticks, open **Live Feed**, choose **FYERS (primary)** and press **Listen**.
 The live socket implements FYERS' HSM protocol natively in C++.
 `feed/tests/test_fyers_hsm.cpp` checks it byte for byte against vectors
 produced by FYERS' official SDK.
