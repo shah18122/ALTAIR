@@ -168,73 +168,102 @@ call made before it moves.
 
 ## Results
 
-The sections below are from the 12-track run (daily and hourly, 24 models)
-that preceded the Atlas-wide sweep across all five timeframes.
+Run on the dataset pushed on 2026-09-29.
+- **Scope:** 21 tracks (NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d; NIFTY FUT daily; five "+ VIX fc" tracks) and 4.13 million forecast bars, about 134 million model decisions in all.
+- **Models:** 40 direction models and 14 band models per track.
+- **Run:** 36 minutes with 4 parallel jobs, with **zero look-ahead refusals** in both curricula.
+- **Tests:** 840 direction model-track tests, so both significance tests are Bonferroni-corrected by 840.
 
-Run on the dataset pushed 2026-09-29: 12 tracks (the 7 above, plus 5 index
-tracks with the VIX forecast as an input), 24 models each (18 forecasters,
-6 ensembles). 13 minutes on one core, **zero look-ahead refusals**, and
-identical numbers across repeated runs. 288 model-track tests, so both
-significance tests (against a coin, and against the best constant call)
-are Bonferroni-corrected by 288. Full tables: the Summary sheet.
+The full tables are in the Summary, Bands and Frontier sheets.
 
-| Track | Up-rate | Best single model | Beats a coin (corrected) | Beats the best constant call (corrected) |
-|---|---|---|---|---|
-| NIFTY daily | 53.5 % | Transformer 53.9 % [52.1, 55.8] | Transformer, Momentum, Consensus 75 % | **none** |
-| BANKNIFTY daily | 53.2 % | Always majority 53.0 % | none | none |
-| NIFTY FUT daily | 52.2 % | GRU 53.9 % [52.0, 55.8] | GRU, Consensus 75 % | none |
-| **INDIA VIX daily** | 46.5 % | **Random forest 60.9 % [59.1, 62.7]** | 10 models | **Random forest, Champion, Hedge, Stack, logistic** |
-| NIFTY hourly | 50.8 % | Random forest 51.5 % [50.7, 52.2] | random forest, kNN | none |
-| BANKNIFTY hourly | 50.5 % | Logistic 51.1 % | none | none |
-| INDIA VIX hourly | 43.8 % | "Always down" 56.2 % | 17 models | none (VIX falls on 56 % of hours) |
+### Direction: 80 % is not there
 
-1. **Index direction cannot be forecast from price and VIX alone**, daily
-   or hourly. The best daily accuracies (~53–54 %) are what calling UP every
-   day scores; hourly sits at 50–51.5 %. After the round-trip cost, net bp
-   per trade runs from about −10 to +5 and no single model is positive on
-   every index track.
-2. **INDIA VIX next-day direction can be forecast.** The random forest
-   scores 60.9 % over 2,839 out-of-sample days against 53.5 % for the best
-   constant call, and it improves, noisily, as the window doubles: 50 %
-   learning 24 days, 58 % on 96, 53 % on 192, 58 % on 384, 62 % on 768,
-   63 % on 1,536. Hedge learned to follow it (all of the weight by the last
-   stage). VIX mean-reverts around its 20-day level, and the tree models
-   find that. RF, logistic and kNN are also the only real price skill
-   against the random walk (+2.0, +0.9, +0.8 %).
-3. **Reliably wrong** (corrected): mean reversion on NIFTY daily (46 %, the
-   mirror of momentum's 53.7 %) and on VIX hourly (48 %); the SVM on VIX
-   hourly (44 %: it leans up on a series that mostly falls).
+The **Frontier** sheet ranks each model's calls by confidence. It then
+reports the largest top slice that is right at least 80 % of the time on at
+least 30 calls.
 
-### Merging models
+No such slice exists on any NIFTY, BANKNIFTY or NIFTY FUT track, at any
+timeframe, for any model.
 
-Three kinds of merge, all built only from finished stages:
+The only one anywhere is INDIA VIX 1m: Stack (confident 10 %), top 0.1 %, at
+81.6 % on 76 calls (Wilson low 71.4 %). It isn't a result, for four reasons:
+- It is one call every 37 trading days.
+- Its accuracy equals the share of up-moves on those same bars.
+- VIX cannot be traded.
+- It is the best of 5,823 slices tried.
 
-| Track | Best single | Stack | Stack (confident third) | Consensus 75 % |
-|---|---|---|---|---|
-| INDIA VIX daily | RF 60.9 % | 57.5 % | 59.5 % on 32 % of days | 60.3 % on 38 % |
-| NIFTY daily | 53.9 % | 51.4 % | 54.8 % on 33 % | **57.4 % on 27 %**, +7.1 bp/trade, t = 1.6 |
-| NIFTY FUT daily | 53.9 % | 52.5 % | 53.5 % on 12 % | **57.3 % on 34 %**, +3.9 bp/trade, t = 0.9 |
-| BANKNIFTY daily | 53.0 % | 53.1 % | 53.7 % on 29 % | 54.8 % on 32 % |
-| NIFTY / BANKNIFTY hourly | ~51 % | ~50 % | ~50.5–51 % | ~51 %; BANKNIFTY loses after cost (t = −3.9) |
+The best honest direction numbers, counting only slices of at least 100 calls:
 
-* **Stacking does not beat the best single model.** When most inputs are
-  coin-level, the meta-model spreads its weight over noise. On VIX it trails
-  the random forest by 3.5 points.
-* **Consensus is the one merge that lifts index accuracy.** When at least
-  three quarters of the learning models agree, NIFTY and NIFTY FUT daily are
-  right about 57 % of the time, on roughly a third of the days. But the
-  up-rate on those same days is 54–56 %. The models mostly agree on up-days
-  in up-trends, so the edge over "always up" on those days is only 1–3
-  points, and not significant after correction. The P&L after cost is
-  positive (NIFTY +7.1 bp a trade over 713 trades), with t = 1.6. That is
-  **promising, not proven**. It is a candidate for paper trading and for
-  re-testing on data after this run, not for live money.
-* **The VIX forecast as an input does not help the index models.** The
-  "+ VIX fc" tracks score within noise of the originals, e.g. NIFTY daily
-  Consensus 57.4 % both ways; NIFTY FUT daily Consensus 57.3 % → 54.2 %.
+| Track | Most confident 1 % of calls | Most confident 5 % | Best model that calls ≥ 90 % of bars |
+|---|---|---|---|
+| NIFTY 1m / 5m / 15m / hourly | 54.9 / 56.3 / 55.4 / 56.7 % | 54.6 / 54.5 / 55.3 / 56.0 % | 51.4–51.8 % |
+| BANKNIFTY 1m / 5m / 15m / hourly | 55.1 / 57.0 / 56.7 / 60.2 % | 55.8 / 55.8 / 55.3 / 53.3 % | 51.0–52.6 % |
+| NIFTY / BANKNIFTY / FUT daily | too few calls | 61.5 / 60.4 / 61.2 % (about 140 calls each) | 54.0 / 53.0 / 53.9 %; "always up" is 53.4 / 53.2 / 52.2 % |
+| INDIA VIX 1m / 5m / 15m / hourly / daily | 75.9 / 61.6 / 61.5 / 66.3 / — % | 72.5 / 62.4 / 60.1 / 60.6 / 71.7 % | 54.5–60.9 % (forecastable, not tradable) |
 
-What would improve it next:
-- broker-verified data: run `ops\broker_audit.ps1`, then repeat;
-- inputs beyond price: option-chain OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close;
-- a forward test of Consensus 75 % on NIFTY daily from October 2026, the data this run has never seen;
-- using the VIX forecast where it bites: timing option premium, not index direction.
+**What is statistically real is small.** On the index tracks, 90 model-track
+pairs beat both a coin and the best constant call after the 840-test
+correction. All of them are on 1m, 5m or 15m bars, at 50.3–54.9 %. None is on
+hourly or daily bars.
+
+The strongest is 1-minute mean reversion: on BANKNIFTY 1m the z-score band is
+right 53.7 % of the time over 82,871 calls. Traded, it loses 3.3 bp a trade
+after costs (47,601 trades, t = −115). It is the index's stale-price bounce,
+not an edge.
+
+### Range: 80 %, on every bar, at every timeframe
+
+The band models aim at 80 %, calibrated on their own past errors. On every
+intraday track they land at 79.3–82.0 %. On daily tracks they land at
+76.9–79.7 %; NIFTY FUT under-covers by 3 points. Ranked on the interval
+score, the winners beat the constant-width band by 11.5–16.3 % on every index
+track:
+
+| Track | Best band model | Hit rate | 80 % band (± from the last close) | Constant band | Score skill |
+|---|---|---|---|---|---|
+| NIFTY 1m | Seasonal (time of day) | 79.8 % | ±3.8 bp | ±3.9 bp, 80.7 % | +15.5 % |
+| NIFTY 5m | Seasonal | 79.8 % | ±8.7 bp | ±9.0 bp | +13.1 % |
+| NIFTY 15m | Seasonal | 79.6 % | ±14.7 bp | ±14.9 bp | +11.6 % |
+| NIFTY hourly | Seasonal | 79.7 % | ±27.8 bp | ±28.2 bp | +12.7 % |
+| NIFTY daily | GJR-GARCH | 79.2 % | ±106 bp | ±122 bp, 83.3 % | +12.8 % |
+| BANKNIFTY 1m / 5m / 15m / hourly | Seasonal | 79.3–79.8 % | ±5.5 / 12.0 / 20.0 / 36.9 bp | ±5.7 / 12.5 / 20.4 / 37.8 bp | +13.5–16.3 % |
+| BANKNIFTY daily | GJR-GARCH | 78.6 % | ±133 bp | ±159 bp | +15.5 % |
+| NIFTY FUT daily | GJR-GARCH | 76.9 % | ±101 bp | ±118 bp | +11.5 % |
+| INDIA VIX 1m / 5m / 15m | GBDT on \|r\| | 80.7–82.0 % | ±26 / 52 / 87 bp | | +7.1–8.5 % |
+| INDIA VIX hourly / daily | Vol ensemble | 81.1 / 79.7 % | ±146 / 545 bp | | +4.7 / 3.9 % |
+
+Intraday, the seasonal band's average width is within 0.4–4 % of the
+constant band's. It wins by putting the width where the risk is: wider at
+the open, narrower at midday. Its hit rate is 81.5–82.7 % in its wide half
+and 76.6–78.1 % in its narrow half.
+
+Daily, GJR-GARCH wins by following volatility clusters. Its band is
+13.6–16.7 % narrower on average than the constant band, and it still covers
+77–79 %.
+
+**The honest 80 % forecast** is the range, not the direction. For example,
+"the next 5-minute NIFTY close will be within ±8.7 bp of the last one" is
+right 79.8 % of the time on every bar, and the band widens and narrows with
+the time of day. That is what an option seller needs.
+
+### Merging models (this run)
+
+- **Filtered ensembles** (Stack's confident slices and the Consensus filters)
+  have the best accuracy on the calls they make on every track. They make few
+  calls, and none reaches 80 %.
+- **Consensus 75 % on the daily index tracks** is right 54–58 % of the time
+  on 21–27 % of days. That is never significant against the best constant
+  call on those days.
+- **Adding the VIX model's own forecast as an input** moves the daily
+  Consensus 75 % by up to 2 points:
+  - NIFTY: 55.9 → 58.0 %.
+  - BANKNIFTY: 55.5 → 56.3 %.
+  - FUT: 54.2 → 55.6 %.
+  - It lowers Vote, Hedge and Stack slightly.
+  - None of these moves is significant.
+
+### What would improve it next
+- **Broker-verified data:** run `ops\broker_audit.ps1`, then repeat the run.
+- **Inputs beyond price:** option-chain OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close.
+- **A forward test** of the daily Consensus 75 % filter from October 2026, on data this run has never seen.
+- **Use the bands where they bite:** strike selection and position sizing for option selling, where a calibrated 80 % range is directly the product.

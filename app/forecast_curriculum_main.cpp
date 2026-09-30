@@ -883,8 +883,9 @@ int main(int argc, char** argv) {
                  << "  n=" << s.all.scored() << "  up-rate " << fixed(pct(s.up_rate), 1) + "%";
             if (s.have_price) { text << "  skill vs RW " << fixed(100.0 * s.price.skill, 2, true) + "%"; }
             if (s.all.trades > 0) {
-                text << "  net " << fixed(s.all.net_bp / static_cast<double>(s.all.trades), 2, true) << " bp/trade (t "
-                     << fixed(s.all.net_t(), 1, true) << ")";
+                text << "  net " << fixed(s.all.net_bp / static_cast<double>(s.all.trades), 2, true) << " bp/trade on "
+                     << s.all.trades << (s.all.trades == 1 ? " trade" : " trades");
+                if (std::isfinite(s.all.net_t())) { text << " (t " << fixed(s.all.net_t(), 1, true) << ")"; }
             }
             text << "  -- " << verdict(s, tests) << "\n";
         }

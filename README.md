@@ -148,8 +148,9 @@ next-bar direction, and an 80 % range band (scored on how narrow it can be).
 build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
 ```
 
-Writes `data/verified/forecast_curriculum.xlsx` (summary, learning curve per
-track, data cleaning) and a per-forecast log. See
+Writes `data/verified/forecast_curriculum.xlsx` (direction summary, range
+bands, accuracy-vs-coverage frontier, learning curve per track, data
+cleaning) and a per-forecast log for the hourly and daily tracks. See
 [ops/forecast-curriculum.md](ops/forecast-curriculum.md) for the method and
 the results.
 

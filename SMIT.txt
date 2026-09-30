@@ -613,3 +613,36 @@ Results (12 tracks, 288 tests, 0 look-ahead refusals):
 Also in PR #4's last commit: CI runs a one-track real-data curriculum
 smoke test; the four-track daily run is `dataset;experiment` (it took
 ~1,700 s under the Debug ASan build, past ctest's 1,200 s limit).
+
+17. MODEL ATLAS SWEEP, ALL TIMEFRAMES, RANGE BANDS -- 2026-09-30
+------------------------------------------------------------------------------
+Owner's request: try every Model Atlas model on every timeframe, combining
+them as needed, for forecasts right at least 80% of the time, and often.
+Targets chosen: direction (with abstention) and 80% range bands.
+  models/curriculum.hpp   31 base direction models (added: ridge, tree, CNN
+                          with random kernels, autoencoder, VAR, Kalman, HMM,
+                          Hurst, SARIMA, DQN, tuned momentum, z-score, pairs)
+                          + 9 ensembles (Stack confident 10% / 2%,
+                          Consensus 90%); 16-byte stored calls; visible caps
+                          (SVM 1,500 rows, kNN 20,000, HMM 50,000)
+  models/band_curriculum.hpp  12 band models + 2 ensembles (constant,
+                          bootstrap, jump diffusion, historical, EWMA,
+                          GARCH, GJR, EGARCH, Heston, seasonal, GBDT/RF on
+                          |r|); split-conformal k; interval score
+  app/forecast_tracks.hpp build_intraday (1m/5m/15m on a full session grid)
+  app/forecast_curriculum_main.cpp  21 tracks, --jobs, --no-bands; Bands,
+                          Frontier and Atlas coverage sheets
+Results (21 tracks, 4.13M bars, 840 tests, 0 look-ahead refusals, 36 min):
+  - Direction: no NIFTY / BANKNIFTY / FUT slice reaches 80% on 30+ calls,
+    at any timeframe. The best index slices of 100+ calls are 55-61%. On
+    1m-15m, 90 pairs beat a coin and "always up" after correction, at
+    50.3-54.9%, and all lose after costs (BANKNIFTY 1m z-score: 53.7%,
+    -3.3 bp a trade, t = -115).
+  - The only 80% slice is INDIA VIX 1m top 0.1% (81.6% on 76 calls in 11
+    years). It is selected after the fact and cannot be traded.
+  - Range: calibrated 80% bands on every bar at every timeframe. Intraday
+    hit rates are 79.3-82.0%, daily 76.9-79.7%. The seasonal
+    (time-of-day) band wins intraday and GJR-GARCH wins daily, beating the
+    constant band's score by 11.5-16.3%. Example: NIFTY 5m within
+    +/-8.7 bp, right 79.8% of the time.
+  Details: ops/forecast-curriculum.md "Results".
