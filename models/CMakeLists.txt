@@ -60,6 +60,11 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_named_factors_test PRIVATE altair_models altair_flags)
     add_test(NAME models_named_factors COMMAND altair_named_factors_test)
 
+    # The forecast curriculum: doubling windows, right/wrong record, ensembles.
+    add_executable(altair_curriculum_test tests/test_curriculum.cpp)
+    target_link_libraries(altair_curriculum_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_curriculum COMMAND altair_curriculum_test)
+
     add_executable(altair_stream_forecast_test tests/test_stream_forecast.cpp)
     target_link_libraries(altair_stream_forecast_test PRIVATE altair_models altair_flags)
     add_test(NAME models_stream_forecast COMMAND altair_stream_forecast_test)

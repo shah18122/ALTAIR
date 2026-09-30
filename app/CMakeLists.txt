@@ -291,3 +291,21 @@ if(ALTAIR_BUILD_TESTS)
         --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/data_audit_out --no-merged)
     set_tests_properties(data_audit_dataset PROPERTIES LABELS dataset TIMEOUT 600)
 endif()
+
+# The forecast curriculum: every forecaster in models/ learns 3 days, forecasts,
+# keeps score, refits on 6, 12, 24 ... days. Offline: reads dataset/, writes
+# data/verified/forecast_curriculum.xlsx and per-forecast logs.
+add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
+target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
+target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_forecast_tracks_test tests/test_forecast_tracks.cpp)
+    target_link_libraries(altair_forecast_tracks_test PRIVATE altair_models altair_flags)
+    target_include_directories(altair_forecast_tracks_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME forecast_tracks COMMAND altair_forecast_tracks_test)
+    # The whole curriculum on the real dataset/, daily tracks only (the hourly
+    # ones take minutes). Writes under the build tree, never into data/.
+    add_test(NAME forecast_curriculum_dataset COMMAND altair_forecast_curriculum
+        --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/forecast_out --only daily --no-log)
+    set_tests_properties(forecast_curriculum_dataset PROPERTIES LABELS dataset TIMEOUT 1200)
+endif()
