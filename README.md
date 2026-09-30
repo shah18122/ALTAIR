@@ -132,20 +132,26 @@ See [ops/data-audit.md](ops/data-audit.md) for the checks and the findings.
 
 ## Forecast curriculum
 
-`altair_forecast_curriculum` trains every forecaster in `models/` (baselines,
-logistic, SVM, kNN, random forest, gradient boosting, MLP, LSTM, GRU,
-transformer, AR/ARMA, Ornstein–Uhlenbeck, Markov, k-means regimes and three
-track-record ensembles) on a doubling schedule: learn 3 days, forecast the
+`altair_forecast_curriculum` trains every Model Atlas forecaster that can
+make a next-bar call: 33 direction models, from the baselines through ridge,
+trees, SVM and kNN, the neural nets (MLP, LSTM, GRU, Transformer and CNN, all
+trained by backpropagation), DQN, PPO and actor-critic,
+AR/ARMA/SARIMA/VAR, Kalman and HMM, plus 12 volatility-band models (GARCH,
+GJR, EGARCH, EWMA, Heston, seasonal, jump diffusion …), with ensembles and
+confidence filters, on a doubling schedule: learn 3 days, forecast the
 next 3, record every call right or wrong, refit on 6, 12, 24 … days. Tracks:
-NIFTY, BANKNIFTY, NIFTY futures and INDIA VIX next-day direction, and NIFTY,
-BANKNIFTY and INDIA VIX next-hour direction, with INDIA VIX as a feature.
+NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d, plus NIFTY futures
+daily, with INDIA VIX as a feature. The daily and hourly index tracks run
+again with the VIX model's own forecast as an input. Two targets per track:
+next-bar direction, and an 80 % range band (scored on how narrow it can be).
 
 ```powershell
 build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
 ```
 
-Writes `data/verified/forecast_curriculum.xlsx` (summary, learning curve per
-track, data cleaning) and a per-forecast log. See
+Writes `data/verified/forecast_curriculum.xlsx` (direction summary, range
+bands, accuracy-vs-coverage frontier, learning curve per track, data
+cleaning) and a per-forecast log for the hourly and daily tracks. See
 [ops/forecast-curriculum.md](ops/forecast-curriculum.md) for the method and
 the results.
 

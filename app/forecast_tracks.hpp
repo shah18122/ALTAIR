@@ -42,6 +42,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -71,6 +72,8 @@ struct TrackInfo {
     std::size_t short_days{};       ///< hourly: days without the full grid, not forecast
     std::size_t before_vix{};       ///< bars before INDIA VIX begins, not used
     std::size_t no_vix{};           ///< rows dropped: no VIX bar at the same time
+    std::size_t no_vix_forecast{};  ///< rows dropped: no VIX forecast known at the decision
+    std::size_t no_pair{};          ///< rows dropped: no paired-instrument price at the same time
     std::size_t no_spot{};          ///< futures rows dropped: no spot close for the basis
     std::size_t roll_excluded{};    ///< futures outcomes that cross an expiry
     std::size_t expiries{};
@@ -171,8 +174,11 @@ inline std::map<std::int64_t, std::size_t> index_by_day(const std::vector<da::Au
 }
 
 inline void push_row(CurriculumTrack& tr, const std::vector<double>& f, std::int64_t t, std::int64_t t_out,
-                     std::int32_t day, double anchor, double actual, double cost) {
+                     std::int32_t day, double anchor, double actual, double cost, std::uint16_t slot,
+                     double pair) {
     tr.x.insert(tr.x.end(), f.begin(), f.end());
+    tr.slot.push_back(slot);
+    if (std::isfinite(pair)) { tr.pair.push_back(pair); }
     tr.t.push_back(t);
     tr.t_out.push_back(t_out);
     tr.day.push_back(day);
@@ -191,7 +197,32 @@ inline void finish_info(const CurriculumTrack& tr, TrackInfo& info) {
     }
 }
 
+/// A second instrument's closes by key (a date for daily bars, the stamp
+/// intraday), for the pairs model. NaN where it has no bar.
+struct PairLookup {
+    std::vector<std::int64_t> key;
+    std::vector<double> close;
+    PairLookup() = default;
+    PairLookup(const std::vector<da::AuditBar>* bars, bool daily) {
+        if (bars == nullptr) { return; }
+        for (const auto& b : *bars) {
+            key.push_back(daily ? bar_day(b) : b.t);
+            close.push_back(b.c);
+        }
+    }
+    [[nodiscard]] bool empty() const noexcept { return key.empty(); }
+    [[nodiscard]] double at(std::int64_t k) const noexcept {
+        const auto it = std::lower_bound(key.begin(), key.end(), k);
+        return it != key.end() && *it == k ? close[static_cast<std::size_t>(it - key.begin())]
+                                           : std::numeric_limits<double>::quiet_NaN();
+    }
+};
+
 } // namespace detail
+
+/// The VIX model's out-of-sample P(VIX up tomorrow), keyed by the day whose
+/// close it was made at. Produced by a curriculum run on the VIX daily track.
+using VixForecast = std::map<std::int64_t, double>;
 
 /// What a daily track is built from. Bars are cleaned and daily (t = date).
 struct DailyInputs {
@@ -201,6 +232,11 @@ struct DailyInputs {
     const std::vector<da::AuditBar>* spot = nullptr;   ///< NIFTY spot, for a futures track
     bool tradable = true;
     double other_cost_bp = 1.3;
+    /// When set, one more feature: the VIX forecast made at this day's close.
+    const VixForecast* vix_forecast = nullptr;
+    /// When set, the paired instrument's close rides along for the pairs model.
+    const std::vector<da::AuditBar>* pair = nullptr;
+    std::string pair_name{};
 };
 
 /// Next-day direction. Features at the close of day i; outcome: day i+1's close.
@@ -223,8 +259,12 @@ struct DailyInputs {
         tr.feature_names.insert(tr.feature_names.end(), {"VIX", "VIX change", "VIX vs 20d"});
     }
     if (futures) { tr.feature_names.insert(tr.feature_names.end(), {"basis", "basis change"}); }
+    if (in.vix_forecast != nullptr) { tr.feature_names.emplace_back("VIX forecast P(up)"); }
     tr.p = tr.feature_names.size();
     tr.seq_cols = {0, 6, 8, is_vix ? std::size_t{7} : std::size_t{11}};
+    tr.season = 1;
+    const detail::PairLookup pair(in.pair, true);
+    tr.pair_name = in.pair_name;
 
     const auto fday = detail::index_by_day(f);
     const auto vday = is_vix ? std::map<std::int64_t, std::size_t>{} : detail::index_by_day(*in.vix);
@@ -297,9 +337,18 @@ struct DailyInputs {
             row[c++] = expiry.contains(bar_day(own[i - 1]))
                            ? 0.0 : basis - std::log(own[i - 1].c / f[prev->second].c);
         }
+        if (in.vix_forecast != nullptr) {
+            // Made at this close, from data up to it: known at the decision.
+            const auto fc = in.vix_forecast->find(d);
+            if (fc == in.vix_forecast->end()) { ++info.no_vix_forecast; continue; }
+            row[c++] = fc->second;
+        }
+        const double pv = pair.empty() ? std::numeric_limits<double>::quiet_NaN() : pair.at(d);
+        if (!pair.empty() && !std::isfinite(pv)) { ++info.no_pair; continue; }
         const std::int64_t next = bar_day(own[i + 1]);
         detail::push_row(tr, row, d * kDaySec + kCloseSec, next * kDaySec + kCloseSec, ++day_ordinal,
-                         own[i].c, own[i + 1].c, futures_cost_bp(d, in.other_cost_bp));
+                         own[i].c, own[i + 1].c, futures_cost_bp(d, in.other_cost_bp),
+                         static_cast<std::uint16_t>(da::audit_weekday(d)), pv);
     }
     detail::finish_info(tr, info);
     return tr;
@@ -319,6 +368,11 @@ struct HourlyInputs {
     const std::vector<da::AuditBar>* vix = nullptr;   ///< INDIA VIX 60m; null for VIX itself
     bool tradable = true;
     double other_cost_bp = 1.3;
+    /// When set, one more feature: the VIX forecast made at the previous close.
+    const VixForecast* vix_forecast = nullptr;
+    /// When set, the paired instrument's close rides along for the pairs model.
+    const std::vector<da::AuditBar>* pair = nullptr;
+    std::string pair_name{};
 };
 
 /// Next-hour direction. A decision at the close of each of a full day's
@@ -339,8 +393,12 @@ struct HourlyInputs {
     } else {
         tr.feature_names.insert(tr.feature_names.end(), {"VIX", "VIX ret bar", "VIX since prev close"});
     }
+    if (in.vix_forecast != nullptr) { tr.feature_names.emplace_back("VIX forecast P(up)"); }
     tr.p = tr.feature_names.size();
     tr.seq_cols = {0, 4, 5, is_vix ? std::size_t{3} : std::size_t{10}};
+    tr.season = 6;
+    const detail::PairLookup pair(in.pair, false);
+    tr.pair_name = in.pair_name;
 
     const auto& bars = *in.own;
     // Days, in order: [begin, end) into bars.
@@ -385,6 +443,16 @@ struct HourlyInputs {
         double ph = 0.0, pl = std::numeric_limits<double>::infinity();
         for (std::size_t k = p1.b; k < p1.e; ++k) { ph = std::max(ph, bars[k].h); pl = std::min(pl, bars[k].l); }
         const double open = bars[s.b].o;
+        // The VIX forecast known during this day: the one made at the last
+        // close before it, if that close was within a week.
+        double vix_fc = std::numeric_limits<double>::quiet_NaN();
+        if (in.vix_forecast != nullptr) {
+            auto it = in.vix_forecast->lower_bound(s.day);
+            if (it != in.vix_forecast->begin()) {
+                --it;
+                if (s.day - it->first <= 7) { vix_fc = it->second; }
+            }
+        }
         const auto vix_prev_close = is_vix ? vix_close.end() : vix_close.find(p1.day);
         bool counted_day = false;
         for (std::size_t j = 0; j < 6; ++j) {
@@ -418,11 +486,149 @@ struct HourlyInputs {
                 row[c++] = std::log(v->second / vprev);
                 row[c++] = std::log(v->second / vix_prev_close->second);
             }
+            if (in.vix_forecast != nullptr) {
+                if (!std::isfinite(vix_fc)) { ++info.no_vix_forecast; continue; }
+                row[c++] = vix_fc;
+            }
+            const double pv = pair.empty() ? std::numeric_limits<double>::quiet_NaN() : pair.at(b.t);
+            if (!pair.empty() && !std::isfinite(pv)) { ++info.no_pair; continue; }
             if (!counted_day) { ++day_ordinal; counted_day = true; }
             const std::int64_t close_j = hourly_close(b.t);
             const std::int64_t close_next = hourly_close(bars[s.b + j + 1].t);
             detail::push_row(tr, row, close_j, close_next, day_ordinal, b.c, bars[s.b + j + 1].c,
-                             futures_cost_bp(s.day, in.other_cost_bp));
+                             futures_cost_bp(s.day, in.other_cost_bp), static_cast<std::uint16_t>(j), pv);
+        }
+    }
+    detail::finish_info(tr, info);
+    return tr;
+}
+
+/// What a 1-, 5- or 15-minute track is built from. Bars are cleaned.
+struct IntradayInputs {
+    std::string name, instrument;
+    int tf = 5;                                      ///< minutes: 1, 5 or 15
+    const std::vector<da::AuditBar>* own = nullptr;
+    const std::vector<da::AuditBar>* vix = nullptr;   ///< INDIA VIX at the same timeframe; null for VIX itself
+    bool tradable = true;
+    double other_cost_bp = 1.3;
+    const std::vector<da::AuditBar>* pair = nullptr;  ///< the paired instrument at the same timeframe
+    std::string pair_name{};
+};
+
+/// Next-bar direction at 1, 5 or 15 minutes: a decision at the close of every
+/// bar of a full session but the last; outcome, the next bar's close. The same
+/// rules as the hourly track -- full 09:15-15:30 grids only, VIX at the same
+/// stamp, nothing across the night.
+[[nodiscard]] inline CurriculumTrack build_intraday(const IntradayInputs& in, TrackInfo& info) {
+    CurriculumTrack tr;
+    tr.name = in.name;
+    tr.instrument = in.instrument;
+    tr.horizon = "next " + std::to_string(in.tf) + "-minute bar";
+    tr.tradable = in.tradable;
+    const bool is_vix = in.vix == nullptr;
+    const std::int64_t tf = in.tf;
+    const std::size_t per_day = static_cast<std::size_t>((375 + tf - 1) / tf);   // 09:15 to 15:30
+    const std::size_t hour = static_cast<std::size_t>(60 / tf > 0 ? 60 / tf : 1);
+    tr.feature_names = {"ret bar", "ret prev bar", "ret last hour", "ret since open", "gap", "range",
+                        "close in range", "time of day", "prev day ret", "vol last hour"};
+    if (is_vix) {
+        tr.feature_names.insert(tr.feature_names.end(), {"log level", "ret since prev close"});
+    } else {
+        tr.feature_names.insert(tr.feature_names.end(), {"VIX", "VIX ret bar", "VIX since prev close"});
+    }
+    tr.p = tr.feature_names.size();
+    tr.seq_cols = {0, 5, 6, is_vix ? std::size_t{4} : std::size_t{11}};
+    tr.season = per_day - 1;
+    const detail::PairLookup pair(in.pair, false);
+    tr.pair_name = in.pair_name;
+
+    const auto& bars = *in.own;
+    struct DaySpan { std::int64_t day; std::size_t b, e; };
+    std::vector<DaySpan> days;
+    for (std::size_t i = 0; i < bars.size(); ++i) {
+        const std::int64_t d = bar_day(bars[i]);
+        if (days.empty() || days.back().day != d) { days.push_back({d, i, i}); }
+        days.back().e = i + 1;
+    }
+    const auto full = [&](const DaySpan& sp) {
+        if (sp.e - sp.b != per_day) { return false; }
+        for (std::size_t k = 0; k < per_day; ++k) {
+            if (da::audit_minute_of_day(bars[sp.b + k].t) != 555 + tf * static_cast<std::int64_t>(k)) { return false; }
+        }
+        return true;
+    };
+    const auto bar_close = [tf](std::int64_t stamp) {
+        const std::int64_t close = da::audit_day(stamp) * kDaySec + kCloseSec;
+        return stamp + tf * 60 > close ? close : stamp + tf * 60;   // RULE 11: proven -- only the last bar runs past 15:30
+    };
+    const detail::PairLookup vix(in.vix, false);
+    std::vector<std::int64_t> vix_days;
+    std::vector<double> vix_last;
+    if (!is_vix) {
+        for (const auto& b : *in.vix) {
+            const std::int64_t d = bar_day(b);
+            if (vix_days.empty() || vix_days.back() != d) { vix_days.push_back(d); vix_last.push_back(b.c); }
+            else { vix_last.back() = b.c; }
+        }
+    }
+    const auto vix_close_before = [&](std::int64_t day) {
+        const auto it = std::lower_bound(vix_days.begin(), vix_days.end(), day);
+        if (it == vix_days.begin()) { return std::numeric_limits<double>::quiet_NaN(); }
+        const auto k = static_cast<std::size_t>(it - vix_days.begin()) - 1;
+        return day - vix_days[k] <= 7 ? vix_last[k] : std::numeric_limits<double>::quiet_NaN();
+    };
+
+    std::int32_t day_ordinal = -1;
+    std::vector<double> row(tr.p);
+    std::vector<double> rets(per_day);
+    for (std::size_t q = 0; q < days.size(); ++q) {
+        const DaySpan& sp = days[q];
+        if (!full(sp)) { ++info.short_days; continue; }
+        if (q < 2) { info.warmup += sp.e - sp.b; continue; }
+        const DaySpan& p1 = days[q - 1];
+        const DaySpan& p2 = days[q - 2];
+        if (p1.e < 2) { info.warmup += sp.e - sp.b; continue; }
+        const double pc = bars[p1.e - 1].c, ppc = bars[p2.e - 1].c;
+        const double open = bars[sp.b].o;
+        const double vix_pc = is_vix ? pc : vix_close_before(sp.day);
+        bool counted_day = false;
+        for (std::size_t k = 0; k + 1 < per_day; ++k) {
+            const da::AuditBar& b = bars[sp.b + k];
+            const double prev_c = k > 0 ? bars[sp.b + k - 1].c : pc;
+            const double prev2_c = k > 1 ? bars[sp.b + k - 2].c : (k == 1 ? pc : bars[p1.e - 2].c);
+            rets[k] = std::log(b.c / prev_c);
+            const std::size_t back = k + 1 < hour ? k + 1 : hour;
+            const double hour_ago = k + 1 > hour ? bars[sp.b + k - hour].c : pc;
+            double ss = 0.0;
+            for (std::size_t m = k + 1 - back; m <= k; ++m) { ss += rets[m] * rets[m]; }
+            std::size_t c = 0;
+            row[c++] = rets[k];
+            row[c++] = std::log(prev_c / prev2_c);
+            row[c++] = std::log(b.c / hour_ago);
+            row[c++] = std::log(b.c / open);
+            row[c++] = std::log(open / pc);
+            row[c++] = std::log(b.h / b.l);
+            row[c++] = detail::clv(b);
+            row[c++] = static_cast<double>(k) / static_cast<double>(per_day);
+            row[c++] = std::log(pc / ppc);
+            row[c++] = std::sqrt(ss / static_cast<double>(back));
+            if (is_vix) {
+                row[c++] = std::log(b.c);
+                row[c++] = std::log(b.c / pc);
+            } else {
+                const double v = vix.at(b.t);
+                const double vp = k > 0 ? vix.at(bars[sp.b + k - 1].t) : vix_pc;
+                if (!(v > 0.0) || !(vp > 0.0) || !(vix_pc > 0.0)) { ++info.no_vix; continue; }
+                row[c++] = std::log(v);
+                row[c++] = std::log(v / vp);
+                row[c++] = std::log(v / vix_pc);
+            }
+            const double pv = pair.empty() ? std::numeric_limits<double>::quiet_NaN() : pair.at(b.t);
+            if (!pair.empty() && !std::isfinite(pv)) { ++info.no_pair; continue; }
+            if (!counted_day) { ++day_ordinal; counted_day = true; }
+            detail::push_row(tr, row, bar_close(b.t), bar_close(bars[sp.b + k + 1].t), day_ordinal, b.c,
+                             bars[sp.b + k + 1].c, futures_cost_bp(sp.day, in.other_cost_bp),
+                             static_cast<std::uint16_t>(k), pv);
         }
     }
     detail::finish_info(tr, info);

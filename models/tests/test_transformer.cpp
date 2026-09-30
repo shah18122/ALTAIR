@@ -2,7 +2,9 @@
 
 #include <models/transformer.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 
 namespace {
@@ -10,6 +12,31 @@ int failures = 0;
 void check(bool ok, const char* text) {
     if (ok) std::printf("  ok  : %s\n", text);
     else { ++failures; std::printf("  FAIL: %s\n", text); }
+}
+
+/// Backpropagation against the central finite difference of the same loss,
+/// on every parameter, at a random point and for a sequence shorter than MaxT.
+template <class Net>
+double worst_gradient_error(std::uint64_t seed, std::size_t steps) {
+    double sequence[64 * 64];   // steps x D, both at most 64
+    std::uint64_t s = seed;
+    for (double& v : sequence) {
+        s = s * 6364136223846793005ull + 1442695040888963407ull;
+        v = static_cast<double>(s >> 11) * (2.0 / 9007199254740992.0) - 1.0;
+    }
+    Net net; net.reset(seed);
+    for (std::size_t i = 0; i < Net::kParams; ++i) {   // off the init point: LN gains and biases non-trivial
+        s = s * 6364136223846793005ull + 1442695040888963407ull;
+        net.mutable_params()[i] += 0.1 * (static_cast<double>(s >> 11) * (2.0 / 9007199254740992.0) - 1.0);
+    }
+    static double numeric[Net::kParams], analytic[Net::kParams];
+    const double l1 = net.compute_gradients(sequence, steps, 0.3, numeric);
+    const double l2 = net.analytic_gradients(sequence, steps, 0.3, analytic);
+    double worst = std::fabs(l1 - l2);
+    for (std::size_t i = 0; i < Net::kParams; ++i) {
+        worst = std::max(worst, std::fabs(numeric[i] - analytic[i]) / (1e-4 + std::fabs(numeric[i])));
+    }
+    return worst;
 }
 }
 
@@ -45,6 +72,14 @@ int main() {
 
     check(Net::kParams > 4 * 4 * 4 && Net::param_count() == Net::kParams,
           "checkpoint includes Q/K/V/output, feed-forward, norms and readout");
+
+    const double e1 = worst_gradient_error<Net>(11, 4);
+    const double e2 = worst_gradient_error<altair::CausalTransformer<4, 2, 8, 1, 8>>(12, 8);
+    const double e3 = worst_gradient_error<altair::CausalTransformer<4, 2, 8, 1, 8>>(13, 5);
+    const double e4 = worst_gradient_error<altair::CausalTransformer<6, 3, 7, 3, 6>>(14, 6);
+    std::printf("        worst relative gradient error: %.2e %.2e %.2e %.2e\n", e1, e2, e3, e4);
+    check(e1 < 1e-5 && e2 < 1e-5 && e3 < 1e-5 && e4 < 1e-5,
+          "backpropagation matches the finite-difference gradient on every parameter");
 
     std::printf("\n%s\n", failures == 0 ? "PASS" : "FAILED");
     return failures == 0 ? 0 : 1;
