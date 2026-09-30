@@ -69,7 +69,7 @@ void test_daily() {
     auto vix = weekdays(start, 60, 15.0, 0.01);
     vix.erase(vix.begin() + 40);   // one day without VIX
     ft::TrackInfo info;
-    const auto tr = ft::build_daily({"T daily", "T", &own, &vix, nullptr, true, 1.3}, info);
+    const auto tr = ft::build_daily({"T daily", "T", &own, &vix, nullptr, true, 1.3, nullptr}, info);
     check(altair::curriculum_check_track(tr).has_value(), "the daily track passes the curriculum's checks");
     // 60 bars: the last has no next day, 20 are warm-up, one lacks VIX, and
     // the day after the gap has VIX but only 19 VIX bars behind it... still >= 20.
@@ -98,7 +98,7 @@ void test_futures_roll() {
     }
     const auto vix = weekdays(start, 90, 15.0, 0.0);
     ft::TrackInfo info;
-    const auto tr = ft::build_daily({"F daily", "F", &fut, &vix, &spot, true, 1.3}, info);
+    const auto tr = ft::build_daily({"F daily", "F", &fut, &vix, &spot, true, 1.3, nullptr}, info);
     check(altair::curriculum_check_track(tr).has_value(), "the futures track passes the curriculum's checks");
     // June's expiry falls in the 20-day warm-up; July, August and September are rolls.
     check(info.roll_excluded == 3 && info.expiries == 4,
@@ -133,7 +133,7 @@ void test_hourly() {
         }
     }
     ft::TrackInfo info;
-    const auto tr = ft::build_hourly({"T hourly", "T", &own, &vix, true, 1.3}, info);
+    const auto tr = ft::build_hourly({"T hourly", "T", &own, &vix, true, 1.3, nullptr}, info);
     check(altair::curriculum_check_track(tr).has_value(), "the hourly track passes the curriculum's checks");
     check(info.short_days == 1 && info.warmup == 14, "a short session is excluded; two days are history only");
     // Wednesday: 6 decisions. Friday: 6, less the 11:15 VIX gap (its bar and the next need it).
@@ -160,11 +160,43 @@ void test_after_one_bar_session() {
         }
     }
     ft::TrackInfo info;
-    const auto tr = ft::build_hourly({"M hourly", "M", &own, &vix, true, 1.3}, info);
+    const auto tr = ft::build_hourly({"M hourly", "M", &own, &vix, true, 1.3, nullptr}, info);
     check(tr.rows() == 12 && info.short_days == 1 && info.warmup == 7,
           "the day after a one-bar session is still forecast");
     check(std::fabs(tr.x[1] - std::log(own[7].c / own[6].c)) < 1e-12,
           "its previous-bar return is the one-bar session against the bar before it");
+}
+
+void test_vix_forecast_feature() {
+    const std::int64_t start = da::audit_days_from_civil(2025, 1, 1);
+    const auto own = weekdays(start, 40, 100.0, 0.3);
+    const auto vix = weekdays(start, 40, 15.0, 0.01);
+    ft::VixForecast fc;
+    for (std::size_t k = 22; k < own.size(); ++k) { fc[da::audit_day(own[k].t)] = 0.01 * static_cast<double>(k); }
+    ft::TrackInfo info;
+    const auto tr = ft::build_daily({"T daily", "T", &own, &vix, nullptr, true, 1.3, &fc}, info);
+    check(altair::curriculum_check_track(tr).has_value() && tr.feature_names.back() == "VIX forecast P(up)",
+          "the VIX forecast is one more daily feature");
+    check(info.no_vix_forecast == 2 && std::fabs(tr.x[tr.p - 1] - 0.22) < 1e-12,
+          "a daily row reads the forecast made at its own close; rows before it exist are dropped");
+
+    // Hourly: the forecast made at the previous close.
+    const std::int64_t d0 = da::audit_days_from_civil(2025, 3, 3);
+    std::vector<da::AuditBar> h, hv;
+    for (int day = 0; day < 4; ++day) {
+        for (int k = 0; k < 7; ++k) {
+            const std::int64_t t = (d0 + day) * 86'400 + (555 + 60 * k) * 60;
+            h.push_back(bar(t, 100, 100.2, 99.8, 100.0 + 0.1 * k + day));
+            hv.push_back(bar(t, 15, 15.2, 14.8, 15.0 + 0.01 * k));
+        }
+    }
+    ft::VixForecast hfc{{d0 + 1, 0.7}, {d0 + 2, 0.3}};
+    ft::TrackInfo hinfo;
+    const auto ht = ft::build_hourly({"T hourly", "T", &h, &hv, true, 1.3, &hfc}, hinfo);
+    check(altair::curriculum_check_track(ht).has_value() && ht.rows() == 12,
+          "hourly rows on days 2 and 3 carry a forecast");
+    check(std::fabs(ht.x[ht.p - 1] - 0.7) < 1e-12 && std::fabs(ht.x[6 * ht.p + ht.p - 1] - 0.3) < 1e-12,
+          "an hourly row reads the forecast made at the previous day's close, never its own day's");
 }
 
 } // namespace
@@ -177,6 +209,7 @@ int main() {
     test_futures_roll();
     test_hourly();
     test_after_one_bar_session();
+    test_vix_forecast_feature();
     std::printf("Forecast tracks: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

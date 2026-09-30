@@ -83,8 +83,11 @@ std::string verdict(const CurriculumSummary& s, std::size_t tests) {
     if (s.all.scored() < 100) { return "too few forecasts to judge"; }
     if (s.p_adjusted < 0.05) {
         if (s.accuracy < 0.5) { return "reliably WRONG (significant) - worse than a coin"; }
-        return s.z_vs_constant > 2.0 ? "beats a coin AND the best constant call (significant)"
-                                     : "beats a coin (significant) but not the best constant call";
+        if (s.p_constant_adjusted < 0.05) { return "beats a coin AND the best constant call (significant)"; }
+        return s.z_vs_constant > 2.0
+                   ? "beats a coin (significant); its edge over the best constant call is not significant after "
+                         + std::to_string(tests) + " tests"
+                   : "beats a coin (significant) but not the best constant call";
     }
     if (s.p_vs_half < 0.05) {
         return "above a coin by chance-level evidence (not significant after " + std::to_string(tests) + " tests)";
@@ -98,16 +101,16 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
     XlsxSheet sh;
     sh.name = "Summary";
     sh.freeze_rows = 1;
-    const char* head[] = {"Track", "Model", "Family", "Forecasts", "Abstained", "Right", "Wrong", "No direction", "Flat",
+    const char* head[] = {"Track", "Model", "Family", "Forecasts", "Abstained", "Coverage %", "Right", "Wrong", "No direction", "Flat",
                           "Accuracy %", "95% low %", "95% high %", "z vs coin", "p vs coin",
-                          "p (Bonferroni)", "Up-rate on same bars %", "vs best constant call (pts)",
+                          "p (Bonferroni)", "Up-rate on same bars %", "vs best constant call (pts)", "p vs constant (Bonferroni)",
                           "Brier", "RMSE bp", "Random walk RMSE bp", "Skill vs RW %", "Price verdict",
-                          "Trades (clear cost)", "Trade hit %", "Net bp / trade", "Net bp total",
+                          "Trades (clear cost)", "Trade hit %", "Net bp / trade", "Net t-stat", "Net bp total",
                           "Final-stage accuracy %", "Fit s", "Verdict"};
     std::vector<XlsxCell> h;
     for (const char* c : head) { h.push_back(XlsxCell::str(c, true)); }
     sh.rows.push_back(h);
-    sh.widths = {18, 22, 11, 10, 10, 9, 9, 10, 7, 10, 9, 9, 9, 9, 11, 12, 12, 8, 9, 11, 10, 22, 11, 10, 10, 11, 11, 8, 52};
+    sh.widths = {24, 24, 11, 10, 10, 10, 9, 9, 10, 7, 10, 9, 9, 9, 9, 11, 12, 12, 12, 8, 9, 11, 10, 22, 11, 10, 10, 9, 11, 11, 8, 52};
     for (const auto& r : results) {
         if (!r.ok) {
             sh.rows.push_back({XlsxCell::str(r.track.name), XlsxCell::str("-"), XlsxCell::str("-"),
@@ -130,6 +133,10 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
             sh.rows.push_back({
                 XlsxCell::str(r.track.name), XlsxCell::str(r.run.models[m]), XlsxCell::str(r.run.families[m]),
                 XlsxCell::num(static_cast<double>(s.all.forecasts)), XlsxCell::num(static_cast<double>(s.all.abstained)),
+                XlsxCell::num(s.all.forecasts + s.all.abstained > 0
+                                  ? 100.0 * static_cast<double>(s.all.forecasts)
+                                        / static_cast<double>(s.all.forecasts + s.all.abstained)
+                                  : nan),
                 XlsxCell::num(static_cast<double>(s.all.right)), XlsxCell::num(static_cast<double>(s.all.wrong)),
                 XlsxCell::num(static_cast<double>(s.all.no_direction)), XlsxCell::num(static_cast<double>(s.all.flat)),
                 XlsxCell::num(scored ? pct(s.accuracy) : nan, true),
@@ -137,6 +144,7 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
                 XlsxCell::num(scored ? s.z_vs_half : nan), XlsxCell::num(scored ? s.p_vs_half : nan),
                 XlsxCell::num(scored ? s.p_adjusted : nan), XlsxCell::num(scored ? pct(s.up_rate) : nan),
                 XlsxCell::num(scored ? 100.0 * (s.accuracy - s.best_constant) : nan),
+                XlsxCell::num(scored ? s.p_constant_adjusted : nan),
                 XlsxCell::num(s.all.brier()),
                 XlsxCell::num(s.have_price ? s.price.rmse_model_bps : nan),
                 XlsxCell::num(s.have_price ? s.price.rmse_naive_bps : nan),
@@ -146,6 +154,7 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
                 XlsxCell::num(s.all.trades > 0 ? 100.0 * static_cast<double>(s.all.trade_wins)
                                                      / static_cast<double>(s.all.trades) : nan),
                 XlsxCell::num(s.all.trades > 0 ? s.all.net_bp / static_cast<double>(s.all.trades) : nan),
+                XlsxCell::num(s.all.net_t()),
                 XlsxCell::num(s.all.trades > 0 ? s.all.net_bp : nan),
                 XlsxCell::num(fin.scored() > 0 ? pct(fin.accuracy()) : nan),
                 XlsxCell::num(std::round(r.run.fit_seconds[m] * 10.0) / 10.0),
@@ -251,7 +260,7 @@ XlsxSheet data_sheet(const std::vector<TrackResult>& results) {
     const char* head[] = {"Track", "Source", "Files", "Rows read", "Parse errors", "Duplicates", "Conflicts (kept first)",
                           "Seconds floored", "Bars after cleaning", "Bad prices dropped", "OHLC repaired",
                           "Short sessions excluded", "Bars before INDIA VIX", "Rows without VIX",
-                          "Rows without spot", "Roll outcomes excluded", "Expiries", "Basis on expiry bp",
+                          "Rows without spot", "Rows without VIX forecast", "Roll outcomes excluded", "Expiries", "Basis on expiry bp",
                           "Basis jump next day bp", "Warm-up bars", "Decisions", "Trading days",
                           "First decision", "Last decision", "Features", "Cost"};
     std::vector<XlsxCell> h;
@@ -265,12 +274,12 @@ XlsxSheet data_sheet(const std::vector<TrackResult>& results) {
         sh.rows.push_back({XlsxCell::str(r.track.name), XlsxCell::str(i.source), n(i.files), n(i.rows_read),
                            n(i.parse_errors), n(i.duplicates), n(i.conflicts), n(i.seconds_floored), n(i.bars),
                            n(i.bad_price), n(i.ohlc_repaired), n(i.short_days), n(i.before_vix), n(i.no_vix),
-                           n(i.no_spot), n(i.roll_excluded), n(i.expiries), XlsxCell::num(i.basis_on_expiry_bp),
+                           n(i.no_spot), n(i.no_vix_forecast), n(i.roll_excluded), n(i.expiries), XlsxCell::num(i.basis_on_expiry_bp),
                            XlsxCell::num(i.basis_jump_after_bp), n(i.warmup), n(i.rows),
                            XlsxCell::num(i.days), XlsxCell::str(i.first), XlsxCell::str(i.last),
                            XlsxCell::str(features), XlsxCell::str(i.cost_note)});
     }
-    sh.widths = {18, 28, 7, 10, 8, 10, 10, 9, 10, 9, 9, 10, 10, 9, 9, 10, 8, 9, 9, 9, 10, 9, 26, 26, 90, 40};
+    sh.widths = {24, 28, 7, 10, 8, 10, 10, 9, 10, 9, 9, 10, 10, 9, 9, 10, 10, 8, 9, 9, 9, 10, 9, 26, 26, 90, 40};
     return sh;
 }
 
@@ -411,17 +420,18 @@ int main(int argc, char** argv) {
                                   + " bp charges and one tick";
     // Built first, then added: the builders fill the info they are handed, and
     // an argument list does not order its evaluation.
-    auto t_nifty_d = ft::build_daily({"NIFTY daily", "NIFTY", &nifty_d, &vix_d, nullptr, true, other_cost}, i_nifty_d);
-    auto t_bank_d = ft::build_daily({"BANKNIFTY daily", "BANKNIFTY", &bank_d, &vix_d, nullptr, true, other_cost}, i_bank_d);
-    auto t_fut_d = ft::build_daily({"NIFTY FUT daily", "NIFTY FUT", &fut_d, &vix_d, &nifty_d, true, other_cost}, i_fut_d);
-    auto t_vix_d = ft::build_daily({"INDIA VIX daily", "INDIA VIX", &vix_d, nullptr, nullptr, false, other_cost}, i_vix_d);
-    auto t_nifty_h = ft::build_hourly({"NIFTY hourly", "NIFTY", &nifty_h, &vix_h, true, other_cost}, i_nifty_h);
-    auto t_bank_h = ft::build_hourly({"BANKNIFTY hourly", "BANKNIFTY", &bank_h, &vix_h, true, other_cost}, i_bank_h);
-    auto t_vix_h = ft::build_hourly({"INDIA VIX hourly", "INDIA VIX", &vix_h, nullptr, false, other_cost}, i_vix_h);
+    auto t_nifty_d = ft::build_daily({"NIFTY daily", "NIFTY", &nifty_d, &vix_d, nullptr, true, other_cost, nullptr}, i_nifty_d);
+    auto t_bank_d = ft::build_daily({"BANKNIFTY daily", "BANKNIFTY", &bank_d, &vix_d, nullptr, true, other_cost, nullptr}, i_bank_d);
+    auto t_fut_d = ft::build_daily({"NIFTY FUT daily", "NIFTY FUT", &fut_d, &vix_d, &nifty_d, true, other_cost, nullptr}, i_fut_d);
+    auto t_vix_d = ft::build_daily({"INDIA VIX daily", "INDIA VIX", &vix_d, nullptr, nullptr, false, other_cost, nullptr}, i_vix_d);
+    auto t_nifty_h = ft::build_hourly({"NIFTY hourly", "NIFTY", &nifty_h, &vix_h, true, other_cost, nullptr}, i_nifty_h);
+    auto t_bank_h = ft::build_hourly({"BANKNIFTY hourly", "BANKNIFTY", &bank_h, &vix_h, true, other_cost, nullptr}, i_bank_h);
+    auto t_vix_h = ft::build_hourly({"INDIA VIX hourly", "INDIA VIX", &vix_h, nullptr, false, other_cost, nullptr}, i_vix_h);
+    // INDIA VIX daily runs first: its forecasts feed the "+ VIX fc" tracks.
+    add(std::move(t_vix_d), i_vix_d, "not tradable");
     add(std::move(t_nifty_d), i_nifty_d, cost_text.c_str());
     add(std::move(t_bank_d), i_bank_d, cost_text.c_str());
     add(std::move(t_fut_d), i_fut_d, cost_text.c_str());
-    add(std::move(t_vix_d), i_vix_d, "not tradable");
     add(std::move(t_nifty_h), i_nifty_h, cost_text.c_str());
     add(std::move(t_bank_h), i_bank_h, cost_text.c_str());
     add(std::move(t_vix_h), i_vix_h, "not tradable");
@@ -430,24 +440,62 @@ int main(int argc, char** argv) {
     opt.first_days = static_cast<std::int32_t>(first_days);
     opt.step_cap_days = static_cast<std::int32_t>(cap_days);
     std::size_t tests = 0;
-    for (auto& r : results) {
+    const auto run_one = [&](TrackResult& r) {
         const auto t0 = std::chrono::steady_clock::now();
         auto models = altair::curriculum_default_models();
         auto run = altair::curriculum_run(r.track, models, opt);
         r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         if (!run) {
             r.error = altair::curriculum_error_text(run.error());
-            std::printf("  %-18s not run: %s\n", r.track.name.c_str(), r.error.c_str());
-            continue;
+            std::printf("  %-24s not run: %s\n", r.track.name.c_str(), r.error.c_str());
+            return;
         }
         r.run = std::move(*run);
         r.ok = true;
         tests += r.run.models.size();
-        std::printf("  %-18s %6zu decisions, %5d days, %2zu stages, %zu look-ahead refusals, %.0f s\n",
+        std::printf("  %-24s %6zu decisions, %5d days, %2zu stages, %zu look-ahead refusals, %.0f s\n",
                     r.track.name.c_str(), r.track.rows(), r.track.days(), r.run.stages.size(),
                     r.run.lookahead_refusals, r.seconds);
         std::fflush(stdout);
+    };
+    for (auto& r : results) { run_one(r); }
+
+    // The VIX model's out-of-sample forecasts -- Hedge's, which picks models by
+    // their record in finished stages, not by hindsight -- as an input to the
+    // index models. Run beside the originals so the two can be compared.
+    ft::VixForecast vix_fc;
+    for (const auto& r : results) {
+        if (!r.ok || r.track.name != "INDIA VIX daily") { continue; }
+        const auto h = std::find(r.run.models.begin(), r.run.models.end(), std::string{"Hedge"});
+        const auto m = static_cast<std::size_t>(h - r.run.models.begin());
+        for (std::size_t i = r.run.first_row; m < r.run.models.size() && i < r.track.rows(); ++i) {
+            const auto& c = r.run.calls[m][i - r.run.first_row];
+            if (c.made && std::isfinite(c.p_up)) { vix_fc[da::audit_day(r.track.t[i])] = c.p_up; }
+        }
     }
+    if (!vix_fc.empty()) {
+        ft::TrackInfo f_nifty_d = i_nifty_d, f_bank_d = i_bank_d, f_fut_d = i_fut_d, f_nifty_h = i_nifty_h,
+                      f_bank_h = i_bank_h;
+        for (ft::TrackInfo* i : {&f_nifty_d, &f_bank_d, &f_fut_d, &f_nifty_h, &f_bank_h}) {
+            // The builder recounts what it drops; the loader's counts stay.
+            i->short_days = i->before_vix = i->no_vix = i->no_spot = i->roll_excluded = i->expiries = i->warmup = 0;
+        }
+        auto v_nifty_d = ft::build_daily({"NIFTY daily + VIX fc", "NIFTY", &nifty_d, &vix_d, nullptr, true, other_cost, &vix_fc}, f_nifty_d);
+        auto v_bank_d = ft::build_daily({"BANKNIFTY daily + VIX fc", "BANKNIFTY", &bank_d, &vix_d, nullptr, true, other_cost, &vix_fc}, f_bank_d);
+        auto v_fut_d = ft::build_daily({"NIFTY FUT daily + VIX fc", "NIFTY FUT", &fut_d, &vix_d, &nifty_d, true, other_cost, &vix_fc}, f_fut_d);
+        auto v_nifty_h = ft::build_hourly({"NIFTY hourly + VIX fc", "NIFTY", &nifty_h, &vix_h, true, other_cost, &vix_fc}, f_nifty_h);
+        auto v_bank_h = ft::build_hourly({"BANKNIFTY hourly + VIX fc", "BANKNIFTY", &bank_h, &vix_h, true, other_cost, &vix_fc}, f_bank_h);
+        const std::size_t before = results.size();
+        add(std::move(v_nifty_d), f_nifty_d, cost_text.c_str());
+        add(std::move(v_bank_d), f_bank_d, cost_text.c_str());
+        add(std::move(v_fut_d), f_fut_d, cost_text.c_str());
+        add(std::move(v_nifty_h), f_nifty_h, cost_text.c_str());
+        add(std::move(v_bank_h), f_bank_h, cost_text.c_str());
+        for (std::size_t k = before; k < results.size(); ++k) { run_one(results[k]); }
+    } else if (only.empty() || std::string{"daily + VIX fc hourly"}.find(only) != std::string::npos) {
+        std::printf("  (no INDIA VIX daily forecasts: the '+ VIX fc' tracks were not built)\n");
+    }
+
     for (auto& r : results) {
         if (!r.ok) { continue; }
         for (std::size_t m = 0; m < r.run.models.size(); ++m) {
@@ -473,15 +521,16 @@ int main(int argc, char** argv) {
         for (const std::size_t m : order) {
             const auto& s = r.summary[m];
             if (s.all.scored() == 0) {
-                text << "  " << pad(r.run.models[m], 22) << "  never forecast\n";
+                text << "  " << pad(r.run.models[m], 24) << "  never forecast\n";
                 continue;
             }
-            text << "  " << pad(r.run.models[m], 22) << pad(fixed(pct(s.accuracy), 2) + "%", 7)
+            text << "  " << pad(r.run.models[m], 24) << pad(fixed(pct(s.accuracy), 2) + "%", 7)
                  << "  [" << fixed(pct(s.lo95), 1) << ", " << fixed(pct(s.hi95), 1) << "]"
                  << "  n=" << s.all.scored() << "  up-rate " << fixed(pct(s.up_rate), 1) + "%";
             if (s.have_price) { text << "  skill vs RW " << fixed(100.0 * s.price.skill, 2, true) + "%"; }
             if (s.all.trades > 0) {
-                text << "  net " << fixed(s.all.net_bp / static_cast<double>(s.all.trades), 2, true) << " bp/trade";
+                text << "  net " << fixed(s.all.net_bp / static_cast<double>(s.all.trades), 2, true) << " bp/trade (t "
+                     << fixed(s.all.net_t(), 1, true) << ")";
             }
             text << "  -- " << verdict(s, tests) << "\n";
         }
@@ -499,12 +548,16 @@ int main(int argc, char** argv) {
         "Daily: decide at 15:30 from that day's close; outcome = next trading day's close. Hourly: decide at the close of "
         "each of a full day's first six hourly bars (10:15 ... 15:15); outcome = the next hourly close. No overnight hour.",
         "Features are standardised on the training window only (models/dataset.hpp Scaler). Classical models tune one "
-        "hyper-parameter on the last quarter of their training window. Ensembles: Vote (majority of the learning models), "
-        "Champion (the model with the best record in finished stages), Hedge (exponential weights on finished stages).",
+        "hyper-parameter on the last quarter of their training window. Ensembles, all from finished stages only: Vote "
+        "(majority of the learning models), Champion (best record so far), Hedge (exponential weights on the record), "
+        "Stack (a logistic regression on every model's past out-of-sample calls: whom to trust, invert or ignore), "
+        "Stack (confident third) (the Stack only in its most confident third), Consensus 75% (the Vote only when three "
+        "quarters of at least six callers agree). A filtered ensemble abstains otherwise: read its accuracy with its Coverage.",
         "Baselines: Coin flip (seeded), Always majority (the training up-rate), Momentum and Mean reversion (repeat or reverse "
         "the last move). 'Up-rate on same bars' is what calling UP every time would have scored; the best constant call is "
         "max(up-rate, 1 - up-rate) -- always down on INDIA VIX, which falls more often than it rises.",
-        "Significance: z and two-sided p against 50 %, Bonferroni-corrected over every model on every track. Skill vs RW: "
+        "Significance: z and two-sided p against 50 %, and one-sided p against the best constant call, both "
+        "Bonferroni-corrected over every model on every track. Skill vs RW: "
         "1 - RMSE(model price) / RMSE(last price), from models/forecast_scorecard.hpp; the price verdict needs 200 "
         "forecasts and a paired t beyond 2.",
         "Trades: a call is acted on only when its expected move exceeds the round-trip cost of that day (futures STT 2 bp, "

@@ -587,3 +587,29 @@ details in ops/forecast-curriculum.md):
   - INDIA VIX hourly: falls on 56 % of hours; nothing beats "always down".
 Next: repeat after the broker audit; add option-chain OI/PCR/IV-skew and
 flows as inputs; use the VIX forecast to time option premium.
+
+
+------------------------------------------------------------------------------
+16. MERGING MODELS -- 2026-09-30
+------------------------------------------------------------------------------
+Owner's request: merge models to improve. Chosen: stacking, confidence
+filters, and the VIX forecast as an input.
+  models/curriculum.hpp   Stack (logistic regression on every model's past
+                          out-of-sample calls), Stack (confident third),
+                          Consensus 75%; coverage and net-bp t-stat; the
+                          edge over the best constant call is Bonferroni-
+                          corrected like the coin test
+  app/forecast_tracks.hpp VixForecast input (daily: the forecast made at the
+                          decision's close; hourly: the previous close's)
+  app/forecast_curriculum_main.cpp  runs INDIA VIX daily first, feeds its
+                          Hedge forecasts to 5 "+ VIX fc" index tracks
+Results (12 tracks, 288 tests, 0 look-ahead refusals):
+  - Stacking does not beat the best single model (VIX: 57.5% vs RF 60.9%).
+  - Consensus 75% lifts NIFTY / NIFTY FUT daily to ~57% on ~1/3 of days,
+    +7.1 / +3.9 bp a trade after cost (t = 1.6 / 0.9); the edge over
+    "always up" on those same days is 1-3 points, not significant.
+    Promising, not proven: paper-trade / forward-test only.
+  - The VIX forecast as an input does not help the index models.
+Also in PR #4's last commit: CI runs a one-track real-data curriculum
+smoke test; the four-track daily run is `dataset;experiment` (it took
+~1,700 s under the Debug ASan build, past ctest's 1,200 s limit).

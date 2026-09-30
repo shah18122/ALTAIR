@@ -134,11 +134,12 @@ See [ops/data-audit.md](ops/data-audit.md) for the checks and the findings.
 
 `altair_forecast_curriculum` trains every forecaster in `models/` (baselines,
 logistic, SVM, kNN, random forest, gradient boosting, MLP, LSTM, GRU,
-transformer, AR/ARMA, Ornstein–Uhlenbeck, Markov, k-means regimes and three
-track-record ensembles) on a doubling schedule: learn 3 days, forecast the
+transformer, AR/ARMA, Ornstein–Uhlenbeck, Markov, k-means regimes, plus
+track-record ensembles, stacking and consensus filters) on a doubling schedule: learn 3 days, forecast the
 next 3, record every call right or wrong, refit on 6, 12, 24 … days. Tracks:
 NIFTY, BANKNIFTY, NIFTY futures and INDIA VIX next-day direction, and NIFTY,
-BANKNIFTY and INDIA VIX next-hour direction, with INDIA VIX as a feature.
+BANKNIFTY and INDIA VIX next-hour direction, with INDIA VIX as a feature, and
+the index tracks again with the VIX model's own forecast as an input.
 
 ```powershell
 build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified

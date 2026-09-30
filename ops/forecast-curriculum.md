@@ -21,7 +21,7 @@ scored.
 build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
 ```
 
-About 8 minutes for all seven tracks on one core (`--only daily`: about 3).
+About 13 minutes for all twelve tracks on one core (`--only daily`: about 6).
 Options: `--first-days N` (default 3), `--cap-days N` (stop doubling once a
 block would exceed N days and walk on in N-day blocks; 0 = pure doubling),
 `--other-cost-bp X`, `--only TEXT`, `--no-log`.
@@ -39,6 +39,7 @@ block would exceed N days and walk on in N-day blocks; 0 = pure doubling),
 | Track | Decision | Outcome |
 |---|---|---|
 | NIFTY, BANKNIFTY, NIFTY FUT, INDIA VIX daily | 15:30, from that day's bar | next trading day's close |
+| … + VIX fc (daily and hourly index tracks) | the same, plus the INDIA VIX model's own forecast as a feature | the same |
 | NIFTY, BANKNIFTY, INDIA VIX hourly | close of each of a full day's first six hourly bars (10:15 … 15:15) | the next hourly close (no overnight hour) |
 
 Features (all known at the decision; standardised on the training window
@@ -59,7 +60,7 @@ futures track takes its price features from the spot index plus the
 | Neural | MLP (backprop), LSTM, GRU, causal Transformer |
 | Time series | AR(2), ARMA(1,1), Ornstein–Uhlenbeck, 3-state Markov chain |
 | Regime | k-means regimes |
-| Ensembles | Vote (majority of the learning models), Champion (best record in finished stages), Hedge (exponential weights on finished stages) |
+| Ensembles | Vote (majority of the learning models), Champion (best record in finished stages), Hedge (exponential weights on finished stages), **Stack** (a logistic regression on every model's past out-of-sample calls), **Stack (confident third)** and **Consensus 75%** (filters that abstain unless confident) |
 
 Tuning uses the last quarter of each training window only. Limits, stated:
 the transformer trains by finite differences (the repository's reference
@@ -104,51 +105,70 @@ call made before it moves.
 
 ## Results
 
-Run on the dataset pushed 2026-09-29 (all seven tracks, under 8 minutes on
-one core, **zero look-ahead refusals**; two runs gave identical numbers). 21 models × 7 tracks = 147 tests, so a
-result needs p < 0.05 / 147 to count. Full tables: the Summary sheet.
+Run on the dataset pushed 2026-09-29: 12 tracks (the 7 above, plus 5 index
+tracks with the VIX forecast as an input), 24 models each (18 forecasters,
+6 ensembles). 13 minutes on one core, **zero look-ahead refusals**, and
+identical numbers across repeated runs. 288 model-track tests, so both
+significance tests (against a coin, and against the best constant call)
+are Bonferroni-corrected by 288. Full tables: the Summary sheet.
 
-| Track | Decisions | Up-rate | Best model (accuracy, 95 % CI) | Beats a coin? | Beats the best constant call? |
-|---|---|---|---|---|---|
-| NIFTY daily | 2,884 | 53.5 % | Transformer 53.9 % [52.1, 55.8] | 3 models, significant | **No** — always-up scores 53.5 % |
-| BANKNIFTY daily | 2,885 | 53.2 % | Always majority 53.0 % | No | No |
-| NIFTY FUT daily | 2,731 | 52.2 % | GRU 53.9 % [52.0, 55.8] | 3 models, significant | **No** |
-| INDIA VIX daily | 2,885 | 46.5 % | **Random forest 60.9 % [59.1, 62.7]** | yes, 7 models | **Yes** — RF, Champion, Hedge, logistic, Vote, kNN |
-| NIFTY hourly | 17,208 | 50.8 % | Random forest 51.5 % [50.7, 52.2] | RF and kNN, significant | **No** |
-| BANKNIFTY hourly | 17,208 | 50.5 % | Logistic 51.1 % | No | No |
-| INDIA VIX hourly | 17,214 | 43.8 % | Always down 56.2 % | yes, 15 models | **No** — none beats always down (VIX falls on 56 % of hours) |
+| Track | Up-rate | Best single model | Beats a coin (corrected) | Beats the best constant call (corrected) |
+|---|---|---|---|---|
+| NIFTY daily | 53.5 % | Transformer 53.9 % [52.1, 55.8] | Transformer, Momentum, Consensus 75 % | **none** |
+| BANKNIFTY daily | 53.2 % | Always majority 53.0 % | none | none |
+| NIFTY FUT daily | 52.2 % | GRU 53.9 % [52.0, 55.8] | GRU, Consensus 75 % | none |
+| **INDIA VIX daily** | 46.5 % | **Random forest 60.9 % [59.1, 62.7]** | 10 models | **Random forest, Champion, Hedge, Stack, logistic** |
+| NIFTY hourly | 50.8 % | Random forest 51.5 % [50.7, 52.2] | random forest, kNN | none |
+| BANKNIFTY hourly | 50.5 % | Logistic 51.1 % | none | none |
+| INDIA VIX hourly | 43.8 % | "Always down" 56.2 % | 17 models | none (VIX falls on 56 % of hours) |
 
-What the record says:
+1. **Index direction cannot be forecast from price and VIX alone**, daily
+   or hourly. The best daily accuracies (~53–54 %) are what calling UP every
+   day scores; hourly sits at 50–51.5 %. After the round-trip cost, net bp
+   per trade runs from about −10 to +5 and no single model is positive on
+   every index track.
+2. **INDIA VIX next-day direction can be forecast.** The random forest
+   scores 60.9 % over 2,839 out-of-sample days against 53.5 % for the best
+   constant call, and it improves, noisily, as the window doubles: 50 %
+   learning 24 days, 58 % on 96, 53 % on 192, 58 % on 384, 62 % on 768,
+   63 % on 1,536. Hedge learned to follow it (all of the weight by the last
+   stage). VIX mean-reverts around its 20-day level, and the tree models
+   find that. RF, logistic and kNN are also the only real price skill
+   against the random walk (+2.0, +0.9, +0.8 %).
+3. **Reliably wrong** (corrected): mean reversion on NIFTY daily (46 %, the
+   mirror of momentum's 53.7 %) and on VIX hourly (48 %); the SVM on VIX
+   hourly (44 %: it leans up on a series that mostly falls).
 
-1. **Index direction is not forecastable from price and VIX alone** — daily
-   or hourly, by any model here. The best daily accuracies (~53–54 %) equal
-   what calling UP every day scores; hourly sits at 50–51.5 %. After the
-   round-trip cost no index model makes money reliably: net bp per trade
-   runs from about −10 to +5, and no model is positive on every index track.
-2. **INDIA VIX next-day direction is forecastable.** The random forest
-   reaches 60.9 % over 2,839 out-of-sample days against 53.5 % for the best
-   constant call, and its accuracy rises, noisily, as the window doubles:
-   50 % learning 24 days, 58 % on 96, 53 % on 192, 58 % on 384, 62 % on
-   768, 63 % on 1,536. The Hedge ensemble learned to follow it (100 % of the
-   weight by the last stage). VIX mean-reverts around its 20-day level; the
-   tree models find that.
-3. **More data helps only where there is signal.** On VIX the curve rises
-   stage by stage; on the indices it wanders around the up-rate whatever
-   the window.
-4. **Price error**: the learning models are within about ±2 % of the
-   random walk's RMSE (the coin and the rules, which forecast a full average
-   move every time, are ~20 % worse). By the scorecard's paired test only
-   4 of 147 price forecasts beat the random walk: random forest, logistic
-   and kNN on VIX daily (+2.0, +0.9, +0.8 % skill) and the always-down drift
-   on VIX hourly (+0.1 %). 90 are measurably worse. On the indices the best
-   price forecast is still "no change".
-5. **Reliably wrong** (significant after correction): mean reversion on
-   NIFTY and NIFTY FUT daily (46 %, the mirror of momentum's 53.5–53.7 %)
-   and on VIX hourly (48 %), and the SVM on VIX hourly (44 %: it leans up on
-   a series that mostly falls).
+### Merging models
 
-What would improve it next: broker-verified data (run
-`ops\broker_audit.ps1`, then repeat); inputs beyond price — option-chain
-OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close; and using
-the VIX forecast where it matters, timing option premium rather than index
-direction.
+Three kinds of merge, all built only from finished stages:
+
+| Track | Best single | Stack | Stack (confident third) | Consensus 75 % |
+|---|---|---|---|---|
+| INDIA VIX daily | RF 60.9 % | 57.5 % | 59.5 % on 32 % of days | 60.3 % on 38 % |
+| NIFTY daily | 53.9 % | 51.4 % | 54.8 % on 33 % | **57.4 % on 27 %**, +7.1 bp/trade, t = 1.6 |
+| NIFTY FUT daily | 53.9 % | 52.5 % | 53.5 % on 12 % | **57.3 % on 34 %**, +3.9 bp/trade, t = 0.9 |
+| BANKNIFTY daily | 53.0 % | 53.1 % | 53.7 % on 29 % | 54.8 % on 32 % |
+| NIFTY / BANKNIFTY hourly | ~51 % | ~50 % | ~50.5–51 % | ~51 %; BANKNIFTY loses after cost (t = −3.9) |
+
+* **Stacking does not beat the best single model.** When most inputs are
+  coin-level, the meta-model spreads its weight over noise. On VIX it trails
+  the random forest by 3.5 points.
+* **Consensus is the one merge that lifts index accuracy.** When at least
+  three quarters of the learning models agree, NIFTY and NIFTY FUT daily are
+  right about 57 % of the time, on roughly a third of the days. But the
+  up-rate on those same days is 54–56 %. The models mostly agree on up-days
+  in up-trends, so the edge over "always up" on those days is only 1–3
+  points, and not significant after correction. The P&L after cost is
+  positive (NIFTY +7.1 bp a trade over 713 trades), with t = 1.6. That is
+  **promising, not proven**. It is a candidate for paper trading and for
+  re-testing on data after this run, not for live money.
+* **The VIX forecast as an input does not help the index models.** The
+  "+ VIX fc" tracks score within noise of the originals, e.g. NIFTY daily
+  Consensus 57.4 % both ways; NIFTY FUT daily Consensus 57.3 % → 54.2 %.
+
+What would improve it next:
+- broker-verified data: run `ops\broker_audit.ps1`, then repeat;
+- inputs beyond price: option-chain OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close;
+- a forward test of Consensus 75 % on NIFTY daily from October 2026, the data this run has never seen;
+- using the VIX forecast where it bites: timing option premium, not index direction.

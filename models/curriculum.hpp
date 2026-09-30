@@ -72,6 +72,7 @@
 #include <expected>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -1145,17 +1146,36 @@ curriculum_default_models(std::uint64_t seed = 0xA17A1Au) {
 // The engine
 // ---------------------------------------------------------------------------
 
+/// The ensembles the engine adds after the base models, in this order. All of
+/// them weigh the base models by FINISHED stages only:
+///   Vote       the majority of the learning models (baselines excluded)
+///   Champion   the model with the best record so far
+///   Hedge      exponential weights on the record
+///   Stack      a logistic regression on every model's past calls -- it learns
+///              whom to trust, whom to invert and whom to ignore
+///   Stack (confident third)  the Stack, only when it is in its most
+///              confident third (threshold from its own training rows)
+///   Consensus 75%  the Vote, only when three quarters of the callers agree
+inline constexpr const char* kCurriculumEnsembles[] = {
+    "Vote", "Champion", "Hedge", "Stack", "Stack (confident third)", "Consensus 75%"};
+
 struct CurriculumOptions {
     std::int32_t first_days = 3;
     std::int32_t step_cap_days = 0;
     /// Scored past forecasts a model needs before it can be Champion.
     std::size_t champion_min = 20;
+    /// Scored past rows the stacking meta-model needs before it calls.
+    std::size_t stack_min = 60;
+    /// Consensus calls only when at least this share of the learning models,
+    /// and at least `consensus_min` of them, agree.
+    double consensus = 0.75;
+    std::size_t consensus_min = 6;
 };
 
 /// Everything a run produced. Rows are indexed from `first_row`, the first
 /// forecast (stage 0's first test row).
 struct CurriculumRun {
-    std::vector<std::string> models;     ///< base models, then Vote, Champion, Hedge
+    std::vector<std::string> models;     ///< base models, then the ensembles (kCurriculumEnsembles)
     std::vector<std::string> families;
     std::size_t base_models = 0;
     std::vector<CurriculumStage> stages;
@@ -1171,6 +1191,14 @@ struct CurriculumRun {
 };
 
 namespace curriculum_detail {
+
+/// What the stacking meta-model reads from one call: +1 sure up, -1 sure
+/// down, 0 abstained. A rule without a probability gives its direction.
+inline double signed_confidence(const CurriculumCall& c) noexcept {
+    if (!c.made) { return 0.0; }
+    if (std::isfinite(c.p_up)) { return 2.0 * (c.p_up - 0.5); }
+    return static_cast<double>(c.dir);
+}
 
 /// +1 up, -1 down, 0 unchanged.
 inline int outcome(const CurriculumTrack& tr, std::size_t i) noexcept {
@@ -1208,12 +1236,13 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
         run.models.push_back(m->name());
         run.families.push_back(m->family());
     }
-    for (const char* e : {"Vote", "Champion", "Hedge"}) {
+    for (const char* e : kCurriculumEnsembles) {
         run.models.emplace_back(e);
         run.families.emplace_back("ensemble");
     }
     const std::size_t total = run.models.size();
     const std::size_t vote = base, champ = base + 1, hedge = base + 2;
+    const std::size_t stack = base + 3, confident = base + 4, consensus = base + 5;
 
     run.first_row = run.stages.front().test_begin;
     const std::size_t n = tr.rows() - run.first_row;
@@ -1225,6 +1254,11 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
     // The record the ensembles weigh: finished stages only.
     std::vector<std::size_t> right(base, 0), wrong(base, 0);
     std::size_t rounds = 0;
+    // What the stacking meta-model learns from: every base model's
+    // out-of-sample call on every scored row of the finished stages.
+    std::vector<double> meta_x;
+    std::vector<std::uint8_t> meta_y;
+    std::size_t meta_rows = 0;
 
     for (const CurriculumStage& st : run.stages) {
         for (std::size_t i = st.test_begin; i < st.test_end; ++i) {
@@ -1269,6 +1303,43 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
                                                : "abstained: no track record yet";
         run.notes[hedge][st.index] = rounds > 0 ? std::string{} : "abstained: no track record yet";
 
+        // Stacking: a logistic regression on the base models' past calls.
+        std::optional<LogisticRegression> meta;
+        double confident_at = std::numeric_limits<double>::infinity();
+        if (meta_rows >= opt.stack_min) {
+            LogisticParams prm;
+            prm.l2 = 1e-2;
+            auto fitted = LogisticRegression::fit(meta_x, meta_rows, base, meta_y, prm);
+            if (fitted) {
+                meta = std::move(*fitted);
+                // The confident third: the threshold the meta-model's own
+                // training rows put a third of its calls above.
+                std::vector<double> conf(meta_rows);
+                for (std::size_t k = 0; k < meta_rows; ++k) {
+                    conf[k] = std::fabs(meta->probability({meta_x.data() + k * base, base}) - 0.5);
+                }
+                std::sort(conf.begin(), conf.end());
+                confident_at = conf[(2 * meta_rows) / 3];
+                const auto wts = meta->weights();
+                std::vector<std::size_t> idx(base);
+                for (std::size_t m = 0; m < base; ++m) { idx[m] = m; }
+                std::stable_sort(idx.begin(), idx.end(),
+                                 [&wts](std::size_t a, std::size_t b) { return std::fabs(wts[a]) > std::fabs(wts[b]); });
+                std::string lean;
+                for (std::size_t k = 0; k < 3 && k < base; ++k) {
+                    lean += (k ? ", " : "") + run.models[idx[k]] + " "
+                          + (wts[idx[k]] >= 0.0 ? "+" : "") + cd::trim_double(std::round(wts[idx[k]] * 100.0) / 100.0);
+                }
+                run.notes[stack][st.index] = "learned from " + std::to_string(meta_rows) + " past calls; leans on " + lean;
+                run.notes[confident][st.index] = "acts when |P(up) - 0.5| >= " + cd::trim_double(std::round(confident_at * 1000.0) / 1000.0);
+            } else {
+                run.notes[stack][st.index] = run.notes[confident][st.index] = "abstained: meta fit refused";
+            }
+        } else {
+            run.notes[stack][st.index] = run.notes[confident][st.index] =
+                "abstained: fewer than " + std::to_string(opt.stack_min) + " past calls";
+        }
+
         for (std::size_t m = 0; m < base; ++m) {
             const auto t0 = std::chrono::steady_clock::now();
             d.set_now(st.train_rows);
@@ -1302,6 +1373,21 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
                 cd::finish(c, d);
                 run.calls[vote][r] = c;
             }
+            // Consensus: the vote, only when it is lopsided enough.
+            const std::size_t callers = ups + downs;
+            if (callers >= opt.consensus_min
+                && static_cast<double>(std::max(ups, downs)) >= opt.consensus * static_cast<double>(callers)) {
+                run.calls[consensus][r] = run.calls[vote][r];
+            }
+            if (meta) {
+                std::vector<double> sx(base);
+                for (std::size_t m = 0; m < base; ++m) { sx[m] = cd::signed_confidence(run.calls[m][r]); }
+                const double p = meta->probability(sx);
+                CurriculumCall c = cd::from_probability(p);
+                cd::finish(c, d);
+                run.calls[stack][r] = c;
+                if (std::fabs(p - 0.5) >= confident_at) { run.calls[confident][r] = c; }
+            }
             if (best >= 0) { run.calls[champ][r] = run.calls[static_cast<std::size_t>(best)][r]; }
             if (rounds > 0) {
                 double wu = 0.0, wall = 0.0, wmu = 0.0;
@@ -1327,9 +1413,12 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
             ++rounds;
             for (std::size_t m = 0; m < base; ++m) {
                 const CurriculumCall& c = run.calls[m][i - run.first_row];
+                meta_x.push_back(cd::signed_confidence(c));
                 if (!c.made) { continue; }
                 (c.dir == out ? right[m] : wrong[m]) += 1;
             }
+            meta_y.push_back(out > 0 ? 1 : 0);
+            ++meta_rows;
         }
         run.lookahead_refusals += d.refusals();
         run.degenerate_features += d.degenerate_features();
@@ -1353,6 +1442,16 @@ struct CurriculumTally {
     std::size_t brier_n = 0;
     std::size_t trades = 0, trade_wins = 0;
     double net_bp = 0.0;
+    double net_bp_sq = 0.0;
+
+    /// Mean net bp per trade over its standard error: is the P&L luck?
+    [[nodiscard]] double net_t() const noexcept {
+        if (trades < 2) { return std::numeric_limits<double>::quiet_NaN(); }
+        const double n = static_cast<double>(trades);
+        const double mean = net_bp / n;
+        const double var = (net_bp_sq - n * mean * mean) / (n - 1.0);
+        return var > 0.0 ? mean / std::sqrt(var / n) : std::numeric_limits<double>::quiet_NaN();
+    }
 
     [[nodiscard]] std::size_t scored() const noexcept { return right + wrong; }
     [[nodiscard]] double accuracy() const noexcept {
@@ -1388,6 +1487,7 @@ curriculum_tally(const CurriculumTrack& tr, const CurriculumRun& run, std::size_
         if (std::isfinite(net)) {
             ++t.trades;
             t.net_bp += net;
+            t.net_bp_sq += net * net;
             if (net > 0.0) { ++t.trade_wins; }
         }
         if (out == 0) { ++t.flat; continue; }
@@ -1414,6 +1514,7 @@ struct CurriculumSummary {
     double up_rate = 0.0;            ///< "always up" on the same scored bars
     double best_constant = 0.0;
     double z_vs_constant = 0.0;
+    double p_constant_adjusted = 1.0;   ///< one-sided (better than), Bonferroni over `tests`
     bool have_price = false;
     ForecastScore price{};           ///< against the random walk
     ForecastVerdict verdict = ForecastVerdict::NotEnoughEvidence;
@@ -1440,6 +1541,9 @@ curriculum_summary(const CurriculumTrack& tr, const CurriculumRun& run, std::siz
         s.up_rate = static_cast<double>(s.all.ups) / nn;
         s.best_constant = std::max(s.up_rate, 1.0 - s.up_rate);
         s.z_vs_constant = (p - s.best_constant) / std::sqrt(0.25 / nn);
+        // Held to the same bar as the coin test: corrected for every test run.
+        s.p_constant_adjusted = std::min(1.0, 0.5 * std::erfc(s.z_vs_constant / std::sqrt(2.0))
+                                                  * static_cast<double>(tests > 0 ? tests : 1));
     }
     std::vector<ForecastPoint> pts;
     for (std::size_t i = run.first_row; i < tr.rows(); ++i) {

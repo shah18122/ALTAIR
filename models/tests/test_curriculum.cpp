@@ -174,6 +174,21 @@ void test_learning_and_no_leak() {
     const auto h = curriculum_summary(tr, *run, hedge, tests);
     check(h.accuracy > 0.65, "Hedge follows the models that are right");
 
+    const auto stack = curriculum_summary(tr, *run, idx("Stack"), tests);
+    const auto conf = curriculum_summary(tr, *run, idx("Stack (confident third)"), tests);
+    const auto cons = curriculum_summary(tr, *run, idx("Consensus 75%"), tests);
+    std::printf("        stack %.3f (%zu)  confident %.3f (%zu)  consensus %.3f (%zu)\n", stack.accuracy,
+                stack.all.scored(), conf.accuracy, conf.all.scored(), cons.accuracy, cons.all.scored());
+    check(stack.accuracy > 0.65, "Stack learns whom to trust from the models' past calls");
+    check(run->notes[idx("Stack")][0].find("fewer than") != std::string::npos
+              && stack.all.forecasts < tr.rows() - run->first_row,
+          "Stack abstains until it has 60 past calls to learn from");
+    const double conf_share = static_cast<double>(conf.all.forecasts) / static_cast<double>(stack.all.forecasts);
+    check(conf_share > 0.15 && conf_share < 0.6 && conf.accuracy >= stack.accuracy - 0.02,
+          "the confident third calls on roughly a third of the Stack's rows, no less accurately");
+    check(cons.all.forecasts < tr.rows() - run->first_row && cons.accuracy > 0.65,
+          "Consensus calls only when the models agree, and is right when they do");
+
     // Changing one outcome must not change any call made before it was known.
     auto moved = tr;
     const std::size_t j = run->stages[5].test_begin + 3;
@@ -215,6 +230,16 @@ void test_scoring() {
           "right and wrong are counted against the realised direction");
     // 10 bp expected move clears a 2 bp cost: every call trades.
     check(t.trades == tr.rows(), "a call whose expected move clears the cost trades");
+    {
+        double sum = 0.0, sq = 0.0;
+        for (std::size_t i = 0; i < tr.rows(); ++i) {
+            const double net = curriculum_trade_bp(tr, run.calls[0][i], i);
+            sum += net; sq += net * net;
+        }
+        const double n = static_cast<double>(tr.rows()), mean = sum / n;
+        const double want = mean / std::sqrt((sq - n * mean * mean) / (n - 1.0) / n);
+        check(std::fabs(t.net_t() - want) < 1e-9, "net t-stat is the mean net bp over its standard error");
+    }
     CurriculumTrack vix = tr;
     vix.tradable = false;
     vix.cost_bp.clear();
@@ -245,6 +270,12 @@ void test_scoring() {
     check(std::fabs(s.p_vs_half - 0.0455) < 1e-3 && std::fabs(s.p_adjusted - 0.455) < 1e-2,
           "two-sided p and its Bonferroni correction over ten tests");
     check(std::fabs(s.lo95 - 0.5020) < 1e-3 && std::fabs(s.hi95 - 0.6906) < 1e-3, "Wilson 95 % interval");
+    // Up-rate of these bars sets the best constant call; the edge over it is
+    // corrected for the ten tests too.
+    const double zc = (0.60 - s.best_constant) / 0.05;
+    check(std::fabs(s.z_vs_constant - zc) < 1e-9
+              && std::fabs(s.p_constant_adjusted - std::min(1.0, 5.0 * std::erfc(zc / std::sqrt(2.0)))) < 1e-9,
+          "the edge over the best constant call is Bonferroni-corrected as well");
 }
 
 } // namespace
