@@ -5,6 +5,8 @@
 // checks that matter are the ones that ask whether the answer means anything.
 
 #include <analytics/hmm.hpp>
+
+#include <cstdint>
 #include <analytics/sabr.hpp>
 
 #include <cmath>
@@ -291,6 +293,29 @@ int main() {
                       "yesterday's return");
             }
         }
+    }
+
+    // ---- 5b. ONE RETURN FAR IN EVERY STATE'S TAIL -------------------------
+    // An overnight gap on a 5-minute series: 500 sd from both states. Every
+    // Gaussian density underflows to exactly 0 there. Baum-Welch used to die
+    // on it in every restart, and fit_hmm then sorted a model with no states.
+    {
+        std::vector<double> r(20000);
+        std::uint64_t s = 42;
+        for (std::size_t t = 0; t < r.size(); ++t) {
+            double u = 0.0;
+            for (int j = 0; j < 12; ++j) {
+                s = s * 6364136223846793005ull + 1442695040888963407ull;
+                u += static_cast<double>(s >> 11) * (1.0 / 9007199254740992.0);
+            }
+            r[t] = 0.001 * (u - 6.0) * (t % 400 < 200 ? 1.0 : 3.0);
+        }
+        r[10000] = 0.5;
+        const auto h = fit_hmm(r, 2, 0xBEEF, 4, 60);
+        check(h.has_value() && h->k == 2 && std::isfinite(h->log_likelihood)
+                  && h->sigma[0] > 0.0 && h->sigma[1] > h->sigma[0],
+              "a return 500 sd out does not kill the fit: emissions are scaled "
+              "per step, and the calm/volatile states are still found");
     }
 
     // ---- 6. REFUSALS ------------------------------------------------------

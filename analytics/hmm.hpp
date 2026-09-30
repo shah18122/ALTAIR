@@ -47,6 +47,7 @@
 #include <cmath>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <vector>
 
 namespace altair {
@@ -93,26 +94,49 @@ namespace detail {
     return std::exp(-0.5 * z * z) / (s * 2.5066282746310002);
 }
 
+[[nodiscard]] inline double log_gauss(double x, double m, double s) noexcept {
+    if (!(s > 1e-300)) { return -std::numeric_limits<double>::infinity(); }
+    const double z = (x - m) / s;
+    return -0.5 * z * z - std::log(s * 2.5066282746310002);
+}
+
 /// One Baum-Welch run from a given start. Returns the log-likelihood.
 [[nodiscard]] inline double baum_welch(const std::vector<double>& x, Hmm& h,
                                        std::size_t iters) {
     const std::size_t n = x.size(), k = h.k;
     std::vector<double> alpha(n * k), beta(n * k), scale(n), gam(n * k),
-        xi(k * k);
+        xi(k * k), b(n * k), offset(n);
     double ll = 0.0;
 
     for (std::size_t it = 0; it < iters; ++it) {
+        // ---- emissions, scaled per step by their largest -----------------
+        // One return far out in every state's tail (an overnight gap on a
+        // 5-minute series) underflows every density to exactly 0 and the
+        // forward pass dies. Dividing step t's densities by their maximum is
+        // exact: the scaled forward-backward cancels any per-step constant,
+        // and the log of it is added back to the likelihood.
+        for (std::size_t t = 0; t < n; ++t) {
+            double top = -std::numeric_limits<double>::infinity();
+            for (std::size_t j = 0; j < k; ++j) {
+                b[t * k + j] = log_gauss(x[t], h.mu[j], h.sigma[j]);
+                top = std::max(top, b[t * k + j]);
+            }
+            if (!std::isfinite(top)) { return -1e300; }
+            for (std::size_t j = 0; j < k; ++j) { b[t * k + j] = std::exp(b[t * k + j] - top); }
+            offset[t] = top;
+        }
+
         // ---- forward, SCALED --------------------------------------------
         ll = 0.0;
         for (std::size_t j = 0; j < k; ++j) {
-            alpha[j] = h.pi[j] * gauss(x[0], h.mu[j], h.sigma[j]);
+            alpha[j] = h.pi[j] * b[j];
         }
         double s = 0.0;
         for (std::size_t j = 0; j < k; ++j) { s += alpha[j]; }
         if (!(s > 0.0)) { return -1e300; }
         scale[0] = s;
         for (std::size_t j = 0; j < k; ++j) { alpha[j] /= s; }
-        ll += std::log(s);
+        ll += std::log(s) + offset[0];
 
         for (std::size_t t = 1; t < n; ++t) {
             s = 0.0;
@@ -121,13 +145,13 @@ namespace detail {
                 for (std::size_t i = 0; i < k; ++i) {
                     acc += alpha[(t - 1) * k + i] * h.trans(i, j);
                 }
-                alpha[t * k + j] = acc * gauss(x[t], h.mu[j], h.sigma[j]);
+                alpha[t * k + j] = acc * b[t * k + j];
                 s += alpha[t * k + j];
             }
             if (!(s > 0.0)) { return -1e300; }
             scale[t] = s;
             for (std::size_t j = 0; j < k; ++j) { alpha[t * k + j] /= s; }
-            ll += std::log(s);
+            ll += std::log(s) + offset[t];
         }
 
         // ---- backward, using the SAME scale factors ----------------------
@@ -137,7 +161,7 @@ namespace detail {
                 double acc = 0.0;
                 for (std::size_t j = 0; j < k; ++j) {
                     acc += h.trans(i, j)
-                         * gauss(x[t + 1], h.mu[j], h.sigma[j])
+                         * b[(t + 1) * k + j]
                          * beta[(t + 1) * k + j];
                 }
                 beta[t * k + i] = acc / scale[t + 1];
@@ -162,7 +186,7 @@ namespace detail {
             for (std::size_t i = 0; i < k; ++i) {
                 for (std::size_t j = 0; j < k; ++j) {
                     tmp[i * k + j] = alpha[t * k + i] * h.trans(i, j)
-                        * gauss(x[t + 1], h.mu[j], h.sigma[j])
+                        * b[(t + 1) * k + j]
                         * beta[(t + 1) * k + j];
                     sum += tmp[i * k + j];
                 }
@@ -261,7 +285,10 @@ fit_hmm(const std::vector<double>& x, std::size_t k, std::uint64_t seed,
             h.sigma[j] = sd * (0.5 + 1.5 * rnd());
         }
         const double ll = detail::baum_welch(x, h, iters);
-        if (!std::isfinite(ll)) { continue; }
+        // -1e300 is baum_welch's "the forward pass died". It is finite, so
+        // without this a run where every restart died left `best` a default
+        // model with no states, and the label sort below read past it.
+        if (!std::isfinite(ll) || ll <= -1e300) { continue; }
         lls.push_back(ll);
         if (ll > best_ll) { best_ll = ll; best = h; }
     }
