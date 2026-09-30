@@ -1,22 +1,32 @@
 // app/forecast_curriculum_main.cpp -- altair_forecast_curriculum.
 //
-// Walks every forecaster in models/ through the doubling curriculum
-// (models/curriculum.hpp) on the dataset: learn 3 days, forecast the next 3,
-// keep the record, refit on 6, forecast 6, ... to the end of the data. Seven
-// tracks: NIFTY, BANKNIFTY, NIFTY futures and INDIA VIX next-day direction;
-// NIFTY, BANKNIFTY and INDIA VIX next-hour direction.
+// Walks every forecaster in the Model Atlas that can make a next-bar call
+// through the doubling curriculum (models/curriculum.hpp) on the dataset:
+// learn 3 days, forecast the next 3, keep the record, refit on 6, forecast 6,
+// ... to the end of the data. Two questions per track:
+//   direction  which way will the next close go? (models/curriculum.hpp)
+//   range      will it land inside a band that is right 80 % of the time,
+//              and how narrow can that band be? (models/band_curriculum.hpp)
+// Tracks: NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d, NIFTY
+// futures daily, and the daily/hourly index tracks again with the VIX
+// model's forecast as an input.
 //
 // Offline and read-only: it reads dataset/ and writes
-//   <out>/forecast_curriculum.xlsx   Summary, Data, Method, one learning-curve
-//                                    sheet per track
+//   <out>/forecast_curriculum.xlsx   Summary, Bands, Frontier, Atlas coverage,
+//                                    Data, Method, one sheet per track
 //   <out>/forecast_curriculum.txt    the summary as text
-//   <out>/forecast_log/<track>.csv   every forecast and whether it was right
+//   <out>/forecast_log/<track>.csv   every forecast (daily and hourly tracks)
 
 #include <app/forecast_tracks.hpp>
 #include <app/xlsx_writer.hpp>
+#include <models/band_curriculum.hpp>
 #include <models/curriculum.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <map>
+#include <mutex>
+#include <thread>
 #include <cctype>
 #include <charconv>
 #include <chrono>
@@ -25,6 +35,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -42,14 +53,31 @@ using altair::CurriculumTrack;
 using altair::xlsx::XlsxCell;
 using altair::xlsx::XlsxSheet;
 
+/// Accuracy when a model calls only its most confident share of rows.
+struct FrontierRow {
+    std::size_t model = 0;
+    std::size_t scored = 0;
+    std::vector<double> acc;          ///< at kFrontierLevels
+    std::vector<std::size_t> n;       ///< rows in each level
+    double best_level = 0.0;          ///< largest share with accuracy >= 80 % on >= 30 rows; 0 if none
+    double best_acc = 0.0, best_low = 0.0, best_up_rate = 0.0;
+    std::size_t best_n = 0;
+};
+
+inline constexpr double kFrontierLevels[] = {0.001, 0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.50, 1.0};
+
 struct TrackResult {
     CurriculumTrack track;
     ft::TrackInfo info;
     CurriculumRun run;
-    bool ok = false;
+    altair::BandRun bands;
+    bool ok = false, bands_ok = false;
     std::string error;
     double seconds = 0.0;
     std::vector<CurriculumSummary> summary;   ///< [model]
+    std::vector<altair::BandTally> band_summary;
+    std::vector<FrontierRow> frontier;
+    bool log = false;                         ///< daily and hourly: small enough for a CSV
 };
 
 /// `v` with `decimals` places; `sign` adds a + to positive numbers.
@@ -166,6 +194,216 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
     return sh;
 }
 
+/// Rank a model's scored rows by confidence (|P(up) - 0.5|) and read the
+/// accuracy of its top slices. The ranking uses the whole test period's
+/// confidences -- no outcomes -- so the slice thresholds are not ones a trader
+/// could have known in advance; the ex-ante versions are the Stack (confident
+/// ...) and Consensus ensembles, which are scored like any model.
+FrontierRow compute_frontier(const CurriculumTrack& t, const CurriculumRun& run, std::size_t m) {
+    FrontierRow f;
+    f.model = m;
+    std::vector<std::pair<double, std::pair<bool, bool>>> scored;   // confidence, (right, went up)
+    for (std::size_t i = run.first_row; i < t.rows(); ++i) {
+        const altair::CurriculumCall c = run.calls[m][i - run.first_row];
+        const double r = t.ret(i);
+        if (!c.made || !std::isfinite(c.p_up) || r == 0.0) { continue; }
+        const int out = r > 0.0 ? 1 : -1;
+        scored.push_back({std::fabs(c.p_up - 0.5), {c.dir == out, out > 0}});
+    }
+    f.scored = scored.size();
+    if (scored.empty()) { return f; }
+    std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::vector<std::size_t> right(scored.size() + 1, 0), ups(scored.size() + 1, 0);
+    for (std::size_t k = 0; k < scored.size(); ++k) {
+        right[k + 1] = right[k] + (scored[k].second.first ? 1 : 0);
+        ups[k + 1] = ups[k] + (scored[k].second.second ? 1 : 0);
+    }
+    const auto wilson_low = [](double p, double n) {
+        const double z = 1.959963984540054;
+        return (p + z * z / (2 * n) - z * std::sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / (1 + z * z / n);
+    };
+    for (const double level : kFrontierLevels) {
+        const std::size_t n = std::max<std::size_t>(1, static_cast<std::size_t>(std::llround(level * static_cast<double>(scored.size()))));
+        f.n.push_back(n);
+        const double acc = static_cast<double>(right[n]) / static_cast<double>(n);
+        f.acc.push_back(acc);
+        if (n >= 30 && acc >= 0.80 && level > f.best_level) {
+            f.best_level = level;
+            f.best_acc = acc;
+            f.best_n = n;
+            f.best_low = wilson_low(acc, static_cast<double>(n));
+            f.best_up_rate = static_cast<double>(ups[n]) / static_cast<double>(n);
+        }
+    }
+    return f;
+}
+
+XlsxSheet frontier_sheet(const std::vector<TrackResult>& results) {
+    XlsxSheet sh;
+    sh.name = "Frontier";
+    sh.freeze_rows = 1;
+    std::vector<XlsxCell> h{XlsxCell::str("Track", true), XlsxCell::str("Model", true), XlsxCell::str("Scored calls", true)};
+    for (const double l : kFrontierLevels) {
+        h.push_back(XlsxCell::str("Acc % top " + fixed(100.0 * l, l < 0.01 ? 1 : 0) + "%", true));
+    }
+    for (const char* c : {"Largest share at >= 80 % (n >= 30)", "Its accuracy %", "Its calls", "Wilson 95 % low %",
+                          "Calls per trading day", "Up-rate on those bars %"}) {
+        h.push_back(XlsxCell::str(c, true));
+    }
+    sh.rows.push_back(h);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    for (const auto& r : results) {
+        if (!r.ok) { continue; }
+        std::vector<const FrontierRow*> rows;
+        for (const auto& f : r.frontier) { if (f.scored > 0) rows.push_back(&f); }
+        std::stable_sort(rows.begin(), rows.end(), [](const FrontierRow* a, const FrontierRow* b) {
+            return a->acc.size() > 3 && b->acc.size() > 3 && a->acc[3] > b->acc[3];   // by the top-2 % slice
+        });
+        for (const FrontierRow* f : rows) {
+            std::vector<XlsxCell> row{XlsxCell::str(r.track.name), XlsxCell::str(r.run.models[f->model]),
+                                      XlsxCell::num(static_cast<double>(f->scored))};
+            for (std::size_t k = 0; k < f->acc.size(); ++k) { row.push_back(XlsxCell::num(pct(f->acc[k]))); }
+            const bool any = f->best_level > 0.0;
+            row.push_back(any ? XlsxCell::str(fixed(100.0 * f->best_level, f->best_level < 0.01 ? 1 : 0) + "%")
+                              : XlsxCell::str("never"));
+            row.push_back(XlsxCell::num(any ? pct(f->best_acc) : nan));
+            row.push_back(XlsxCell::num(any ? static_cast<double>(f->best_n) : nan));
+            row.push_back(XlsxCell::num(any ? pct(f->best_low) : nan));
+            row.push_back(XlsxCell::num(any ? static_cast<double>(f->best_n) / static_cast<double>(r.track.days()) : nan));
+            row.push_back(XlsxCell::num(any ? pct(f->best_up_rate) : nan));
+            sh.rows.push_back(row);
+        }
+        sh.rows.push_back({});
+    }
+    sh.widths = {24, 26, 10, 11, 11, 10, 10, 10, 10, 10, 10, 11, 16, 11, 9, 12, 12, 12};
+    return sh;
+}
+
+std::string band_verdict(const altair::BandTally& b, const altair::BandTally& base) {
+    if (b.made < 100) { return "too few bands to judge"; }
+    const double cov = b.coverage();
+    const double se = std::sqrt(altair::kBandCoverage * (1.0 - altair::kBandCoverage) / static_cast<double>(b.made));
+    const bool calibrated = std::fabs(cov - altair::kBandCoverage) < std::max(0.02, 3.0 * se);
+    const double skill = 1.0 - b.mean_score_bp() / base.mean_score_bp();
+    std::string out = calibrated ? "calibrated" : (cov < altair::kBandCoverage ? "UNDER-covers" : "over-covers");
+    if (std::isfinite(skill)) {
+        out += skill > 0.005 ? ", " + fixed(100.0 * skill, 1) + " % better score than the constant band"
+             : skill < -0.005 ? ", " + fixed(-100.0 * skill, 1) + " % worse than the constant band"
+                              : ", same as the constant band";
+    }
+    return out;
+}
+
+XlsxSheet bands_sheet(const std::vector<TrackResult>& results) {
+    XlsxSheet sh;
+    sh.name = "Bands";
+    sh.freeze_rows = 1;
+    const char* head[] = {"Track", "Model", "Family", "Bands", "Abstained", "Hit rate %", "Target %",
+                          "Mean width bp", "Interval score bp", "Width vs constant %", "Score skill vs constant %",
+                          "Hit rate, wide half %", "Hit rate, narrow half %", "Fit s", "Verdict"};
+    std::vector<XlsxCell> h;
+    for (const char* c : head) { h.push_back(XlsxCell::str(c, true)); }
+    sh.rows.push_back(h);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    for (const auto& r : results) {
+        if (!r.bands_ok || r.band_summary.empty()) { continue; }
+        const auto& base = r.band_summary.front();   // Constant sigma (GBM)
+        std::vector<std::size_t> order(r.band_summary.size());
+        for (std::size_t m = 0; m < order.size(); ++m) { order[m] = m; }
+        std::stable_sort(order.begin(), order.end(), [&r](std::size_t a, std::size_t b) {
+            const double x = r.band_summary[a].made > 0 ? r.band_summary[a].mean_score_bp() : 1e300;
+            const double y = r.band_summary[b].made > 0 ? r.band_summary[b].mean_score_bp() : 1e300;
+            return x < y;
+        });
+        for (const std::size_t m : order) {
+            const auto& b = r.band_summary[m];
+            const std::size_t lo_made = b.made - b.hi_made, lo_hits = b.hits - b.hi_hits;
+            sh.rows.push_back({
+                XlsxCell::str(r.track.name), XlsxCell::str(r.bands.models[m]), XlsxCell::str(r.bands.families[m]),
+                XlsxCell::num(static_cast<double>(b.made)), XlsxCell::num(static_cast<double>(b.abstained)),
+                XlsxCell::num(pct(b.coverage()), true), XlsxCell::num(100.0 * altair::kBandCoverage),
+                XlsxCell::num(b.mean_width_bp()), XlsxCell::num(b.mean_score_bp()),
+                XlsxCell::num(b.made > 0 ? 100.0 * (b.mean_width_bp() / base.mean_width_bp() - 1.0) : nan),
+                XlsxCell::num(b.made > 0 ? 100.0 * (1.0 - b.mean_score_bp() / base.mean_score_bp()) : nan),
+                XlsxCell::num(b.hi_made > 0 ? 100.0 * static_cast<double>(b.hi_hits) / static_cast<double>(b.hi_made) : nan),
+                XlsxCell::num(lo_made > 0 ? 100.0 * static_cast<double>(lo_hits) / static_cast<double>(lo_made) : nan),
+                XlsxCell::num(std::round(r.bands.fit_seconds[m] * 10.0) / 10.0),
+                XlsxCell::str(band_verdict(b, base)),
+            });
+        }
+        sh.rows.push_back({});
+    }
+    sh.widths = {24, 26, 11, 10, 10, 10, 9, 12, 13, 12, 13, 12, 12, 8, 60};
+    return sh;
+}
+
+/// Every Model Atlas row (desktop/atlas_data.hpp) and what this run did with it.
+XlsxSheet atlas_sheet() {
+    struct Row { const char* section; const char* name; const char* use; };
+    static const Row rows[] = {
+        {"1. Statistical alpha", "Mean reversion", "Mean reversion (last move); Mean reversion (z-score band)"},
+        {"1. Statistical alpha", "Momentum / trend following", "Momentum (last move); Momentum (tuned lookback)"},
+        {"1. Statistical alpha", "Cointegration", "Pairs (cointegration): NIFTY against BANKNIFTY and back"},
+        {"1. Statistical alpha", "Pairs trading", "Pairs (cointegration)"},
+        {"1. Statistical alpha", "Statistical arbitrage", "Pairs (cointegration) -- a two-instrument universe"},
+        {"1. Statistical alpha", "Factor models (Fama-French, PCA)", "Autoencoder + logistic (PCA factors of the features); cross-sectional factors need a stock universe"},
+        {"1. Statistical alpha", "Relative value", "not run: needs fundamentals, not in the dataset"},
+        {"1. Statistical alpha", "Spread / calendar trading", "not run: needs two futures expiries; the dataset has the near month only"},
+        {"1. Statistical alpha", "Regime detection", "Hurst regime switch; k-means regimes; Markov chain; Hidden Markov model"},
+        {"2. Machine learning", "Linear / ridge regression", "Ridge regression"},
+        {"2. Machine learning", "Gradient boosting (GBDT / LightGBM)", "Gradient boosting; Gradient boosting on |r| (bands)"},
+        {"2. Machine learning", "Decision tree", "Decision tree"},
+        {"2. Machine learning", "MLP / feedforward network", "Neural net (MLP)"},
+        {"2. Machine learning", "LSTM / GRU", "LSTM; GRU"},
+        {"2. Machine learning", "Transformer / attention", "Transformer"},
+        {"2. Machine learning", "CNN", "CNN (random kernels)"},
+        {"2. Machine learning", "Random forest", "Random forest; Random forest on |r| (bands)"},
+        {"2. Machine learning", "Logistic regression", "Logistic regression; the Stack's meta-model"},
+        {"2. Machine learning", "SVM / KNN / autoencoder", "SVM (RBF); k-nearest neighbours; Autoencoder + logistic"},
+        {"3. Time series & volatility", "AR (autoregression)", "AR(2)"},
+        {"3. Time series & volatility", "ARMA / ARIMA / SARIMA", "ARMA(1,1); Seasonal AR (SARIMA)"},
+        {"3. Time series & volatility", "VAR (vector autoregression)", "VAR(1)"},
+        {"3. Time series & volatility", "Kalman filter", "Kalman filter (drift)"},
+        {"3. Time series & volatility", "Hidden Markov model", "Hidden Markov model"},
+        {"3. Time series & volatility", "Markov regime chain", "Markov chain"},
+        {"3. Time series & volatility", "Ornstein-Uhlenbeck", "Ornstein-Uhlenbeck"},
+        {"3. Time series & volatility", "Brownian motion / GBM", "Always majority (the drift); Constant sigma (GBM) band"},
+        {"3. Time series & volatility", "Historical volatility & EWMA", "Historical vol (20); EWMA (0.94) bands"},
+        {"3. Time series & volatility", "GARCH / GJR-GARCH", "GARCH(1,1); GJR-GARCH bands"},
+        {"3. Time series & volatility", "EGARCH", "EGARCH band"},
+        {"3. Time series & volatility", "Heston stochastic volatility", "Heston variance drift band"},
+        {"3. Time series & volatility", "Hurst exponent", "Hurst regime switch"},
+        {"4. Microstructure & execution", "Order-book imbalance, microprice, VPIN, Kyle's lambda", "not run: need the order book and trade tape; the dataset is OHLC bars"},
+        {"4. Microstructure & execution", "Slippage, TWAP/VWAP/POV, Almgren-Chriss, shortfall, queue, fill probability, Hawkes", "not forecasters: they execute a decided trade"},
+        {"5. Risk", "VaR, CVaR, stress, covariance, drawdown, beta, factor risk", "not forecasters of the next bar; the band models are the forecasting half of VaR"},
+        {"5. Risk", "Conformal risk control", "every band is conformally calibrated on its own past errors"},
+        {"6. Options & derivatives", "Black-Scholes ... finite-difference PDE", "not run: they price options; no option chain in the dataset"},
+        {"7. Portfolio construction", "Sizing, Kelly, vol targeting, risk parity, min variance, Black-Litterman, MVO", "not forecasters: they size and combine positions"},
+        {"8. Alternative data", "News / NLP / sentiment; event models", "not run: no text or event data in the dataset"},
+        {"9. Simulation", "Monte Carlo", "Constant sigma (GBM); Jump diffusion (Merton) bands"},
+        {"9. Simulation", "Bootstrapping", "Bootstrap quantile band"},
+        {"9. Simulation", "Jump diffusion", "Jump diffusion (Merton) band"},
+        {"9. Simulation", "Walk-forward & purged CV", "the curriculum itself: doubling walk-forward, no look-ahead"},
+        {"9. Simulation", "Agent-based simulation", "not a forecaster: a synthetic market"},
+        {"10. Reinforcement learning", "Q-learning", "not run: its QLearner learns execution aggression, not direction"},
+        {"10. Reinforcement learning", "DQN / PPO / actor-critic", "DQN (reinforcement)"},
+        {"Cross-cutting", "Ensemble aggregator", "Vote, Champion, Hedge, Stack, Consensus, Vol ensemble, Best band so far"},
+        {"Cross-cutting", "Forecast scorecard", "the price skill and verdict columns"},
+        {"Cross-cutting", "Transaction cost calculator", "the cost hurdle (STT dated as in config/charges.toml)"},
+        {"Cross-cutting", "Model scorecards & drift, feature registry, DCF", "not forecasters of the next bar"},
+    };
+    XlsxSheet sh;
+    sh.name = "Atlas coverage";
+    sh.freeze_rows = 1;
+    sh.rows.push_back({XlsxCell::str("Atlas section", true), XlsxCell::str("Atlas row", true),
+                       XlsxCell::str("In this run", true)});
+    for (const Row& r : rows) {
+        sh.rows.push_back({XlsxCell::str(r.section), XlsxCell::str(r.name), XlsxCell::str(r.use)});
+    }
+    sh.widths = {30, 60, 110};
+    return sh;
+}
+
 XlsxSheet track_sheet(const TrackResult& r) {
     XlsxSheet sh;
     sh.name = r.track.name;
@@ -248,6 +486,44 @@ XlsxSheet track_sheet(const TrackResult& r) {
                            XlsxCell::str(c >= 0 ? run.models[static_cast<std::size_t>(c)] : "none yet"),
                            XlsxCell::str(top.empty() ? "none yet" : top)});
     }
+    if (r.bands_ok) {
+        const auto& b = r.bands;
+        const auto bheader = [&](const char* title) {
+            std::vector<XlsxCell> hh{XlsxCell::str(title, true), XlsxCell::str("Learned days", true),
+                                     XlsxCell::str("Forecast days", true), XlsxCell::str("Learned", true),
+                                     XlsxCell::str("Forecast", true)};
+            for (const auto& m : b.models) { hh.push_back(XlsxCell::str(m, true)); }
+            sh.rows.push_back(hh);
+        };
+        sh.rows.push_back({});
+        sh.rows.push_back({XlsxCell::str("Range: will the next close land inside the band? Target 80 %.", true)});
+        bheader("Band hit rate % in the stage");
+        for (const auto& st : b.stages) {
+            auto row = stage_cells(st);
+            for (std::size_t m = 0; m < b.models.size(); ++m) {
+                const auto k = altair::band_tally(t, b, m, st.test_begin, st.test_end);
+                row.push_back(XlsxCell::num(k.made > 0 ? pct(k.coverage()) : nan));
+            }
+            sh.rows.push_back(row);
+        }
+        sh.rows.push_back({});
+        bheader("Mean band width bp in the stage");
+        for (const auto& st : b.stages) {
+            auto row = stage_cells(st);
+            for (std::size_t m = 0; m < b.models.size(); ++m) {
+                const auto k = altair::band_tally(t, b, m, st.test_begin, st.test_end);
+                row.push_back(XlsxCell::num(k.made > 0 ? k.mean_width_bp() : nan));
+            }
+            sh.rows.push_back(row);
+        }
+        sh.rows.push_back({});
+        bheader("Band calibration and fit");
+        for (const auto& st : b.stages) {
+            auto row = stage_cells(st);
+            for (std::size_t m = 0; m < b.models.size(); ++m) { row.push_back(XlsxCell::str(b.notes[m][st.index])); }
+            sh.rows.push_back(row);
+        }
+    }
     sh.widths = {26, 12, 13, 26, 26};
     for (std::size_t m = 0; m < models; ++m) { sh.widths.push_back(14); }
     return sh;
@@ -305,7 +581,7 @@ void write_log(const fs::path& dir, const TrackResult& r) {
         const int moved = t.ret(i) > 0.0 ? 1 : (t.ret(i) < 0.0 ? -1 : 0);
         const std::string when = da::format_audit_time(t.t[i], false);
         for (std::size_t m = 0; m < run.models.size(); ++m) {
-            const auto& c = run.calls[m][i - run.first_row];
+            const altair::CurriculumCall c = run.calls[m][i - run.first_row];
             if (!c.made) { continue; }   // abstentions are in the workbook, stage by stage
             const char* result = moved == 0 ? "FLAT" : (c.dir == moved ? "RIGHT" : "WRONG");
             const double net = altair::curriculum_trade_bp(t, c, i);
@@ -332,16 +608,19 @@ void write_log(const fs::path& dir, const TrackResult& r) {
 
 void usage(const char* exe) {
     std::printf(
-        "  Train every forecaster on a doubling curriculum and keep its record.\n\n"
-        "    %s [--dataset DIR] [--out DIR] [--first-days N] [--cap-days N]\n"
-        "       [--other-cost-bp X] [--only TEXT] [--no-log]\n\n"
+        "  Train every Model Atlas forecaster on a doubling curriculum, for direction and for\n"
+        "  80 %% range bands, on every timeframe, and keep the record.\n\n"
+        "    %s [--dataset DIR] [--out DIR] [--first-days N] [--cap-days N] [--jobs N]\n"
+        "       [--other-cost-bp X] [--only TEXT] [--no-bands] [--no-log]\n\n"
         "    --dataset DIR      default dataset\n"
         "    --out DIR          default data/verified\n"
         "    --first-days N     days learned before the first forecast (default 3)\n"
         "    --cap-days N       stop doubling once a block exceeds N days; 0 = pure doubling (default)\n"
+        "    --jobs N           tracks run in parallel (default: the machine's cores)\n"
         "    --other-cost-bp X  round-trip charges besides STT, incl. one tick of slippage (default 1.3)\n"
-        "    --only TEXT        run only tracks whose name contains TEXT (e.g. daily, NIFTY)\n"
-        "    --no-log           skip the per-forecast CSV logs\n", exe);
+        "    --only TEXT        run only tracks whose name contains TEXT (e.g. daily, 5m, NIFTY)\n"
+        "    --no-bands         skip the range-band curriculum\n"
+        "    --no-log           skip the per-forecast CSV logs (written for daily and hourly tracks)\n", exe);
 }
 
 bool parse_int(std::string_view v, long& out) {
@@ -349,15 +628,32 @@ bool parse_int(std::string_view v, long& out) {
     return r.ec == std::errc{} && r.ptr == v.data() + v.size();
 }
 
+/// One track to build: where its bars live and how to read them.
+struct TrackSpec {
+    std::string name, instrument;
+    std::string dir;          ///< under the dataset, e.g. "spot/nifty"
+    int tf = 0;               ///< minutes; da::kDailyTf for daily
+    bool vix_itself = false, futures = false;
+    std::string pair_dir, pair_name;
+};
+
+std::string tf_dir(int tf) {
+    return tf == da::kDailyTf ? "1d" : std::to_string(tf) + "m";
+}
+
+std::string tf_label(int tf) {
+    return tf == da::kDailyTf ? "daily" : (tf == 60 ? "hourly" : std::to_string(tf) + "m");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     fs::path root = "dataset";
     fs::path out = "data/verified";
-    long first_days = 3, cap_days = 0;
+    long first_days = 3, cap_days = 0, jobs = static_cast<long>(std::max(1u, std::thread::hardware_concurrency()));
     double other_cost = 1.3;
     std::string only;
-    bool log = true;
+    bool log = true, bands = true;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
         const bool has = i + 1 < argc;
@@ -366,12 +662,17 @@ int main(int argc, char** argv) {
         if (a == "--out" && has) { out = argv[++i]; continue; }
         if (a == "--only" && has) { only = argv[++i]; continue; }
         if (a == "--no-log") { log = false; continue; }
+        if (a == "--no-bands") { bands = false; continue; }
         if (a == "--first-days" && has) {
             if (!parse_int(argv[++i], first_days) || first_days < 1 || first_days > 1000) { usage(argv[0]); return 2; }
             continue;
         }
         if (a == "--cap-days" && has) {
             if (!parse_int(argv[++i], cap_days) || cap_days < 0 || cap_days > 100000) { usage(argv[0]); return 2; }
+            continue;
+        }
+        if (a == "--jobs" && has) {
+            if (!parse_int(argv[++i], jobs) || jobs < 1 || jobs > 64) { usage(argv[0]); return 2; }
             continue;
         }
         if (a == "--other-cost-bp" && has) {
@@ -386,79 +687,130 @@ int main(int argc, char** argv) {
     }
 
     const auto t_start = std::chrono::steady_clock::now();
-    std::printf("Forecast curriculum over %s\n", root.string().c_str());
+    std::printf("Forecast curriculum over %s (%ld parallel jobs)\n", root.string().c_str(), jobs);
 
-    // Every series once; each is cleaned against the info of the track that owns it.
-    ft::TrackInfo i_nifty_d, i_bank_d, i_fut_d, i_vix_d, i_nifty_h, i_bank_h, i_vix_h;
-    const auto load = [&root](const char* rel, int tf, ft::TrackInfo& info) {
-        auto bars = ft::load_bars(root / rel, tf, info);
-        ft::clean_bars(bars, info);
-        return bars;
-    };
-    const auto nifty_d = load("spot/nifty/1d", da::kDailyTf, i_nifty_d);
-    const auto bank_d = load("spot/banknifty/1d", da::kDailyTf, i_bank_d);
-    const auto vix_d = load("spot/indiavix/1d", da::kDailyTf, i_vix_d);
-    const auto fut_d = load("fut/nifty/1d", da::kDailyTf, i_fut_d);
-    const auto nifty_h = load("spot/nifty/60m", 60, i_nifty_h);
-    const auto bank_h = load("spot/banknifty/60m", 60, i_bank_h);
-    const auto vix_h = load("spot/indiavix/60m", 60, i_vix_h);
-    if (nifty_d.empty() || vix_d.empty() || nifty_h.empty() || vix_h.empty()) {
-        std::printf("  dataset not found or empty under %s\n", root.string().c_str());
-        return 1;
+    // The tracks: every instrument at every timeframe, 1m first so the longest
+    // jobs start first.
+    std::vector<TrackSpec> specs;
+    for (const int tf : {1, 5, 15, 60, da::kDailyTf}) {
+        specs.push_back({"NIFTY " + tf_label(tf), "NIFTY", "spot/nifty", tf, false, false, "spot/banknifty", "BANKNIFTY"});
+        specs.push_back({"BANKNIFTY " + tf_label(tf), "BANKNIFTY", "spot/banknifty", tf, false, false, "spot/nifty", "NIFTY"});
+        specs.push_back({"INDIA VIX " + tf_label(tf), "INDIA VIX", "spot/indiavix", tf, true, false, "", ""});
+    }
+    specs.push_back({"NIFTY FUT daily", "NIFTY FUT", "fut/nifty", da::kDailyTf, false, true, "", ""});
+    const auto wanted = [&only](const std::string& name) { return only.empty() || name.find(only) != std::string::npos; };
+    std::erase_if(specs, [&](const TrackSpec& t) { return !wanted(t.name); });
+    const bool want_fc = wanted("NIFTY daily + VIX fc") || wanted("BANKNIFTY daily + VIX fc")
+                      || wanted("NIFTY FUT daily + VIX fc") || wanted("NIFTY hourly + VIX fc")
+                      || wanted("BANKNIFTY hourly + VIX fc");
+    if (want_fc && std::none_of(specs.begin(), specs.end(), [](const TrackSpec& t) { return t.name == "INDIA VIX daily"; })) {
+        specs.push_back({"INDIA VIX daily", "INDIA VIX", "spot/indiavix", da::kDailyTf, true, false, "", ""});
     }
 
-    std::vector<TrackResult> results;
-    const auto add = [&](CurriculumTrack t, ft::TrackInfo info, const char* cost) {
-        if (!only.empty() && t.name.find(only) == std::string::npos) { return; }
-        info.cost_note = cost;
-        TrackResult r;
-        r.track = std::move(t);
-        r.info = std::move(info);
-        results.push_back(std::move(r));
+    // Every series the tracks need, loaded and cleaned once, before any thread starts.
+    struct Series { std::vector<da::AuditBar> bars; ft::TrackInfo info; };
+    std::map<std::string, Series> series;
+    const auto need = [&](const std::string& dir, int tf) {
+        const std::string key = dir + "/" + tf_dir(tf);
+        if (series.contains(key)) { return; }
+        Series sr;
+        sr.bars = ft::load_bars(root / key, tf, sr.info);
+        ft::clean_bars(sr.bars, sr.info);
+        series.emplace(key, std::move(sr));
+    };
+    for (const auto& t : specs) {
+        need(t.dir, t.tf);
+        if (!t.vix_itself) { need("spot/indiavix", t.tf); }
+        if (t.futures) { need("spot/nifty", t.tf); }
+        if (!t.pair_dir.empty()) { need(t.pair_dir, t.tf); }
+    }
+    if (want_fc) {
+        for (const int tf : {60, da::kDailyTf}) { need("spot/nifty", tf); need("spot/banknifty", tf); need("spot/indiavix", tf); }
+        need("fut/nifty", da::kDailyTf);
+    }
+    for (const auto& [key, sr] : series) {
+        if (sr.bars.empty()) { std::printf("  no data under %s\n", (root / key).string().c_str()); return 1; }
+    }
+    const auto bars = [&](const std::string& dir, int tf) -> const std::vector<da::AuditBar>* {
+        const auto it = series.find(dir + "/" + tf_dir(tf));
+        return it == series.end() ? nullptr : &it->second.bars;
     };
     const std::string cost_text = "2 bp STT to 2026-03-31, 5 bp from 2026-04-01, + " + fixed(other_cost, 1)
                                   + " bp charges and one tick";
-    // Built first, then added: the builders fill the info they are handed, and
-    // an argument list does not order its evaluation.
-    auto t_nifty_d = ft::build_daily({"NIFTY daily", "NIFTY", &nifty_d, &vix_d, nullptr, true, other_cost, nullptr}, i_nifty_d);
-    auto t_bank_d = ft::build_daily({"BANKNIFTY daily", "BANKNIFTY", &bank_d, &vix_d, nullptr, true, other_cost, nullptr}, i_bank_d);
-    auto t_fut_d = ft::build_daily({"NIFTY FUT daily", "NIFTY FUT", &fut_d, &vix_d, &nifty_d, true, other_cost, nullptr}, i_fut_d);
-    auto t_vix_d = ft::build_daily({"INDIA VIX daily", "INDIA VIX", &vix_d, nullptr, nullptr, false, other_cost, nullptr}, i_vix_d);
-    auto t_nifty_h = ft::build_hourly({"NIFTY hourly", "NIFTY", &nifty_h, &vix_h, true, other_cost, nullptr}, i_nifty_h);
-    auto t_bank_h = ft::build_hourly({"BANKNIFTY hourly", "BANKNIFTY", &bank_h, &vix_h, true, other_cost, nullptr}, i_bank_h);
-    auto t_vix_h = ft::build_hourly({"INDIA VIX hourly", "INDIA VIX", &vix_h, nullptr, false, other_cost, nullptr}, i_vix_h);
-    // INDIA VIX daily runs first: its forecasts feed the "+ VIX fc" tracks.
-    add(std::move(t_vix_d), i_vix_d, "not tradable");
-    add(std::move(t_nifty_d), i_nifty_d, cost_text.c_str());
-    add(std::move(t_bank_d), i_bank_d, cost_text.c_str());
-    add(std::move(t_fut_d), i_fut_d, cost_text.c_str());
-    add(std::move(t_nifty_h), i_nifty_h, cost_text.c_str());
-    add(std::move(t_bank_h), i_bank_h, cost_text.c_str());
-    add(std::move(t_vix_h), i_vix_h, "not tradable");
 
     altair::CurriculumOptions opt;
     opt.first_days = static_cast<std::int32_t>(first_days);
     opt.step_cap_days = static_cast<std::int32_t>(cap_days);
-    std::size_t tests = 0;
+    std::mutex print_mu;
+
+    // Build a track from its spec (and, for the "+ VIX fc" tracks, the forecasts).
+    const auto build = [&](const TrackSpec& t, const ft::VixForecast* fc, TrackResult& r) {
+        r.info = series.at(t.dir + "/" + tf_dir(t.tf)).info;
+        r.info.cost_note = t.vix_itself ? "not tradable" : cost_text;
+        const auto* own = bars(t.dir, t.tf);
+        const auto* vix = t.vix_itself ? nullptr : bars("spot/indiavix", t.tf);
+        const auto* pair = t.pair_dir.empty() ? nullptr : bars(t.pair_dir, t.tf);
+        if (t.tf == da::kDailyTf) {
+            r.track = ft::build_daily({t.name, t.instrument, own, vix, t.futures ? bars("spot/nifty", t.tf) : nullptr,
+                                       !t.vix_itself, other_cost, fc, pair, t.pair_name}, r.info);
+        } else if (t.tf == 60) {
+            r.track = ft::build_hourly({t.name, t.instrument, own, vix, !t.vix_itself, other_cost, fc, pair, t.pair_name}, r.info);
+        } else {
+            r.track = ft::build_intraday({t.name, t.instrument, t.tf, own, vix, !t.vix_itself, other_cost, pair, t.pair_name}, r.info);
+        }
+        r.log = log && t.tf >= 60;
+    };
     const auto run_one = [&](TrackResult& r) {
         const auto t0 = std::chrono::steady_clock::now();
         auto models = altair::curriculum_default_models();
         auto run = altair::curriculum_run(r.track, models, opt);
-        r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         if (!run) {
             r.error = altair::curriculum_error_text(run.error());
-            std::printf("  %-24s not run: %s\n", r.track.name.c_str(), r.error.c_str());
+            const std::lock_guard<std::mutex> lock(print_mu);
+            std::printf("  %-26s not run: %s\n", r.track.name.c_str(), r.error.c_str());
             return;
         }
         r.run = std::move(*run);
         r.ok = true;
-        tests += r.run.models.size();
-        std::printf("  %-24s %6zu decisions, %5d days, %2zu stages, %zu look-ahead refusals, %.0f s\n",
-                    r.track.name.c_str(), r.track.rows(), r.track.days(), r.run.stages.size(),
-                    r.run.lookahead_refusals, r.seconds);
+        for (std::size_t m = 0; m < r.run.models.size(); ++m) { r.frontier.push_back(compute_frontier(r.track, r.run, m)); }
+        if (bands) {
+            auto bm = altair::band_default_models();
+            auto br = altair::band_run(r.track, bm, opt);
+            if (br) {
+                r.bands = std::move(*br);
+                r.bands_ok = true;
+                for (std::size_t m = 0; m < r.bands.models.size(); ++m) {
+                    r.band_summary.push_back(altair::band_tally(r.track, r.bands, m, r.bands.first_row, r.track.rows()));
+                }
+            }
+        }
+        r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        const std::lock_guard<std::mutex> lock(print_mu);
+        std::printf("  %-26s %8zu decisions, %5d days, %2zu stages, %zu + %zu look-ahead refusals, %.0f s\n",
+                    r.track.name.c_str(), r.track.rows(), r.track.days(), r.run.stages.size(), r.run.lookahead_refusals,
+                    r.bands_ok ? r.bands.lookahead_refusals : 0, r.seconds);
         std::fflush(stdout);
     };
-    for (auto& r : results) { run_one(r); }
+    const auto run_all = [&](std::vector<TrackResult>& rs, std::size_t from, const std::vector<std::function<void(TrackResult&)>>& makers) {
+        std::atomic<std::size_t> next{0};
+        const auto worker = [&]() {
+            for (std::size_t k = next++; k < makers.size(); k = next++) {
+                makers[k](rs[from + k]);
+                run_one(rs[from + k]);
+            }
+        };
+        std::vector<std::thread> pool;
+        const std::size_t n = std::min<std::size_t>(static_cast<std::size_t>(jobs), makers.size());
+        for (std::size_t k = 0; k < n; ++k) { pool.emplace_back(worker); }
+        for (auto& th : pool) { th.join(); }
+    };
+
+    std::vector<TrackResult> results(specs.size());
+    {
+        std::vector<std::function<void(TrackResult&)>> makers;
+        for (const auto& t : specs) { makers.push_back([&, t](TrackResult& r) { build(t, nullptr, r); }); }
+        run_all(results, 0, makers);
+    }
 
     // The VIX model's out-of-sample forecasts -- Hedge's, which picks models by
     // their record in finished stages, not by hindsight -- as an input to the
@@ -469,33 +821,35 @@ int main(int argc, char** argv) {
         const auto h = std::find(r.run.models.begin(), r.run.models.end(), std::string{"Hedge"});
         const auto m = static_cast<std::size_t>(h - r.run.models.begin());
         for (std::size_t i = r.run.first_row; m < r.run.models.size() && i < r.track.rows(); ++i) {
-            const auto& c = r.run.calls[m][i - r.run.first_row];
+            const altair::CurriculumCall c = r.run.calls[m][i - r.run.first_row];
             if (c.made && std::isfinite(c.p_up)) { vix_fc[da::audit_day(r.track.t[i])] = c.p_up; }
         }
     }
-    if (!vix_fc.empty()) {
-        ft::TrackInfo f_nifty_d = i_nifty_d, f_bank_d = i_bank_d, f_fut_d = i_fut_d, f_nifty_h = i_nifty_h,
-                      f_bank_h = i_bank_h;
-        for (ft::TrackInfo* i : {&f_nifty_d, &f_bank_d, &f_fut_d, &f_nifty_h, &f_bank_h}) {
-            // The builder recounts what it drops; the loader's counts stay.
-            i->short_days = i->before_vix = i->no_vix = i->no_spot = i->roll_excluded = i->expiries = i->warmup = 0;
+    if (want_fc && !vix_fc.empty()) {
+        std::vector<TrackSpec> fc_specs;
+        for (const auto& t : std::vector<TrackSpec>{
+                 {"NIFTY daily + VIX fc", "NIFTY", "spot/nifty", da::kDailyTf, false, false, "spot/banknifty", "BANKNIFTY"},
+                 {"BANKNIFTY daily + VIX fc", "BANKNIFTY", "spot/banknifty", da::kDailyTf, false, false, "spot/nifty", "NIFTY"},
+                 {"NIFTY FUT daily + VIX fc", "NIFTY FUT", "fut/nifty", da::kDailyTf, false, true, "", ""},
+                 {"NIFTY hourly + VIX fc", "NIFTY", "spot/nifty", 60, false, false, "spot/banknifty", "BANKNIFTY"},
+                 {"BANKNIFTY hourly + VIX fc", "BANKNIFTY", "spot/banknifty", 60, false, false, "spot/nifty", "NIFTY"}}) {
+            if (wanted(t.name)) { fc_specs.push_back(t); }
         }
-        auto v_nifty_d = ft::build_daily({"NIFTY daily + VIX fc", "NIFTY", &nifty_d, &vix_d, nullptr, true, other_cost, &vix_fc}, f_nifty_d);
-        auto v_bank_d = ft::build_daily({"BANKNIFTY daily + VIX fc", "BANKNIFTY", &bank_d, &vix_d, nullptr, true, other_cost, &vix_fc}, f_bank_d);
-        auto v_fut_d = ft::build_daily({"NIFTY FUT daily + VIX fc", "NIFTY FUT", &fut_d, &vix_d, &nifty_d, true, other_cost, &vix_fc}, f_fut_d);
-        auto v_nifty_h = ft::build_hourly({"NIFTY hourly + VIX fc", "NIFTY", &nifty_h, &vix_h, true, other_cost, &vix_fc}, f_nifty_h);
-        auto v_bank_h = ft::build_hourly({"BANKNIFTY hourly + VIX fc", "BANKNIFTY", &bank_h, &vix_h, true, other_cost, &vix_fc}, f_bank_h);
-        const std::size_t before = results.size();
-        add(std::move(v_nifty_d), f_nifty_d, cost_text.c_str());
-        add(std::move(v_bank_d), f_bank_d, cost_text.c_str());
-        add(std::move(v_fut_d), f_fut_d, cost_text.c_str());
-        add(std::move(v_nifty_h), f_nifty_h, cost_text.c_str());
-        add(std::move(v_bank_h), f_bank_h, cost_text.c_str());
-        for (std::size_t k = before; k < results.size(); ++k) { run_one(results[k]); }
-    } else if (only.empty() || std::string{"daily + VIX fc hourly"}.find(only) != std::string::npos) {
+        const std::size_t from = results.size();
+        results.resize(from + fc_specs.size());
+        std::vector<std::function<void(TrackResult&)>> makers;
+        for (const auto& t : fc_specs) { makers.push_back([&, t](TrackResult& r) { build(t, &vix_fc, r); }); }
+        run_all(results, from, makers);
+    } else if (want_fc) {
         std::printf("  (no INDIA VIX daily forecasts: the '+ VIX fc' tracks were not built)\n");
     }
+    // A track added only to feed the "+ VIX fc" tracks is not reported.
+    if (!wanted("INDIA VIX daily")) {
+        std::erase_if(results, [](const TrackResult& r) { return r.track.name == "INDIA VIX daily"; });
+    }
 
+    std::size_t tests = 0;
+    for (const auto& r : results) { tests += r.ok ? r.run.models.size() : 0; }
     for (auto& r : results) {
         if (!r.ok) { continue; }
         for (std::size_t m = 0; m < r.run.models.size(); ++m) {
@@ -521,10 +875,10 @@ int main(int argc, char** argv) {
         for (const std::size_t m : order) {
             const auto& s = r.summary[m];
             if (s.all.scored() == 0) {
-                text << "  " << pad(r.run.models[m], 24) << "  never forecast\n";
+                text << "  " << pad(r.run.models[m], 30) << "  never forecast\n";
                 continue;
             }
-            text << "  " << pad(r.run.models[m], 24) << pad(fixed(pct(s.accuracy), 2) + "%", 7)
+            text << "  " << pad(r.run.models[m], 30) << pad(fixed(pct(s.accuracy), 2) + "%", 7)
                  << "  [" << fixed(pct(s.lo95), 1) << ", " << fixed(pct(s.hi95), 1) << "]"
                  << "  n=" << s.all.scored() << "  up-rate " << fixed(pct(s.up_rate), 1) + "%";
             if (s.have_price) { text << "  skill vs RW " << fixed(100.0 * s.price.skill, 2, true) + "%"; }
@@ -534,6 +888,31 @@ int main(int argc, char** argv) {
             }
             text << "  -- " << verdict(s, tests) << "\n";
         }
+        // Where, if anywhere, direction reaches 80 %.
+        const FrontierRow* best = nullptr;
+        for (const auto& f : r.frontier) {
+            if (f.best_level > 0.0 && (best == nullptr || f.best_level > best->best_level)) { best = &f; }
+        }
+        if (best != nullptr) {
+            text << "  >= 80 % direction: " << r.run.models[best->model] << ", its most confident "
+                 << fixed(100.0 * best->best_level, best->best_level < 0.01 ? 1 : 0) << "% of calls: "
+                 << fixed(pct(best->best_acc), 1) << "% on " << best->best_n << " calls (Wilson low "
+                 << fixed(pct(best->best_low), 1) << "%, up-rate on those bars " << fixed(pct(best->best_up_rate), 1)
+                 << "%)\n";
+        } else {
+            text << "  >= 80 % direction: no model reaches it on any slice of 30+ calls\n";
+        }
+        if (r.bands_ok && !r.band_summary.empty()) {
+            std::size_t bestb = 0;
+            for (std::size_t m = 1; m < r.band_summary.size(); ++m) {
+                if (r.band_summary[m].made > 100
+                    && r.band_summary[m].mean_score_bp() < r.band_summary[bestb].mean_score_bp()) { bestb = m; }
+            }
+            const auto& bb = r.band_summary[bestb];
+            text << "  80 % band: best " << r.bands.models[bestb] << ", hit rate " << fixed(pct(bb.coverage()), 1)
+                 << "% with " << fixed(bb.mean_width_bp(), 1) << " bp width -- " << band_verdict(bb, r.band_summary.front())
+                 << "\n";
+        }
     }
 
     const std::vector<std::string> method = {
@@ -542,37 +921,43 @@ int main(int argc, char** argv) {
         "then learn [0, 6) and forecast [6, 12); then 12, 24, 48 ... until the data ends. The last block is what is left.",
         "Inside a block the model is frozen: it never sees the outcomes it is forecasting. After the block it is refitted "
         "from scratch on everything seen so far. That refit is the 'update'.",
-        "A call is RIGHT when the next close moved the called way, WRONG otherwise (a call with no direction is WRONG and also "
-        "counted under 'No direction'; an exact 50/50 is broken by the expected return). An unchanged close is neither. A model "
-        "that cannot fit yet (too few rows for its method) ABSTAINS, and abstentions are listed per stage, not scored.",
-        "Daily: decide at 15:30 from that day's close; outcome = next trading day's close. Hourly: decide at the close of "
-        "each of a full day's first six hourly bars (10:15 ... 15:15); outcome = the next hourly close. No overnight hour.",
+        "DIRECTION. A call is RIGHT when the next close moved the called way, WRONG otherwise (a call with no direction is "
+        "WRONG and also counted under 'No direction'; an exact 50/50 is broken by the expected return). An unchanged close "
+        "is neither. A model that cannot fit yet ABSTAINS; abstentions are listed per stage, not scored.",
+        "RANGE. A band model forecasts the scale of the next move; the band is k times it either side of the last price, "
+        "with k the 80th percentile of the model's own past out-of-sample |move| / scale (in-sample until 50 exist). "
+        "Every band aims at 80 %; they compete on the interval (Winkler) score -- width plus 5x any miss -- against the "
+        "constant-sigma band. A wide band hits often and scores badly, so hit rate alone proves nothing.",
+        "FRONTIER. For each probabilistic model, its scored calls ranked by confidence |P(up) - 0.5|; the accuracy of the "
+        "top 0.1 %, 0.5 %, 1 % ... 100 %; and the largest slice still >= 80 % on 30+ calls. The ranking uses the whole "
+        "test period's confidences (no outcomes), so a trader would not have known the threshold in advance -- the "
+        "ex-ante versions are the Stack (confident ...) and Consensus ensembles, scored like any model on the Summary sheet.",
+        "Timeframes: daily (decide at 15:30, outcome next close), hourly (decide at the close of each of a full day's first "
+        "six bars), and 15m, 5m and 1m (decide at the close of every bar of a full 09:15-15:30 session but the last). "
+        "Nothing is forecast across the night. Features at every timeframe include INDIA VIX at the same moment; "
+        "NIFTY and BANKNIFTY carry each other's price for the pairs model.",
         "Features are standardised on the training window only (models/dataset.hpp Scaler). Classical models tune one "
-        "hyper-parameter on the last quarter of their training window. Ensembles, all from finished stages only: Vote "
-        "(majority of the learning models), Champion (best record so far), Hedge (exponential weights on the record), "
-        "Stack (a logistic regression on every model's past out-of-sample calls: whom to trust, invert or ignore), "
-        "Stack (confident third) (the Stack only in its most confident third), Consensus 75% (the Vote only when three "
-        "quarters of at least six callers agree). A filtered ensemble abstains otherwise: read its accuracy with its Coverage.",
+        "hyper-parameter on the last quarter of their training window. Ensembles, all from finished stages only: Vote, "
+        "Champion, Hedge, Stack (a logistic regression on every model's past out-of-sample calls), Stack (confident "
+        "third / 10% / 2%), Consensus 75% / 90%. A filtered ensemble abstains otherwise: read its accuracy with its Coverage.",
         "Baselines: Coin flip (seeded), Always majority (the training up-rate), Momentum and Mean reversion (repeat or reverse "
-        "the last move). 'Up-rate on same bars' is what calling UP every time would have scored; the best constant call is "
-        "max(up-rate, 1 - up-rate) -- always down on INDIA VIX, which falls more often than it rises.",
+        "the last move). The best constant call is max(up-rate, 1 - up-rate) on the same bars.",
         "Significance: z and two-sided p against 50 %, and one-sided p against the best constant call, both "
-        "Bonferroni-corrected over every model on every track. Skill vs RW: "
-        "1 - RMSE(model price) / RMSE(last price), from models/forecast_scorecard.hpp; the price verdict needs 200 "
-        "forecasts and a paired t beyond 2.",
+        "Bonferroni-corrected over every model on every track. Skill vs RW: 1 - RMSE(model price) / RMSE(last price).",
         "Trades: a call is acted on only when its expected move exceeds the round-trip cost of that day (futures STT 2 bp, "
         "5 bp from 2026-04-01, plus other charges and one tick). Net bp = direction x move - cost. VIX is not tradable.",
         "Data rules (see the Data sheet): seconds floored, repeated stamps keep the first bar, impossible OHLC widened and "
-        "counted, hourly only on full 09:15-15:15 days, NIFTY futures daily only with roll-crossing outcomes excluded, "
-        "rows without a same-time INDIA VIX bar dropped, history before INDIA VIX starts (2015) not used.",
-        "Limits: the transformer is trained by finite differences (the repository's reference backend) with 400 SGD steps "
-        "a stage, so it is the least-trained network. The SVM learns from its window's latest 1,500 rows. LSTM and GRU "
-        "use analytic backpropagation through time.",
+        "counted, intraday only on full sessions, NIFTY futures daily only with roll-crossing outcomes excluded, rows "
+        "without a same-time INDIA VIX bar (or pair price) dropped, history before INDIA VIX starts (2015) not used.",
+        "Visible truncations: the transformer trains by finite differences with 400 SGD steps a stage; the SVM learns from "
+        "its window's latest 1,500 rows, kNN from 20,000, the HMM's Baum-Welch from 50,000, the DQN's replay from 4,096; "
+        "GARCH/GJR/EGARCH fit on the latest 100,000 returns and filter over all of them. Each says so in its stage notes.",
     };
 
     std::error_code ec;
     fs::create_directories(out, ec);
-    std::vector<XlsxSheet> sheets{summary_sheet(results, tests), data_sheet(results), method_sheet(method)};
+    std::vector<XlsxSheet> sheets{summary_sheet(results, tests), bands_sheet(results), frontier_sheet(results),
+                                  atlas_sheet(), data_sheet(results), method_sheet(method)};
     for (const auto& r : results) {
         if (r.ok) { sheets.push_back(track_sheet(r)); }
     }
@@ -590,16 +975,14 @@ int main(int argc, char** argv) {
         std::ofstream f(out / "forecast_curriculum.txt", std::ios::binary | std::ios::trunc);
         f << text.str();
     }
-    if (log) {
-        for (const auto& r : results) {
-            if (r.ok) { write_log(out / "forecast_log", r); }
-        }
+    for (const auto& r : results) {
+        if (r.ok && r.log) { write_log(out / "forecast_log", r); }
     }
     std::size_t refusals = 0;
-    for (const auto& r : results) { refusals += r.ok ? r.run.lookahead_refusals : 0; }
+    for (const auto& r : results) { refusals += (r.ok ? r.run.lookahead_refusals : 0) + (r.bands_ok ? r.bands.lookahead_refusals : 0); }
     const double total = std::chrono::duration<double>(std::chrono::steady_clock::now() - t_start).count();
     std::printf("%s\n  wrote %s (%.0f s)\n", text.str().c_str(), (out / "forecast_curriculum.xlsx").string().c_str(), total);
-    if (log) { std::printf("  wrote per-forecast logs under %s\n", (out / "forecast_log").string().c_str()); }
+    if (log) { std::printf("  wrote per-forecast logs (daily and hourly tracks) under %s\n", (out / "forecast_log").string().c_str()); }
     bool all_ok = !results.empty();
     for (const auto& r : results) { all_ok = all_ok && r.ok; }
     return all_ok && refusals == 0 ? 0 : 1;

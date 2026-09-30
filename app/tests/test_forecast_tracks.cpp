@@ -199,6 +199,35 @@ void test_vix_forecast_feature() {
           "an hourly row reads the forecast made at the previous day's close, never its own day's");
 }
 
+void test_intraday() {
+    // Five days of 5-minute bars: day 3 is short; everything else a full grid.
+    const std::int64_t d0 = da::audit_days_from_civil(2025, 3, 3);
+    std::vector<da::AuditBar> own, vix, pair;
+    for (int day = 0; day < 5; ++day) {
+        const int bars = day == 3 ? 40 : 75;
+        for (int k = 0; k < bars; ++k) {
+            const std::int64_t t = (d0 + day) * 86'400 + (555 + 5 * k) * 60;
+            const double c = 100.0 + day + 0.01 * k + (k % 2 == 0 ? 0.03 : -0.02);
+            own.push_back(bar(t, c - 0.01, c + 0.05, c - 0.05, c));
+            vix.push_back(bar(t, 15.0, 15.1, 14.9, 15.0 + 0.001 * k));
+            pair.push_back(bar(t, 2 * c, 2 * c, 2 * c, 2 * c));
+        }
+    }
+    ft::TrackInfo info;
+    const auto tr = ft::build_intraday({"T 5m", "T", 5, &own, &vix, true, 1.3, &pair, "P"}, info);
+    check(altair::curriculum_check_track(tr).has_value(), "the 5-minute track passes the curriculum's checks");
+    check(info.short_days == 1 && info.warmup == 150 && tr.rows() == 2 * 74 && tr.days() == 2,
+          "74 decisions a full day (75 bars, none across the night); a short day and two history days skipped");
+    check(tr.season == 74 && tr.slot[0] == 0 && tr.slot[73] == 73 && tr.slot[74] == 0,
+          "each row knows its bar of the day");
+    check(tr.t[0] == (d0 + 2) * 86'400 + (555 + 5) * 60 && tr.t_out[73] == (d0 + 2) * 86'400 + ft::kCloseSec,
+          "decided at the bar's close; the 15:20 bar's outcome is the 15:30 close");
+    check(tr.pair.size() == tr.rows() && std::fabs(tr.pair[0] - 2.0 * tr.anchor[0]) < 1e-12,
+          "the pair's close at the same stamp rides along");
+    check(std::fabs(tr.x[2] - std::log(own[150].c / own[149].c)) < 1e-12,
+          "ret last hour at the first bar runs from yesterday's close");
+}
+
 } // namespace
 
 int main() {
@@ -210,6 +239,7 @@ int main() {
     test_hourly();
     test_after_one_bar_session();
     test_vix_forecast_feature();
+    test_intraday();
     std::printf("Forecast tracks: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

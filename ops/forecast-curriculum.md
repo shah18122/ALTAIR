@@ -1,7 +1,14 @@
 # Forecast curriculum — learn 3 days, forecast, keep score, refit on 6, 12, 24 …
 
-`altair_forecast_curriculum` walks every forecaster in `models/` through the
-same schedule on `dataset/` and keeps a record of every call, right or wrong.
+`altair_forecast_curriculum` walks every forecaster in the Model Atlas that
+can make a next-bar call through the same schedule on `dataset/`, at every
+timeframe, and keeps a record of every call, right or wrong. It asks two
+questions of each track:
+
+* **Direction**: will the next close be up or down? (`models/curriculum.hpp`)
+* **Range**: will the next close land inside a band that aims to be right
+  80 % of the time, and how narrow can that band be?
+  (`models/band_curriculum.hpp`)
 
 ```
 stage 0   learn days [0, 3)      forecast days [3, 6)
@@ -21,18 +28,24 @@ scored.
 build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
 ```
 
-About 13 minutes for all twelve tracks on one core (`--only daily`: about 6).
-Options: `--first-days N` (default 3), `--cap-days N` (stop doubling once a
-block would exceed N days and walk on in N-day blocks; 0 = pure doubling),
-`--other-cost-bp X`, `--only TEXT`, `--no-log`.
+All 21 tracks take about an hour on four cores; the 1-minute tracks are most
+of it (`--only daily`: about 2 minutes).
+
+Options:
+- `--first-days N` (default 3).
+- `--cap-days N`: stop doubling once a block would exceed N days, then walk on in N-day blocks. 0 (the default) is pure doubling.
+- `--jobs N`: how many tracks run in parallel. The default is the machine's core count.
+- `--other-cost-bp X`.
+- `--only TEXT`: run only tracks whose name contains it, e.g. `--only 5m`.
+- `--no-bands`, `--no-log`.
 
 ## Output (`data/verified/`, git-ignored)
 
 | File | What |
 |---|---|
-| `forecast_curriculum.xlsx` | **Summary** (every model on every track: accuracy, 95 % interval, p vs a coin with Bonferroni, always-up on the same bars, Brier, price skill vs the random walk, trades that clear cost, verdict) · **Data** (what cleaning did, per track) · **Method** · one **learning-curve sheet per track** (accuracy per stage and so far, right/scored, what each stage's fit chose, the Champion and Hedge weights going into each stage) |
+| `forecast_curriculum.xlsx` | **Summary**: direction, every model on every track (accuracy, 95 % interval, p against a coin and against the best constant call, both Bonferroni-corrected, coverage, Brier, price skill against the random walk, trades that clear cost, verdict). **Bands**: every band model on every track (hit rate, width, interval score, skill against the constant band). **Frontier**: accuracy of each model's most confident 0.1 % … 100 % of calls, and the largest slice still at or above 80 %. **Atlas coverage**: every Model Atlas row, and what the run did with it. **Data** · **Method** · one **sheet per track** with its learning curves. |
 | `forecast_curriculum.txt` | The summary as text. |
-| `forecast_log/<track>.csv` | Every forecast: time, stage, days learned, model, last price, next price, forecast price, P(up), call, what moved, RIGHT/WRONG/FLAT, net bp if traded. |
+| `forecast_log/<track>.csv` | Every forecast on the daily and hourly tracks: time, stage, days learned, model, last price, next price, forecast price, P(up), call, what moved, RIGHT/WRONG/FLAT, net bp if traded. The 1–15-minute logs would run to gigabytes and are not written. |
 
 ## Tracks
 
@@ -41,6 +54,7 @@ block would exceed N days and walk on in N-day blocks; 0 = pure doubling),
 | NIFTY, BANKNIFTY, NIFTY FUT, INDIA VIX daily | 15:30, from that day's bar | next trading day's close |
 | … + VIX fc (daily and hourly index tracks) | the same, plus the INDIA VIX model's own forecast as a feature | the same |
 | NIFTY, BANKNIFTY, INDIA VIX hourly | close of each of a full day's first six hourly bars (10:15 … 15:15) | the next hourly close (no overnight hour) |
+| NIFTY, BANKNIFTY, INDIA VIX 15m, 5m, 1m | close of every bar of a full 09:15–15:30 session but the last | the next bar's close (no overnight bar) |
 
 Features (all known at the decision; standardised on the training window
 only): recent returns (1, 2, 3, 5, 20 days or the last two bars), 10-day
@@ -54,18 +68,49 @@ futures track takes its price features from the spot index plus the
 
 | Family | Models |
 |---|---|
-| Baselines | Coin flip (seeded), Always majority, Momentum, Mean reversion |
-| Classical | Logistic regression (L2 tuned), SVM (RBF), k-nearest neighbours (k tuned) |
-| Trees | Random forest (depth tuned), Gradient boosting |
-| Neural | MLP (backprop), LSTM, GRU, causal Transformer |
-| Time series | AR(2), ARMA(1,1), Ornstein–Uhlenbeck, 3-state Markov chain |
-| Regime | k-means regimes |
-| Ensembles | Vote (majority of the learning models), Champion (best record in finished stages), Hedge (exponential weights on finished stages), **Stack** (a logistic regression on every model's past out-of-sample calls), **Stack (confident third)** and **Consensus 75%** (filters that abstain unless confident) |
+31 direction forecasters and 9 ensembles:
 
-Tuning uses the last quarter of each training window only. Limits, stated:
-the transformer trains by finite differences (the repository's reference
-backend) with 400 SGD steps a stage, so it is the least-trained network; the
-SVM learns from its window's latest 1,500 rows.
+| Family | Models |
+|---|---|
+| Baselines | Coin flip (seeded), Always majority, Momentum, Mean reversion |
+| Statistical alpha | Momentum (tuned lookback), Mean reversion (z-score band, abstains inside it), Pairs (cointegration, NIFTY against BANKNIFTY and back) |
+| Classical | Logistic regression (L2 tuned), Ridge regression (λ tuned), SVM (RBF), k-nearest neighbours (k tuned), Autoencoder + logistic |
+| Trees | Decision tree, Random forest (depth tuned), Gradient boosting |
+| Neural | MLP (backprop), LSTM, GRU, causal Transformer, CNN (random dilated kernels, ROCKET-style), DQN (reinforcement, as a contextual bandit) |
+| Time series | AR(2), ARMA(1,1), Seasonal AR (SARIMA), VAR(1), Kalman filter (drift), Ornstein–Uhlenbeck, Markov chain, Hidden Markov model, Hurst regime switch |
+| Regime | k-means regimes |
+| Ensembles | Vote, Champion, Hedge, **Stack** (a logistic regression on every model's past out-of-sample calls), and the filters that abstain unless confident: **Stack (confident third / 10 % / 2 %)**, **Consensus 75 % / 90 %** |
+
+12 band models and 2 band ensembles:
+
+| Family | Models |
+|---|---|
+| Benchmark | Constant sigma (GBM) |
+| Simulation | Bootstrap quantile, Jump diffusion (Merton, Monte Carlo) |
+| Volatility | Historical vol (20), EWMA (0.94), GARCH(1,1), GJR-GARCH, EGARCH, Heston variance drift, Seasonal vol (time of day) |
+| Learned | Gradient boosting on \|r\|, Random forest on \|r\| |
+| Ensembles | Vol ensemble (geometric mean), Best band so far |
+
+The Atlas coverage sheet lists every one of the Atlas's 85 rows. Rows that
+cannot make a single instrument's next-bar call are listed with the reason:
+- execution (they carry out a decided trade);
+- risk and portfolio construction (they size and combine positions);
+- option pricing (no option chain in the dataset);
+- order-book microstructure (no order book in the dataset);
+- text and fundamentals (no such data).
+
+Tuning uses the last quarter of each training window only. Truncations are
+visible, and each model states its own in the stage notes:
+- The transformer trains by finite differences with 400 SGD steps a stage, so it is the least-trained network.
+- Row caps on what a model learns from:
+
+  | Model | Rows |
+  |---|---|
+  | SVM | the window's latest 1,500 |
+  | kNN | 20,000 |
+  | HMM (Baum–Welch) | 50,000 |
+  | DQN (replay) | 4,096 |
+  | GARCH / GJR / EGARCH (fit) | the latest 100,000 returns, then filtered over all of them |
 
 ## Data rules (from the data audit)
 
@@ -102,8 +147,29 @@ call made before it moves.
   day's round trip (futures STT 2 bp, 5 bp from 2026-04-01 per
   `config/charges.toml`, plus 1.3 bp other charges and one tick). INDIA VIX
   is not tradable.
+* **Bands**: each band is k × the model's forecast scale, either side of the
+  last close. k is the 80th percentile of the model's own past
+  out-of-sample |move| / scale (split conformal over finished stages;
+  in-sample until 50 such errors exist).
+  - Any band hits 80 % if it is wide enough, so hit rate alone proves
+    nothing.
+  - The models compete on the **interval (Winkler) score**: width + 2/α ×
+    any miss. It is a proper score, so it cannot be gamed by width in
+    either direction.
+  - Each model is also measured against the constant-sigma band.
+* **Frontier**: each probabilistic model's calls are ranked by confidence
+  |P(up) − 0.5|. The report gives the accuracy of the top 0.1 %, 0.5 %,
+  1 % … 100 %, and the largest slice still at or above 80 % on 30+ calls.
+  - The ranking uses the whole test period's confidences but never its
+    outcomes. The thresholds are therefore not ones a trader could have
+    known in advance.
+  - The ex-ante versions are the Stack (confident …) and Consensus
+    ensembles, which are scored like any other model.
 
 ## Results
+
+The sections below are from the 12-track run (daily and hourly, 24 models)
+that preceded the Atlas-wide sweep across all five timeframes.
 
 Run on the dataset pushed 2026-09-29: 12 tracks (the 7 above, plus 5 index
 tracks with the VIX forecast as an input), 24 models each (18 forecasters,

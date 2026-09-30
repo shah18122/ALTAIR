@@ -303,15 +303,17 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_forecast_tracks_test PRIVATE altair_models altair_flags)
     target_include_directories(altair_forecast_tracks_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME forecast_tracks COMMAND altair_forecast_tracks_test)
-    # End to end on the real dataset/: one daily track (INDIA VIX), every model,
-    # zero look-ahead refusals or the exit code says so. ~30 s optimised, ~5 min
-    # under the Debug ASan build. Writes under the build tree, never into data/.
+    # End to end on the real dataset/: one daily track (INDIA VIX), every
+    # direction and band model, zero look-ahead refusals or the exit code says
+    # so. ~30 s optimised, several minutes under the Debug ASan build. Writes
+    # under the build tree, never into data/.
     add_test(NAME forecast_curriculum_dataset COMMAND altair_forecast_curriculum
         --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/forecast_out
-        --only "INDIA VIX daily" --no-log)
-    set_tests_properties(forecast_curriculum_dataset PROPERTIES LABELS dataset TIMEOUT 1200)
-    # Every daily track: a long market measurement (~3 min optimised, ~30 min
-    # under ASan), so `experiment`, which CI never runs; `ctest -L dataset` does.
+        --only "INDIA VIX daily" --no-log --jobs 1)
+    set_tests_properties(forecast_curriculum_dataset PROPERTIES LABELS dataset TIMEOUT 3000)
+    # Every daily track: a long market measurement (a few minutes optimised,
+    # far longer under ASan), so `experiment`, which CI never runs;
+    # `ctest -L dataset` does.
     add_test(NAME forecast_curriculum_daily COMMAND altair_forecast_curriculum
         --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/forecast_daily_out
         --only daily --no-log)

@@ -174,6 +174,26 @@ void test_learning_and_no_leak() {
     const auto h = curriculum_summary(tr, *run, hedge, tests);
     check(h.accuracy > 0.65, "Hedge follows the models that are right");
 
+    // The rest of the Atlas: the learners that can see the persistence must find it.
+    for (const char* name : {"Ridge regression", "VAR(1)", "Seasonal AR (SARIMA)", "Momentum (tuned lookback)"}) {
+        const auto s = curriculum_summary(tr, *run, idx(name), tests);
+        std::printf("        %-28s %.3f on %zu\n", name, s.accuracy, s.all.scored());
+        check(s.all.scored() > 100 && s.accuracy > 0.62, name);
+    }
+    for (const char* name : {"Decision tree", "CNN (random kernels)", "Autoencoder + logistic", "Kalman filter (drift)",
+                             "Hidden Markov model", "DQN (reinforcement)"}) {
+        const auto s = curriculum_summary(tr, *run, idx(name), tests);
+        std::printf("        %-28s %.3f on %zu\n", name, s.accuracy, s.all.scored());
+        check(s.all.scored() > 100, name);
+    }
+    {
+        const auto z = curriculum_summary(tr, *run, idx("Mean reversion (z-score band)"), tests);
+        check(z.all.forecasts < (tr.rows() - run->first_row) / 2, "the z-score band abstains inside its band");
+        const auto pairs = curriculum_summary(tr, *run, idx("Pairs (cointegration)"), tests);
+        check(pairs.all.forecasts == 0 && run->notes[idx("Pairs (cointegration)")].back().find("no paired") != std::string::npos,
+              "the pairs model abstains, and says why, on a track with no pair");
+    }
+
     const auto stack = curriculum_summary(tr, *run, idx("Stack"), tests);
     const auto conf = curriculum_summary(tr, *run, idx("Stack (confident third)"), tests);
     const auto cons = curriculum_summary(tr, *run, idx("Consensus 75%"), tests);
@@ -198,12 +218,44 @@ void test_learning_and_no_leak() {
     bool same = run2.has_value();
     for (std::size_t m = 0; same && m < run->models.size(); ++m) {
         for (std::size_t i = run->first_row; i <= j; ++i) {
-            const auto& a = run->calls[m][i - run->first_row];
-            const auto& b = run2->calls[m][i - run2->first_row];
+            const CurriculumCall a = run->calls[m][i - run->first_row];
+            const CurriculumCall b = run2->calls[m][i - run2->first_row];
             if (a.made != b.made || a.dir != b.dir || (a.made && a.mu != b.mu)) { same = false; break; }
         }
     }
     check(same, "an outcome cannot change any call made before it was known");
+}
+
+/// Two prices tied by a mean-reverting spread: this leg reverts toward the pair.
+void test_pairs() {
+    CurriculumTrack tr = ar_track(600, 0.0, 0.0, 17);
+    std::uint64_t st = 99;
+    const auto gauss = [&st]() {
+        double u = 0.0;
+        for (int k = 0; k < 12; ++k) {
+            st = curriculum_detail::mix(st);
+            u += static_cast<double>(st >> 11) * (1.0 / 9007199254740992.0);
+        }
+        return u - 6.0;
+    };
+    double pair = 100.0, spread = 0.0, price = 0.0;
+    for (std::size_t i = 0; i < tr.rows(); ++i) {
+        pair *= std::exp(0.01 * gauss());
+        spread = 0.5 * spread + 0.02 * gauss();          // strongly mean-reverting
+        price = std::log(pair) + spread;
+        tr.pair.push_back(pair);
+        tr.anchor[i] = std::exp(price);
+        // Tomorrow: the pair drifts, the spread halves -- this leg moves back toward the pair.
+        tr.actual[i] = std::exp(price - 0.5 * spread + 0.003 * gauss());
+    }
+    std::vector<std::unique_ptr<CurriculumModel>> m;
+    m.push_back(std::make_unique<CurriculumPairs>());
+    const auto run = curriculum_run(tr, m);
+    check(run.has_value() && run->lookahead_refusals == 0, "the pairs model runs with no look-ahead");
+    if (!run) { return; }
+    const auto s = curriculum_summary(tr, *run, 0, 1);
+    std::printf("        pairs: %.3f on %zu calls\n", s.accuracy, s.all.scored());
+    check(s.all.scored() > 20 && s.accuracy > 0.7, "beyond two sigma the leg reverts toward its pair");
 }
 
 void test_scoring() {
@@ -211,7 +263,7 @@ void test_scoring() {
     CurriculumRun run;
     run.first_row = 0;
     run.models = {"m"};
-    run.calls.assign(1, std::vector<CurriculumCall>(tr.rows()));
+    run.calls.assign(1, std::vector<CurriculumStoredCall>(tr.rows()));
     std::size_t expect_right = 0, expect_wrong = 0;
     for (std::size_t i = 0; i < tr.rows(); ++i) {
         CurriculumCall c = curriculum_detail::from_probability(i % 3 == 0 ? 0.3 : 0.7, 0.001);
@@ -254,15 +306,15 @@ void test_scoring() {
     CurriculumRun known;
     known.first_row = 0;
     auto flat = ar_track(100, 0.0, 0.0, 3);
-    known.calls.assign(1, std::vector<CurriculumCall>(flat.rows()));
+    known.calls.assign(1, std::vector<CurriculumStoredCall>(flat.rows()));
     std::size_t made_right = 0;
     for (std::size_t i = 0; i < flat.rows(); ++i) {
         const int out = flat.ret(i) > 0.0 ? 1 : -1;
         const int dir = made_right < 60 ? out : -out;
         if (dir == out) { ++made_right; }
         known.calls[0][i] = curriculum_detail::from_direction(dir);
-        known.calls[0][i].mu = 0.0;
-        known.calls[0][i].sigma = 0.01;
+        known.calls[0][i].mu = 0.0F;
+        known.calls[0][i].sigma = 0.01F;
     }
     const auto s = curriculum_summary(flat, known, 0, 10);
     check(std::fabs(s.accuracy - 0.60) < 1e-12 && std::fabs(s.z_vs_half - 2.0) < 1e-9,
@@ -286,6 +338,7 @@ int main() {
     test_track_checks();
     test_guards();
     test_scoring();
+    test_pairs();
     test_learning_and_no_leak();
     std::printf("Forecast curriculum: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
