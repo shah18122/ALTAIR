@@ -67,6 +67,12 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE altair_instruments altair_flags)
     add_test(NAME fyers_master COMMAND altair_fyers_master_test)
 
+    # GETS screens: FYERS tickers -> underlying, expiry, strike, right.
+    add_executable(altair_fyers_symbol_test tests/test_fyers_symbol.cpp)
+    target_link_libraries(altair_fyers_symbol_test
+        PRIVATE altair_instruments altair_flags)
+    add_test(NAME fyers_symbol COMMAND altair_fyers_symbol_test)
+
     # P7-01. The eligible cross-venue universe: NSE<->BSE by ISIN.
     add_executable(altair_cross_venue_test tests/test_cross_venue.cpp)
     target_link_libraries(altair_cross_venue_test

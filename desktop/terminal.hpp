@@ -54,6 +54,7 @@
 #include "order_ticket.hpp"
 #include "panels.hpp"
 #include "funds_summary.hpp"
+#include "gets_workspace.hpp"
 #include "position_table.hpp"
 #include "price_client.hpp"
 #include "data/series_io.hpp"
@@ -297,8 +298,10 @@ public:
             "with --replay nifty 1m to test without a Kite token, or --go for "
             "live."));
         h->addWidget(stream_btn_);
-        positions_btn_ = new QPushButton(QStringLiteral("Positions"), strip);
-        positions_btn_->setToolTip(QStringLiteral("Open positions and comparable broker funds"));
+        positions_btn_ = new QPushButton(QStringLiteral("Positions & Greeks"), strip);
+        positions_btn_->setToolTip(QStringLiteral(
+            "GETS-style workspace: positions and funds, Greek watch, portfolio Greeks, simulation, "
+            "expenses, trade history, RMS, top movers and indices"));
         h->addWidget(positions_btn_);
         operations_btn_ = new QPushButton(QStringLiteral("Operations"), strip);
         operations_btn_->setToolTip(QStringLiteral("Legacy order, queue and emergency controls"));
@@ -323,6 +326,12 @@ public:
         auto* account_layout = new QVBoxLayout(account_surface_);
         account_layout->setContentsMargins(10, 10, 10, 10);
         account_layout->setSpacing(8);
+
+        account_state_ = new QLabel(QStringLiteral(
+            "No FYERS snapshot applied yet. Press Refresh FYERS above."), account_surface_);
+        account_state_->setObjectName(QStringLiteral("accountCaveat"));
+        account_state_->setWordWrap(true);
+        account_layout->addWidget(account_state_);
 
         auto* funds_title = new QLabel(QStringLiteral("AVAILABLE FUNDS BY BROKER"), account_surface_);
         funds_title->setObjectName(QStringLiteral("sectionKicker"));
@@ -359,7 +368,14 @@ public:
         position_head->addWidget(position_filter_);
         account_layout->addLayout(position_head);
 
-        positions_model_ = new PositionTableModel({}, this);
+        // Instruments resolve through the FYERS tickers the GETS workspace
+        // read; before this the table showed "unresolved #N" for every row.
+        positions_model_ = new PositionTableModel(
+            [this](broker_view::InstrumentKey key) -> std::optional<InstrumentDisplay> {
+                const auto it = instrument_names_.constFind(static_cast<std::uint32_t>(key));
+                if (it == instrument_names_.constEnd()) return std::nullopt;
+                return *it;
+            }, this);
         positions_proxy_ = new QSortFilterProxyModel(this);
         positions_proxy_->setSourceModel(positions_model_);
         positions_proxy_->setSortRole(PositionTableModel::SortRole);
@@ -386,7 +402,12 @@ public:
         empty_note->setObjectName(QStringLiteral("accountCaveat"));
         empty_note->setWordWrap(true);
         account_layout->addWidget(empty_note);
-        surface_->addWidget(account_surface_);
+        // P4-07 + GETS: the account surface is the first tab of the GETS
+        // workspace, which adds the Greek, RMS and market tabs beside it and
+        // feeds this Terminal the typed FYERS snapshot on every refresh.
+        gets_ = new GetsWorkspace(account_surface_, surface_);
+        gets_->on_account = [this](const GetsTypedAccount& typed) { apply_gets_account(typed); };
+        surface_->addWidget(gets_);
 
         connect(position_filter_, &QLineEdit::textChanged, this,
                 [this](const QString& text) {
@@ -423,10 +444,10 @@ public:
         split_->setStretchFactor(1, 50);
         split_->setStretchFactor(2, 26);
         surface_->addWidget(split_);
-        surface_->setCurrentWidget(account_surface_);
+        surface_->setCurrentWidget(gets_);
         v->addWidget(surface_, 1);
         connect(positions_btn_, &QPushButton::clicked, this,
-                [this] { surface_->setCurrentWidget(account_surface_); });
+                [this] { surface_->setCurrentWidget(gets_); });
         connect(operations_btn_, &QPushButton::clicked, this,
                 [this] { surface_->setCurrentWidget(split_); });
 
@@ -511,10 +532,44 @@ public:
     [[nodiscard]] FundsSummaryModel* funds_model() const noexcept { return funds_model_; }
     [[nodiscard]] PositionTableModel* positions_model() const noexcept { return positions_model_; }
     [[nodiscard]] QTableView* positions_view() const noexcept { return positions_view_; }
+    [[nodiscard]] GetsWorkspace* gets() const noexcept { return gets_; }
     [[nodiscard]] bool account_surface_visible() const noexcept {
-        return surface_ != nullptr && surface_->currentWidget() == account_surface_;
+        return surface_ != nullptr && surface_->currentWidget() == gets_;
     }
-    void show_account_surface() { surface_->setCurrentWidget(account_surface_); }
+    void show_account_surface() {
+        surface_->setCurrentWidget(gets_);
+        gets_->tabs()->setCurrentWidget(account_surface_);
+    }
+
+    /// Apply the FYERS snapshot the GETS workspace built. A stale or refused
+    /// snapshot leaves the tables as they were and says so above them.
+    void apply_gets_account(const GetsTypedAccount& typed) {
+        if (!typed.snapshot) {
+            account_state_->setText(QStringLiteral("FYERS snapshot not applied: %1").arg(typed.refusal));
+            return;
+        }
+        for (auto it = typed.instruments.begin(); it != typed.instruments.end(); ++it)
+            instrument_names_.insert(it.key(), it.value());
+        const QString id = QString::fromLatin1(typed.snapshot->account_id.data());
+        const Timestamp now{QDateTime::currentMSecsSinceEpoch() * 1'000'000LL};
+        const auto applied = apply_account({*typed.snapshot, QStringLiteral("FYERS · %1").arg(id),
+                                            FundsSource::Broker, PositionSource::Broker}, now);
+        const QString at = QDateTime::fromMSecsSinceEpoch(
+            typed.snapshot->observed.observed_at.ns_since_epoch() / 1'000'000, QTimeZone(19800))
+            .toString(QStringLiteral("HH:mm:ss"));
+        if (applied) {
+            account_state_->setText(QStringLiteral("FYERS %1 snapshot of %2 IST applied.%3")
+                .arg(id, at, typed.skipped.isEmpty() ? QString()
+                    : QStringLiteral(" Skipped: %1.").arg(typed.skipped.join(QStringLiteral("; ")))));
+        } else {
+            account_state_->setText(QStringLiteral(
+                "FYERS snapshot of %1 IST not applied (%2). The tables below keep their previous rows; "
+                "press Refresh FYERS.")
+                .arg(at, applied.error() == TerminalAccountError::SnapshotUnusable
+                             ? QStringLiteral("older than its 30 s validity")
+                             : QStringLiteral("rows refused by the table")));
+        }
+    }
 
     /// Apply one typed, credential-free account snapshot to the read-only
     /// Terminal. `now` is UTC nanoseconds supplied by the owner; this method
@@ -711,6 +766,9 @@ private:
     QSplitter* split_ = nullptr;
     QStackedWidget* surface_ = nullptr;
     QWidget* account_surface_ = nullptr;
+    QLabel* account_state_ = nullptr;
+    GetsWorkspace* gets_ = nullptr;
+    QHash<std::uint32_t, InstrumentDisplay> instrument_names_;
     QPushButton* positions_btn_ = nullptr;
     QPushButton* operations_btn_ = nullptr;
     FundsSummaryModel* funds_model_ = nullptr;

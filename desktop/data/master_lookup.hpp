@@ -157,6 +157,10 @@ public:
                           "the Kite token slot must be inside token[]");
             by_token_.insert(
                 s.token[static_cast<std::size_t>(altair::FeedSource::Kite)], p);
+            // GETS screens look contracts up by name: FYERS and Kite spell
+            // derivative trading symbols the same way, and the exchange code
+            // keeps an NSE cash line apart from its BSE twin.
+            by_symbol_.insert(p.kite_exchange + QLatin1Char(':') + p.symbol, p);
             return true;
         };
         const auto rep = detail::load_kite_dump_into(csv.data(), csv.size(),
@@ -173,8 +177,17 @@ public:
         return it == by_token_.end() ? InstrumentProfile{} : *it;
     }
 
+    /// By Kite exchange code and trading symbol, e.g. ("NFO",
+    /// "NIFTY26SEP25000CE") or ("NSE", "SBIN").
+    [[nodiscard]] InstrumentProfile find_symbol(const QString& kite_exchange,
+                                                const QString& symbol) const {
+        const auto it = by_symbol_.find(kite_exchange + QLatin1Char(':') + symbol);
+        return it == by_symbol_.end() ? InstrumentProfile{} : *it;
+    }
+
 private:
     QHash<std::uint32_t, InstrumentProfile> by_token_;
+    QHash<QString, InstrumentProfile> by_symbol_;
     bool loaded_ = false;
     bool tried_ = false;
     QString error_;

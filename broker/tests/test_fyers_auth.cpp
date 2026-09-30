@@ -2,6 +2,7 @@
 
 #include <broker/fyers_api.hpp>
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -82,6 +83,21 @@ int main() {
     }
     check(all_get_only,
           "FYERS account helper vocabulary contains no order mutation path");
+    check(std::strcmp(kTradebookEndpoint.path, "/api/v3/tradebook") == 0,
+          "the trade book is the v3 read-only tradebook GET");
+
+    const std::array<std::string, 2> quote_symbols{"NSE:SBIN-EQ", "NSE:M&M-EQ"};
+    const auto target = quotes_target(quote_symbols);
+    check(target && *target == "/data/quotes?symbols=NSE%3ASBIN-EQ%2CNSE%3AM%26M-EQ",
+          "quotes target percent-encodes ':' ',' and '&'");
+    check(!quotes_target(std::array<std::string, 0>{}).has_value(),
+          "an empty quote request is refused");
+    std::array<std::string, kQuotesMaxSymbols + 1> too_many{};
+    for (auto& symbol : too_many) symbol = "NSE:SBIN-EQ";
+    check(!quotes_target(too_many).has_value(),
+          "more than 50 symbols in one quote request is refused");
+    check(!quotes_target(std::array<std::string, 1>{"NSE:A,B"}).has_value(),
+          "a symbol containing a comma is refused");
 
     std::printf("FYERS auth: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;

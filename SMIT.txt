@@ -170,6 +170,10 @@ P3-05 FYERS history audit            DONE    live 2026-09-28: 750 NIFTY 1m bars,
                                              588 overlapped, 4 close diffs,
                                              max 0.15 points
 P4-01..02 account-first Terminal     DONE
+P4-03..07 GETS/Greeksoft Terminal    DONE    NEW 2026-09-29: GETS workspace in the
+                                             Terminal (section 13). Positions/funds
+                                             now fed from FYERS (was never wired).
+                                             Live-account visual check still open.
 P5 Pair Trading selector             DONE    formulas deliberately not chosen
 P6-01..06 Atlas / models             DONE    85/85 numerical engines, 0 partial.
                                              NOT market-trained or validated.
@@ -212,7 +216,10 @@ Tests:
     Expect "Authentication done", "Subscribed", ticks > 0. If FYERS refuses
     the socket token, re-run altair_fyers_login (tokens are daily). --source
     changes the client name sent at auth if FYERS objects to it.
- 2. Build the desktop on Windows (Qt 6.8) and check the new theme on every
+ 2. On your PC: build.bat net, open Terminal -> Positions & Greeks, press
+    Refresh FYERS. Put the Kite master at data/instruments.csv so monthly
+    expiries and lot sizes resolve (section 13).
+ 2b. Build the desktop on Windows (Qt 6.8) and check the new theme on every
     page. All colours are tokens in desktop/theme.hpp.
  3. Put the FYERS ticker under the continuous supervisor / price service
     (today it is a bounded sample, like the Kite ticker).
@@ -453,3 +460,130 @@ CI (.github/workflows/ci.yml)
   manual (parked).
 Local results: GCC 167/167, Clang 18 + libc++ 164/164 (no tomlplusplus),
 ctest -LE 'dataset|experiment'.
+
+
+------------------------------------------------------------------------------
+13. GETS-STYLE TERMINAL -- 2026-09-29
+------------------------------------------------------------------------------
+Requirement 6 ("GETS/Greeksoft terminal", P4-04..P4-07). Before this, the
+Terminal had the P4-05 positions table and P4-06 funds strip, but nothing fed
+them in the running app (apply_account() had no caller; FYERS positions were
+never typed, and FYERS funds use fund_limit ids the parser did not read), and
+none of GETS' Greek, RMS or market screens existed. P4-04's column spec was
+written but never built.
+
+Terminal -> "Positions & Greeks" is now a tabbed GETS workspace:
+  Positions & Funds  the existing P4-05/06 tables, now fed a typed FYERS
+                     snapshot on every refresh, with instrument names.
+  Greek Watch        GETS Greek market watch: user IV (editable), days left,
+                     expiry, strike, type, units, theoretical, IV, LTP, trade
+                     price, MtoM, Delta/DVal, Gamma/GVal, Vega/VVal,
+                     Theta/TVal, spot, lot, time value, status. MAIN (compact)
+                     and Full profiles. Positions plus a persisted watch list.
+  Greek Summary      per underlying x expiry, then a total: MtoM, call/put IV,
+                     delta, gamma, vega, theta, delta-neutral lots, EQ posn.
+  Simulation         spot +-range in steps, IV shift, days forward: P&L now,
+                     P&L at expiry, Greeks, hedge lots (GETS GreekSimulation).
+  Expense & Margin   per instrument buy/sell qty, value, average, orders,
+                     charges (risk/cost.hpp + config/charges.toml), realised
+                     net; the account's fund limits.
+  Trade History      the FYERS trade book.
+  RMS                margin use vs warn/stop thresholds, open positions vs
+                     limit, MtoM vs loss limit, realised P&L, pending and
+                     rejected orders with the broker's reason.
+  Top Movers         gainers/losers, scrip based or index based, top N.
+  Index Info         LTP, change, OHLC, previous close, day-range position.
+
+Engine and data (all read-only, no order path):
+  instruments/fyers_symbol.hpp   FYERS ticker -> underlying, expiry, strike,
+                                 CE/PE; refuses ambiguous readings; monthly
+                                 tickers carry no day (master required).
+  risk/option_book.hpp           leg IV/Greeks (BS on spot), grouped summary,
+                                 scenario grid, per-order expenses.
+  broker/fyers_api.hpp           /api/v3/tradebook, /data/quotes target (50
+                                 symbols per request, percent-encoded).
+  app/fyers_account_main.cpp     also fetches the trade book.
+  app/fyers_quotes_main.cpp      NEW altair_fyers_quotes -> data/fyers_quotes.json.
+  config/market_watch.txt        indices + stocks for Top Movers / Index Info.
+  desktop/gets_data.hpp, gets_tables.hpp, gets_workspace.hpp; terminal.hpp.
+Tests: fyers_symbol, option_book, fyers_auth (quotes/tradebook),
+fyers_quotes_dry_run, desktop_gets (fixtures; also run under ASan/UBSan).
+
+Also fixed while validating: TSC calibration read each endpoint as an
+unbracketed steady/TSC pair, so preemption skewed a sample and create()
+refused the clock on a loaded box (tsc_clock failed once under ctest -j4).
+Endpoints are now bracketed and re-read; the uncertainty test measures
+growth at a span derived from the calibration. 60/60 passes under load.
+
+Known limits (stated on screen): snapshots, not ticks (Refresh or Auto 60 s);
+monthly expiries need data/instruments.csv; per-contract SPAN is not in
+FYERS' read-only API; brokerage assumed Rs 20/order (options flat, intraday
+and futures min(Rs 20, 0.03%), delivery 0); Kite account rows not wired.
+
+
+------------------------------------------------------------------------------
+14. DATA AUDIT -- 2026-09-29
+------------------------------------------------------------------------------
+Owner's request: verify the data (1) against the broker and (2) across all
+timeframes of the dataset itself, with an instrument-wise sheet.
+  app/data_audit.hpp, app/data_audit_main.cpp   altair_data_audit
+  app/xlsx_writer.hpp                           dependency-free .xlsx writer
+  ops/broker_audit.ps1                          FYERS + Kite fetch, then audit
+  app/fyers_history_main.cpp                    --continuous (cont_flag=1), 350 ms pacing
+  ops/data-audit.md                             how to run; findings
+  .gitignore                                    data/broker_audit/, data/verified/,
+                                                data/fyers_quotes.json
+Tests: data_audit (unit, incl. xlsx), data_audit_dataset (whole real dataset,
+label `dataset`).
+Findings (cross-timeframe, run here): see ops/data-audit.md. Headlines:
+INDIA VIX 1m has 2,547 impossible-OHLC bars (2018-12..2019); NIFTY 1m has
+seconds-stamped bars (2015) and wrong extremes on circuit days (2020-03);
+NIFTY FUT intraday for Jul..25 Aug 2026 is the next-month contract;
+BANKNIFTY's other timeframes are resampled from its 1m (not independent).
+Broker comparison: run ops/broker_audit.ps1 on the PC (needs sessions).
+
+
+------------------------------------------------------------------------------
+15. FORECAST CURRICULUM -- 2026-09-30
+------------------------------------------------------------------------------
+Owner's request: train all the models on the dataset; start with 3 days,
+ask for a forecast, record right or wrong, update, give 6 days, and so on;
+improve the data and the models along the way.
+  models/curriculum.hpp            the engine: doubling stages (3, 6, 12 ...
+                                   trading days), look-ahead guards (targets
+                                   only in the training window; features,
+                                   lags and prices only up to the row being
+                                   forecast; refused reads counted), adapters
+                                   for 18 forecasters + baselines, ensembles
+                                   (Vote, Champion, Hedge) from finished
+                                   stages only, scoring (Wilson CI, binomial
+                                   p with Bonferroni, always-up on the same
+                                   bars, Brier, skill vs random walk via
+                                   forecast_scorecard.hpp, trades that clear
+                                   the dated round-trip cost)
+  app/forecast_tracks.hpp          dataset -> tracks, with the data audit's
+                                   findings as rules (OHLC repair, full
+                                   sessions only, VIX-aligned rows, futures
+                                   daily only, roll-crossing outcomes out,
+                                   expiry calendar checked against the basis)
+  app/forecast_curriculum_main.cpp altair_forecast_curriculum ->
+                                   data/verified/forecast_curriculum.xlsx,
+                                   .txt, forecast_log/<track>.csv
+  ops/forecast-curriculum.md       method, how to run, results
+Tests: models_curriculum (schedule, guards, a cheating model refused, one
+changed outcome moves no earlier call, learning on a persistent series,
+scoring maths), forecast_tracks (cleaning, expiry calendar, daily/futures/
+hourly timing, VIX gaps, short sessions), forecast_curriculum_dataset
+(daily tracks on the real data, label `dataset`).
+Results (run here, 7 tracks, 147 model-track tests, 0 look-ahead refusals;
+details in ops/forecast-curriculum.md):
+  - NIFTY / BANKNIFTY / NIFTY FUT direction, daily and hourly: no model
+    beats the best constant call (always-up ~52-54 % daily, ~50.5-51 %
+    hourly); none makes money reliably after the dated round-trip cost.
+  - INDIA VIX next-day direction IS forecastable: random forest 60.9 %
+    [59.1, 62.7] vs 53.5 % for the best constant call, rising as the window
+    doubles; Hedge learns to follow it; RF/logistic/kNN also beat the
+    random walk on price (the only real price skill in the run).
+  - INDIA VIX hourly: falls on 56 % of hours; nothing beats "always down".
+Next: repeat after the broker audit; add option-chain OI/PCR/IV-skew and
+flows as inputs; use the VIX forecast to time option premium.

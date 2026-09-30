@@ -91,6 +91,14 @@ if(ALTAIR_HAVE_NET)
     target_compile_definitions(altair_fyers_ticker PRIVATE
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+    # GETS screens: READ-ONLY /data/quotes snapshot (spot, option LTPs,
+    # change and OHLC) for the Terminal's Greek, movers and index tabs.
+    add_executable(altair_fyers_quotes fyers_quotes_main.cpp)
+    target_link_libraries(altair_fyers_quotes PRIVATE
+        altair_broker_net altair_flags)
+    target_compile_definitions(altair_fyers_quotes PRIVATE
+        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
     add_executable(altair_fyers_history fyers_history_main.cpp)
     target_link_libraries(altair_fyers_history PRIVATE
         altair_broker_net altair_flags)
@@ -176,6 +184,7 @@ if(ALTAIR_HAVE_NET)
         altair_kite_login altair_fyers_login altair_kite_fetch
         altair_kite_account altair_fyers_account altair_kite_update altair_kite_ticker
         altair_kite_quote altair_fyers_history altair_fyers_webhook altair_fyers_ticker
+        altair_fyers_quotes
         RUNTIME DESTINATION "${_altair_helper_destination}")
     if(TARGET altair_price_service)
         install(TARGETS altair_price_service
@@ -187,6 +196,9 @@ if(ALTAIR_HAVE_NET)
         add_test(NAME fyers_account_dry_run COMMAND altair_fyers_account)
         add_test(NAME fyers_ticker_dry_run COMMAND altair_fyers_ticker
             --symbols NSE:SBIN-EQ,NSE:NIFTY50-INDEX --depth --seconds 5)
+        add_test(NAME fyers_quotes_dry_run COMMAND altair_fyers_quotes
+            --symbols-file ${CMAKE_SOURCE_DIR}/config/market_watch.txt
+            --symbols NSE:NIFTY26SEP25000CE)
         add_test(NAME kite_account_dry_run COMMAND altair_kite_account)
         add_test(NAME fyers_history_dry_run COMMAND altair_fyers_history
             --symbol NSE:SBIN-EQ --from 2026-09-01 --to 2026-09-02
@@ -260,4 +272,48 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME dataset_merge COMMAND altair_dataset_merge_test)
     # Runs threads: the TSan CI job runs exactly the `concurrency` label.
     set_tests_properties(dataset_merge PROPERTIES LABELS concurrency)
+endif()
+
+# Data audit: dataset/ checked across timeframes, against its other sources
+# (_superseded_*) and against broker candles (ops/broker_audit.ps1). Offline:
+# it reads files and writes data/verified/ (data_audit.xlsx + merged CSVs).
+add_executable(altair_data_audit data_audit_main.cpp)
+target_link_libraries(altair_data_audit PRIVATE altair_flags)
+target_include_directories(altair_data_audit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_data_audit_test tests/test_data_audit.cpp)
+    target_link_libraries(altair_data_audit_test PRIVATE altair_flags)
+    target_include_directories(altair_data_audit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME data_audit COMMAND altair_data_audit_test)
+    # The whole audit over the real dataset/ (label `dataset`: runs where the
+    # data is). Writes its report under the build tree, never into data/.
+    add_test(NAME data_audit_dataset COMMAND altair_data_audit
+        --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/data_audit_out --no-merged)
+    set_tests_properties(data_audit_dataset PROPERTIES LABELS dataset TIMEOUT 600)
+endif()
+
+# The forecast curriculum: every forecaster in models/ learns 3 days, forecasts,
+# keeps score, refits on 6, 12, 24 ... days. Offline: reads dataset/, writes
+# data/verified/forecast_curriculum.xlsx and per-forecast logs.
+add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
+target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
+target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_forecast_tracks_test tests/test_forecast_tracks.cpp)
+    target_link_libraries(altair_forecast_tracks_test PRIVATE altair_models altair_flags)
+    target_include_directories(altair_forecast_tracks_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME forecast_tracks COMMAND altair_forecast_tracks_test)
+    # End to end on the real dataset/: one daily track (INDIA VIX), every model,
+    # zero look-ahead refusals or the exit code says so. ~30 s optimised, ~5 min
+    # under the Debug ASan build. Writes under the build tree, never into data/.
+    add_test(NAME forecast_curriculum_dataset COMMAND altair_forecast_curriculum
+        --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/forecast_out
+        --only "INDIA VIX daily" --no-log)
+    set_tests_properties(forecast_curriculum_dataset PROPERTIES LABELS dataset TIMEOUT 1200)
+    # Every daily track: a long market measurement (~3 min optimised, ~30 min
+    # under ASan), so `experiment`, which CI never runs; `ctest -L dataset` does.
+    add_test(NAME forecast_curriculum_daily COMMAND altair_forecast_curriculum
+        --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/forecast_daily_out
+        --only daily --no-log)
+    set_tests_properties(forecast_curriculum_daily PROPERTIES LABELS "dataset;experiment" TIMEOUT 3600)
 endif()

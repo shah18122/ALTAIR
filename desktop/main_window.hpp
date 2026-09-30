@@ -606,6 +606,8 @@ private:
             connect(layout->addAction(entry.first), &QAction::triggered, this,
                     [this, value = entry.second] { nav_->set_mode(value); });
         }
+        // GETS workspace: per-user watch list, user IVs, RMS thresholds.
+        if (terminal_->gets() != nullptr) terminal_->gets()->set_settings(nav_settings_);
         auto* terminal_split = terminal_->findChild<QSplitter*>(QString{}, Qt::FindDirectChildrenOnly);
         if (terminal_split) {
             terminal_split->setChildrenCollapsible(false);

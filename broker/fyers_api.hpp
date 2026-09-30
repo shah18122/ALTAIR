@@ -16,6 +16,7 @@
 #include <cstring>
 #include <expected>
 #include <string>
+#include <string_view>
 
 namespace altair::fyers {
 
@@ -43,6 +44,54 @@ inline constexpr std::array<ReadOnlyAccountEndpoint, 5> kAccountEndpoints{{
     {"holdings", "/api/v3/holdings"},
     {"orders", "/api/v3/orders"},
 }};
+
+/// The trade book, fetched beside the five above for the GETS trade-history
+/// and expense screens. Kept out of kAccountEndpoints so the typed snapshot's
+/// five sections keep their order; still a read-only GET.
+inline constexpr ReadOnlyAccountEndpoint kTradebookEndpoint{"tradebook", "/api/v3/tradebook"};
+
+/// Market quotes (LTP, change, OHLC, previous close) for up to 50 symbols per
+/// request, on the data host. Read-only.
+inline constexpr const char* kQuotesPath = "/data/quotes";
+inline constexpr std::size_t kQuotesMaxSymbols = 50;
+inline constexpr std::size_t kQuotesTargetMax = 8192;
+
+enum class QuotesError : unsigned char { Empty, TooMany, BadSymbol, TooLong };
+
+/// "/data/quotes?symbols=NSE%3ASBIN-EQ%2CNSE%3AM%26M-EQ". Every byte outside
+/// the URL-unreserved set is percent-encoded, so '&' in "M&M" cannot end the
+/// query early. Refuses an empty list, more than kQuotesMaxSymbols symbols,
+/// an empty or comma-bearing symbol, or a target longer than kQuotesTargetMax.
+template <typename Range>
+[[nodiscard]] inline std::expected<std::string, QuotesError>
+quotes_target(const Range& symbols) {
+    std::string out{kQuotesPath};
+    out += "?symbols=";
+    std::size_t count = 0;
+    constexpr char kHex[] = "0123456789ABCDEF";
+    for (const auto& symbol : symbols) {
+        const std::string_view sv{symbol};
+        if (sv.empty() || sv.find(',') != std::string_view::npos)
+            return std::unexpected(QuotesError::BadSymbol);
+        if (++count > kQuotesMaxSymbols) return std::unexpected(QuotesError::TooMany);
+        if (count > 1) out += "%2C";
+        for (const char ch : sv) {
+            const auto c = static_cast<unsigned char>(ch);
+            const bool unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
+            if (unreserved) {
+                out += ch;
+            } else {
+                out += '%';
+                out += kHex[c >> 4];
+                out += kHex[c & 0x0F];
+            }
+        }
+        if (out.size() > kQuotesTargetMax) return std::unexpected(QuotesError::TooLong);
+    }
+    if (count == 0) return std::unexpected(QuotesError::Empty);
+    return out;
+}
 
 inline constexpr std::size_t kClientIdMax = 128;
 inline constexpr std::size_t kAuthCodeMax = 256;
