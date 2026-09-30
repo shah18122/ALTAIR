@@ -668,3 +668,17 @@ Owner's request: add PPO and actor-critic, train the CNN, lift the row caps.
                           above that 256 random Fourier features and dual
                           coordinate descent on every row; HMM, DQN replay
                           and the GARCH-family band fits on every row
+Results (21 tracks, 42 direction models, 882 tests, 0 look-ahead refusals, 60 min):
+  - Lifting the caps made the weak models less weak: SVM +0.5 to +2.2 pts
+    on index tracks (+4 to +10 on VIX); trained CNN 49.3-50.0 -> 49.9-51.2
+    (VIX 43.8-50.9 -> 53.6-55.2); Transformer +0.1 to +1.6 (VIX up to +3.8);
+    kNN and HMM unchanged.
+  - Still no index slice at 80% on 30+ calls. Best index slices of 100+ calls
+    are 53-61%. 98 index pairs beat a coin and "always up" after correction,
+    at 50.4-56.9%, all on 1m-15m, and none makes money after costs.
+  - INDIA VIX 1m now has two 80% slices (85.2% on 54 calls, 83.1% on 71): one
+    call every 40-53 days, selected after the fact, untradable.
+  - Range bands unchanged: the winners never hit a cap.
+  Fixed on the way: analytics/hmm.hpp segfaulted when one return underflowed
+  every state's density (a 5m overnight gap in the full window). Emissions
+  are now scaled per step in log space, and a dead restart counts as failed.

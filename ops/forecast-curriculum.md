@@ -174,11 +174,11 @@ call made before it moves.
 
 ## Results
 
-Run on the dataset pushed on 2026-09-29.
-- **Scope:** 21 tracks (NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d; NIFTY FUT daily; five "+ VIX fc" tracks) and 4.13 million forecast bars, about 134 million model decisions in all.
-- **Models:** 40 direction models and 14 band models per track.
-- **Run:** 36 minutes with 4 parallel jobs, with **zero look-ahead refusals** in both curricula.
-- **Tests:** 840 direction model-track tests, so both significance tests are Bonferroni-corrected by 840.
+Run on the dataset pushed on 2026-09-29, with every model learning from every row.
+- **Scope:** 21 tracks (NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d; NIFTY FUT daily; five "+ VIX fc" tracks) and 4.13 million forecast bars, about 174 million model decisions in all.
+- **Models:** 42 direction models (33 base models and 9 ensembles) and 14 band models per track.
+- **Run:** 60 minutes with 4 parallel jobs, with **zero look-ahead refusals** in both curricula.
+- **Tests:** 882 direction model-track tests, so both significance tests are Bonferroni-corrected by 882.
 
 The full tables are in the Summary, Bands and Frontier sheets.
 
@@ -191,33 +191,60 @@ least 30 calls.
 No such slice exists on any NIFTY, BANKNIFTY or NIFTY FUT track, at any
 timeframe, for any model.
 
-The only one anywhere is INDIA VIX 1m: Stack (confident 10 %), top 0.1 %, at
-81.6 % on 76 calls (Wilson low 71.4 %). It isn't a result, for four reasons:
-- It is one call every 37 trading days.
-- Its accuracy equals the share of up-moves on those same bars.
+The only ones anywhere are two slices of INDIA VIX 1m:
+- Stack (confident 2 %), top 0.5 %: 85.2 % on 54 calls (Wilson low 73.4 %).
+- Stack (confident 10 %), top 0.1 %: 83.1 % on 71 calls.
+
+They aren't a result, for four reasons:
+- They are one call every 40–53 trading days.
+- Their accuracy equals the share of up-moves on those same bars.
 - VIX cannot be traded.
-- It is the best of 5,823 slices tried.
+- They are the best of 6,201 slices tried.
 
 The best honest direction numbers, counting only slices of at least 100 calls:
 
 | Track | Most confident 1 % of calls | Most confident 5 % | Best model that calls ≥ 90 % of bars |
 |---|---|---|---|
-| NIFTY 1m / 5m / 15m / hourly | 54.9 / 56.3 / 55.4 / 56.7 % | 54.6 / 54.5 / 55.3 / 56.0 % | 51.4–51.8 % |
-| BANKNIFTY 1m / 5m / 15m / hourly | 55.1 / 57.0 / 56.7 / 60.2 % | 55.8 / 55.8 / 55.3 / 53.3 % | 51.0–52.6 % |
-| NIFTY / BANKNIFTY / FUT daily | too few calls | 61.5 / 60.4 / 61.2 % (about 140 calls each) | 54.0 / 53.0 / 53.9 %; "always up" is 53.4 / 53.2 / 52.2 % |
-| INDIA VIX 1m / 5m / 15m / hourly / daily | 75.9 / 61.6 / 61.5 / 66.3 / — % | 72.5 / 62.4 / 60.1 / 60.6 / 71.7 % | 54.5–60.9 % (forecastable, not tradable) |
+| NIFTY 1m / 5m / 15m / hourly | 55.8 / 55.8 / 53.4 / 59.1 % | 54.7 / 55.0 / 55.3 / 56.5 % | 51.4–51.8 % |
+| BANKNIFTY 1m / 5m / 15m / hourly | 55.6 / 56.3 / 55.4 / 60.2 % | 53.8 / 56.3 / 54.9 / 56.6 % | 51.1–52.6 % |
+| NIFTY / BANKNIFTY / FUT daily | too few calls | 59.4 / 60.4 / 61.2 % (about 140 calls each) | 53.8 / 53.0 / 53.9 %; "always up" is 53.4 / 53.2 / 52.2 % |
+| INDIA VIX 1m / 5m / 15m / hourly / daily | 78.7 / 61.6 / 61.1 / 65.1 / — % | 73.1 / 62.4 / 60.9 / 60.0 / 71.7 % | 54.3–60.9 % (forecastable, not tradable) |
 
-**What is statistically real is small.** On the index tracks, 90 model-track
-pairs beat both a coin and the best constant call after the 840-test
-correction. All of them are on 1m, 5m or 15m bars, at 50.3–54.9 %. None is on
-hourly or daily bars.
+**What is statistically real is small, and none of it pays.** On the index
+tracks, 98 model-track pairs beat both a coin and the best constant call after
+the 882-test correction. All of them are on 1m, 5m or 15m bars, at
+50.4–56.9 %. None is on hourly or daily bars.
 
-The strongest is 1-minute mean reversion: on BANKNIFTY 1m the z-score band is
-right 53.7 % of the time over 82,871 calls. Traded, it loses 3.3 bp a trade
-after costs (47,601 trades, t = −115). It is the index's stale-price bounce,
-not an edge.
+No index model has a positive net return after costs with t > 3 on 100 or more
+trades. Two examples:
+- **The strongest pair:** BANKNIFTY 5m Stack (confident 2 %) is right 56.9 %
+  of the time, on 1,869 calls (0.9 % of bars). It loses 2.7 bp a trade.
+- **1-minute mean reversion:** on BANKNIFTY 1m the z-score band is right
+  53.7 % of the time over 82,871 calls. It loses 3.3 bp a trade after costs
+  (47,601 trades, t = −115). It is the index's stale-price bounce, not an edge.
+
+### What lifting the row caps changed
+
+Every model that was capped, or untrained, now learns from every row. The
+accuracy on every call, capped run → uncapped run:
+
+| Model | Index tracks (1m–hourly) | INDIA VIX (1m–hourly) | Why |
+|---|---|---|---|
+| SVM (RBF) | +0.5 to +2.2 pts (e.g. NIFTY 1m 49.8 → 51.5, BANKNIFTY 5m 50.2 → 52.4) | +4 to +10 pts (hourly 44.4 → 54.7) | It had learned from the latest 1,500 rows only |
+| CNN | random kernels → trained: 49.3–50.0 → 49.9–51.2 | 43.8–50.9 → 53.6–55.2 | The random-kernel version was below a coin on several tracks |
+| Transformer | +0.1 to +1.6 pts | +0.5 to +3.8 pts (1m 52.2 → 56.0) | Backpropagation over every row in place of 400 finite-difference steps |
+| kNN | ±0.5 pts | ±0.9 pts | 20,000 rows was already plenty for 13 features |
+| HMM | unchanged | unchanged | A 2-state Gaussian on returns is the same model on 50,000 or 575,000 of them |
+| DQN | ±0.5 pts | 1m 55.2 → 52.1, 5m 52.9 → 52.3 | The full replay dilutes the recent regime the 4,096-row replay tracked |
+| PPO / actor-critic (new) | 49.5–51.6 % | 50.0–55.0 % | Linear policies: logistic regression learned by policy gradient |
+
+The most confident slices hardly move: the best index slices stay at 53–61 %.
+Lifting the caps made the weak models less weak. It did not create an edge.
 
 ### Range: 80 %, on every bar, at every timeframe
+
+Unchanged by lifting the caps: the winning band models (seasonal intraday,
+GJR-GARCH daily, GBDT on |r| for VIX) never ran into them.
 
 The band models aim at 80 %, calibrated on their own past errors. On every
 intraday track they land at 79.3–82.0 %. On daily tracks they land at
@@ -255,21 +282,21 @@ the time of day. That is what an option seller needs.
 ### Merging models (this run)
 
 - **Filtered ensembles** (Stack's confident slices and the Consensus filters)
-  have the best accuracy on the calls they make on every track. They make few
-  calls, and none reaches 80 %.
-- **Consensus 75 % on the daily index tracks** is right 54–58 % of the time
-  on 21–27 % of days. That is never significant against the best constant
+  have the best accuracy on the calls they make on most tracks. They make few
+  calls, and none reaches 80 % on an index.
+- **Consensus 75 % on the daily index tracks** is right 54.2–57.3 % of the
+  time on 24–37 % of days. That is never significant against the best constant
   call on those days.
 - **Adding the VIX model's own forecast as an input** moves the daily
-  Consensus 75 % by up to 2 points:
-  - NIFTY: 55.9 → 58.0 %.
-  - BANKNIFTY: 55.5 → 56.3 %.
-  - FUT: 54.2 → 55.6 %.
-  - It lowers Vote, Hedge and Stack slightly.
+  Consensus 75 % by less than a point:
+  - NIFTY: 56.4 → 57.3 %.
+  - BANKNIFTY: 54.2 → 54.2 %.
+  - FUT: 55.3 → 54.8 %.
   - None of these moves is significant.
 
 ### What would improve it next
 - **Broker-verified data:** run `ops\broker_audit.ps1`, then repeat the run.
 - **Inputs beyond price:** option-chain OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close.
+- **Order-book data:** the Atlas's microstructure rows (order-book imbalance, microprice, VPIN, Kyle's lambda) need recorded depth and trades, and they are the Atlas's likeliest source of short-horizon direction edge.
 - **A forward test** of the daily Consensus 75 % filter from October 2026, on data this run has never seen.
 - **Use the bands where they bite:** strike selection and position sizing for option selling, where a calibrated 80 % range is directly the product.
