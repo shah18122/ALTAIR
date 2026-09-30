@@ -130,6 +130,25 @@ powershell -ExecutionPolicy Bypass -File ops\broker_audit.ps1
 
 See [ops/data-audit.md](ops/data-audit.md) for the checks and the findings.
 
+## Forecast curriculum
+
+`altair_forecast_curriculum` trains every forecaster in `models/` (baselines,
+logistic, SVM, kNN, random forest, gradient boosting, MLP, LSTM, GRU,
+transformer, AR/ARMA, Ornstein–Uhlenbeck, Markov, k-means regimes and three
+track-record ensembles) on a doubling schedule: learn 3 days, forecast the
+next 3, record every call right or wrong, refit on 6, 12, 24 … days. Tracks:
+NIFTY, BANKNIFTY, NIFTY futures and INDIA VIX next-day direction, and NIFTY,
+BANKNIFTY and INDIA VIX next-hour direction, with INDIA VIX as a feature.
+
+```powershell
+build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
+```
+
+Writes `data/verified/forecast_curriculum.xlsx` (summary, learning curve per
+track, data cleaning) and a per-forecast log. See
+[ops/forecast-curriculum.md](ops/forecast-curriculum.md) for the method and
+the results.
+
 ## CI
 
 | Workflow | Runs | What it proves |

@@ -58,6 +58,9 @@ void test_expiries() {
     check(e.contains(da::audit_days_from_civil(2025, 8, 28)), "August 2025: the last Thursday");
     check(e.contains(da::audit_days_from_civil(2025, 9, 29)), "September 2025: last Tuesday a holiday -> the Monday");
     check(e.contains(da::audit_days_from_civil(2025, 10, 28)), "October 2025: the last Tuesday");
+    std::vector<da::AuditBar> part(cal.begin(), cal.end() - 5);   // ends Friday 24 October
+    check(!ft::nifty_expiries(part).contains(da::audit_day(part.back().t)),
+          "data that ends before a month's expiry does not invent one");
 }
 
 void test_daily() {
@@ -97,7 +100,9 @@ void test_futures_roll() {
     ft::TrackInfo info;
     const auto tr = ft::build_daily({"F daily", "F", &fut, &vix, &spot, true, 1.3}, info);
     check(altair::curriculum_check_track(tr).has_value(), "the futures track passes the curriculum's checks");
-    check(info.roll_excluded >= 3, "an outcome that crosses an expiry is not a decision");
+    // June's expiry falls in the 20-day warm-up; July, August and September are rolls.
+    check(info.roll_excluded == 3 && info.expiries == 4,
+          "an outcome that crosses an expiry is not a decision; expiries counted in the contract's range");
     for (std::size_t i = 0; i < tr.rows(); ++i) {
         if (exp.contains(da::audit_day(tr.t[i]))) { check(false, "no decision on an expiry day"); break; }
     }
@@ -140,6 +145,28 @@ void test_hourly() {
           "the first bar's return runs from yesterday's close");
 }
 
+void test_after_one_bar_session() {
+    // Full day, a one-bar Muhurat session, then two full days.
+    const std::int64_t d0 = da::audit_days_from_civil(2025, 10, 20);
+    std::vector<da::AuditBar> own, vix;
+    const int bars_per_day[] = {7, 1, 7, 7};
+    for (int day = 0; day < 4; ++day) {
+        const std::int64_t d = d0 + day;
+        for (int k = 0; k < bars_per_day[day]; ++k) {
+            const std::int64_t t = d * 86'400 + (555 + 60 * k) * 60;
+            const double c = 200.0 + day + 0.1 * k;
+            own.push_back(bar(t, c, c + 0.2, c - 0.2, c));
+            vix.push_back(bar(t, 12.0, 12.1, 11.9, 12.0 + 0.01 * k));
+        }
+    }
+    ft::TrackInfo info;
+    const auto tr = ft::build_hourly({"M hourly", "M", &own, &vix, true, 1.3}, info);
+    check(tr.rows() == 12 && info.short_days == 1 && info.warmup == 7,
+          "the day after a one-bar session is still forecast");
+    check(std::fabs(tr.x[1] - std::log(own[7].c / own[6].c)) < 1e-12,
+          "its previous-bar return is the one-bar session against the bar before it");
+}
+
 } // namespace
 
 int main() {
@@ -149,6 +176,7 @@ int main() {
     test_daily();
     test_futures_roll();
     test_hourly();
+    test_after_one_bar_session();
     std::printf("Forecast tracks: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

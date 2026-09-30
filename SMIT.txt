@@ -541,3 +541,49 @@ seconds-stamped bars (2015) and wrong extremes on circuit days (2020-03);
 NIFTY FUT intraday for Jul..25 Aug 2026 is the next-month contract;
 BANKNIFTY's other timeframes are resampled from its 1m (not independent).
 Broker comparison: run ops/broker_audit.ps1 on the PC (needs sessions).
+
+
+------------------------------------------------------------------------------
+15. FORECAST CURRICULUM -- 2026-09-30
+------------------------------------------------------------------------------
+Owner's request: train all the models on the dataset; start with 3 days,
+ask for a forecast, record right or wrong, update, give 6 days, and so on;
+improve the data and the models along the way.
+  models/curriculum.hpp            the engine: doubling stages (3, 6, 12 ...
+                                   trading days), look-ahead guards (targets
+                                   only in the training window; features,
+                                   lags and prices only up to the row being
+                                   forecast; refused reads counted), adapters
+                                   for 18 forecasters + baselines, ensembles
+                                   (Vote, Champion, Hedge) from finished
+                                   stages only, scoring (Wilson CI, binomial
+                                   p with Bonferroni, always-up on the same
+                                   bars, Brier, skill vs random walk via
+                                   forecast_scorecard.hpp, trades that clear
+                                   the dated round-trip cost)
+  app/forecast_tracks.hpp          dataset -> tracks, with the data audit's
+                                   findings as rules (OHLC repair, full
+                                   sessions only, VIX-aligned rows, futures
+                                   daily only, roll-crossing outcomes out,
+                                   expiry calendar checked against the basis)
+  app/forecast_curriculum_main.cpp altair_forecast_curriculum ->
+                                   data/verified/forecast_curriculum.xlsx,
+                                   .txt, forecast_log/<track>.csv
+  ops/forecast-curriculum.md       method, how to run, results
+Tests: models_curriculum (schedule, guards, a cheating model refused, one
+changed outcome moves no earlier call, learning on a persistent series,
+scoring maths), forecast_tracks (cleaning, expiry calendar, daily/futures/
+hourly timing, VIX gaps, short sessions), forecast_curriculum_dataset
+(daily tracks on the real data, label `dataset`).
+Results (run here, 7 tracks, 147 model-track tests, 0 look-ahead refusals;
+details in ops/forecast-curriculum.md):
+  - NIFTY / BANKNIFTY / NIFTY FUT direction, daily and hourly: no model
+    beats the best constant call (always-up ~52-54 % daily, ~50.5-51 %
+    hourly); none makes money reliably after the dated round-trip cost.
+  - INDIA VIX next-day direction IS forecastable: random forest 60.9 %
+    [59.1, 62.7] vs 53.5 % for the best constant call, rising as the window
+    doubles; Hedge learns to follow it; RF/logistic/kNN also beat the
+    random walk on price (the only real price skill in the run).
+  - INDIA VIX hourly: falls on 56 % of hours; nothing beats "always down".
+Next: repeat after the broker audit; add option-chain OI/PCR/IV-skew and
+flows as inputs; use the VIX forecast to time option premium.

@@ -408,6 +408,9 @@ inline std::uint64_t mix(std::uint64_t x) noexcept {
     return x ^ (x >> 31);
 }
 
+/// An exact 0.5 is broken by the sign of the expected return. Without that,
+/// an even vote or a regime whose training up-rate was exactly half would
+/// hand in "no direction" -- scored as wrong -- for a whole block of rows.
 inline CurriculumCall from_probability(double p, double mu = nan()) noexcept {
     CurriculumCall c;
     if (!std::isfinite(p)) { return c; }
@@ -415,6 +418,7 @@ inline CurriculumCall from_probability(double p, double mu = nan()) noexcept {
     c.p_up = p;
     c.mu = mu;
     c.dir = p > 0.5 ? 1 : (p < 0.5 ? -1 : 0);
+    if (c.dir == 0 && std::isfinite(mu)) { c.dir = mu > 0.0 ? 1 : (mu < 0.0 ? -1 : 0); }
     return c;
 }
 
@@ -1343,6 +1347,7 @@ struct CurriculumTally {
     std::size_t abstained = 0;
     std::size_t flat = 0;        ///< calls on bars that closed unchanged
     std::size_t right = 0, wrong = 0;
+    std::size_t no_direction = 0;   ///< calls with no direction: counted in `wrong` too
     std::size_t ups = 0;         ///< scored bars that rose, for "always up" on the same bars
     double brier_sum = 0.0;
     std::size_t brier_n = 0;
@@ -1388,6 +1393,7 @@ curriculum_tally(const CurriculumTrack& tr, const CurriculumRun& run, std::size_
         if (out == 0) { ++t.flat; continue; }
         if (out > 0) { ++t.ups; }
         (c.dir == out ? t.right : t.wrong) += 1;
+        if (c.dir == 0) { ++t.no_direction; }
         if (std::isfinite(c.p_up)) {
             const double e = c.p_up - (out > 0 ? 1.0 : 0.0);
             t.brier_sum += e * e;

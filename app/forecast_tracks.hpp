@@ -144,6 +144,7 @@ inline void clean_bars(std::vector<da::AuditBar>& bars, TrackInfo& info) {
             const std::int64_t month_start = da::audit_days_from_civil(y, m, 1);
             const int want = month_start >= kTuesdayExpiryFrom ? 1 : 3;   // Tue : Thu (Mon = 0)
             while (da::audit_weekday(d) != want) { --d; }
+            if (d > *days.rbegin()) { continue; }   // the data ends before this month's expiry
             while (d >= month_start && !days.contains(d)) { --d; }   // holiday: the day before
             if (d >= month_start) { out.insert(d); }
         }
@@ -232,7 +233,8 @@ struct DailyInputs {
     std::set<std::int64_t> expiry;
     if (futures) {
         expiry = nifty_expiries(*in.spot);
-        info.expiries = expiry.size();
+        const std::int64_t first = bar_day(own.front()), last = bar_day(own.back());
+        for (const std::int64_t e : expiry) { info.expiries += e >= first && e <= last ? 1 : 0; }
         double on = 0.0, jump = 0.0;
         std::size_t n_on = 0, n_jump = 0;
         for (std::size_t i = 0; i + 1 < own.size(); ++i) {
@@ -374,7 +376,10 @@ struct HourlyInputs {
         if (q < 2) { info.warmup += s.e - s.b; continue; }
         const DaySpan& p1 = days[q - 1];
         const DaySpan& p2 = days[q - 2];
-        if (p1.e - p1.b < 2) { info.warmup += s.e - s.b; continue; }
+        // Yesterday's last bar and the bar before it. After a one-bar session
+        // (Muhurat) that earlier bar belongs to the day before -- still the
+        // previous bar in time.
+        if (p1.e < 2) { info.warmup += s.e - s.b; continue; }
         const double pc = bars[p1.e - 1].c;
         const double ppc = bars[p2.e - 1].c;
         double ph = 0.0, pl = std::numeric_limits<double>::infinity();

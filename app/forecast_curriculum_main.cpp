@@ -83,8 +83,8 @@ std::string verdict(const CurriculumSummary& s, std::size_t tests) {
     if (s.all.scored() < 100) { return "too few forecasts to judge"; }
     if (s.p_adjusted < 0.05) {
         if (s.accuracy < 0.5) { return "reliably WRONG (significant) - worse than a coin"; }
-        return s.z_vs_constant > 2.0 ? "beats a coin AND always-up (significant)"
-                                     : "beats a coin (significant) but not always-up";
+        return s.z_vs_constant > 2.0 ? "beats a coin AND the best constant call (significant)"
+                                     : "beats a coin (significant) but not the best constant call";
     }
     if (s.p_vs_half < 0.05) {
         return "above a coin by chance-level evidence (not significant after " + std::to_string(tests) + " tests)";
@@ -98,16 +98,16 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
     XlsxSheet sh;
     sh.name = "Summary";
     sh.freeze_rows = 1;
-    const char* head[] = {"Track", "Model", "Family", "Forecasts", "Abstained", "Right", "Wrong", "Flat",
+    const char* head[] = {"Track", "Model", "Family", "Forecasts", "Abstained", "Right", "Wrong", "No direction", "Flat",
                           "Accuracy %", "95% low %", "95% high %", "z vs coin", "p vs coin",
-                          "p (Bonferroni)", "Always-up on same bars %", "vs best constant (pts)",
+                          "p (Bonferroni)", "Up-rate on same bars %", "vs best constant call (pts)",
                           "Brier", "RMSE bp", "Random walk RMSE bp", "Skill vs RW %", "Price verdict",
                           "Trades (clear cost)", "Trade hit %", "Net bp / trade", "Net bp total",
                           "Final-stage accuracy %", "Fit s", "Verdict"};
     std::vector<XlsxCell> h;
     for (const char* c : head) { h.push_back(XlsxCell::str(c, true)); }
     sh.rows.push_back(h);
-    sh.widths = {18, 22, 11, 10, 10, 9, 9, 7, 10, 9, 9, 9, 9, 11, 12, 12, 8, 9, 11, 10, 22, 11, 10, 10, 11, 11, 8, 52};
+    sh.widths = {18, 22, 11, 10, 10, 9, 9, 10, 7, 10, 9, 9, 9, 9, 11, 12, 12, 8, 9, 11, 10, 22, 11, 10, 10, 11, 11, 8, 52};
     for (const auto& r : results) {
         if (!r.ok) {
             sh.rows.push_back({XlsxCell::str(r.track.name), XlsxCell::str("-"), XlsxCell::str("-"),
@@ -131,7 +131,7 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
                 XlsxCell::str(r.track.name), XlsxCell::str(r.run.models[m]), XlsxCell::str(r.run.families[m]),
                 XlsxCell::num(static_cast<double>(s.all.forecasts)), XlsxCell::num(static_cast<double>(s.all.abstained)),
                 XlsxCell::num(static_cast<double>(s.all.right)), XlsxCell::num(static_cast<double>(s.all.wrong)),
-                XlsxCell::num(static_cast<double>(s.all.flat)),
+                XlsxCell::num(static_cast<double>(s.all.no_direction)), XlsxCell::num(static_cast<double>(s.all.flat)),
                 XlsxCell::num(scored ? pct(s.accuracy) : nan, true),
                 XlsxCell::num(scored ? pct(s.lo95) : nan), XlsxCell::num(scored ? pct(s.hi95) : nan),
                 XlsxCell::num(scored ? s.z_vs_half : nan), XlsxCell::num(scored ? s.p_vs_half : nan),
@@ -478,7 +478,7 @@ int main(int argc, char** argv) {
             }
             text << "  " << pad(r.run.models[m], 22) << pad(fixed(pct(s.accuracy), 2) + "%", 7)
                  << "  [" << fixed(pct(s.lo95), 1) << ", " << fixed(pct(s.hi95), 1) << "]"
-                 << "  n=" << s.all.scored() << "  always-up " << fixed(pct(s.up_rate), 1) + "%";
+                 << "  n=" << s.all.scored() << "  up-rate " << fixed(pct(s.up_rate), 1) + "%";
             if (s.have_price) { text << "  skill vs RW " << fixed(100.0 * s.price.skill, 2, true) + "%"; }
             if (s.all.trades > 0) {
                 text << "  net " << fixed(s.all.net_bp / static_cast<double>(s.all.trades), 2, true) << " bp/trade";
@@ -493,7 +493,8 @@ int main(int argc, char** argv) {
         "then learn [0, 6) and forecast [6, 12); then 12, 24, 48 ... until the data ends. The last block is what is left.",
         "Inside a block the model is frozen: it never sees the outcomes it is forecasting. After the block it is refitted "
         "from scratch on everything seen so far. That refit is the 'update'.",
-        "A call is RIGHT when the next close moved the called way, WRONG otherwise. An unchanged close is neither. A model "
+        "A call is RIGHT when the next close moved the called way, WRONG otherwise (a call with no direction is WRONG and also "
+        "counted under 'No direction'; an exact 50/50 is broken by the expected return). An unchanged close is neither. A model "
         "that cannot fit yet (too few rows for its method) ABSTAINS, and abstentions are listed per stage, not scored.",
         "Daily: decide at 15:30 from that day's close; outcome = next trading day's close. Hourly: decide at the close of "
         "each of a full day's first six hourly bars (10:15 ... 15:15); outcome = the next hourly close. No overnight hour.",
@@ -501,7 +502,8 @@ int main(int argc, char** argv) {
         "hyper-parameter on the last quarter of their training window. Ensembles: Vote (majority of the learning models), "
         "Champion (the model with the best record in finished stages), Hedge (exponential weights on finished stages).",
         "Baselines: Coin flip (seeded), Always majority (the training up-rate), Momentum and Mean reversion (repeat or reverse "
-        "the last move). 'Always-up on same bars' is what calling UP every time would have scored on the scored bars.",
+        "the last move). 'Up-rate on same bars' is what calling UP every time would have scored; the best constant call is "
+        "max(up-rate, 1 - up-rate) -- always down on INDIA VIX, which falls more often than it rises.",
         "Significance: z and two-sided p against 50 %, Bonferroni-corrected over every model on every track. Skill vs RW: "
         "1 - RMSE(model price) / RMSE(last price), from models/forecast_scorecard.hpp; the price verdict needs 200 "
         "forecasts and a paired t beyond 2.",

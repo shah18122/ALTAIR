@@ -205,6 +205,11 @@ void test_scoring() {
         if (r == 0.0) { continue; }
         ((c.dir > 0) == (r > 0.0) ? expect_right : expect_wrong) += 1;
     }
+    const auto tie_up = curriculum_detail::from_probability(0.5, 0.002);
+    const auto tie_down = curriculum_detail::from_probability(0.5, -0.002);
+    const auto tie_none = curriculum_detail::from_probability(0.5);
+    check(tie_up.dir == 1 && tie_down.dir == -1 && tie_none.made && tie_none.dir == 0,
+          "an exact 0.5 is broken by the expected return; with none it has no direction");
     const auto t = curriculum_tally(tr, run, 0, 0, tr.rows());
     check(t.right == expect_right && t.wrong == expect_wrong && t.brier_n == t.scored(),
           "right and wrong are counted against the realised direction");
@@ -214,6 +219,11 @@ void test_scoring() {
     vix.tradable = false;
     vix.cost_bp.clear();
     check(curriculum_tally(vix, run, 0, 0, tr.rows()).trades == 0, "an untradable index never trades");
+    CurriculumRun none = run;
+    for (auto& c : none.calls[0]) { c = curriculum_detail::from_direction(0); }
+    const auto tn = curriculum_tally(tr, none, 0, 0, tr.rows());
+    check(tn.right == 0 && tn.wrong == tn.scored() && tn.no_direction == tn.scored(),
+          "a call with no direction is wrong, and counted as such");
 
     // Wilson and the binomial test on a known record: 60 of 100.
     CurriculumRun known;
