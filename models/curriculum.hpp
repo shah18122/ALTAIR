@@ -65,6 +65,7 @@
 #include <models/mlp.hpp>
 #include <models/regime_rl.hpp>
 #include <models/time_series.hpp>
+#include <models/trainable_cnn.hpp>
 #include <models/trainable_recurrent.hpp>
 #include <models/transformer.hpp>
 
@@ -80,6 +81,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -90,14 +92,13 @@ inline constexpr std::size_t kCurriculumMaxFeatures = 16;
 /// Inputs per step, and steps back, that the sequence models read.
 inline constexpr std::size_t kCurriculumSeqInputs = 4;
 inline constexpr std::size_t kCurriculumSeqSteps = 16;
-/// The SVM learns from at most this many of its window's latest rows.
-/// models/classical.hpp's SMO is quadratic per pass and has no kernel cache.
-inline constexpr std::size_t kCurriculumSvmRows = 1500;
-/// kNN learns from at most this many of its window's latest rows: every
-/// forecast is a scan of them, and a 1-minute window holds half a million.
-inline constexpr std::size_t kCurriculumKnnRows = 20000;
-/// The HMM's Baum-Welch runs on at most this many of the window's latest returns.
-inline constexpr std::size_t kCurriculumHmmRows = 50000;
+/// Up to this many rows the SVM is models/classical.hpp's exact SMO, which is
+/// quadratic per pass with no kernel cache. Above it, on EVERY row of the
+/// window, the same RBF kernel is approximated by random Fourier features and
+/// the SVM trained by dual coordinate descent -- the standard large-scale route.
+inline constexpr std::size_t kCurriculumSvmExactRows = 1500;
+/// Random Fourier features for the large-window SVM.
+inline constexpr std::size_t kCurriculumSvmFeatures = 256;
 
 enum class CurriculumError : std::uint8_t {
     /// Ragged columns, a non-positive or non-finite price, or stamps out of order.
@@ -632,40 +633,277 @@ private:
 
 class CurriculumSvm final : public CurriculumModel {
 public:
+    explicit CurriculumSvm(std::uint64_t seed = 0x5F3u) noexcept : seed_(seed) {}
     std::string name() const override { return "SVM (RBF)"; }
     std::string family() const override { return "classical"; }
     std::string fit(const CurriculumDesign& d) override {
         const std::size_t n = d.train_rows();
         if (n < 8) { return "fewer than 8 rows"; }
-        // RULE 11: visible truncation -- the SVM learns from the window's latest
-        // kCurriculumSvmRows rows and says so through tuned().
-        from_ = n > kCurriculumSvmRows ? n - kCurriculumSvmRows : 0;
-        const auto x = d.block(from_, n);
-        std::vector<std::int8_t> y;
-        for (std::size_t j = from_; j < n; ++j) { y.push_back(d.up(j) ? 1 : -1); }
-        SvmParams prm;
-        prm.kernel = SvmKernel::Rbf;
-        prm.gamma = 1.0 / static_cast<double>(d.p());
-        prm.c = 1.0;
-        prm.max_passes = 3;
-        auto m = SupportVectorMachine::fit(x, n - from_, d.p(), y, prm);
-        if (!m) { return "SVM fit refused"; }
-        model_ = std::move(*m);
-        rows_ = n - from_;
+        const double gamma = 1.0 / static_cast<double>(d.p());
+        rows_ = n;
+        if (n <= kCurriculumSvmExactRows) {
+            const auto x = d.block(0, n);
+            std::vector<std::int8_t> y;
+            for (std::size_t j = 0; j < n; ++j) { y.push_back(d.up(j) ? 1 : -1); }
+            SvmParams prm;
+            prm.kernel = SvmKernel::Rbf;
+            prm.gamma = gamma;
+            prm.c = 1.0;
+            prm.max_passes = 3;
+            auto m = SupportVectorMachine::fit(x, n, d.p(), y, prm);
+            if (!m) { return "SVM fit refused"; }
+            model_ = std::move(*m);
+            exact_ = true;
+            return {};
+        }
+        exact_ = false;
+        draw_features(d.p(), gamma);
+        // Dual coordinate descent for the hinge-loss SVM on the features
+        // (Hsieh et al. 2008), C = 1 as for the exact fit, every row, seeded order.
+        constexpr double C = 1.0;
+        const std::size_t D = kCurriculumSvmFeatures;
+        w_.assign(D + 1, 0.0);
+        std::vector<double> alpha(n, 0.0), z(D + 1);
+        std::vector<std::size_t> order(n);
+        for (std::size_t j = 0; j < n; ++j) { order[j] = j; }
+        std::uint64_t s = seed_;
+        passes_ = 0;
+        for (int pass = 0; pass < 20; ++pass) {
+            for (std::size_t j = n; j > 1; --j) {
+                s = curriculum_detail::mix(s);
+                std::swap(order[j - 1], order[s % j]);
+            }
+            double worst = 0.0;
+            for (const std::size_t j : order) {
+                embed(d.features(j), z.data());
+                const double y = d.up(j) ? 1.0 : -1.0;
+                double wz = 0.0, qq = 0.0;
+                for (std::size_t k = 0; k <= D; ++k) { wz += w_[k] * z[k]; qq += z[k] * z[k]; }
+                const double g = y * wz - 1.0;
+                const double pg = alpha[j] == 0.0 ? std::min(g, 0.0) : (alpha[j] == C ? std::max(g, 0.0) : g);
+                worst = std::max(worst, std::fabs(pg));
+                if (pg == 0.0 || !(qq > 0.0)) { continue; }
+                const double a = std::min(std::max(alpha[j] - g / qq, 0.0), C);
+                const double step = (a - alpha[j]) * y;
+                alpha[j] = a;
+                for (std::size_t k = 0; k <= D; ++k) { w_[k] += step * z[k]; }
+            }
+            ++passes_;
+            if (worst < 1e-3) { break; }
+        }
         return {};
     }
     CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
-        const double m = model_.margin(d.features(i));
+        double m = 0.0;
+        if (exact_) {
+            m = model_.margin(d.features(i));
+        } else {
+            std::vector<double> z(kCurriculumSvmFeatures + 1);
+            embed(d.features(i), z.data());
+            for (std::size_t k = 0; k < z.size(); ++k) { m += w_[k] * z[k]; }
+        }
         if (!std::isfinite(m)) { return {}; }
         return curriculum_detail::from_direction(m > 0.0 ? 1 : (m < 0.0 ? -1 : 0));
     }
     std::string tuned() const override {
-        return from_ > 0 ? "latest " + std::to_string(rows_) + " rows" : std::string{};
+        return exact_ ? std::string{}
+                      : std::to_string(kCurriculumSvmFeatures) + " random Fourier features, all "
+                            + std::to_string(rows_) + " rows, " + std::to_string(passes_) + " passes";
     }
 
 private:
+    /// omega ~ N(0, 2 gamma I), b ~ U(0, 2 pi): E[z(x).z(y)] = exp(-gamma |x - y|^2),
+    /// the kernel the exact fit uses. The last coordinate is the bias.
+    void draw_features(std::size_t p, double gamma) {
+        const std::size_t D = kCurriculumSvmFeatures;
+        p_ = p;
+        omega_.assign(D * p, 0.0);
+        phase_.assign(D, 0.0);
+        std::uint64_t s = seed_ ^ 0x9E3779B97F4A7C15ull;
+        const auto u = [&s]() {
+            s = curriculum_detail::mix(s);
+            return (static_cast<double>(s >> 11) + 0.5) * (1.0 / 9007199254740992.0);
+        };
+        const double sd = std::sqrt(2.0 * gamma), two_pi = 6.283185307179586;
+        for (double& w : omega_) { w = sd * std::sqrt(-2.0 * std::log(u())) * std::cos(two_pi * u()); }
+        for (double& b : phase_) { b = two_pi * u(); }
+    }
+    void embed(std::span<const double> x, double* z) const {
+        const std::size_t D = kCurriculumSvmFeatures;
+        const double scale = std::sqrt(2.0 / static_cast<double>(D));
+        for (std::size_t k = 0; k < D; ++k) {
+            double a = phase_[k];
+            for (std::size_t j = 0; j < p_; ++j) { a += omega_[k * p_ + j] * x[j]; }
+            z[k] = scale * std::cos(a);
+        }
+        z[D] = 1.0;
+    }
+    std::uint64_t seed_;
     SupportVectorMachine model_{};
-    std::size_t from_ = 0, rows_ = 0;
+    bool exact_ = true;
+    std::size_t rows_ = 0, p_ = 0;
+    int passes_ = 0;
+    std::vector<double> omega_, phase_, w_;
+};
+
+/// Exact k-nearest neighbours on every row of the window. Same rule as
+/// models/classical.hpp's KnnModel (features standardised on the training
+/// rows, Euclidean distance, ties to the earlier row, the share of the k
+/// nearest that went up), searched through a k-d tree: a brute-force scan per
+/// forecast is 10 ms at 1-minute scale, and there are a million forecasts.
+class CurriculumKnnIndex {
+public:
+    void build(const CurriculumDesign& d, std::size_t from, std::size_t to) {
+        p_ = d.p();
+        n_ = to - from;
+        mean_.assign(p_, 0.0);
+        scale_.assign(p_, 0.0);
+        const auto raw = d.block(from, to);
+        for (std::size_t i = 0; i < n_; ++i) {
+            for (std::size_t j = 0; j < p_; ++j) { mean_[j] += raw[i * p_ + j]; }
+        }
+        for (double& m : mean_) { m /= static_cast<double>(n_); }
+        for (std::size_t i = 0; i < n_; ++i) {
+            for (std::size_t j = 0; j < p_; ++j) {
+                const double q = raw[i * p_ + j] - mean_[j];
+                scale_[j] += q * q;
+            }
+        }
+        for (double& v : scale_) {
+            v = n_ > 1 ? std::sqrt(v / static_cast<double>(n_ - 1)) : 0.0;
+            if (!(v > 1e-12)) { v = 1.0; }   // a constant feature contributes zero, as in KnnModel
+        }
+        std::vector<double> x(n_ * p_);
+        for (std::size_t i = 0; i < n_; ++i) {
+            for (std::size_t j = 0; j < p_; ++j) { x[i * p_ + j] = (raw[i * p_ + j] - mean_[j]) / scale_[j]; }
+        }
+        up_.resize(n_);
+        for (std::size_t i = 0; i < n_; ++i) { up_[i] = d.up(from + i) ? 1 : 0; }
+        order_.resize(n_);
+        for (std::size_t i = 0; i < n_; ++i) { order_[i] = static_cast<std::uint32_t>(i); }
+        nodes_.clear();
+        (void)split(x, 0, static_cast<std::uint32_t>(n_));
+        xs_.resize(n_ * p_);   // leaves stored contiguously, in tree order
+        for (std::size_t i = 0; i < n_; ++i) {
+            for (std::size_t j = 0; j < p_; ++j) { xs_[i * p_ + j] = x[static_cast<std::size_t>(order_[i]) * p_ + j]; }
+        }
+    }
+
+    /// The k nearest training rows' up flags, nearest first; false if the query is not finite.
+    bool nearest(std::span<const double> features, std::size_t k, std::vector<std::uint8_t>& out) const {
+        if (features.size() != p_ || k == 0 || n_ == 0) { return false; }
+        std::vector<double> q(p_), off(p_, 0.0);
+        for (std::size_t j = 0; j < p_; ++j) {
+            if (!std::isfinite(features[j])) { return false; }
+            q[j] = (features[j] - mean_[j]) / scale_[j];
+        }
+        Heap h;
+        h.k = std::min(k, n_);
+        search(0, q.data(), off.data(), 0.0, h);
+        std::sort(h.items.begin(), h.items.end());
+        out.clear();
+        for (const auto& [d2, row] : h.items) { out.push_back(up_[row]); }
+        return true;
+    }
+
+private:
+    struct Node {
+        std::uint32_t lo, hi;
+        std::int32_t dim = -1, left = -1, right = -1;
+        double cut = 0.0;
+    };
+    struct Heap {
+        std::size_t k = 0;
+        std::vector<std::pair<double, std::uint32_t>> items;   // max-heap on (distance, row)
+        double worst() const { return items.front().first; }
+    };
+    static constexpr std::uint32_t kLeaf = 16;
+
+    std::int32_t split(const std::vector<double>& x, std::uint32_t lo, std::uint32_t hi) {
+        const auto me = static_cast<std::int32_t>(nodes_.size());
+        nodes_.push_back(Node{lo, hi});
+        if (hi - lo <= kLeaf) { return me; }
+        std::size_t dim = 0;
+        double spread = 0.0;
+        for (std::size_t j = 0; j < p_; ++j) {
+            double a = std::numeric_limits<double>::infinity(), b = -a;
+            for (std::uint32_t i = lo; i < hi; ++i) {
+                const double v = x[static_cast<std::size_t>(order_[i]) * p_ + j];
+                a = std::min(a, v);
+                b = std::max(b, v);
+            }
+            if (b - a > spread) { spread = b - a; dim = j; }
+        }
+        if (!(spread > 0.0)) { return me; }   // identical points: one leaf
+        const std::uint32_t mid = lo + (hi - lo) / 2;
+        std::nth_element(order_.begin() + lo, order_.begin() + mid, order_.begin() + hi,
+                         [&](std::uint32_t a, std::uint32_t b) {
+                             return x[static_cast<std::size_t>(a) * p_ + dim] < x[static_cast<std::size_t>(b) * p_ + dim];
+                         });
+        const double cut = x[static_cast<std::size_t>(order_[mid]) * p_ + dim];
+        const auto l = split(x, lo, mid);
+        const auto r = split(x, mid, hi);
+        nodes_[static_cast<std::size_t>(me)].dim = static_cast<std::int32_t>(dim);
+        nodes_[static_cast<std::size_t>(me)].cut = cut;
+        nodes_[static_cast<std::size_t>(me)].left = l;
+        nodes_[static_cast<std::size_t>(me)].right = r;
+        return me;
+    }
+
+    /// Four independent sums: one serial chain of p additions is the bottleneck.
+    double distance(const double* q, const double* r) const noexcept {
+        double s0 = 0.0, s1 = 0.0, s2 = 0.0, s3 = 0.0;
+        std::size_t j = 0;
+        for (; j + 4 <= p_; j += 4) {
+            const double a = q[j] - r[j], b = q[j + 1] - r[j + 1], c = q[j + 2] - r[j + 2], e = q[j + 3] - r[j + 3];
+            s0 += a * a;
+            s1 += b * b;
+            s2 += c * c;
+            s3 += e * e;
+        }
+        for (; j < p_; ++j) {
+            const double a = q[j] - r[j];
+            s0 += a * a;
+        }
+        return (s0 + s1) + (s2 + s3);
+    }
+
+    void search(std::int32_t id, const double* q, double* off, double bound, Heap& h) const {
+        const Node& nd = nodes_[static_cast<std::size_t>(id)];
+        if (nd.dim < 0) {
+            for (std::uint32_t i = nd.lo; i < nd.hi; ++i) {
+                const double d2 = distance(q, xs_.data() + static_cast<std::size_t>(i) * p_);
+                const std::pair<double, std::uint32_t> item{d2, order_[i]};
+                if (h.items.size() < h.k) {
+                    h.items.push_back(item);
+                    std::push_heap(h.items.begin(), h.items.end());
+                } else if (item < h.items.front()) {   // nearer, or as near and an earlier row
+                    std::pop_heap(h.items.begin(), h.items.end());
+                    h.items.back() = item;
+                    std::push_heap(h.items.begin(), h.items.end());
+                }
+            }
+            return;
+        }
+        const auto dim = static_cast<std::size_t>(nd.dim);
+        const double diff = q[dim] - nd.cut;
+        search(diff < 0.0 ? nd.left : nd.right, q, off, bound, h);
+        // The far side is at least this far: the query's offset to the cut in
+        // this dimension replaces the one already counted for it.
+        const double old = off[dim];
+        const double far = bound - old * old + diff * diff;
+        if (h.items.size() < h.k || far <= h.worst()) {
+            off[dim] = diff;
+            search(diff < 0.0 ? nd.right : nd.left, q, off, far, h);
+            off[dim] = old;
+        }
+    }
+
+    std::size_t p_ = 0, n_ = 0;
+    std::vector<double> mean_, scale_, xs_;
+    std::vector<std::uint8_t> up_;
+    std::vector<std::uint32_t> order_;
+    std::vector<Node> nodes_;
 };
 
 class CurriculumKnn final : public CurriculumModel {
@@ -675,56 +913,50 @@ public:
     std::string fit(const CurriculumDesign& d) override {
         const std::size_t n = d.train_rows();
         if (n < 10) { return "fewer than 10 rows"; }
-        // RULE 11: visible truncation -- kNN compares every forecast with every
-        // training row, so it learns from the window's latest kCurriculumKnnRows
-        // rows and says so through tuned().
-        from_ = n > kCurriculumKnnRows ? n - kCurriculumKnnRows : 0;
         const std::size_t grid[] = {5, 15, 45};
         k_ = grid[0];
-        if (n - from_ >= 40) {
-            const std::size_t v = from_ + curriculum_detail::inner_split(n - from_);
-            double best = -1.0;
-            for (const std::size_t k : grid) {
-                if (k > v - from_) { continue; }
-                const auto m = fit_range(d, from_, v, k);
-                if (!m) { continue; }
-                std::vector<double> p;
-                for (std::size_t j = v; j < n; ++j) {
-                    const auto q = m->predict(d.features(j));
-                    p.push_back(q ? *q : curriculum_detail::nan());
+        if (n >= 40) {
+            // One search for the largest k answers every k on the grid: the
+            // k nearest are the first k of the 45 nearest, in the same order.
+            const std::size_t v = curriculum_detail::inner_split(n);
+            index_.build(d, 0, v);
+            std::vector<double> p[3];
+            std::vector<std::uint8_t> near;
+            for (std::size_t j = v; j < n; ++j) {
+                const bool ok = index_.nearest(d.features(j), grid[2], near);
+                for (std::size_t g = 0; g < 3; ++g) {
+                    if (!ok || grid[g] > v || near.size() < grid[g]) { p[g].push_back(curriculum_detail::nan()); continue; }
+                    double up = 0.0;
+                    for (std::size_t m = 0; m < grid[g]; ++m) { up += near[m]; }
+                    p[g].push_back(up / static_cast<double>(grid[g]));
                 }
-                const double acc = curriculum_detail::sign_accuracy(p, d, v);
-                if (acc > best) { best = acc; k_ = k; }
+            }
+            double best = -1.0;
+            for (std::size_t g = 0; g < 3; ++g) {
+                if (grid[g] > v) { continue; }
+                const double acc = curriculum_detail::sign_accuracy(p[g], d, v);
+                if (acc > best) { best = acc; k_ = grid[g]; }
             }
         }
-        auto m = fit_range(d, from_, n, k_);
-        if (!m) { return "kNN fit refused"; }
-        model_ = std::move(*m);
+        index_.build(d, 0, n);
         mu_up_ = d.mean_up();
         mu_down_ = d.mean_down();
+        rows_ = n;
         return {};
     }
     CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
-        const auto q = model_.predict(d.features(i));
-        if (!q) { return {}; }
-        return curriculum_detail::from_probability(*q, *q * mu_up_ + (1.0 - *q) * mu_down_);
+        std::vector<std::uint8_t> near;
+        if (!index_.nearest(d.features(i), k_, near) || near.empty()) { return {}; }
+        double up = 0.0;
+        for (const auto u : near) { up += u; }
+        const double q = up / static_cast<double>(near.size());
+        return curriculum_detail::from_probability(q, q * mu_up_ + (1.0 - q) * mu_down_);
     }
-    std::string tuned() const override {
-        return "k=" + std::to_string(k_) + (from_ > 0 ? ", latest " + std::to_string(kCurriculumKnnRows) + " rows" : "");
-    }
+    std::string tuned() const override { return "k=" + std::to_string(k_) + ", all " + std::to_string(rows_) + " rows"; }
 
 private:
-    static std::expected<KnnModel, ClassicalError>
-    fit_range(const CurriculumDesign& d, std::size_t from, std::size_t to, std::size_t k) {
-        const auto x = d.block(from, to);
-        std::vector<double> y;
-        for (std::size_t j = from; j < to; ++j) { y.push_back(d.up(j) ? 1.0 : 0.0); }
-        // Regression on 0/1 gives the share of neighbours that went up: a probability.
-        return KnnModel::fit(x, to - from, d.p(), y, k, false);
-    }
-    KnnModel model_{};
-    std::size_t k_ = 5;
-    std::size_t from_ = 0;
+    CurriculumKnnIndex index_;
+    std::size_t k_ = 5, rows_ = 0;
     double mu_up_ = 0.0, mu_down_ = 0.0;
 };
 
@@ -892,12 +1124,11 @@ private:
 // Sequence models: LSTM, GRU and the causal transformer
 // ---------------------------------------------------------------------------
 
+
 /// `Steps` caps how far back the network reads. `budget` > 0 replaces the
-/// epoch rule with that many SGD steps on the window's latest rows: the
-/// transformer's reference backend (models/transformer.hpp) differentiates by
-/// central finite differences, two forward passes per parameter per sample,
-/// so it cannot afford what the LSTM and GRU (analytic BPTT) get. It is
-/// therefore the least-trained network here, and the report says so.
+/// epoch rule with that many SGD steps on the window's latest rows; no default
+/// model uses it now that the transformer trains by backpropagation
+/// (models/transformer.hpp's analytic_gradients) like the LSTM and GRU.
 template <class Net, std::size_t Steps = kCurriculumSeqSteps>
 class CurriculumSequence final : public CurriculumModel {
 public:
@@ -984,10 +1215,8 @@ private:
 
 using CurriculumLstm = CurriculumSequence<TrainableLstm<8, kCurriculumSeqInputs, kCurriculumSeqSteps>>;
 using CurriculumGru = CurriculumSequence<TrainableGru<8, kCurriculumSeqInputs, kCurriculumSeqSteps>>;
-/// Eight steps back, not sixteen: attention is quadratic in steps and every
-/// finite-difference gradient pays for it twice per parameter.
+/// Eight steps back, not sixteen: attention is quadratic in steps.
 inline constexpr std::size_t kCurriculumTransformerSteps = 8;
-inline constexpr std::size_t kCurriculumTransformerBudget = 400;
 using CurriculumTransformer = CurriculumSequence<
     CausalTransformer<kCurriculumSeqInputs, 2, 8, 1, kCurriculumTransformerSteps>, kCurriculumTransformerSteps>;
 
@@ -1342,95 +1571,57 @@ private:
     double sigma_ = 0.0;
 };
 
-/// CNN (Atlas 2, models/attention.hpp's dilated causal convolution): random
-/// convolution kernels at three dilations over the recent sequence, pooled to
-/// max and share-positive, read out by a logistic regression. The kernels are
-/// never trained -- the ROCKET recipe, which is among the strongest known
-/// time-series classifiers precisely because the readout is all that learns.
-class CurriculumRocket final : public CurriculumModel {
+/// CNN (Atlas 2): models/trainable_cnn.hpp -- three layers of attention.hpp's
+/// dilated causal convolution (dilations 1, 2, 4; eight channels) with the
+/// kernels trained by backpropagation on up/down (cross-entropy, Adam), read
+/// out at the last step. Its receptive field covers the whole sequence.
+class CurriculumCnn final : public CurriculumModel {
 public:
-    explicit CurriculumRocket(std::uint64_t seed) : seed_(seed) {
-        std::uint64_t s = seed_;
-        const auto u = [&s]() {
-            s = curriculum_detail::mix(s);
-            return static_cast<double>(s >> 11) * (1.0 / 9007199254740992.0) * 2.0 - 1.0;
-        };
-        w_.resize(kKernels * kCin * kWidth);
-        for (double& v : w_) { v = u(); }
-        for (std::size_t k = 0; k < kKernels; ++k) {   // mean-zero kernels, as ROCKET draws them
-            double m = 0.0;
-            for (std::size_t j = 0; j < kCin * kWidth; ++j) { m += w_[k * kCin * kWidth + j]; }
-            m /= static_cast<double>(kCin * kWidth);
-            for (std::size_t j = 0; j < kCin * kWidth; ++j) { w_[k * kCin * kWidth + j] -= m; }
-        }
-        for (std::size_t k = 0; k < kKernels; ++k) { bias_[k] = 0.5 * u(); }
-    }
-    std::string name() const override { return "CNN (random kernels)"; }
+    explicit CurriculumCnn(std::uint64_t seed) noexcept : seed_(seed) {}
+    std::string name() const override { return "CNN (trained, dilated causal)"; }
     std::string family() const override { return "neural"; }
     std::string fit(const CurriculumDesign& d) override {
         const std::size_t n = d.train_rows();
         if (n < 64) { return "fewer than 64 rows"; }
-        std::vector<double> x;
-        x.reserve(n * kFeatures);
-        std::vector<std::uint8_t> y(n);
-        double f[kFeatures];
-        for (std::size_t j = 0; j < n; ++j) {
-            if (!features(d, j, f)) { return "convolution refused"; }
-            x.insert(x.end(), f, f + kFeatures);
-            y[j] = d.up(j) ? 1 : 0;
+        net_ = std::make_unique<Net>();
+        net_->reset(seed_);
+        const int epochs = n <= 200 ? 30 : (n <= 2000 ? 10 : 4);
+        std::vector<std::size_t> order(n);
+        for (std::size_t j = 0; j < n; ++j) { order[j] = j; }
+        std::uint64_t s = seed_;
+        double seq[kCurriculumSeqSteps * kCurriculumSeqInputs];
+        for (int e = 0; e < epochs; ++e) {
+            for (std::size_t j = n; j > 1; --j) {   // a seeded Fisher-Yates shuffle
+                s = curriculum_detail::mix(s);
+                std::swap(order[j - 1], order[s % j]);
+            }
+            const double lr = 2e-3 / (1.0 + 0.5 * e);
+            for (const std::size_t j : order) {
+                const std::size_t steps = d.sequence(j, seq);
+                if (steps == 0) { continue; }
+                (void)net_->train_step(seq, steps, d.up(j) ? 1 : 0, lr);
+            }
         }
-        LogisticParams prm;
-        prm.l2 = 1e-2;
-        prm.epochs = 300;
-        auto m = LogisticRegression::fit(x, n, kFeatures, y, prm);
-        if (!m) { return "readout fit refused"; }
-        readout_ = std::move(*m);
+        trained_ = "epochs " + std::to_string(epochs) + " over all " + std::to_string(n) + " rows";
         mu_up_ = d.mean_up();
         mu_down_ = d.mean_down();
         return {};
     }
     CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
-        double f[kFeatures];
-        if (!features(d, i, f)) { return {}; }
-        const double p = readout_.probability({f, kFeatures});
-        return curriculum_detail::from_probability(p, p * mu_up_ + (1.0 - p) * mu_down_);
-    }
-
-private:
-    static constexpr std::size_t kKernels = 12, kCin = kCurriculumSeqInputs, kWidth = 3, kDilations = 3;
-    /// Max, share positive and the LAST step per kernel and dilation. ROCKET
-    /// pools globally and so forgets which step came last; a forecast needs it.
-    static constexpr std::size_t kFeatures = 3 * kKernels * kDilations;
-    bool features(const CurriculumDesign& d, std::size_t i, double* f) const {
         double seq[kCurriculumSeqSteps * kCurriculumSeqInputs];
         const std::size_t steps = d.sequence(i, seq);
-        if (steps == 0) { return false; }
-        Matrix in{seq, steps, kCin};
-        double out_buf[kCurriculumSeqSteps * kKernels];
-        Matrix out{out_buf, steps, kKernels};
-        Matrix w{const_cast<double*>(w_.data()), kKernels, kCin * kWidth};
-        std::size_t o = 0;
-        for (std::size_t dil = 1, k = 0; k < kDilations; ++k, dil *= 2) {
-            if (!dilated_conv(in, w, bias_, kWidth, dil, out, Padding::CausalLeft)) { return false; }
-            for (std::size_t c = 0; c < kKernels; ++c) {
-                double mx = -std::numeric_limits<double>::infinity(), pos = 0.0;
-                for (std::size_t t = 0; t < steps; ++t) {
-                    const double v = out.at(t, c);
-                    mx = std::max(mx, v);
-                    pos += v > 0.0 ? 1.0 : 0.0;
-                }
-                f[o++] = mx;
-                f[o++] = pos / static_cast<double>(steps);
-                f[o++] = out.at(steps - 1, c);
-            }
-        }
-        return true;
+        if (steps == 0 || !net_) { return {}; }
+        const double p = net_->probability(seq, steps);
+        return curriculum_detail::from_probability(p, p * mu_up_ + (1.0 - p) * mu_down_);
     }
+    std::string tuned() const override { return trained_; }
+
+private:
+    using Net = TrainableTcn<kCurriculumSeqInputs, 8, 3, 3, kCurriculumSeqSteps>;
     std::uint64_t seed_;
-    std::vector<double> w_;
-    double bias_[kKernels] = {};
-    LogisticRegression readout_{};
+    std::unique_ptr<Net> net_;
     double mu_up_ = 0.0, mu_down_ = 0.0;
+    std::string trained_;
 };
 
 /// Linear autoencoder (Atlas 2, models/classical.hpp: the PCA optimum) to four
@@ -1595,11 +1786,9 @@ public:
     std::string fit(const CurriculumDesign& d) override {
         const auto h = d.history(d.train_rows());
         if (h.size() < 100) { return "fewer than 100 returns"; }
-        // RULE 11: visible truncation -- Baum-Welch runs on the latest
-        // kCurriculumHmmRows returns (eight restarts each); the forward filter
-        // then runs over the whole history.
-        const std::size_t from = h.size() > kCurriculumHmmRows ? h.size() - kCurriculumHmmRows : 0;
-        std::vector<double> x(h.begin() + static_cast<std::ptrdiff_t>(from), h.end());
+        // Baum-Welch on every return of the window; the forward filter then
+        // runs on from there.
+        std::vector<double> x(h.begin(), h.end());
         auto m = fit_hmm(x, 2, seed_, 4, 60);
         if (!m) { return "HMM fit refused"; }
         hmm_ = std::move(*m);
@@ -1725,7 +1914,7 @@ public:
         cfg.state_size = d.p();
         cfg.actions = 2;
         cfg.hidden = 16;
-        cfg.replay_capacity = kReplay;
+        cfg.replay_capacity = n;
         cfg.target_sync_updates = 4;
         cfg.learning_rate = 1e-3;
         cfg.gamma = 0.0;
@@ -1733,10 +1922,7 @@ public:
         auto a = DqnAgent::create(cfg);
         if (!a) { return "DQN refused"; }
         agent_ = std::move(*a);
-        // RULE 11: visible truncation -- the replay holds the window's latest
-        // kReplay rows; tuned() says so.
-        const std::size_t from = n > kReplay ? n - kReplay : 0;
-        for (std::size_t j = from; j < n; ++j) {
+        for (std::size_t j = 0; j < n; ++j) {   // the replay holds every row of the window
             const auto f = d.features(j);
             const double r = d.target(j) / d.sd();
             const bool long_side = ((j * 2654435761u) & 1u) == 0;   // both actions, deterministically
@@ -1749,7 +1935,7 @@ public:
             (void)agent_->remember(std::move(t));
         }
         for (int e = 0; e < 8; ++e) { (void)agent_->train_replay(); }
-        rows_ = n - from;
+        rows_ = n;
         return {};
     }
     CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
@@ -1759,13 +1945,103 @@ public:
         const double edge = (*q)[0] - (*q)[1];
         return curriculum_detail::from_direction(edge > 0.0 ? 1 : (edge < 0.0 ? -1 : 0));
     }
-    std::string tuned() const override { return "replay of latest " + std::to_string(rows_) + " rows"; }
+    std::string tuned() const override { return "replay of all " + std::to_string(rows_) + " rows"; }
 
 private:
-    static constexpr std::size_t kReplay = 4096;
     std::uint64_t seed_;
     std::optional<DqnAgent> agent_;
     std::size_t rows_ = 0;
+};
+
+/// PPO and actor-critic (Atlas 10, models/deep_rl.hpp) as a contextual
+/// bandit, like the DQN: the state is the features plus a constant, the
+/// actions long and short, the reward the next standardised return with the
+/// action's sign. Actions are sampled from the current policy (on-policy, as
+/// both methods require), in shuffled batches of 256. The policy's P(long) is
+/// the forecast, so unlike the DQN these rank on the Frontier sheet.
+template <class Agent>
+class CurriculumPolicy final : public CurriculumModel {
+public:
+    CurriculumPolicy(std::string name, std::uint64_t seed) : name_(std::move(name)), seed_(seed) {}
+    std::string name() const override { return name_; }
+    std::string family() const override { return "neural"; }
+    std::string fit(const CurriculumDesign& d) override {
+        const std::size_t n = d.train_rows();
+        if (n < 64 || !(d.sd() > 0.0)) { return "fewer than 64 rows"; }
+        PolicyConfig cfg;
+        cfg.state_size = d.p() + 1;
+        cfg.actions = 2;
+        cfg.actor_learning_rate = 1e-3;
+        cfg.critic_learning_rate = 1e-3;
+        cfg.gamma = 0.0;
+        cfg.gae_lambda = 0.95;
+        cfg.clip_ratio = 0.2;
+        auto a = Agent::create(cfg);
+        if (!a) { return "policy refused"; }
+        agent_ = std::move(*a);
+        const int epochs = n <= 200 ? 30 : (n <= 2000 ? 10 : 4);
+        std::vector<std::size_t> order(n);
+        for (std::size_t j = 0; j < n; ++j) { order[j] = j; }
+        std::uint64_t s = seed_;
+        std::vector<PolicySample> batch;
+        batch.reserve(kBatch);
+        for (int e = 0; e < epochs; ++e) {
+            for (std::size_t j = n; j > 1; --j) {   // a seeded Fisher-Yates shuffle
+                s = curriculum_detail::mix(s);
+                std::swap(order[j - 1], order[s % j]);
+            }
+            for (std::size_t b = 0; b < n; b += kBatch) {
+                batch.clear();
+                for (std::size_t k = b; k < std::min(n, b + kBatch); ++k) {
+                    const std::size_t j = order[k];
+                    PolicySample x;
+                    x.state = state(d, j);
+                    const auto pr = agent_->probabilities(x.state);
+                    if (!pr) { return "policy refused a state"; }
+                    s = curriculum_detail::mix(s);
+                    const double u = static_cast<double>(s >> 11) * (1.0 / 9007199254740992.0);
+                    x.action = u < (*pr)[0] ? 0 : 1;   // 0 long, 1 short
+                    x.old_probability = (*pr)[x.action];
+                    const double r = d.target(j) / d.sd();
+                    x.reward = x.action == 0 ? r : -r;
+                    x.next_state = x.state;
+                    x.terminal = true;
+                    batch.push_back(std::move(x));
+                }
+                if constexpr (std::is_same_v<Agent, PpoAgent>) {
+                    if (!agent_->update(batch, 4)) { return "PPO update refused"; }
+                } else {
+                    if (!agent_->update(batch)) { return "actor-critic update refused"; }
+                }
+            }
+        }
+        trained_ = "epochs " + std::to_string(epochs) + " over all " + std::to_string(n) + " rows";
+        mu_up_ = d.mean_up();
+        mu_down_ = d.mean_down();
+        return {};
+    }
+    CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
+        if (!agent_) { return {}; }
+        const auto pr = agent_->probabilities(state(d, i));
+        if (!pr || pr->size() != 2) { return {}; }
+        const double p = (*pr)[0];
+        return curriculum_detail::from_probability(p, p * mu_up_ + (1.0 - p) * mu_down_);
+    }
+    std::string tuned() const override { return trained_; }
+
+private:
+    static constexpr std::size_t kBatch = 256;
+    static std::vector<double> state(const CurriculumDesign& d, std::size_t i) {
+        const auto f = d.features(i);
+        std::vector<double> x(f.begin(), f.end());
+        x.push_back(1.0);   // the linear policy's bias
+        return x;
+    }
+    std::string name_;
+    std::uint64_t seed_;
+    std::optional<Agent> agent_;
+    double mu_up_ = 0.0, mu_down_ = 0.0;
+    std::string trained_;
 };
 
 /// Momentum / trend following (Atlas 1, strategies/momentum.hpp): the sign of
@@ -1915,7 +2191,7 @@ curriculum_default_models(std::uint64_t seed = 0xA17A1Au) {
     m.push_back(std::make_unique<CurriculumMlp>(seed + 3));
     m.push_back(std::make_unique<CurriculumLstm>("LSTM", seed + 4));
     m.push_back(std::make_unique<CurriculumGru>("GRU", seed + 5));
-    m.push_back(std::make_unique<CurriculumTransformer>("Transformer", seed + 6, kCurriculumTransformerBudget));
+    m.push_back(std::make_unique<CurriculumTransformer>("Transformer", seed + 6));
     m.push_back(std::make_unique<CurriculumArma>(2, 0));
     m.push_back(std::make_unique<CurriculumArma>(1, 1));
     m.push_back(std::make_unique<CurriculumOu>());
@@ -1923,7 +2199,7 @@ curriculum_default_models(std::uint64_t seed = 0xA17A1Au) {
     m.push_back(std::make_unique<CurriculumRegimes>(seed + 7));
     m.push_back(std::make_unique<CurriculumRidge>());
     m.push_back(std::make_unique<CurriculumTree>());
-    m.push_back(std::make_unique<CurriculumRocket>(seed + 8));
+    m.push_back(std::make_unique<CurriculumCnn>(seed + 8));
     m.push_back(std::make_unique<CurriculumAutoencoder>());
     m.push_back(std::make_unique<CurriculumVar>());
     m.push_back(std::make_unique<CurriculumKalman>());
@@ -1931,6 +2207,8 @@ curriculum_default_models(std::uint64_t seed = 0xA17A1Au) {
     m.push_back(std::make_unique<CurriculumHurst>());
     m.push_back(std::make_unique<CurriculumSeasonalAr>());
     m.push_back(std::make_unique<CurriculumDqn>(seed + 10));
+    m.push_back(std::make_unique<CurriculumPolicy<PpoAgent>>("PPO (reinforcement)", seed + 11));
+    m.push_back(std::make_unique<CurriculumPolicy<ActorCriticAgent>>("Actor-critic (reinforcement)", seed + 12));
     m.push_back(std::make_unique<CurriculumMomentumN>());
     m.push_back(std::make_unique<CurriculumZScore>());
     m.push_back(std::make_unique<CurriculumPairs>());

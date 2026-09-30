@@ -356,7 +356,7 @@ XlsxSheet atlas_sheet() {
         {"2. Machine learning", "MLP / feedforward network", "Neural net (MLP)"},
         {"2. Machine learning", "LSTM / GRU", "LSTM; GRU"},
         {"2. Machine learning", "Transformer / attention", "Transformer"},
-        {"2. Machine learning", "CNN", "CNN (random kernels)"},
+        {"2. Machine learning", "CNN", "CNN (trained, dilated causal)"},
         {"2. Machine learning", "Random forest", "Random forest; Random forest on |r| (bands)"},
         {"2. Machine learning", "Logistic regression", "Logistic regression; the Stack's meta-model"},
         {"2. Machine learning", "SVM / KNN / autoencoder", "SVM (RBF); k-nearest neighbours; Autoencoder + logistic"},
@@ -386,7 +386,7 @@ XlsxSheet atlas_sheet() {
         {"9. Simulation", "Walk-forward & purged CV", "the curriculum itself: doubling walk-forward, no look-ahead"},
         {"9. Simulation", "Agent-based simulation", "not a forecaster: a synthetic market"},
         {"10. Reinforcement learning", "Q-learning", "not run: its QLearner learns execution aggression, not direction"},
-        {"10. Reinforcement learning", "DQN / PPO / actor-critic", "DQN (reinforcement)"},
+        {"10. Reinforcement learning", "DQN / PPO / actor-critic", "DQN (reinforcement); PPO (reinforcement); Actor-critic (reinforcement)"},
         {"Cross-cutting", "Ensemble aggregator", "Vote, Champion, Hedge, Stack, Consensus, Vol ensemble, Best band so far"},
         {"Cross-cutting", "Forecast scorecard", "the price skill and verdict columns"},
         {"Cross-cutting", "Transaction cost calculator", "the cost hurdle (STT dated as in config/charges.toml)"},
@@ -950,9 +950,10 @@ int main(int argc, char** argv) {
         "Data rules (see the Data sheet): seconds floored, repeated stamps keep the first bar, impossible OHLC widened and "
         "counted, intraday only on full sessions, NIFTY futures daily only with roll-crossing outcomes excluded, rows "
         "without a same-time INDIA VIX bar (or pair price) dropped, history before INDIA VIX starts (2015) not used.",
-        "Visible truncations: the transformer trains by finite differences with 400 SGD steps a stage; the SVM learns from "
-        "its window's latest 1,500 rows, kNN from 20,000, the HMM's Baum-Welch from 50,000, the DQN's replay from 4,096; "
-        "GARCH/GJR/EGARCH fit on the latest 100,000 returns and filter over all of them. Each says so in its stage notes.",
+        "No row caps: every model learns from every row of its window. The transformer, LSTM, GRU and CNN train by "
+        "backpropagation; kNN is exact, searched through a k-d tree; above 1,500 rows the SVM's RBF kernel is approximated "
+        "by 256 random Fourier features and trained on every row by dual coordinate descent (below it, exact SMO). "
+        "Each model's stage notes say what it fitted.",
     };
 
     std::error_code ec;

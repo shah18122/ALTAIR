@@ -47,10 +47,6 @@ inline constexpr double kBandCoverage = 0.80;
 /// Past out-of-sample errors a model needs before its own stop replaces the
 /// in-sample calibration.
 inline constexpr std::size_t kBandCalibrationMin = 50;
-/// Variance models fit on at most this many of the window's latest returns
-/// (the grid and coordinate searches are O(n) per trial); the filter then
-/// runs over the whole history.
-inline constexpr std::size_t kBandFitRows = 100000;
 
 /// A band model forecasts the scale of the next log return.
 class BandModel {
@@ -69,15 +65,11 @@ namespace band_detail {
 
 inline double nan() noexcept { return std::numeric_limits<double>::quiet_NaN(); }
 
-/// The latest kBandFitRows returns of the training window.
-/// RULE 11: visible truncation -- the models that use it say so in tuned().
-inline std::span<const double> fit_window(const CurriculumDesign& d) {
-    const auto h = d.history(d.train_rows());
-    return h.size() > kBandFitRows ? h.subspan(h.size() - kBandFitRows) : h;
-}
+/// Every return of the training window.
+inline std::span<const double> fit_window(const CurriculumDesign& d) { return d.history(d.train_rows()); }
 
 inline std::string window_note(const CurriculumDesign& d) {
-    return d.train_rows() > kBandFitRows ? "fit on the latest " + std::to_string(kBandFitRows) + " returns" : std::string{};
+    return "fit on all " + std::to_string(d.train_rows()) + " returns";
 }
 
 inline double quantile(std::vector<double> v, double q) {

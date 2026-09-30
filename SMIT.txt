@@ -646,3 +646,25 @@ Results (21 tracks, 4.13M bars, 840 tests, 0 look-ahead refusals, 36 min):
     constant band's score by 11.5-16.3%. Example: NIFTY 5m within
     +/-8.7 bp, right 79.8% of the time.
   Details: ops/forecast-curriculum.md "Results".
+
+18. ATLAS GAPS CLOSED: PPO, ACTOR-CRITIC, TRAINED CNN, NO ROW CAPS -- 2026-09-30
+------------------------------------------------------------------------------
+Owner's request: add PPO and actor-critic, train the CNN, lift the row caps.
+  models/transformer.hpp  analytic_gradients(): backpropagation through the
+                          causal Transformer. train_step uses it. The
+                          finite-difference gradient stays as the reference;
+                          they agree to 3e-7 on every parameter
+                          (test_transformer).
+  models/trainable_cnn.hpp (new)  TrainableTcn: attention.hpp's dilated
+                          causal convolution with LEARNED kernels (3 layers,
+                          dilations 1/2/4), cross-entropy, Adam; gradient
+                          check and a nonlinear pattern test
+                          (test_trainable_cnn)
+  models/curriculum.hpp   CNN (trained, dilated causal) replaces the
+                          random-kernel CNN; PPO and Actor-critic
+                          (deep_rl.hpp) as contextual bandits; kNN exact on
+                          every row through a k-d tree (matches KnnModel's
+                          brute force); SVM exact SMO up to 1,500 rows, and
+                          above that 256 random Fourier features and dual
+                          coordinate descent on every row; HMM, DQN replay
+                          and the GARCH-family band fits on every row

@@ -68,7 +68,7 @@ futures track takes its price features from the spot index plus the
 
 | Family | Models |
 |---|---|
-31 direction forecasters and 9 ensembles:
+33 direction forecasters and 9 ensembles:
 
 | Family | Models |
 |---|---|
@@ -76,7 +76,8 @@ futures track takes its price features from the spot index plus the
 | Statistical alpha | Momentum (tuned lookback), Mean reversion (z-score band, abstains inside it), Pairs (cointegration, NIFTY against BANKNIFTY and back) |
 | Classical | Logistic regression (L2 tuned), Ridge regression (λ tuned), SVM (RBF), k-nearest neighbours (k tuned), Autoencoder + logistic |
 | Trees | Decision tree, Random forest (depth tuned), Gradient boosting |
-| Neural | MLP (backprop), LSTM, GRU, causal Transformer, CNN (random dilated kernels, ROCKET-style), DQN (reinforcement, as a contextual bandit) |
+| Neural | MLP, LSTM, GRU, causal Transformer and CNN (three layers of dilated causal convolution), all trained by backpropagation |
+| Reinforcement | DQN, PPO and actor-critic, each as a contextual bandit (state: the features; actions: long or short; reward: the next standardised return with the action's sign) |
 | Time series | AR(2), ARMA(1,1), Seasonal AR (SARIMA), VAR(1), Kalman filter (drift), Ornstein–Uhlenbeck, Markov chain, Hidden Markov model, Hurst regime switch |
 | Regime | k-means regimes |
 | Ensembles | Vote, Champion, Hedge, **Stack** (a logistic regression on every model's past out-of-sample calls), and the filters that abstain unless confident: **Stack (confident third / 10 % / 2 %)**, **Consensus 75 % / 90 %** |
@@ -99,18 +100,23 @@ cannot make a single instrument's next-bar call are listed with the reason:
 - order-book microstructure (no order book in the dataset);
 - text and fundamentals (no such data).
 
-Tuning uses the last quarter of each training window only. Truncations are
-visible, and each model states its own in the stage notes:
-- The transformer trains by finite differences with 400 SGD steps a stage, so it is the least-trained network.
-- Row caps on what a model learns from:
-
-  | Model | Rows |
-  |---|---|
-  | SVM | the window's latest 1,500 |
-  | kNN | 20,000 |
-  | HMM (Baum–Welch) | 50,000 |
-  | DQN (replay) | 4,096 |
-  | GARCH / GJR / EGARCH (fit) | the latest 100,000 returns, then filtered over all of them |
+Tuning uses the last quarter of each training window only. **There are no
+row caps**: every model learns from every row of its window, and states what
+it fitted in the stage notes. Three things make that affordable at 1-minute
+scale (up to 575,000 rows a window):
+- **Backpropagation.** The transformer trains by backpropagation
+  (`models/transformer.hpp` `analytic_gradients`). It is checked against the
+  finite-difference gradient it used to train by, parameter by parameter, to
+  3e-7. The same schedule as the LSTM and GRU applies: 30, 10 or 4 epochs over
+  every row.
+- **An exact k-d tree** (`CurriculumKnnIndex`) for kNN. It returns exactly
+  `KnnModel`'s brute-force neighbours, checked on 300 forecasts, at about a
+  fifth of the cost.
+- **Random Fourier features for the SVM.** Up to 1,500 rows it is the exact
+  SMO. Above that, its RBF kernel is approximated by 256 random Fourier
+  features, and it is trained on every row by dual coordinate descent. On a
+  1,536-row AR(1) window it reaches 0.665 against a ceiling of 0.667, where the
+  exact SMO (three passes) reaches 0.574.
 
 ## Data rules (from the data audit)
 

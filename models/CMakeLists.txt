@@ -106,6 +106,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_transformer_test PRIVATE altair_models altair_flags)
     add_test(NAME models_transformer COMMAND altair_transformer_test)
 
+    add_executable(altair_trainable_cnn_test tests/test_trainable_cnn.cpp)
+    target_link_libraries(altair_trainable_cnn_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_trainable_cnn COMMAND altair_trainable_cnn_test)
+
     add_executable(altair_serving_test tests/test_serving.cpp)
     target_link_libraries(altair_serving_test PRIVATE altair_models altair_strategies altair_flags)
     add_test(NAME models_serving COMMAND altair_serving_test)

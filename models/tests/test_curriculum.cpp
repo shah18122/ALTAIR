@@ -2,6 +2,7 @@
 
 #include <models/curriculum.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -180,8 +181,9 @@ void test_learning_and_no_leak() {
         std::printf("        %-28s %.3f on %zu\n", name, s.accuracy, s.all.scored());
         check(s.all.scored() > 100 && s.accuracy > 0.62, name);
     }
-    for (const char* name : {"Decision tree", "CNN (random kernels)", "Autoencoder + logistic", "Kalman filter (drift)",
-                             "Hidden Markov model", "DQN (reinforcement)"}) {
+    for (const char* name : {"Decision tree", "CNN (trained, dilated causal)", "Autoencoder + logistic", "Kalman filter (drift)",
+                             "Hidden Markov model", "DQN (reinforcement)", "PPO (reinforcement)",
+                             "Actor-critic (reinforcement)"}) {
         const auto s = curriculum_summary(tr, *run, idx(name), tests);
         std::printf("        %-28s %.3f on %zu\n", name, s.accuracy, s.all.scored());
         check(s.all.scored() > 100, name);
@@ -332,6 +334,61 @@ void test_scoring() {
 
 } // namespace
 
+
+/// The large-window paths: exact kNN through the k-d tree, and the SVM on
+/// random Fourier features once its window passes kCurriculumSvmExactRows.
+void test_large_windows() {
+    // 700 days of 4 rows each: the last stages' windows hold 1,400+ rows.
+    auto base = ar_track(2800, 0.5, 0.0, 11);
+    CurriculumTrack tr = base;
+    for (std::size_t i = 0; i < tr.rows(); ++i) { tr.day[i] = static_cast<std::int32_t>(i / 4); }
+    const auto st = curriculum_stages(tr);
+    auto d = CurriculumDesign::make(tr, st.back());
+    check(d.has_value() && d->train_rows() > kCurriculumSvmExactRows, "the last window is past the exact SVM's size");
+    if (!d) { return; }
+
+    // kNN: the tree's neighbours are KnnModel's brute-force neighbours.
+    const std::size_t n = d->train_rows();
+    CurriculumKnnIndex index;
+    index.build(*d, 0, n);
+    const auto x = d->block(0, n);
+    std::vector<double> y;
+    for (std::size_t j = 0; j < n; ++j) { y.push_back(d->up(j) ? 1.0 : 0.0); }
+    const auto brute = KnnModel::fit(x, n, d->p(), y, 15, false);
+    std::size_t same = 0, asked = 0;
+    std::vector<std::uint8_t> near;
+    for (std::size_t i = n; i < std::min(d->rows(), n + 300); ++i) {
+        d->set_now(i);   // the engine's clock: row i's features are known at its decision
+        const auto q = brute->predict(d->features(i));
+        if (!q || !index.nearest(d->features(i), 15, near)) { continue; }
+        double up = 0.0;
+        for (const auto u : near) { up += u; }
+        ++asked;
+        if (up / 15.0 == *q) { ++same; }
+    }
+    std::printf("        kNN: k-d tree agrees with brute force on %zu of %zu forecasts\n", same, asked);
+    check(asked > 100 && same == asked, "the k-d tree finds exactly the brute-force neighbours");
+
+    // SVM: on an AR(1) with phi = 0.5 the best possible hit rate is
+    // 1/2 + asin(1/2)/pi = 2/3; the random-feature fit on every row gets there.
+    d->set_now(n);
+    CurriculumSvm rff;
+    check(rff.fit(*d).empty() && rff.tuned().find("random Fourier features, all") != std::string::npos,
+          "past 1,500 rows the SVM trains on every row through random Fourier features, and says so");
+    std::size_t called = 0, right = 0;
+    for (std::size_t i = n; i < d->rows(); ++i) {
+        d->set_now(i);
+        const auto c = rff.predict(*d, i);
+        const double r = tr.actual[i] - tr.anchor[i];
+        if (!c.made || c.dir == 0 || r == 0.0) { continue; }
+        ++called;
+        if ((c.dir > 0) == (r > 0.0)) { ++right; }
+    }
+    const double acc = static_cast<double>(right) / static_cast<double>(called);
+    std::printf("        random-feature SVM: %.3f on %zu test rows (ceiling 0.667)\n", acc, called);
+    check(called > 1000 && acc > 0.62, "the random-feature SVM learns the persistence up to its ceiling");
+}
+
 int main() {
     std::printf("Forecast curriculum\n");
     test_schedule();
@@ -340,6 +397,7 @@ int main() {
     test_scoring();
     test_pairs();
     test_learning_and_no_leak();
+    test_large_windows();
     std::printf("Forecast curriculum: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

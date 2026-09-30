@@ -133,8 +133,9 @@ See [ops/data-audit.md](ops/data-audit.md) for the checks and the findings.
 ## Forecast curriculum
 
 `altair_forecast_curriculum` trains every Model Atlas forecaster that can
-make a next-bar call: 31 direction models, from the baselines through ridge,
-trees, SVM and kNN, the neural nets (including a random-kernel CNN and a DQN),
+make a next-bar call: 33 direction models, from the baselines through ridge,
+trees, SVM and kNN, the neural nets (MLP, LSTM, GRU, Transformer and CNN, all
+trained by backpropagation), DQN, PPO and actor-critic,
 AR/ARMA/SARIMA/VAR, Kalman and HMM, plus 12 volatility-band models (GARCH,
 GJR, EGARCH, EWMA, Heston, seasonal, jump diffusion …), with ensembles and
 confidence filters, on a doubling schedule: learn 3 days, forecast the
