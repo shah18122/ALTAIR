@@ -1992,6 +1992,7 @@ public:
             }
             for (std::size_t b = 0; b < n; b += kBatch) {
                 batch.clear();
+                // RULE 11: proven -- the last batch takes the remaining rows; every row is used.
                 for (std::size_t k = b; k < std::min(n, b + kBatch); ++k) {
                     const std::size_t j = order[k];
                     PolicySample x;
