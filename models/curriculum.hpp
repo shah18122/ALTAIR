@@ -87,8 +87,10 @@
 
 namespace altair {
 
-/// Features per row that the fixed-width networks accept. A wider track is refused.
-inline constexpr std::size_t kCurriculumMaxFeatures = 16;
+/// Features per row that the fixed-width networks accept. A wider track is
+/// refused. 64 holds a track's own features plus every other model's forecast
+/// (models/curriculum_feeds.hpp).
+inline constexpr std::size_t kCurriculumMaxFeatures = 64;
 /// Inputs per step, and steps back, that the sequence models read.
 inline constexpr std::size_t kCurriculumSeqInputs = 4;
 inline constexpr std::size_t kCurriculumSeqSteps = 16;

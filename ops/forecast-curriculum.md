@@ -28,8 +28,10 @@ scored.
 build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
 ```
 
-All 21 tracks take about an hour on four cores; the 1-minute tracks are most
-of it (`--only daily`: about 2 minutes).
+The first pass runs 20 tracks; the second pass runs 42 more, each a first-pass
+track with other models' forecasts as inputs (see "Other models as inputs").
+That takes about 90 minutes on four cores, most of it the 1-minute tracks.
+`--only daily` takes about 2 minutes.
 
 Options:
 - `--first-days N` (default 3).
@@ -38,12 +40,13 @@ Options:
 - `--other-cost-bp X`.
 - `--only TEXT`: run only tracks whose name contains it, e.g. `--only 5m`.
 - `--no-bands`, `--no-log`.
+- `--no-feeds`: skip the second pass.
 
 ## Output (`data/verified/`, git-ignored)
 
 | File | What |
 |---|---|
-| `forecast_curriculum.xlsx` | **Summary**: direction, every model on every track (accuracy, 95 % interval, p against a coin and against the best constant call, both Bonferroni-corrected, coverage, Brier, price skill against the random walk, trades that clear cost, verdict). **Bands**: every band model on every track (hit rate, width, interval score, skill against the constant band). **Frontier**: accuracy of each model's most confident 0.1 % … 100 % of calls, and the largest slice still at or above 80 %. **Atlas coverage**: every Model Atlas row, and what the run did with it. **Data** · **Method** · one **sheet per track** with its learning curves. |
+| `forecast_curriculum.xlsx` | **Tradability**: each track's mean move, cost, the accuracy a call needs to pay that cost (at the history's cost and at today's), and the best models against it. **Feeds**: every second-pass model against its first pass over the same period. **Summary**: direction, every model on every track (accuracy, 95 % interval, p against a coin and against the best constant call, both Bonferroni-corrected, coverage, Brier, price skill against the random walk, trades that clear cost, verdict). **Bands**: every band model on every track (hit rate, width, interval score, skill against the constant band). **Frontier**: accuracy of each model's most confident 0.1 % … 100 % of calls, and the largest slice still at or above 80 %. **Atlas coverage**: every Model Atlas row, and what the run did with it. **Data** · **Method** · one **sheet per track** with its learning curves. |
 | `forecast_curriculum.txt` | The summary as text. |
 | `forecast_log/<track>.csv` | Every forecast on the daily and hourly tracks: time, stage, days learned, model, last price, next price, forecast price, P(up), call, what moved, RIGHT/WRONG/FLAT, net bp if traded. The 1–15-minute logs would run to gigabytes and are not written. |
 
@@ -52,7 +55,8 @@ Options:
 | Track | Decision | Outcome |
 |---|---|---|
 | NIFTY, BANKNIFTY, NIFTY FUT, INDIA VIX daily | 15:30, from that day's bar | next trading day's close |
-| … + VIX fc (daily and hourly index tracks) | the same, plus the INDIA VIX model's own forecast as a feature | the same |
+| NIFTY, BANKNIFTY 0920-close and 1015-close (horizons) | 09:20 or 10:15, the close of that 5-minute bar | the same day's 15:30 close |
+| … + vol / cross / models / all (second pass) | the first-pass track's decision, plus other models' forecasts made by then | the same |
 | NIFTY, BANKNIFTY, INDIA VIX hourly | close of each of a full day's first six hourly bars (10:15 … 15:15) | the next hourly close (no overnight hour) |
 | NIFTY, BANKNIFTY, INDIA VIX 15m, 5m, 1m | close of every bar of a full 09:15–15:30 session but the last | the next bar's close (no overnight bar) |
 
@@ -128,6 +132,56 @@ without a same-time INDIA VIX bar dropped; history before INDIA VIX begins
 next-month contract for July–August 2026) with outcomes that cross an expiry
 excluded. The expiry calendar is checked on every run: the basis should be ~0
 on expiry and jump the next day (Data sheet).
+
+## Other models as inputs (second pass)
+
+`models/curriculum_feeds.hpp`. A finished run holds every model's
+out-of-sample forecast for every row from its first test block on. Each
+forecast is made at the row's decision, from models fitted on finished stages
+only. A second pass appends some of them to another track's features:
+
+| Group | Inputs |
+|---|---|
+| **vol** | The track's own 80 % band widths (GJR-GARCH, seasonal, GBDT on \|r\|, vol ensemble), the HMM's forecast scale and drift, and the Kalman drift. |
+| **cross** | Hedge's forecast on the next faster and next slower timeframe and on the daily track, the other index's forecast and band, and INDIA VIX's forecast. |
+| **models** | All 32 first-pass models' signed confidence: +1 sure up, −1 sure down, 0 abstained. The coin flip is left out. |
+| **all** | Everything above, about 45 more inputs. |
+
+How the groups run:
+- **Daily and horizon tracks:** every group, an ablation that shows which input helps.
+- **5m, 15m and hourly:** "all" only.
+- **1m:** none. No accuracy pays a 1-minute trade's costs.
+
+**The join is as-of.** A row reads, from each feed, the latest value made at
+or before its decision. An intraday source counts only on its own day; a daily
+one counts for up to a week. A feed that cannot supply a value reads 0 ("no
+opinion"), except the band and self feeds, whose rows are dropped instead.
+`models/tests/test_curriculum_feeds.cpp` runs both passes, changes one
+outcome, and checks that none of the 8,190 second-pass calls made before it
+moves.
+
+## Tradability
+
+A direction call that is right a share p of the time, on moves of mean size
+E|r|, nets (2p − 1)·E|r| − cost a trade. Break-even is therefore
+p* = ½ + cost / (2·E|r|), assuming being right does not depend on the size of
+the move.
+
+The **Tradability** sheet gives p* at two costs:
+- the history's average cost (mostly 2 bp STT);
+- today's cost (5 bp STT since 2026-04-01, plus 1.3 bp).
+
+It then sets the best models against p*. At 6.3 bp a round trip:
+
+| Horizon | Break-even accuracy |
+|---|---|
+| 1m | about 99 % (a 1-minute move averages 3 bp) |
+| 5m | 95 % |
+| 15m | 75 % |
+| hourly | 63 % |
+| 09:20→close | 54–56 % |
+| 10:15→close | 55–57 % |
+| daily | 53.5–54.5 % |
 
 ## No look-ahead
 

@@ -41,6 +41,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <map>
@@ -630,6 +631,126 @@ struct IntradayInputs {
                              bars[sp.b + k + 1].c, futures_cost_bp(sp.day, in.other_cost_bp),
                              static_cast<std::uint16_t>(k), pv);
         }
+    }
+    detail::finish_info(tr, info);
+    return tr;
+}
+
+/// What a horizon track is built from: cleaned 5-minute bars.
+struct SessionInputs {
+    std::string name, instrument;
+    /// The decision: the close of the 5-minute bar ending at this minute of
+    /// the day (560 = 09:20, 615 = 10:15). The outcome: the session's close.
+    int decide_minute = 615;
+    const std::vector<da::AuditBar>* own = nullptr;
+    const std::vector<da::AuditBar>* vix = nullptr;   ///< INDIA VIX 5-minute bars
+    double other_cost_bp = 1.3;
+    const std::vector<da::AuditBar>* pair = nullptr;  ///< the paired instrument's 5-minute bars
+    std::string pair_name{};
+};
+
+/// From a moment in the session to its close, one decision a day: long
+/// enough that a move is several times the round-trip cost (break-even
+/// accuracy about 55 % against 99 % at one minute). Full 09:15-15:30 grids
+/// only; the outcome is known at 15:30, before the next day's decision.
+[[nodiscard]] inline CurriculumTrack build_session(const SessionInputs& in, TrackInfo& info) {
+    CurriculumTrack tr;
+    tr.name = in.name;
+    tr.instrument = in.instrument;
+    char hm[16];
+    std::snprintf(hm, sizeof hm, "%02d:%02d", in.decide_minute / 60, in.decide_minute % 60);
+    tr.horizon = std::string{hm} + " to the close";
+    tr.tradable = true;
+    tr.feature_names = {"ret since open", "gap", "ret last hour", "vol since open", "range since open",
+                        "close in range", "prev day ret", "prev day range", "ret 5d", "weekday",
+                        "VIX", "VIX since prev close", "VIX since open"};
+    tr.p = tr.feature_names.size();
+    tr.seq_cols = {0, 1, 3, 11};
+    tr.season = 5;
+    const detail::PairLookup pair(in.pair, false);
+    tr.pair_name = in.pair_name;
+    const detail::PairLookup vix(in.vix, false);
+    constexpr std::size_t per_day = 75;
+    const std::size_t k_dec = static_cast<std::size_t>((in.decide_minute - 555) / 5) - 1;   // the bar that closes then
+
+    const auto& bars = *in.own;
+    struct DaySpan { std::int64_t day; std::size_t b, e; };
+    std::vector<DaySpan> days;
+    for (std::size_t i = 0; i < bars.size(); ++i) {
+        const std::int64_t d = bar_day(bars[i]);
+        if (days.empty() || days.back().day != d) { days.push_back({d, i, i}); }
+        days.back().e = i + 1;
+    }
+    const auto full = [&](const DaySpan& sp) {
+        if (sp.e - sp.b != per_day) { return false; }
+        for (std::size_t k = 0; k < per_day; ++k) {
+            if (da::audit_minute_of_day(bars[sp.b + k].t) != 555 + 5 * static_cast<std::int64_t>(k)) { return false; }
+        }
+        return true;
+    };
+    // The VIX close of the last day before `day` that has one.
+    std::vector<std::int64_t> vix_days;
+    std::vector<double> vix_last;
+    for (const auto& b : *in.vix) {
+        const std::int64_t d = bar_day(b);
+        if (vix_days.empty() || vix_days.back() != d) { vix_days.push_back(d); vix_last.push_back(b.c); }
+        else { vix_last.back() = b.c; }
+    }
+    const auto vix_close_before = [&](std::int64_t day) {
+        const auto it = std::lower_bound(vix_days.begin(), vix_days.end(), day);
+        if (it == vix_days.begin()) { return std::numeric_limits<double>::quiet_NaN(); }
+        const auto k = static_cast<std::size_t>(it - vix_days.begin()) - 1;
+        return day - vix_days[k] <= 7 ? vix_last[k] : std::numeric_limits<double>::quiet_NaN();
+    };
+
+    std::int32_t day_ordinal = -1;
+    std::vector<double> row(tr.p);
+    for (std::size_t q = 0; q < days.size(); ++q) {
+        const DaySpan& sp = days[q];
+        if (!full(sp)) { ++info.short_days; continue; }
+        if (q < 6 || k_dec + 1 >= per_day) { ++info.warmup; continue; }
+        const DaySpan& p1 = days[q - 1];
+        const double pc = bars[p1.e - 1].c, ppc = bars[days[q - 2].e - 1].c, pc5 = bars[days[q - 6].e - 1].c;
+        double p_hi = 0.0, p_lo = 0.0;
+        for (std::size_t k = p1.b; k < p1.e; ++k) {
+            p_hi = k == p1.b ? bars[k].h : std::max(p_hi, bars[k].h);
+            p_lo = k == p1.b ? bars[k].l : std::min(p_lo, bars[k].l);
+        }
+        const double open = bars[sp.b].o;
+        const da::AuditBar& d = bars[sp.b + k_dec];
+        double hi = 0.0, lo = 0.0, ss = 0.0;
+        for (std::size_t k = 0; k <= k_dec; ++k) {
+            const da::AuditBar& b = bars[sp.b + k];
+            hi = k == 0 ? b.h : std::max(hi, b.h);
+            lo = k == 0 ? b.l : std::min(lo, b.l);
+            const double r = std::log(b.c / (k == 0 ? open : bars[sp.b + k - 1].c));
+            ss += r * r;
+        }
+        const std::size_t hour_back = k_dec >= 12 ? k_dec - 12 : 0;
+        const double hour_ago = k_dec >= 12 ? bars[sp.b + hour_back].c : open;
+        const double v = vix.at(d.t), v_open = vix.at(bars[sp.b].t), v_pc = vix_close_before(sp.day);
+        if (!(v > 0.0) || !(v_open > 0.0) || !(v_pc > 0.0)) { ++info.no_vix; continue; }
+        const double pv = pair.empty() ? std::numeric_limits<double>::quiet_NaN() : pair.at(d.t);
+        if (!pair.empty() && !std::isfinite(pv)) { ++info.no_pair; continue; }
+        std::size_t c = 0;
+        row[c++] = std::log(d.c / open);
+        row[c++] = std::log(open / pc);
+        row[c++] = std::log(d.c / hour_ago);
+        row[c++] = std::sqrt(ss / static_cast<double>(k_dec + 1));
+        row[c++] = std::log(hi / lo);
+        row[c++] = hi > lo ? (d.c - lo) / (hi - lo) - 0.5 : 0.0;
+        row[c++] = std::log(pc / ppc);
+        row[c++] = std::log(p_hi / p_lo);
+        row[c++] = std::log(pc / pc5);
+        row[c++] = static_cast<double>(da::audit_weekday(sp.day));
+        row[c++] = std::log(v);
+        row[c++] = std::log(v / v_pc);
+        row[c++] = std::log(v / v_open);
+        const da::AuditBar& last = bars[sp.e - 1];
+        detail::push_row(tr, row, sp.day * kDaySec + static_cast<std::int64_t>(in.decide_minute) * 60,
+                         sp.day * kDaySec + kCloseSec, ++day_ordinal, d.c, last.c,
+                         futures_cost_bp(sp.day, in.other_cost_bp),
+                         static_cast<std::uint16_t>(da::audit_weekday(sp.day)), pv);
     }
     detail::finish_info(tr, info);
     return tr;
