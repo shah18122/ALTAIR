@@ -163,11 +163,16 @@ the results.
 Paper trades only, never sent to a broker; the desktop's **Strategies →
 Demo Trading** page runs both and shows trades, per-model totals and equity.
 
-- `altair_band_option_demo`: when the day first touches a band model's
-  09:20 edge, sell one lot of the option at the first strike past it, then
-  buy it back at 15:20. Premiums are synthetic (Black-76 at INDIA VIX).
-  Every band model loses before expenses. Only 43–45 % of touches close back
-  inside the edge, so a touch is a breakout more often than a reversal.
+- `altair_band_option_demo`: each band model's 09:20 forecast sells options
+  under six rules, one lot, bought back by 15:20. The rules: wait for a touch;
+  a strangle at the band edges; with a 2× stop; delta hedged; expiry day.
+  Premiums are synthetic (Black-76 at INDIA VIX).
+  - Touch-fading loses under every assumption: a touch is a breakout more
+    often than a reversal.
+  - The 09:20 strangle earns only on the variance clock (+₹98 NIFTY, +₹283
+    BANKNIFTY a trade with the stop; t = 3.4 and 7.1). It does so only since
+    2021, and mostly from the volatility premium rather than the forecast.
+  - It needs real intraday option prices before it means anything.
 - `altair_pairs_futures`: walk-forward Engle-Granger pairs, long one future
   and short the other in whole lots, over `config/pairs.csv` (NIFTY-BANKNIFTY,
   CIPLA-SUNPHARMA, HDFCBANK-ICICIBANK and more). Stock legs come from FYERS via

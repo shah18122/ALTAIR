@@ -216,7 +216,7 @@ protected:
             hi = std::max({hi, q.gross, q.net});
         }
         if (!(hi > lo)) hi = lo + 1.0;
-        const QRectF area(84.0, 32.0, std::max(10.0, width() - 100.0), std::max(10.0, height() - 60.0));
+        const QRectF area(104.0, 32.0, std::max(10.0, width() - 120.0), std::max(10.0, height() - 60.0));
         const auto y_of = [&](double v) { return area.bottom() - (v - lo) / (hi - lo) * area.height(); };
         const auto x_of = [&](std::size_t i) {
             return area.left() + static_cast<double>(i) / static_cast<double>(points_.size() - 1) * area.width();
@@ -228,7 +228,7 @@ protected:
         p.setPen(QColor(QString::fromLatin1(theme_token::kTextMuted)));
         for (const double v : {hi, 0.0, lo}) {
             if (v == 0.0 && (y_of(hi) > y_of(0.0) - 18.0 || y_of(lo) < y_of(0.0) + 18.0)) continue;   // would overlap
-            p.drawText(QRectF(0.0, y_of(v) - 9.0, 78.0, 18.0), Qt::AlignRight | Qt::AlignVCenter, rupees(v));
+            p.drawText(QRectF(0.0, y_of(v) - 9.0, 98.0, 18.0), Qt::AlignRight | Qt::AlignVCenter, rupees(v));
         }
         p.drawText(QRectF(area.left(), area.bottom() + 4.0, 120.0, 18.0), Qt::AlignLeft,
                    points_.front().date.toString(Qt::ISODate));
@@ -311,8 +311,8 @@ public:
 
         auto* head = new QLabel(QStringLiteral(
             "<b>DEMO TRADING</b> &nbsp;·&nbsp; paper trades only: nothing here is sent to a broker. "
-            "One lot each. Band models sell the option at the first strike past the edge their 09:20 "
-            "forecast set and buy it back at 15:20; pairs go long one future and short the other."), this);
+            "One lot each. Band models sell options at the edges their 09:20 forecast set, under the rule "
+            "you pick, and buy them back by 15:20; pairs go long one future and short the other."), this);
         head->setWordWrap(true);
         v->addWidget(head);
 
@@ -339,6 +339,8 @@ public:
         v->addLayout(controls);
 
         auto* filters = new QHBoxLayout;
+        rule_ = new QComboBox(this);
+        rule_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
         instrument_ = new QComboBox(this);
         model_ = new QComboBox(this);
         model_->setMinimumContentsLength(22);
@@ -346,6 +348,8 @@ public:
         model_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         totals_ = new QLabel(this);
         totals_->setWordWrap(true);
+        filters->addWidget(new QLabel(QStringLiteral("Rule"), this));
+        filters->addWidget(rule_);
         filters->addWidget(new QLabel(QStringLiteral("Instrument"), this));
         filters->addWidget(instrument_);
         filters->addWidget(new QLabel(QStringLiteral("Model"), this));
@@ -360,9 +364,9 @@ public:
         pairs_summary_ = new demo_detail::CsvModel(this);
         pairs_trades_ = new demo_detail::CsvModel(this);
         pairs_windows_ = new demo_detail::CsvModel(this);
-        auto* summary_sort = new QSortFilterProxyModel(this);
-        summary_sort->setSourceModel(summary_);
-        summary_sort->setSortRole(Qt::UserRole);
+        summary_filter_ = new demo_detail::ColumnFilter(this);
+        summary_filter_->setSourceModel(summary_);
+        summary_filter_->setSortRole(Qt::UserRole);
         trade_filter_ = new demo_detail::ColumnFilter(this);
         trade_filter_->setSourceModel(trades_);
         trade_filter_->setSortRole(Qt::UserRole);
@@ -382,7 +386,7 @@ public:
             views_.push_back(demo_detail::table_view(m, this));
             return views_.back();
         };
-        tabs_->addTab(view(summary_sort), QStringLiteral("Options · by model"));
+        tabs_->addTab(view(summary_filter_), QStringLiteral("Options · by model"));
         tabs_->addTab(view(trade_filter_), QStringLiteral("Options · trades"));
         tabs_->addTab(equity_, QStringLiteral("Options · equity"));
         tabs_->addTab(view(sorted(pairs_summary_)), QStringLiteral("Pairs · summary"));
@@ -394,6 +398,7 @@ public:
         connect(run_options_, &QPushButton::clicked, this, [this] { run(QStringLiteral("altair_band_option_demo")); });
         connect(run_pairs_, &QPushButton::clicked, this, [this] { run(QStringLiteral("altair_pairs_futures")); });
         connect(reread, &QPushButton::clicked, this, [this] { reload(); });
+        connect(rule_, &QComboBox::currentIndexChanged, this, [this](int) { load_rule(); });
         connect(instrument_, &QComboBox::currentIndexChanged, this, [this](int) { refilter(); });
         connect(model_, &QComboBox::currentIndexChanged, this, [this](int) { refilter(); });
         reload();
@@ -405,6 +410,8 @@ public:
     [[nodiscard]] int shown_trades() const { return trade_filter_->rowCount(); }
     [[nodiscard]] QComboBox* model_filter() const { return model_; }
     [[nodiscard]] QComboBox* instrument_filter() const { return instrument_; }
+    [[nodiscard]] QComboBox* rule_filter() const { return rule_; }
+    [[nodiscard]] int shown_summary_rows() const { return summary_filter_->rowCount(); }
 
 private:
     [[nodiscard]] QString out_dir(const QString& name) const {
@@ -412,38 +419,72 @@ private:
     }
 
     void reload() {
-        const auto meta = demo_detail::read_csv(out_dir(QStringLiteral("band_option_demo")) + QStringLiteral("/meta.csv"));
-        std::map<QString, QString> m;
+        const QString opt = out_dir(QStringLiteral("band_option_demo"));
+        const auto meta = demo_detail::read_csv(opt + QStringLiteral("/meta.csv"));
+        meta_.clear();
         for (const auto& row : meta.rows) {
-            if (row.size() >= 2) m[row[0]] = row[1];
+            if (row.size() >= 2) meta_[row[0]] = row[1];
         }
-        summary_->set(demo_detail::read_csv(out_dir(QStringLiteral("band_option_demo")) + QStringLiteral("/summary.csv")));
-        trades_->set(demo_detail::read_csv(out_dir(QStringLiteral("band_option_demo")) + QStringLiteral("/trades.csv")));
+        have_meta_ = !meta.rows.empty();
+        summary_->set(demo_detail::read_csv(opt + QStringLiteral("/summary.csv")));
         pairs_summary_->set(demo_detail::read_csv(out_dir(QStringLiteral("pairs_futures")) + QStringLiteral("/summary.csv")));
         pairs_trades_->set(demo_detail::read_csv(out_dir(QStringLiteral("pairs_futures")) + QStringLiteral("/trades.csv")));
         pairs_windows_->set(demo_detail::read_csv(out_dir(QStringLiteral("pairs_futures")) + QStringLiteral("/windows.csv")));
-
-        const QString costs = m.count(QStringLiteral("costs")) ? m[QStringLiteral("costs")] : QString{};
+        const QString costs = meta_.count(QStringLiteral("costs")) ? meta_[QStringLiteral("costs")] : QString{};
         costs_verified_ = costs == QLatin1String("verified");
-        if (meta.rows.empty()) {
+
+        // Rules in the order the CLI ran them; an output from before rules
+        // existed has one unnamed rule and a single trades.csv.
+        const auto& sc = summary_->csv();
+        const int rc = sc.column(QStringLiteral("rule"));
+        QStringList rules;
+        if (rc >= 0) {
+            for (const auto& row : sc.rows) {
+                if (rc < row.size() && !rules.contains(row[rc])) rules << row[rc];
+            }
+        }
+        {
+            const QString keep = rule_->currentText();
+            const QSignalBlocker block(rule_);
+            rule_->clear();
+            rule_->addItems(rules);
+            const int at = rule_->findText(keep);
+            rule_->setCurrentIndex(at >= 0 ? at : 0);
+        }
+        rule_->setEnabled(rules.size() > 1);
+        reload_ratio();
+        load_rule();
+    }
+
+    void load_rule() {
+        const QString opt = out_dir(QStringLiteral("band_option_demo"));
+        const QString rule = rule_->currentText();
+        trades_->set(demo_detail::read_csv(opt + (rule.isEmpty() ? QStringLiteral("/trades.csv")
+                                                                  : QStringLiteral("/trades_%1.csv").arg(rule))));
+        summary_filter_->set_filter({{summary_->csv().column(QStringLiteral("rule")), rule}});
+        auto& m = meta_;
+        if (!have_meta_) {
             banner_->setText(QStringLiteral("No option demo output yet in <code>%1</code>. Press <b>Run option demo</b>.")
-                                 .arg(out_dir(QStringLiteral("band_option_demo")).toHtmlEscaped()));
+                                 .arg(opt.toHtmlEscaped()));
             banner_->setStyleSheet(QStringLiteral("color:%1;").arg(QString::fromLatin1(theme_token::kTextMuted)));
         } else {
+            const QString costs = m[QStringLiteral("costs")];
             const QString colour = costs_verified_ ? QStringLiteral("#3FB950") : QStringLiteral("#F85149");
+            const QString text = m.count(QStringLiteral("rule_") + rule) ? m[QStringLiteral("rule_") + rule]
+                                                                         : m[QStringLiteral("rule")];
+            const QString clock = m.count(QStringLiteral("clock")) ? m[QStringLiteral("clock")]
+                                                                   : QStringLiteral("CALENDAR: time to expiry / 365 days");
             banner_->setText(QStringLiteral("<span style='color:%1'><b>Expenses: %2.</b> %3</span><br>"
-                                            "<b>Premiums:</b> %4<br><b>Rule:</b> %5 &nbsp;·&nbsp; "
-                                            "slippage %6 pt each way &nbsp;·&nbsp; lot NIFTY %7, BANKNIFTY %8 (%9)")
+                                            "<b>Premiums:</b> %4 &nbsp;·&nbsp; <b>Clock:</b> %5<br><b>Rule:</b> %6 &nbsp;·&nbsp; "
+                                            "slippage %7 pt each way &nbsp;·&nbsp; lot NIFTY %8, BANKNIFTY %9")
                                  .arg(colour, costs.toHtmlEscaped(), m[QStringLiteral("cost_note")].toHtmlEscaped(),
-                                      m[QStringLiteral("premiums")].toHtmlEscaped(), m[QStringLiteral("rule")].toHtmlEscaped(),
-                                      m[QStringLiteral("slippage_pts")], m[QStringLiteral("NIFTY_lot_size")],
-                                      m[QStringLiteral("BANKNIFTY_lot_size")],
-                                      m[QStringLiteral("NIFTY_lot_note")].toHtmlEscaped()));
+                                      m[QStringLiteral("premiums")].toHtmlEscaped(), clock.toHtmlEscaped(),
+                                      text.toHtmlEscaped(), m[QStringLiteral("slippage_pts")],
+                                      m[QStringLiteral("NIFTY_lot_size")], m[QStringLiteral("BANKNIFTY_lot_size")]));
             banner_->setStyleSheet({});
         }
         fill_combo(instrument_, trades_->csv(), QStringLiteral("instrument"));
         fill_combo(model_, trades_->csv(), QStringLiteral("model"));
-        reload_ratio();
         refilter();
         for (auto* v : views_) v->resizeColumnsToContents();
     }
@@ -583,6 +624,8 @@ private:
 
     QString root_dir_;
     bool costs_verified_ = false;
+    bool have_meta_ = false;
+    std::map<QString, QString> meta_;
     HelperProcess helper_;
     QLabel* banner_{};
     QLabel* status_{};
@@ -591,6 +634,7 @@ private:
     QPushButton* run_options_{};
     QPushButton* run_pairs_{};
     QCheckBox* unverified_{};
+    QComboBox* rule_{};
     QComboBox* instrument_{};
     QComboBox* model_{};
     QTabWidget* tabs_{};
@@ -600,6 +644,7 @@ private:
     demo_detail::CsvModel* pairs_trades_{};
     demo_detail::CsvModel* pairs_windows_{};
     demo_detail::ColumnFilter* trade_filter_{};
+    demo_detail::ColumnFilter* summary_filter_{};
     demo_detail::EquityChart* equity_{};
     std::vector<QTableView*> views_;
 };

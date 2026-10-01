@@ -2,10 +2,17 @@
 //
 // A demo of the one forecast that tested usable: the 80 % range band. For
 // NIFTY and BANKNIFTY, every band model (models/band_curriculum.hpp) forecasts
-// at 09:20 the band the session should close in; when price touches an edge,
-// strategies/band_option_fade.hpp sells one lot of the option beyond it and
-// buys it back at 15:20. Every trade records the model that placed it, the
-// premiums, the expenses item by item and the net P&L.
+// at 09:20 the band the session should close in, and each RULE sells options
+// on it (strategies/band_option_fade.hpp), one lot, bought back by 15:20:
+//   touch               wait for an edge to be touched, sell the option past it
+//   strangle            sell both edges at 09:20, before any touch
+//   strangle-stop2x     the same, a leg bought back once its premium doubles
+//   strangle-hedged     the same, delta hedged with whole futures lots
+//   expiry-day          the strangle on monthly expiry days, in that day's contract
+//   expiry-day-stop2x   the same with the 2x stop
+// Every trade records the model that placed it, the premiums, the expenses
+// item by item, the net P&L, and where the gross came from: time decay, the
+// underlying's move, the change in IV, and slippage.
 //
 // READ THE ASSUMPTIONS BEFORE THE NUMBERS. They are in meta.csv and on the
 // desktop page, and every one is stated rather than buried:
@@ -16,11 +23,18 @@
 //   * strikes step by TODAY's step (data/instruments.csv);
 //   * the option is the current MONTHLY contract (the expiry calendar in
 //     app/forecast_tracks.hpp), rolled to the next one on expiry day;
+//   * time to expiry runs on the VARIANCE clock by default: each day is split
+//     between the overnight gap and the session in proportion to the trailing
+//     250 sessions' variance (strategies/band_option_fade.hpp, FadeClock).
+//     Calendar time credits an intraday seller a quarter of a day's decay,
+//     trading time a whole day's; the result swings from loss to profit
+//     between them, so --clock calendar|trading are there to show it;
 //   * expenses come from config/charges.toml through risk/cost.hpp, and are
 //     REFUSED while that schedule is unverified -- unless --unverified-costs
 //     is passed, which prices them anyway and stamps every figure UNVERIFIED.
 //
-// Offline and read-only. Writes <out>/band_option_demo/{trades,summary,meta}.csv.
+// Offline and read-only. Writes <out>/band_option_demo/: trades_<rule>.csv,
+// summary.csv (every rule, instrument and model) and meta.csv.
 
 #include <app/forecast_tracks.hpp>
 #include <models/band_curriculum.hpp>
@@ -55,12 +69,19 @@ constexpr std::size_t kSessionBars = 75;
 
 void usage(const char* exe) {
     std::printf(
-        "  Sell the option a range band says will not pay: one lot, bought back at 15:20.\n\n"
+        "  Sell the options a range band says will not pay: one lot, bought back by 15:20.\n\n"
         "    %s [--dataset DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
-        "       [--rate R] [--slippage-pts P] [--unverified-costs]\n\n"
+        "       [--rules R1,R2,...] [--clock variance|calendar|trading] [--rate R] [--slippage-pts P]\n"
+        "       [--unverified-costs]\n\n"
         "    --dataset DIR         default dataset\n"
         "    --out DIR             default data/verified (writes band_option_demo/)\n"
         "    --instrument X        default both\n"
+        "    --clock C             variance (default: each day's time split between the overnight gap and\n"
+        "                          the session by the trailing 250 sessions' variance), calendar (INDIA\n"
+        "                          VIX's convention) or trading (decay only while the market is open).\n"
+        "                          Synthetic intraday P&L turns on this choice: run all three\n"
+        "    --rules LIST          touch, strangle, strangle-stop2x, strangle-hedged, expiry-day,\n"
+        "                          expiry-day-stop2x (default: all)\n"
         "    --rate R              continuously compounded rate for the forward (default 0.065)\n"
         "    --slippage-pts P      option premium points given up per fill (default 0.5)\n"
         "    --unverified-costs    price expenses from an UNVERIFIED config/charges.toml anyway,\n"
@@ -182,33 +203,150 @@ Costs price_costs(const FadeTrade& t, const std::vector<altair::ChargeSchedule>&
     return c;
 }
 
-struct Row {
-    std::string instrument, model;
-    std::int64_t day = 0;
-    FadeTrade t;
+/// Futures hedge fills through risk/cost.hpp: Rs 20 or 0.03 %, whichever is lower.
+Costs price_hedge(const std::vector<altair::HedgeFill>& fills, double lot, const std::vector<altair::ChargeSchedule>& schedules,
+                  bool allowed) {
     Costs c;
+    if (!allowed) { return c; }
+    if (fills.empty()) { c.priced = true; return c; }
+    // FUTURES BROKERAGE: Rs 20 or 0.03 %, the lower -- commercial, as above.
+    altair::BrokerageRule br{};
+    br.flat_per_order = altair::Notional{2'000};
+    br.pct = altair::rate_from(0.0003L);
+    br.take_lower = true;
+    for (const auto& f : fills) {
+        altair::Trade tr{};
+        tr.segment = altair::Segment::Fut;
+        tr.exchange = altair::Exchange::NSE;
+        tr.side = f.lots > 0 ? altair::Side::Buy : altair::Side::Sell;
+        tr.qty = altair::Qty{static_cast<std::int64_t>(std::llround(std::fabs(static_cast<double>(f.lots)) * lot))};
+        tr.price = altair::Price{static_cast<std::int64_t>(std::llround(f.price * 100.0))};
+        tr.trade_ts = altair::Timestamp{f.t * 1'000'000'000LL};
+        const auto* s = altair::schedule_for(schedules.data(), schedules.size(), tr.trade_ts);
+        if (s == nullptr) { return Costs{}; }
+        const auto b = altair::compute_cost(tr, *s, br);
+        if (!b) { return Costs{}; }
+        const auto rs = [](altair::Notional n) { return static_cast<double>(n.raw()) / 100.0; };
+        c.brokerage += rs(b->brokerage);
+        c.stt += rs(b->stt);
+        c.exchange += rs(b->exchange_txn);
+        c.sebi += rs(b->sebi);
+        c.stamp += rs(b->stamp);
+        c.ipft += rs(b->ipft);
+        c.gst += rs(b->gst);
+        c.total += rs(b->total);
+    }
+    c.priced = true;
+    return c;
+}
+
+/// Where a leg's gross came from, priced along the path entry -> exit:
+/// time passing at the entry spot and IV, then the spot moving, then the IV
+/// changing; slippage is what the fills gave up. The four add to the gross.
+struct Decomp { double theta = 0, move = 0, iv = 0, slip = 0; };
+
+Decomp decompose(const FadeTrade& t, double rate, double slip_pts, const altair::FadeClock& ck) {
+    namespace fd = altair::fade_detail;
+    Decomp d;
+    const double p0 = fd::premium(t.side, t.entry_spot, t.strike, t.entry_t, t.expiry_ts, t.entry_iv, rate, ck);
+    const double pt = fd::premium(t.side, t.entry_spot, t.strike, t.exit_t, t.expiry_ts, t.entry_iv, rate, ck);
+    const double ps = fd::premium(t.side, t.exit_spot, t.strike, t.exit_t, t.expiry_ts, t.entry_iv, rate, ck);
+    const double p1 = fd::premium(t.side, t.exit_spot, t.strike, t.exit_t, t.expiry_ts, t.exit_iv, rate, ck);
+    if (!std::isfinite(p0) || !std::isfinite(pt) || !std::isfinite(ps) || !std::isfinite(p1)) { return d; }
+    d.theta = (p0 - pt) * t.qty;
+    d.move = (pt - ps) * t.qty;
+    d.iv = (ps - p1) * t.qty;
+    d.slip = -2.0 * slip_pts * t.qty;
+    return d;
+}
+
+struct Rule {
+    std::string id, text;
+    bool touch = false, expiry_day = false;
+    altair::StranglePolicy sp;
 };
+
+std::vector<Rule> all_rules() {
+    const std::string strangle = "09:20: sell 1 lot CE at the first strike >= the upper edge and 1 lot PE at the first strike <= the lower edge";
+    std::vector<Rule> r;
+    r.push_back({"touch", "first touch of an edge after 09:20: sell 1 lot of the option at the first strike past it; buy back at 15:20", true, false, {}});
+    r.push_back({"strangle", strangle + "; hold to 15:20", false, false, {}});
+    r.push_back({"strangle-stop2x", strangle + "; buy a leg back at the first 5-minute close where its premium has doubled", false, false, {2.0, false}});
+    r.push_back({"strangle-hedged", strangle + "; futures delta hedge in whole lots, reset at every 5-minute close", false, false, {0.0, true}});
+    r.push_back({"expiry-day", "monthly expiry days only, in the contract expiring that day (0DTE): " + strangle + "; hold to 15:20", false, true, {}});
+    r.push_back({"expiry-day-stop2x", "monthly expiry days only (0DTE): " + strangle + "; stop at double the premium", false, true, {2.0, false}});
+    return r;
+}
+
+/// One instrument's sessions, prepared once and traded under every rule.
+struct Session {
+    std::int64_t day = 0;
+    std::size_t row = 0;        ///< band_run row
+    altair::FadeDay d;          ///< expiry: the next monthly after today (rolled on expiry day)
+    bool expiry_today = false;
+    double sessions_to_expiry = 0.0;   ///< full sessions after today through that expiry
+    double intraday_share = 1.0;       ///< trailing share of daily variance inside the session
+};
+struct Prepared {
+    std::string name;
+    double lot = 0, step = 0;
+    std::vector<Session> sessions;
+    std::vector<std::string> models;
+    std::vector<std::vector<float>> half;   ///< [model][row - first_row]
+    std::vector<double> anchor;             ///< [row]
+    std::size_t first_row = 0;
+};
+
+struct Leg { FadeTrade t; Costs c; Decomp dc; };
+struct Row {
+    std::size_t inst = 0, model = 0;
+    std::int64_t day = 0, entry_t = 0;
+    std::vector<Leg> legs;
+    double band_low = 0, band_high = 0;
+    std::vector<altair::HedgeFill> fills;
+    double hedge = 0;
+    Costs hc;
+    double gross = 0, expenses = 0, net = 0;
+    bool priced = false;
+};
+
+std::string leg_exit(const FadeTrade& t) {
+    return std::string{t.exit_reason} == "stop" ? "stop " + hhmm(t.exit_t) : std::string{"15:20"};
+}
 
 } // namespace
 
 int main(int argc, char** argv) {
     fs::path root = "dataset", out = "data/verified";
-    std::string which = "both";
+    std::string which = "both", rules_arg;
     double rate = 0.065, slip = 0.5;
-    bool unverified = false;
+    bool unverified = false, trading_clock = true, variance_clock = true;   // default: the variance clock
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
         const bool has = i + 1 < argc;
         if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
+        if (a == "--clock" && has) {
+            const std::string_view c{argv[++i]};
+            if (c != "calendar" && c != "trading" && c != "variance") { usage(argv[0]); return 2; }
+            trading_clock = c != "calendar";
+            variance_clock = c == "variance";
+            continue;
+        }
         if (a == "--dataset" && has) { root = argv[++i]; continue; }
         if (a == "--out" && has) { out = argv[++i]; continue; }
         if (a == "--instrument" && has) { which = argv[++i]; continue; }
+        if (a == "--rules" && has) { rules_arg = argv[++i]; continue; }
         if (a == "--rate" && has) { if (!parse_double(argv[++i], rate) || std::fabs(rate) > 1.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--slippage-pts" && has) { if (!parse_double(argv[++i], slip) || slip < 0.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--unverified-costs") { unverified = true; continue; }
         usage(argv[0]);
         return 2;
     }
+    std::vector<Rule> rules;
+    for (const Rule& r : all_rules()) {
+        if (rules_arg.empty() || ("," + rules_arg + ",").find("," + r.id + ",") != std::string::npos) { rules.push_back(r); }
+    }
+    if (rules.empty()) { usage(argv[0]); return 2; }
 
     // Charges: refused while unverified, unless the caller says otherwise.
     std::vector<altair::ChargeSchedule> schedules;
@@ -228,11 +366,12 @@ int main(int argc, char** argv) {
         cost_note = "COSTING REFUSED: config/charges.toml is UNVERIFIED (block_on_unverified_schedule). Gross P&L only; "
                     "verify the rates and set last_verified, or pass --unverified-costs";
     }
+    const std::string cost_tag = costs_allowed ? (costs_verified ? "verified" : "UNVERIFIED") : "refused";
 
-    struct Inst { std::string name, dir, other_dir; };
+    struct Inst { std::string name, dir; };
     std::vector<Inst> insts;
-    if (which == "both" || which == "NIFTY") { insts.push_back({"NIFTY", "spot/nifty", "spot/banknifty"}); }
-    if (which == "both" || which == "BANKNIFTY") { insts.push_back({"BANKNIFTY", "spot/banknifty", "spot/nifty"}); }
+    if (which == "both" || which == "NIFTY") { insts.push_back({"NIFTY", "spot/nifty"}); }
+    if (which == "both" || which == "BANKNIFTY") { insts.push_back({"BANKNIFTY", "spot/banknifty"}); }
     if (insts.empty()) { usage(argv[0]); return 2; }
 
     const auto load = [&](const std::string& dir, int tf) {
@@ -248,6 +387,18 @@ int main(int argc, char** argv) {
     std::map<std::int64_t, double> vix_at;
     for (const auto& b : vix5) { vix_at[b.t] = b.c; }
     const auto expiries = ft::nifty_expiries(nifty_d);
+    // Trading days in (from, to]: the dataset's sessions, then weekdays past its end.
+    std::vector<std::int64_t> sessions;
+    for (const auto& b : nifty_d) { sessions.push_back(ft::bar_day(b)); }
+    const auto trading_days_between = [&](std::int64_t from, std::int64_t to) {
+        const auto lo = std::upper_bound(sessions.begin(), sessions.end(), from);
+        const auto hi = std::upper_bound(sessions.begin(), sessions.end(), to);
+        std::int64_t n = hi - lo;
+        for (std::int64_t d = std::max(from, sessions.back()) + 1; d <= to; ++d) {
+            if (da::audit_weekday(d) < 5) { ++n; }
+        }
+        return n;
+    };
 
     // BANKNIFTY has no VIX of its own: scale INDIA VIX by the ratio of the two
     // indices' 20-day realised volatility, as of the previous close.
@@ -270,17 +421,22 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::vector<Row> rows;
     std::ostringstream meta;
     meta << "key,value\n";
-    meta << "costs," << (costs_allowed ? (costs_verified ? "verified" : "UNVERIFIED") : "refused") << "\n";
+    meta << "costs," << cost_tag << "\n";
     meta << "cost_note,\"" << cost_note << "\"\n";
     meta << "premiums,\"SYNTHETIC: Black-76 at INDIA VIX (BANKNIFTY: VIX x 20-day realised-vol ratio), flat across strikes; the dataset has no option-chain history\"\n";
-    meta << "expiry,\"the current monthly contract, rolled to the next on expiry day\"\n";
+    meta << "expiry,\"the current monthly contract, rolled to the next on expiry day (expiry-day rules: the contract expiring that day)\"\n";
     meta << "rate," << rate << "\nslippage_pts," << slip << "\n";
-    meta << "rule,\"09:20 band per model; first bar high >= upper edge: sell 1 lot CE at the first strike >= edge; first low <= lower edge: sell 1 lot PE at the first strike <= edge; buy back at the 15:20 close\"\n";
+    meta << "clock,\"" << (variance_clock ? "VARIANCE: days / 252, each split between the overnight gap and the session by the trailing 250 sessions' variance"
+                            : trading_clock ? "TRADING: time to expiry in sessions / 252; decay only while the market is open"
+                                            : "CALENDAR: time to expiry / 365 days, INDIA VIX's convention") << "\"\n";
+    for (const Rule& r : rules) { meta << "rule_" << r.id << ",\"" << r.text << "\"\n"; }
+    meta << "rule,\"" << rules.front().text << "\"\n";
     std::size_t refused_days = 0, no_expiry = 0;
 
+    // Prepare every instrument once: band forecasts and the sessions they trade.
+    std::vector<Prepared> prep;
     for (const Inst& in : insts) {
         const auto lot = lot_size_today("config/lot_size_history.csv", in.name);
         const auto step = strike_step_today("data/instruments.csv", in.name);
@@ -301,16 +457,50 @@ int main(int argc, char** argv) {
             std::printf("  %s: band run refused: %s\n", in.name.c_str(), altair::curriculum_error_text(br.error()));
             continue;
         }
+        Prepared p;
+        p.name = in.name;
+        p.lot = *lot;
+        p.step = *step;
+        p.models = br->models;
+        p.half = br->half;
+        p.first_row = br->first_row;
+        p.anchor.assign(track.anchor.begin(), track.anchor.end());
         std::map<std::int64_t, std::size_t> first_bar;   // day -> index of its 09:15 bar
         for (std::size_t k = 0; k < own5.size(); ++k) {
             if (da::audit_minute_of_day(own5[k].t) == 555) { first_bar[ft::bar_day(own5[k])] = k; }
         }
-        altair::FadePolicy pol;
-        pol.strike_step = *step;
-        pol.lot_size = *lot;
-        pol.lots = 1;
-        pol.rate = rate;
-        pol.slippage_pts = slip;
+        // Each day's share of variance inside the session, over the 250 days
+        // BEFORE it: overnight gap = first open vs the previous last close.
+        std::map<std::int64_t, double> share;
+        {
+            std::vector<std::pair<std::int64_t, std::pair<double, double>>> sq;   // day, (gap^2, session^2)
+            double prev_close = 0.0;
+            std::int64_t prev_day = -1;
+            std::size_t k = 0;
+            while (k < own5.size()) {
+                const std::int64_t day = ft::bar_day(own5[k]);
+                std::size_t e = k;
+                while (e < own5.size() && ft::bar_day(own5[e]) == day) { ++e; }
+                if (e - k >= 60 && prev_day >= 0 && prev_close > 0.0) {
+                    const double g = std::log(own5[k].o / prev_close), sess = std::log(own5[e - 1].c / own5[k].o);
+                    sq.push_back({day, {g * g, sess * sess}});
+                }
+                prev_close = own5[e - 1].c;
+                prev_day = day;
+                k = e;
+            }
+            double sg = 0.0, si = 0.0;
+            constexpr std::size_t kWin = 250;
+            for (std::size_t j = 0; j < sq.size(); ++j) {
+                if (j >= 60 && sg + si > 0.0) { share[sq[j].first] = si / (sg + si); }   // known before day j opens
+                sg += sq[j].second.first;
+                si += sq[j].second.second;
+                if (j >= kWin) {
+                    sg -= sq[j - kWin].second.first;
+                    si -= sq[j - kWin].second.second;
+                }
+            }
+        }
         for (std::size_t i = br->first_row; i < track.rows(); ++i) {
             const std::int64_t day = da::audit_day(track.t[i]);
             const auto fb = first_bar.find(day);
@@ -323,10 +513,19 @@ int main(int argc, char** argv) {
                 if (sc == bank_scale.end()) { ++refused_days; continue; }
                 scale = sc->second;
             }
-            altair::FadeDay d;
-            d.decide_bar = 0;
-            d.exit_bar = kExitBar;
-            d.expiry_ts = *ex * 86'400 + ft::kCloseSec;
+            Session s;
+            s.day = day;
+            if (variance_clock) {
+                const auto sh = share.find(day);
+                if (sh == share.end()) { ++refused_days; continue; }
+                s.intraday_share = sh->second;
+            }
+            s.row = i;
+            s.expiry_today = expiries.contains(day);
+            s.d.decide_bar = 0;
+            s.d.exit_bar = kExitBar;
+            s.d.expiry_ts = *ex * 86'400 + ft::kCloseSec;
+            s.sessions_to_expiry = static_cast<double>(trading_days_between(day, *ex));
             double last_vix = 0.0;
             bool ok = true;
             for (std::size_t k = 0; k < kSessionBars; ++k) {
@@ -335,89 +534,190 @@ int main(int argc, char** argv) {
                 const auto v = vix_at.find(b.t);
                 if (v != vix_at.end() && v->second > 0.0) { last_vix = v->second; }
                 if (!(last_vix > 0.0)) { ok = false; break; }
-                d.bars.push_back({b.t, b.o, b.h, b.l, b.c, last_vix / 100.0 * scale});
+                s.d.bars.push_back({b.t, b.o, b.h, b.l, b.c, last_vix / 100.0 * scale});
             }
             if (!ok) { ++refused_days; continue; }
-            for (std::size_t m = 0; m < br->models.size(); ++m) {
-                const float h = br->half[m][i - br->first_row];
-                if (!(h > 0.0f)) { continue; }
-                const auto trades = altair::fade_day(d, track.anchor[i], static_cast<double>(h), m, pol);
-                if (!trades) { continue; }
-                for (const auto& t : *trades) {
-                    rows.push_back({in.name, br->models[m], day, t, price_costs(t, schedules, costs_allowed)});
-                }
-            }
+            p.sessions.push_back(std::move(s));
         }
+        prep.push_back(std::move(p));
     }
 
-    // Trades, oldest first.
-    std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.t.entry_t < b.t.entry_t; });
     const fs::path dir = out / "band_option_demo";
     std::error_code ec;
     fs::create_directories(dir, ec);
-    {
-        std::ofstream f(dir / "trades.csv", std::ios::trunc);
-        f << "date,instrument,model,option,strike,expiry,entry_time,entry_spot,entry_iv_pct,entry_premium,exit_time,exit_spot,"
-             "exit_iv_pct,exit_premium,lots,qty,band_edge,band_half_bp,gross_pnl,brokerage,stt,exchange,sebi,stamp,ipft,gst,"
-             "expenses,net_pnl,costs\n";
-        for (const Row& r : rows) {
-            const auto& t = r.t;
-            f << iso_day(r.day) << ',' << r.instrument << ",\"" << r.model << "\"," << (t.side == FadeSide::Call ? "CE" : "PE") << ','
-              << fixed(t.strike, 0) << ',' << iso_day(da::audit_day(t.expiry_ts)) << ',' << hhmm(t.entry_t) << ','
-              << fixed(t.entry_spot, 2) << ',' << fixed(100.0 * t.entry_iv, 2) << ',' << fixed(t.entry_premium, 2) << ','
-              << hhmm(t.exit_t) << ',' << fixed(t.exit_spot, 2) << ',' << fixed(100.0 * t.exit_iv, 2) << ','
-              << fixed(t.exit_premium, 2) << ",1," << fixed(t.qty, 0) << ',' << fixed(t.band_edge, 2) << ','
-              << fixed(1e4 * t.half, 1) << ',' << fixed(t.gross, 2) << ',';
-            if (r.c.priced) {
-                f << fixed(r.c.brokerage, 2) << ',' << fixed(r.c.stt, 2) << ',' << fixed(r.c.exchange, 2) << ','
-                  << fixed(r.c.sebi, 2) << ',' << fixed(r.c.stamp, 2) << ',' << fixed(r.c.ipft, 2) << ','
-                  << fixed(r.c.gst, 2) << ',' << fixed(r.c.total, 2) << ',' << fixed(t.gross - r.c.total, 2) << ','
-                  << (costs_verified ? "verified" : "UNVERIFIED") << '\n';
-            } else {
-                f << ",,,,,,,,,refused\n";
+    fs::remove(dir / "trades.csv", ec);   // the one-rule layout this replaced
+
+    struct Sum {
+        std::size_t n = 0, wins = 0;
+        double gross = 0, exp = 0, net = 0, theta = 0, move = 0, iv = 0, hedge = 0, worst = 0, peak = 0, dd = 0, cum = 0;
+        std::string first, last;
+    };
+    std::ofstream summary(dir / "summary.csv", std::ios::trunc);
+    summary << "rule,instrument,model,trades,wins,win_pct,gross_pnl,expenses,net_pnl,net_per_trade,theta_per_trade,"
+               "move_per_trade,iv_per_trade,hedge_per_trade,worst_trade,max_drawdown,first,last,costs\n";
+    std::size_t total_rows = 0;
+    std::printf("Band option demo: %zu rule(s)\n  %s\n", rules.size(), cost_note.c_str());
+    std::printf("  %-18s %-10s %7s %6s %10s %10s %10s %10s %10s\n", "rule", "", "trades", "win %", "theta/tr", "move/tr",
+                "gross/tr", "exp/tr", "net/tr");
+
+    for (const Rule& rule : rules) {
+        std::vector<Row> rows;
+        altair::FadePolicy pol;
+        pol.lots = 1;
+        pol.rate = rate;
+        pol.slippage_pts = slip;
+        for (std::size_t pi = 0; pi < prep.size(); ++pi) {
+            const Prepared& P = prep[pi];
+            pol.strike_step = P.step;
+            pol.lot_size = P.lot;
+            for (const Session& s : P.sessions) {
+                if (rule.expiry_day && !s.expiry_today) { continue; }
+                altair::FadeDay d = s.d;
+                d.clock.trading = trading_clock;
+                d.clock.session_close = s.day * 86'400 + ft::kCloseSec;
+                d.clock.sessions_after = s.sessions_to_expiry;
+                d.clock.intraday_share = variance_clock ? s.intraday_share : 1.0;
+                if (rule.expiry_day) {   // 0DTE: today's contract
+                    d.expiry_ts = s.day * 86'400 + ft::kCloseSec;
+                    d.clock.sessions_after = 0.0;
+                }
+                const double anchor = P.anchor[s.row];
+                for (std::size_t m = 0; m < P.models.size(); ++m) {
+                    const float h = P.half[m][s.row - P.first_row];
+                    if (!(h > 0.0f)) { continue; }
+                    const double half = static_cast<double>(h);
+                    const auto add_leg = [&](Row& r, const FadeTrade& t) {
+                        r.legs.push_back({t, price_costs(t, schedules, costs_allowed), decompose(t, rate, slip, d.clock)});
+                    };
+                    if (rule.touch) {
+                        const auto trades = altair::fade_day(d, anchor, half, m, pol);
+                        if (!trades) { continue; }
+                        for (const auto& t : *trades) {
+                            Row r;
+                            r.inst = pi;
+                            r.model = m;
+                            r.day = s.day;
+                            r.entry_t = t.entry_t;
+                            r.band_low = anchor * std::exp(-half);
+                            r.band_high = anchor * std::exp(half);
+                            add_leg(r, t);
+                            r.hc = price_hedge(r.fills, P.lot, schedules, costs_allowed);   // none: priced as zero
+                            rows.push_back(std::move(r));
+                        }
+                        continue;
+                    }
+                    const auto sd = altair::strangle_day(d, anchor, half, m, pol, rule.sp);
+                    if (!sd || !*sd) { continue; }
+                    Row r;
+                    r.inst = pi;
+                    r.model = m;
+                    r.day = s.day;
+                    r.entry_t = (*sd)->call.entry_t;
+                    r.band_low = anchor * std::exp(-half);
+                    r.band_high = anchor * std::exp(half);
+                    add_leg(r, (*sd)->call);
+                    add_leg(r, (*sd)->put);
+                    r.fills = (*sd)->fills;
+                    r.hedge = (*sd)->hedge_gross;
+                    r.hc = price_hedge(r.fills, P.lot, schedules, costs_allowed);
+                    rows.push_back(std::move(r));
+                }
             }
         }
-    }
+        for (Row& r : rows) {
+            r.gross = r.hedge;
+            r.priced = costs_allowed && r.hc.priced;
+            r.expenses = r.hc.total;
+            for (const Leg& l : r.legs) {
+                r.gross += l.t.gross;
+                r.expenses += l.c.total;
+                r.priced = r.priced && l.c.priced;
+            }
+            r.net = r.priced ? r.gross - r.expenses : r.gross;
+        }
+        std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.entry_t < b.entry_t; });
+        total_rows += rows.size();
 
-    // Per instrument and model.
-    struct Sum { std::size_t n = 0, wins = 0, calls = 0, puts = 0; double gross = 0, exp = 0, net = 0, peak = 0, dd = 0, cum = 0; std::string first, last; };
-    std::map<std::pair<std::string, std::string>, Sum> sums;
-    for (const Row& r : rows) {
-        Sum& s = sums[{r.instrument, r.model}];
-        const double pnl = r.c.priced ? r.t.gross - r.c.total : r.t.gross;
-        ++s.n;
-        s.wins += pnl > 0.0 ? 1 : 0;
-        (r.t.side == FadeSide::Call ? s.calls : s.puts) += 1;
-        s.gross += r.t.gross;
-        s.exp += r.c.priced ? r.c.total : 0.0;
-        s.net += pnl;
-        s.cum += pnl;
-        s.peak = std::max(s.peak, s.cum);
-        s.dd = std::max(s.dd, s.peak - s.cum);
-        if (s.first.empty()) { s.first = iso_day(r.day); }
-        s.last = iso_day(r.day);
-    }
-    {
-        std::ofstream f(dir / "summary.csv", std::ios::trunc);
-        f << "instrument,model,trades,calls,puts,wins,win_pct,gross_pnl,expenses,net_pnl,net_per_trade,max_drawdown,first,last,costs\n";
+        std::ofstream f(dir / ("trades_" + rule.id + ".csv"), std::ios::trunc);
+        f << "date,instrument,model,rule,entry_time,entry_spot,exit_spot,entry_iv_pct,band_low,band_high,expiry,"
+             "call_strike,call_in,call_out,call_exit,put_strike,put_in,put_out,put_exit,qty,hedge_orders,hedge_pnl,"
+             "theta_pnl,move_pnl,iv_pnl,slippage_pnl,gross_pnl,option_expenses,hedge_expenses,expenses,net_pnl,costs\n";
+        std::map<std::pair<std::size_t, std::size_t>, Sum> sums;
+        for (const Row& r : rows) {
+            const FadeTrade& t0 = r.legs.front().t;
+            const FadeTrade* call = nullptr;
+            const FadeTrade* put = nullptr;
+            Decomp dc;
+            double opt_exp = 0;
+            for (const Leg& l : r.legs) {
+                (l.t.side == FadeSide::Call ? call : put) = &l.t;
+                dc.theta += l.dc.theta;
+                dc.move += l.dc.move;
+                dc.iv += l.dc.iv;
+                dc.slip += l.dc.slip;
+                opt_exp += l.c.total;
+            }
+            const auto leg_cols = [&](const FadeTrade* t) {
+                return t == nullptr ? std::string{",,,"}
+                                    : fixed(t->strike, 0) + ',' + fixed(t->entry_premium, 2) + ',' + fixed(t->exit_premium, 2) + ','
+                                          + leg_exit(*t);
+            };
+            f << iso_day(r.day) << ',' << prep[r.inst].name << ",\"" << prep[r.inst].models[r.model] << "\"," << rule.id << ','
+              << hhmm(r.entry_t) << ',' << fixed(t0.entry_spot, 2) << ',' << fixed(r.legs.back().t.exit_spot, 2) << ','
+              << fixed(100.0 * t0.entry_iv, 2) << ',' << fixed(r.band_low, 2) << ',' << fixed(r.band_high, 2) << ','
+              << iso_day(da::audit_day(t0.expiry_ts)) << ',' << leg_cols(call) << ',' << leg_cols(put) << ',' << fixed(t0.qty, 0) << ','
+              << r.fills.size() << ',' << fixed(r.hedge, 2) << ',' << fixed(dc.theta, 2) << ',' << fixed(dc.move, 2) << ','
+              << fixed(dc.iv, 2) << ',' << fixed(dc.slip, 2) << ',' << fixed(r.gross, 2) << ',';
+            if (r.priced) {
+                f << fixed(opt_exp, 2) << ',' << fixed(r.hc.total, 2) << ',' << fixed(r.expenses, 2) << ',' << fixed(r.net, 2) << ','
+                  << cost_tag << '\n';
+            } else {
+                f << ",,,,refused\n";
+            }
+            Sum& s = sums[{r.inst, r.model}];
+            ++s.n;
+            s.wins += r.net > 0.0 ? 1 : 0;
+            s.gross += r.gross;
+            s.exp += r.priced ? r.expenses : 0.0;
+            s.net += r.net;
+            s.theta += dc.theta;
+            s.move += dc.move;
+            s.iv += dc.iv;
+            s.hedge += r.hedge;
+            s.worst = std::min(s.worst, r.net);
+            s.cum += r.net;
+            s.peak = std::max(s.peak, s.cum);
+            s.dd = std::max(s.dd, s.peak - s.cum);
+            if (s.first.empty()) { s.first = iso_day(r.day); }
+            s.last = iso_day(r.day);
+        }
+        std::map<std::size_t, Sum> by_inst;
         for (const auto& [k, s] : sums) {
-            f << k.first << ",\"" << k.second << "\"," << s.n << ',' << s.calls << ',' << s.puts << ',' << s.wins << ','
-              << fixed(100.0 * static_cast<double>(s.wins) / static_cast<double>(s.n), 1) << ',' << fixed(s.gross, 2) << ','
-              << (costs_allowed ? fixed(s.exp, 2) : std::string{}) << ',' << (costs_allowed ? fixed(s.net, 2) : std::string{}) << ','
-              << (costs_allowed ? fixed(s.net / static_cast<double>(s.n), 2) : std::string{}) << ',' << fixed(s.dd, 2) << ','
-              << s.first << ',' << s.last << ',' << (costs_allowed ? (costs_verified ? "verified" : "UNVERIFIED") : "refused") << '\n';
+            const double n = static_cast<double>(s.n);
+            summary << rule.id << ',' << prep[k.first].name << ",\"" << prep[k.first].models[k.second] << "\"," << s.n << ','
+                    << s.wins << ',' << fixed(100.0 * static_cast<double>(s.wins) / n, 1) << ',' << fixed(s.gross, 2) << ','
+                    << (costs_allowed ? fixed(s.exp, 2) : std::string{}) << ',' << (costs_allowed ? fixed(s.net, 2) : std::string{})
+                    << ',' << (costs_allowed ? fixed(s.net / n, 2) : std::string{}) << ',' << fixed(s.theta / n, 2) << ','
+                    << fixed(s.move / n, 2) << ',' << fixed(s.iv / n, 2) << ',' << fixed(s.hedge / n, 2) << ','
+                    << fixed(s.worst, 2) << ',' << fixed(s.dd, 2) << ',' << s.first << ',' << s.last << ',' << cost_tag << '\n';
+            Sum& b = by_inst[k.first];
+            b.n += s.n;
+            b.wins += s.wins;
+            b.gross += s.gross;
+            b.exp += s.exp;
+            b.net += s.net;
+            b.theta += s.theta;
+            b.move += s.move;
+        }
+        for (const auto& [pi, b] : by_inst) {
+            const double n = static_cast<double>(b.n);
+            std::printf("  %-18s %-10s %7zu %6.1f %10.0f %10.0f %10.0f %10s %10s\n", rule.id.c_str(), prep[pi].name.c_str(), b.n,
+                        100.0 * static_cast<double>(b.wins) / n, b.theta / n, b.move / n, b.gross / n,
+                        costs_allowed ? fixed(b.exp / n, 0).c_str() : "refused", costs_allowed ? fixed(b.net / n, 0).c_str() : "-");
         }
     }
-    meta << "trades," << rows.size() << "\ndays_skipped_no_bars_or_vix," << refused_days << "\ndays_skipped_no_expiry," << no_expiry << "\n";
+    meta << "trades," << total_rows << "\ndays_skipped_no_bars_or_vix," << refused_days << "\ndays_skipped_no_expiry," << no_expiry << "\n";
     { std::ofstream f(dir / "meta.csv", std::ios::trunc); f << meta.str(); }
-
-    std::printf("Band option fade demo: %zu trades\n  %s\n", rows.size(), cost_note.c_str());
-    std::printf("  %-10s %-28s %6s %6s %13s %12s %13s %12s\n", "", "model", "trades", "win %", "gross Rs", "expenses Rs", "net Rs", "max DD Rs");
-    for (const auto& [k, s] : sums) {
-        std::printf("  %-10s %-28s %6zu %6.1f %13.0f %12s %13s %12.0f\n", k.first.c_str(), k.second.c_str(), s.n,
-                    100.0 * static_cast<double>(s.wins) / static_cast<double>(s.n), s.gross,
-                    costs_allowed ? fixed(s.exp, 0).c_str() : "refused", costs_allowed ? fixed(s.net, 0).c_str() : "-", s.dd);
-    }
     std::printf("  wrote %s\n", dir.string().c_str());
     return 0;
 }

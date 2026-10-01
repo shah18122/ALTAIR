@@ -6,7 +6,7 @@ desktop's **Strategies → Demo Trading** page runs them and shows the results.
 
 | What | Code | CLI | Output |
 |---|---|---|---|
-| Band-fade short option, 1 lot | `strategies/band_option_fade.hpp` | `altair_band_option_demo` | `data/verified/band_option_demo/{trades,summary,meta}.csv` |
+| Band models selling options, 1 lot | `strategies/band_option_fade.hpp` | `altair_band_option_demo` | `data/verified/band_option_demo/{trades_<rule>,summary,meta}.csv` |
 | Pairs hedged with futures | `strategies/pairs_futures.hpp` | `altair_pairs_futures` | `data/verified/pairs_futures/{trades,windows,summary,ratio}.csv` |
 | Stock legs for the pairs | `ops/fetch_pairs.ps1` | `altair_fyers_history` | `data/pairs/<name>/1d/fyers.csv` (git-ignored: broker data) |
 
@@ -27,59 +27,125 @@ the exchange and broker circulars and set `last_verified`.
 Brokerage is ₹20 an order for options. For futures it is ₹20 or 0.03 %,
 whichever is lower. A roll costs four orders.
 
-## Band-fade short option
+## Band models selling options
 
-**Rule.** Each band model forecasts the day's range at 09:20 from the 5-minute
-bars:
-- If a bar's high first reaches the upper edge, sell one lot of the call at
-  the first strike at or above it.
-- If a bar's low first reaches the lower edge, sell one lot of the put at the
-  first strike at or below it.
-- Each side trades at most once a day.
-- Fill at the close of the touching bar; buy back at the 15:20 close.
-- Slippage is 0.5 point each way.
-- Every trade records the model that placed it.
+Each band model forecasts at 09:20 an 80 % band for the session's close,
+using the 5-minute bars. Each **rule** sells options on that band, one lot,
+bought back by 15:20, and every trade records the model that placed it:
 
-**Premiums are synthetic.** The dataset has no option-chain history, so:
-- Both legs use Black-76 on the forward at INDIA VIX (`analytics/greeks.hpp`).
-- BANKNIFTY uses VIX scaled by its 20-day realised-vol ratio to NIFTY.
-- Volatility is flat across strikes, with no skew.
-- The contract is the current monthly, rolled on expiry day.
+| Rule | What it does |
+|---|---|
+| `touch` | Wait for the first touch of an edge. Sell the option at the first strike past it. |
+| `strangle` | At 09:20, before any touch: sell the call at the first strike ≥ the upper edge and the put at the first ≤ the lower edge. |
+| `strangle-stop2x` | The same, but a leg is bought back at the first 5-minute close where its premium has doubled. |
+| `strangle-hedged` | The same, with a futures delta hedge in whole lots, reset every 5 minutes. |
+| `expiry-day` | The strangle on monthly expiry days only, in the contract expiring that day (0DTE). |
+| `expiry-day-stop2x` | The same, with the 2× stop. |
 
-**Sizes.**
-- Lot sizes are today's, from `config/lot_size_history.csv` (NIFTY 65,
-  BANKNIFTY 30), applied to every historical day.
-- Strike steps are from `data/instruments.csv` (50 and 100).
+Pricing:
+- **Premiums are synthetic.** Black-76 on the forward at INDIA VIX, flat
+  across strikes with no skew. BANKNIFTY uses VIX scaled by its 20-day
+  realised-vol ratio to NIFTY. The dataset has no option-chain history.
+- **Sizes.** Lot sizes are today's (NIFTY 65, BANKNIFTY 30), applied to every
+  historical day. Strike steps are 50 and 100.
+- **Slippage** is 0.5 point each way. Futures hedge orders pay futures charges.
+- **Decomposition.** Every trade's gross is split into time decay, the
+  underlying's move, the IV change and slippage. The four add up to the gross.
 
-**Result** (2015-2026, 14 band models × NIFTY and BANKNIFTY, 27,095 trades):
+### Why the touch rule loses
 
-| | NIFTY | BANKNIFTY |
+The band's 80 % is a statement made at 09:20 about the close. Once the price
+has reached an edge, whether it ends back inside is close to a coin flip: for
+a random walk exactly half, by the reflection principle. Measured, only
+42.7 % (NIFTY) and 44.6 % (BANKNIFTY) of touches close back inside, so touches
+lean towards breakouts (intraday momentum; see Gao et al. 2018 in
+`research/papers/index.md`).
+
+The option sold at the touch is near the money, with |delta| 0.47. One lot
+moves like half a lot of futures, against the move. A few hours of a
+16-day option earns little decay:
+
+| Per trade, calendar clock | NIFTY | BANKNIFTY |
 |---|---|---|
-| Touches that close back inside the edge by 15:20 | 42.7 % | 44.6 % |
-| Win rate, by model | 39-43 % | 43-47 % |
-| Gross per trade, by model | −₹491 to −₹633 | −₹483 to −₹779 |
-| Net per trade (UNVERIFIED expenses, about ₹76) | −₹562 to −₹702 | −₹564 to −₹862 |
+| Time decay | +₹62 | +₹93 |
+| Underlying kept moving | −₹615 | −₹727 |
+| IV change | +₹44 | +₹62 |
+| Slippage | −₹65 | −₹30 |
+| Gross | −₹574 | −₹602 |
 
-**Every band model loses before expenses.**
-- A touch is a breakout more often than a reversal. That is consistent with
-  intraday momentum (Gao, Han, Li & Zhou 2018; see `research/papers/index.md`).
-- Big trend days dominate the losses: the median trade loses about ₹196 gross,
-  the mean about ₹588.
-- The least-bad bands are the time-of-day seasonal one on NIFTY (−₹562 a
-  trade net) and the random forest on |r| on BANKNIFTY (−₹564). GARCH(1,1)
-  loses −₹693 on NIFTY and −₹656 on BANKNIFTY.
+The worst 10 % of trades (trend days) account for 136 % (NIFTY) and 173 %
+(BANKNIFTY) of the total loss. Costs, about ₹75 a trade, are not the reason.
+**The touch rule loses on every clock below.**
 
-The rule is rejected. Selling at the touch sells into the move.
+### The clock decides synthetic intraday results
 
-What this does **not** test:
-- The volatility risk premium (Carr & Wu 2009) needs real option prices.
-- Delta-hedged selling.
-- Fading on a different trigger.
+How much an option decays between 09:20 and 15:20 depends on how time to
+expiry is counted. Synthetic prices cannot settle it, so the CLI runs three
+clocks (`--clock`):
+
+| Clock | One session's share of a day's decay | Note |
+|---|---|---|
+| `calendar` | about ¼ | INDIA VIX's convention. Credits an intraday seller a quarter of a day's decay for most of the day's risk. |
+| `trading` | 1 | Credits a whole day's decay, including the overnight gap risk, to someone who is flat overnight. |
+| `variance` (default) | the intraday share of the day's variance | That share is measured over the trailing 250 sessions: NIFTY 0.44 to 0.80 by year, mean 0.63. |
+
+Net per trade, with UNVERIFIED expenses of about ₹72–159 a trade:
+
+| Rule | Calendar NIFTY | Calendar BANKNIFTY | **Variance NIFTY** | **Variance BANKNIFTY** | Trading NIFTY | Trading BANKNIFTY |
+|---|---|---|---|---|---|---|
+| touch | −₹646 | −₹682 | **−₹496** | **−₹435** | −₹382 | −₹287 |
+| strangle | −₹514 | −₹617 | **+₹59** | **+₹224** | +₹495 | +₹754 |
+| strangle-stop2x | −₹436 | −₹498 | **+₹98** | **+₹283** | +₹522 | +₹790 |
+| strangle-hedged | −₹522 | −₹599 | **+₹61** | **+₹226** | +₹497 | +₹759 |
+| expiry-day | −₹1,504 | −₹1,580 | **+₹155** | **+₹242** | +₹1,014 | +₹1,357 |
+| expiry-day-stop2x | −₹342 | −₹324 | **+₹107** | **+₹507** | +₹840 | +₹1,337 |
+
+On the calendar clock, expiry-day trades are mostly refused: the 0DTE
+premiums are priced so cheap that they round to nothing.
+
+### What the variance-clock result is, and is not
+
+**Significance.** For `strangle-stop2x`, take each day's average across the
+14 band models:
+- NIFTY earns +₹96 a day, t = 3.4 over 2,784 days.
+- BANKNIFTY earns +₹280, t = 7.1 over 2,797 days.
+
+**Mostly the volatility premium, not the forecast.**
+- A constant-width band (GBM) earns +₹68 on NIFTY (t = 2.3) and +₹256 on
+  BANKNIFTY (t = 6.6).
+- The 14 band models add only about ₹25–40 a day.
+- The money comes from VIX pricing more intraday variance than the session
+  delivers.
+
+**Recent, not permanent.** Every year from 2021 to 2026 is positive: NIFTY
++₹185 to +₹461 a trade, BANKNIFTY +₹367 to +₹637. Before that it lost:
+2015–2020 on NIFTY, and 2016–2018 on BANKNIFTY.
+
+**The hedge changes almost nothing.** A one-lot strangle rarely reaches half
+a lot of delta, so whole-lot hedging seldom trades and mostly adds charges.
+
+**Unproven until real prices agree.** There are three open assumptions:
+- the clock;
+- no skew (real out-of-the-money puts are dearer than VIX, and calls cheaper);
+- the bid-ask spread, assumed to be 0.5 point.
+
+Daily NSE bhavcopy files give end-of-day prices only, so they test multi-day
+selling, not intraday decay. Checking the clock needs intraday option
+candles. FYERS serves these for contracts that are still listed, so a few
+months of current-month strikes would calibrate it.
 
 ```powershell
-build\net\app\altair_band_option_demo.exe --instrument both                    # gross only
-build\net\app\altair_band_option_demo.exe --instrument both --unverified-costs  # + expenses, stamped
+build\net\app\altair_band_option_demo.exe                                   # all rules, variance clock, gross only
+build\net\app\altair_band_option_demo.exe --unverified-costs                # + expenses, stamped
+build\net\app\altair_band_option_demo.exe --clock calendar --unverified-costs
+build\net\app\altair_band_option_demo.exe --rules strangle,strangle-stop2x --clock trading
 ```
+
+Output in `data/verified/band_option_demo/`:
+- `trades_<rule>.csv`: one row per trade (touch) or per strangle, with the
+  decomposition columns.
+- `summary.csv`: every rule × instrument × model.
+- `meta.csv`: every assumption, including the clock.
 
 ## Pairs hedged with futures
 

@@ -36,23 +36,33 @@ void test_page(const QString& root) {
     const QString o = root + QStringLiteral("/data/verified/band_option_demo/");
     write(o + "meta.csv",
           "key,value\ncosts,UNVERIFIED\ncost_note,\"priced anyway, UNVERIFIED\"\n"
-          "premiums,SYNTHETIC\nrule,fade\nslippage_pts,0.5\nNIFTY_lot_size,65\nBANKNIFTY_lot_size,30\n");
-    write(o + "summary.csv", "instrument,model,trades,gross_pnl,net_pnl,costs\nNIFTY,\"GARCH(1,1)\",2,100,-60,UNVERIFIED\n");
-    write(o + "trades.csv",
-          "date,instrument,model,option,gross_pnl,expenses,net_pnl,costs\n"
-          "2024-01-02,NIFTY,\"GARCH(1,1)\",CE,300.00,80.00,220.00,UNVERIFIED\n"
-          "2024-01-03,NIFTY,\"GARCH(1,1)\",PE,-200.00,80.00,-280.00,UNVERIFIED\n"
-          "2024-01-03,BANKNIFTY,EWMA,CE,50.00,80.00,-30.00,UNVERIFIED\n");
+          "premiums,SYNTHETIC\nclock,\"VARIANCE: days / 252\"\nrule_touch,wait for a touch\n"
+          "rule_strangle,sell both edges at 09:20\nslippage_pts,0.5\nNIFTY_lot_size,65\nBANKNIFTY_lot_size,30\n");
+    write(o + "summary.csv", "rule,instrument,model,trades,gross_pnl,net_pnl,costs\n"
+                             "touch,NIFTY,\"GARCH(1,1)\",2,100,-60,UNVERIFIED\n"
+                             "touch,BANKNIFTY,EWMA,1,50,-30,UNVERIFIED\n"
+                             "strangle,NIFTY,\"GARCH(1,1)\",1,400,300,UNVERIFIED\n");
+    write(o + "trades_touch.csv",
+          "date,instrument,model,rule,gross_pnl,expenses,net_pnl,costs\n"
+          "2024-01-02,NIFTY,\"GARCH(1,1)\",touch,300.00,80.00,220.00,UNVERIFIED\n"
+          "2024-01-03,NIFTY,\"GARCH(1,1)\",touch,-200.00,80.00,-280.00,UNVERIFIED\n"
+          "2024-01-03,BANKNIFTY,EWMA,touch,50.00,80.00,-30.00,UNVERIFIED\n");
+    write(o + "trades_strangle.csv",
+          "date,instrument,model,rule,gross_pnl,expenses,net_pnl,costs\n"
+          "2024-01-02,NIFTY,\"GARCH(1,1)\",strangle,400.00,100.00,300.00,UNVERIFIED\n");
     const QString p = root + QStringLiteral("/data/verified/pairs_futures/");
     write(p + "ratio.csv",
           "pair,ratio,days,min,min_date,max,max_date,last,last_date,p05,p50,p95,cap,days_above_cap,first_above,last_above\n"
           "NIFTY-BANKNIFTY,BANKNIFTY/NIFTY,10,0.6,2000-01-01,2.66,2019-07-05,2.40,2026-09-24,0.9,2.0,2.5,2.600,91,2019-03-26,2020-02-28\n");
 
     DemoTradingPage page(root);
-    check(page.banner_text().contains(QStringLiteral("UNVERIFIED")), "the costs banner carries the UNVERIFIED stamp");
-    check(page.shown_trades() == 3 && page.totals_text().contains(QStringLiteral("3 trades"))
+    check(page.banner_text().contains(QStringLiteral("UNVERIFIED")) && page.banner_text().contains(QStringLiteral("VARIANCE")),
+          "the banner carries the UNVERIFIED stamp and the clock the premiums ran on");
+    check(page.rule_filter()->count() == 2 && page.rule_filter()->currentText() == QStringLiteral("touch"),
+          "every rule the CLI ran is offered, first one shown");
+    check(page.shown_trades() == 3 && page.shown_summary_rows() == 2 && page.totals_text().contains(QStringLiteral("3 trades"))
               && page.totals_text().contains(QStringLiteral("-\u2060₹90")),
-          "all trades shown; net is the sum of the net column (220 - 280 - 30)");
+          "a rule's trades and its per-model rows; net is the sum of the net column (220 - 280 - 30)");
     check(page.model_filter()->count() == 3, "model filter: All plus the two models that traded");
     page.model_filter()->setCurrentIndex(page.model_filter()->findText(QStringLiteral("GARCH(1,1)")));
     check(page.shown_trades() == 2 && page.totals_text().contains(QStringLiteral("2 trades"))
@@ -60,6 +70,13 @@ void test_page(const QString& root) {
           "filtering by the model that took the trade keeps only its trades");
     page.instrument_filter()->setCurrentIndex(page.instrument_filter()->findText(QStringLiteral("BANKNIFTY")));
     check(page.shown_trades() == 0, "filters combine: GARCH placed no BANKNIFTY trade here");
+    page.rule_filter()->setCurrentIndex(1);
+    check(page.shown_summary_rows() == 1 && page.banner_text().contains(QStringLiteral("sell both edges")),
+          "switching rule shows that rule's summary and description");
+    page.instrument_filter()->setCurrentIndex(0);
+    page.model_filter()->setCurrentIndex(0);
+    check(page.shown_trades() == 1 && page.totals_text().contains(QStringLiteral("₹300")),
+          "and loads that rule's own trades file");
     check(page.ratio_text().contains(QStringLiteral("REJECTED")) && page.ratio_text().contains(QStringLiteral("2019-07-05")),
           "the 2.6 cap hypothesis is shown rejected, with the day of the maximum");
 }

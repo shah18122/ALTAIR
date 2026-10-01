@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace {
 
@@ -104,6 +105,94 @@ void test_both_sides_and_refusals() {
     check(!fade_day(d, 25'000.0, -0.004, 1, policy()).has_value(), "a negative band is refused");
 }
 
+
+void test_strangle() {
+    const double half = 0.004;   // edges 24,900.2 and 25,100.2 -> strikes 24,900 and 25,150
+    const auto quiet = day(25'000.0, [](std::size_t) { return 0.0; });
+    const auto q = strangle_day(quiet, 25'000.0, half, 4, policy(), StranglePolicy{});
+    check(q.has_value() && q->has_value(), "a strangle is sold at the decision without waiting for a touch");
+    if (!q || !*q) { return; }
+    const StrangleDay& a = **q;
+    check(a.call.strike == 25'150.0 && a.put.strike == 24'900.0 && a.call.entry_t == kOpen + 300,
+          "call at the first strike at or above the upper edge, put at or below the lower, sold at 09:20");
+    check(a.gross > 0.0 && a.call.gross > 0.0 && a.put.gross > 0.0 && a.fills.empty(),
+          "a day that stays inside the band keeps time decay on both legs");
+
+    // Trends up 2 points a bar from 09:20: 144 points by 15:20, far past the call.
+    const auto trend = day(25'000.0, [](std::size_t k) { return 2.0 * static_cast<double>(k); });
+    const auto held = strangle_day(trend, 25'000.0, half, 4, policy(), StranglePolicy{});
+    StranglePolicy stop;
+    stop.stop_multiple = 1.5;
+    const auto stopped = strangle_day(trend, 25'000.0, half, 4, policy(), stop);
+    check(held && *held && stopped && *stopped && (*held)->call.gross < 0.0,
+          "a trend through the upper edge loses on the call");
+    if (held && *held && stopped && *stopped) {
+        const auto& c = (*stopped)->call;
+        check(std::string{c.exit_reason} == "stop" && c.exit_t < (*held)->call.exit_t
+                  && c.gross > (*held)->call.gross,
+              "the stop buys the call back early, for a smaller loss than holding");
+    }
+    // Whole lots: 144 points leaves the call's delta under half a lot, so no hedge
+    // is placed. 5 points a bar (360 by 15:20) takes it well past.
+    StranglePolicy hedge;
+    hedge.hedge = true;
+    const auto none = strangle_day(trend, 25'000.0, half, 4, policy(), hedge);
+    check(none && *none && (*none)->fills.empty(), "under half a lot of delta, the whole-lot hedge holds nothing");
+    const auto steep = day(25'000.0, [](std::size_t k) { return 5.0 * static_cast<double>(k); });
+    const auto bare = strangle_day(steep, 25'000.0, half, 4, policy(), StranglePolicy{});
+    const auto hedged = strangle_day(steep, 25'000.0, half, 4, policy(), hedge);
+    if (hedged && *hedged && bare && *bare) {
+        long net = 0;
+        for (const auto& f : (*hedged)->fills) { net += f.lots; }
+        check(!(*hedged)->fills.empty() && net == 0 && (*hedged)->fills.front().lots > 0,
+              "the hedge buys futures as the call's delta grows and is flat by the close");
+        check((*hedged)->hedge_gross > 0.0 && (*hedged)->gross > (*bare)->gross,
+              "hedged in whole lots, the trend costs less than unhedged");
+    } else {
+        check(false, "hedged strangle priced");
+    }
+    StranglePolicy bad;
+    bad.stop_multiple = 0.8;
+    check(!strangle_day(quiet, 25'000.0, half, 4, policy(), bad).has_value(),
+          "a stop below the sale price is refused, not read as no stop");
+}
+
+
+void test_clock() {
+    FadeClock c;
+    c.trading = true;
+    c.session_close = kDay0 + 15 * 3600 + 30 * 60;
+    c.sessions_after = 0.0;
+    const std::int64_t open = kDay0 + 9 * 3600 + 15 * 60;
+    check(std::fabs(fade_detail::years(c, open, c.session_close) - 1.0 / 252.0) < 1e-12,
+          "trading clock: a whole session is one 252nd of a year");
+    check(std::fabs(fade_detail::years(FadeClock{}, open, c.session_close) - 22'500.0 / (365.0 * 86'400.0)) < 1e-12,
+          "calendar clock: the same session is 6h15m of 365 days");
+    c.sessions_after = 3.0;
+    check(std::fabs(fade_detail::years(c, c.session_close + 3600, c.session_close + 3 * 86'400) - 3.0 / 252.0) < 1e-12,
+          "after the close nothing of today is left, only the sessions to come");
+
+    // A quiet day: decay from 09:20 to 15:20 is about a session's worth on the
+    // trading clock and about a quarter of a day's on the calendar clock.
+    auto quiet = day(25'000.0, [](std::size_t) { return 0.0; });
+    quiet.expiry_ts = kDay0 + 3 * 86'400 + 15 * 3600 + 30 * 60;
+    const auto cal = strangle_day(quiet, 25'000.0, 0.004, 0, policy(), StranglePolicy{});
+    quiet.clock.trading = true;
+    quiet.clock.session_close = kDay0 + 15 * 3600 + 30 * 60;
+    quiet.clock.sessions_after = 3.0;
+    const auto trd = strangle_day(quiet, 25'000.0, 0.004, 0, policy(), StranglePolicy{});
+    check(cal && *cal && trd && *trd && (*trd)->gross > 2.0 * (*cal)->gross,
+          "the trading clock credits a quiet session with far more decay than the calendar clock");
+    quiet.clock.intraday_share = 0.65;
+    const auto var = strangle_day(quiet, 25'000.0, 0.004, 0, policy(), StranglePolicy{});
+    check(var && *var && trd && *trd && cal && *cal && (*var)->gross < (*trd)->gross && (*var)->gross > (*cal)->gross,
+          "the variance clock, with a third of the variance overnight, credits decay between the two");
+    c.intraday_share = 0.65;
+    c.sessions_after = 0.0;
+    check(std::fabs(fade_detail::years(c, open, c.session_close) - 0.65 / 252.0) < 1e-12,
+          "variance clock: the session holds its share of the day's unit");
+}
+
 } // namespace
 
 int main() {
@@ -112,6 +201,8 @@ int main() {
     test_call_fade();
     test_put_and_slippage();
     test_both_sides_and_refusals();
+    test_strangle();
+    test_clock();
     std::printf("Band option fade: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

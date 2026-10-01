@@ -728,3 +728,20 @@ Results (ops/demo-trading.md):
   - Pairs NIFTY-BANKNIFTY: 8 of 107 windows cointegrated, 15 trades, net
     Rs 46,193 with UNVERIFIED expenses -- too few trades to call. Stock pairs
     wait for ops/fetch_pairs.ps1 -Go after a FYERS login.
+  Follow-up (same day): "why are we in loss?"
+  - The touch rule spends the band's 80 % before it trades: after a touch,
+    ending back inside is a coin flip (reflection principle). It sells a
+    near-the-money option (|delta| 0.47) and earns +Rs 62 of decay against
+    -Rs 615 of move (NIFTY, a trade).
+  - strategies/band_option_fade.hpp: strangle_day sells both edges at 09:20,
+    with an optional stop and a whole-lot futures hedge. FadeClock: calendar,
+    trading, or variance (the default: each day's time split between the
+    overnight gap and the session by the trailing 250 sessions' variance).
+  - altair_band_option_demo runs six rules. It writes trades_<rule>.csv with
+    each trade's decay / move / IV / slippage split. The desktop page gains a
+    Rule selector.
+  - Result: the clock decides synthetic intraday P&L. Strangle-stop2x is
+    -Rs 436 calendar / +Rs 98 variance / +Rs 522 trading a trade on NIFTY.
+    On the variance clock it is t = 3.4 NIFTY and t = 7.1 BANKNIFTY, positive
+    only since 2021, and mostly the volatility premium: a constant-width band
+    gets most of it. Unproven until real intraday option prices agree.
