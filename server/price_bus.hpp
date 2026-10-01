@@ -43,6 +43,7 @@
 #pragma once
 
 #include <server/price_payload.hpp>
+#include <server/quote_payload.hpp>
 #include <server/protocol.hpp>
 
 #include <boost/asio/io_context.hpp>
@@ -199,13 +200,35 @@ public:
                                        frame.data() + kFrameHeaderBytes,
                                        frame.size() - kFrameHeaderBytes);
         if (!body) { ++refused_; return; }
+        enqueue(topic, std::move(frame), *body, engine_ns);
+    }
 
+    /// The market-watch fields that do not change on every trade
+    /// (server/quote_payload.hpp), on their own topic.
+    void publish_quote(const QuotePayload& q, std::int64_t engine_ns) {
+        std::vector<std::uint8_t> frame(kFrameHeaderBytes + kQuotePayloadBytes);
+        const auto body = encode_quote(q, frame.data() + kFrameHeaderBytes,
+                                       frame.size() - kFrameHeaderBytes);
+        if (!body) { ++refused_; return; }
+        enqueue(kTopicQuote, std::move(frame), *body, engine_ns);
+    }
+
+private:
+    void enqueue(std::uint32_t topic, std::vector<std::uint8_t> frame,
+                 std::size_t body, std::int64_t engine_ns) {
+        if (topic == 0 || topic > kTopicQuote) {
+            // RULE 11: refuse. seq_ has one slot per known topic; an unknown
+            // topic would write past it (it did, before the quote topic was
+            // given its slot).
+            ++refused_;
+            return;
+        }
         FrameHeader h;
         h.kind = FrameKind::Delta;
         h.channel = Channel::State;
         h.topic = topic;
         h.seq = ++seq_[topic];
-        h.payload_len = static_cast<std::uint32_t>(*body);
+        h.payload_len = static_cast<std::uint32_t>(body);
         h.engine_time_ns = engine_ns;
         h.server_time_ns =
             std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -214,7 +237,7 @@ public:
             ++refused_;
             return;
         }
-        frame.resize(kFrameHeaderBytes + *body);
+        frame.resize(kFrameHeaderBytes + body);
 
         for (auto& c : clients_) {
             c->out.push_back(frame);
@@ -229,7 +252,6 @@ public:
         flush();
     }
 
-private:
     struct Client {
         explicit Client(boost::asio::ip::tcp::socket s)
             : sock(std::move(s)) {}
@@ -274,7 +296,7 @@ private:
 
     boost::asio::ip::tcp::acceptor acceptor_;
     std::vector<std::unique_ptr<Client>> clients_;
-    std::uint64_t seq_[3]{};          ///< per topic; index 0 unused
+    std::uint64_t seq_[kTopicQuote + 1]{};   ///< per topic; index 0 unused
     std::uint64_t sent_ = 0;
     std::uint64_t dropped_ = 0;
     std::uint64_t gone_ = 0;

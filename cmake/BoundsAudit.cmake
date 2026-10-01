@@ -65,7 +65,7 @@
 
 function(altair_audit_bounds)
     set(_dirs core instruments broker feed book analytics risk oms features
-              strategies backtest models flagging server desktop app)
+              strategies backtest models flagging server live desktop app)
     set(_bad "")
     set(_seen 0)
     # Counted explicitly, NOT with list(LENGTH _bad). The offending source line

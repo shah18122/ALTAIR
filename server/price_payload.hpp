@@ -66,7 +66,10 @@ enum PriceFlags : std::uint16_t {
     kPriceNoExchTs  = 1u << 3,
     /// Replay, not live. The frame is real data at its original timestamps and
     /// must never be mistaken for now.
-    kPriceReplay    = 1u << 4
+    kPriceReplay    = 1u << 4,
+    /// Simulated, not market data at all: altair_price_service --sim. Shown
+    /// as SIM and never as LIVE, for the same reason as a replay.
+    kPriceSimulated = 1u << 5
 };
 
 /// One price update on the wire. 48 bytes, fixed.

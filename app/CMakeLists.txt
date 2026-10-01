@@ -165,9 +165,10 @@ if(ALTAIR_HAVE_NET)
         add_executable(altair_price_service price_service_main.cpp)
         target_link_libraries(altair_price_service PRIVATE
             altair_server altair_broker_net altair_feed altair_instruments
-            altair_flags Boost::headers)
+            altair_live altair_flags Boost::headers)
         target_compile_definitions(altair_price_service PRIVATE
-            ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+            ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
+            ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
         if(WIN32)
             target_link_libraries(altair_price_service PRIVATE ws2_32 mswsock)
         endif()
@@ -357,4 +358,15 @@ if(ALTAIR_BUILD_TESTS)
         --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/forecast_daily_out
         --only daily --no-log)
     set_tests_properties(forecast_curriculum_daily PROPERTIES LABELS "dataset;experiment" TIMEOUT 3600)
+endif()
+
+# The live terminal's FYERS source: one FYERS socket update into the price
+# bus's trade, quote and book frames. Offline; no socket.
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_fyers_price_frames_test tests/test_fyers_price_frames.cpp)
+    target_link_libraries(altair_fyers_price_frames_test PRIVATE
+        altair_server altair_feed altair_instruments altair_flags)
+    target_include_directories(altair_fyers_price_frames_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME fyers_price_frames COMMAND altair_fyers_price_frames_test)
 endif()

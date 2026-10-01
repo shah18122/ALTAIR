@@ -157,3 +157,7 @@ data/kill_request.json
 # excluded; this one was not, so the whole tree sat stageable. It is not Altair
 # source and must never enter the build or history.
 GETSClient_5.0.191022_64bit_040924/
+
+# Live terminal runtime state: universe, feed status, live-engine state and
+# paper trades. Written at run time from broker data; never committed.
+data/live/
