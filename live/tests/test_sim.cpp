@@ -7,6 +7,7 @@
 #include <live/sim.hpp>
 
 #include <cstdio>
+#include <algorithm>
 #include <cmath>
 #include <map>
 
@@ -48,6 +49,7 @@ struct Seen {
 };
 
 double worst_parity = 0.0;
+std::int64_t widest_future_spread = 0;
 int parity_steps = 0;
 
 std::map<std::uint32_t, Seen> run(std::uint64_t seed, int steps, std::vector<std::int64_t>* trail) {
@@ -77,6 +79,8 @@ std::map<std::uint32_t, Seen> run(std::uint64_t seed, int steps, std::vector<std
                 s.ohlc_ok = s.ohlc_ok && ev.quote.low <= ev.quote.high && ev.quote.low > 0
                          && (!ev.trade || (ev.price.last_paise >= ev.quote.low && ev.price.last_paise <= ev.quote.high));
             if (ev.quote.has(kQuoteHasTop)) s.spread_ok = s.spread_ok && ev.quote.bid > 0 && ev.quote.bid < ev.quote.ask;
+            if (in.kind == LiveKind::Future && ev.quote.has(kQuoteHasTop))
+                widest_future_spread = std::max(widest_future_spread, ev.quote.ask - ev.quote.bid);
             if (ev.book) {
                 ++s.books;
                 for (std::size_t k2 = 1; k2 < kMaxDepthLevels; ++k2)
@@ -123,6 +127,7 @@ int main() {
     check(idx, "indices carry no book, no bid/ask and no volume");
     const auto n = seen.find(kLiveNiftyToken);
     check(n != seen.end() && n->second.trades >= 290 && n->second.trades <= 301, "the index prints once a second");
+    check(widest_future_spread > 0 && widest_future_spread <= 40, "a future quotes a tick or two wide, not a fraction of a percent");
     const auto fut = seen.find(1);
     check(fut != seen.end() && fut->second.trades > 1500, "the future prints on most steps");
     const auto call = seen.find(2), put = seen.find(3);

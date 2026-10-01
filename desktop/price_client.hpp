@@ -35,6 +35,7 @@
 
 #include <server/price_payload.hpp>
 #include <server/protocol.hpp>
+#include <server/quote_payload.hpp>
 
 #include <QByteArray>
 #include <QObject>
@@ -44,21 +45,45 @@
 #include <QTimer>
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <unordered_map>
 
 namespace altair::ui {
 
+/// One printed trade, for time and sales.
+struct LiveTapePrint {
+    std::int64_t ts_ns = 0;
+    std::int64_t price_paise = 0;
+    std::int64_t qty = 0;
+};
+
+/// How many trades each instrument keeps for time and sales.
+inline constexpr std::size_t kLiveTapeDepth = 300;
+
 /// The newest state of one instrument, as the wire delivered it.
 struct LivePrice {
     std::int64_t last_paise = 0;
+    std::int64_t last_qty = 0;
     std::int64_t volume = 0;
     std::int64_t oi = 0;
     std::int64_t exchange_ts_ns = 0;
     bool has_volume = false;
     bool has_oi = false;
     bool replay = false;
+    bool simulated = false;   ///< altair_price_service --sim: never shown as live
     std::uint64_t updates = 0;
+    std::uint64_t trades = 0;
+
+    /// The quote topic (server/quote_payload.hpp): OHLC, previous close, top
+    /// of book, ATP, totals, circuits. `quote.flags` says which are present.
+    QuotePayload quote{};
+    bool has_quote = false;
+
+    /// The latest trades, newest at the back. RULE 11: truncates visibly --
+    /// the tape is a window of the last kLiveTapeDepth prints, and `trades`
+    /// counts every one, so the window never passes for the whole day.
+    std::deque<LiveTapePrint> tape;
 
     /// Five levels a side, and how many are real.
     PriceLevel bids[kMaxDepthLevels]{};
@@ -135,11 +160,13 @@ public:
         return sock_->state() == QAbstractSocket::ConnectedState;
     }
     [[nodiscard]] QString error_text() const { return sock_->errorString(); }
+    [[nodiscard]] QAbstractSocket::SocketState state() const { return sock_->state(); }
     [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
     [[nodiscard]] std::uint64_t gaps() const noexcept { return gaps_; }
     [[nodiscard]] std::uint64_t missed() const noexcept { return missed_; }
     [[nodiscard]] std::uint64_t missed_trades() const noexcept { return trade_missed_; }
     [[nodiscard]] std::uint64_t undecodable() const noexcept { return bad_; }
+    [[nodiscard]] std::uint64_t unknown_topics() const noexcept { return unknown_topic_; }
 
     [[nodiscard]] const LivePrice* price(std::uint32_t token) const {
         const auto it = last_.find(token);
@@ -179,12 +206,22 @@ private Q_SLOTS:
             const std::size_t need = kFrameHeaderBytes + h->payload_len;
             if (static_cast<std::size_t>(buf_.size()) < need) { break; }
 
-            const auto p = decode_price(raw + kFrameHeaderBytes,
-                                        h->payload_len);
-            if (p) {
-                apply(*h, *p);
+            // DISPATCH BY TOPIC. A quote frame is not a price frame, and
+            // decoding one as the other would read a previous close as a
+            // last price.
+            if (h->topic == kTopicQuote) {
+                const auto q = decode_quote(raw + kFrameHeaderBytes, h->payload_len);
+                if (q) { apply_quote(*h, *q); } else { ++bad_; }
+            } else if (h->topic == kTopicTrades || h->topic == kTopicBook) {
+                const auto p = decode_price(raw + kFrameHeaderBytes,
+                                            h->payload_len);
+                if (p) {
+                    apply(*h, *p);
+                } else {
+                    ++bad_;
+                }
             } else {
-                ++bad_;
+                ++unknown_topic_;   // a newer service; skipped by topic, never misread
             }
             buf_.remove(0, static_cast<qsizetype>(need));
         }
@@ -215,9 +252,14 @@ private:
         LivePrice& lp = last_[d.payload.token];
         ++lp.updates;
         lp.replay = d.payload.has(kPriceReplay);
+        lp.simulated = d.payload.has(kPriceSimulated);
         lp.exchange_ts_ns = d.payload.exchange_ts_ns;
         if (h.topic == kTopicTrades) {
             lp.last_paise = d.payload.last_paise;
+            lp.last_qty = d.payload.last_qty;
+            ++lp.trades;
+            lp.tape.push_back(LiveTapePrint{d.payload.exchange_ts_ns, d.payload.last_paise, d.payload.last_qty});
+            if (lp.tape.size() > kLiveTapeDepth) { lp.tape.pop_front(); }
             // ABSENCE IS NOT ZERO, so the presence bit is carried through
             // rather than collapsed into the value. A grid that draws 0 for an
             // index's volume is claiming a measurement nobody made.
@@ -236,6 +278,23 @@ private:
         if (h.topic == kTopicTrades) Q_EMIT tradeUpdated(d.payload.token);
     }
 
+    void apply_quote(const FrameHeader& h, const QuotePayload& q) {
+        ++frames_;
+        auto& seen = seq_[h.topic];
+        if (seen != 0 && h.seq > seen + 1) {
+            ++gaps_;
+            missed_ += h.seq - seen - 1;
+        }
+        seen = h.seq;
+        LivePrice& lp = last_[q.token];
+        ++lp.updates;
+        lp.quote = q;
+        lp.has_quote = true;
+        lp.replay = q.has(kQuoteReplay);
+        lp.simulated = q.has(kQuoteSimulated);
+        Q_EMIT priceUpdated(q.token);
+    }
+
     QTcpSocket* sock_ = nullptr;
     QByteArray buf_;
     QString host_;
@@ -248,6 +307,7 @@ private:
     std::uint64_t missed_ = 0;
     std::uint64_t trade_missed_ = 0;
     std::uint64_t bad_ = 0;
+    std::uint64_t unknown_topic_ = 0;
 };
 
 }  // namespace altair::ui

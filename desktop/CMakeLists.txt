@@ -754,6 +754,32 @@ if(ALTAIR_BUILD_TESTS)
                 PRIVATE ws2_32 mswsock)
         endif()
         add_test(NAME desktop_price_client COMMAND altair_price_client_test)
+
+        # The live market watch over the real bus and client: watch rows,
+        # depth, time and sales, the live chain's market IV, SIM labelling.
+        qt_add_executable(altair_live_market_test
+            tests/test_live_market.cpp
+            live_market.hpp
+            price_client.hpp
+            theme.hpp)
+        target_link_libraries(altair_live_market_test PRIVATE
+            altair_types altair_time altair_server altair_analytics altair_flags Boost::headers
+            Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+        target_include_directories(altair_live_market_test
+            PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        set_target_properties(altair_live_market_test
+            PROPERTIES WIN32_EXECUTABLE OFF)
+        if(WIN32)
+            target_link_libraries(altair_live_market_test
+                PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME desktop_live_market COMMAND altair_live_market_test)
+        set_tests_properties(desktop_live_market PROPERTIES TIMEOUT 60 ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+        if(WIN32)
+            set_tests_properties(desktop_live_market PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        endif()
     endif()
 
     qt_add_executable(altair_atlas_test

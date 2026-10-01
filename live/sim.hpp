@@ -206,8 +206,15 @@ private:
         ev.price.exchange_ts_ns = now_ns_;
         const std::int64_t fair = round_tick(s.fair, in);
         const auto tick = static_cast<std::int64_t>(std::llround((in.tick > 0.0 ? in.tick : 0.05) * 100.0));
-        const std::int64_t half = in.kind == LiveKind::Index ? 0
-                                : std::max<std::int64_t>(tick, (fair / 500 / tick) * tick);   // RULE 11: safe-side floor -- a spread is at least one tick.
+        // Half the spread: one or two ticks for futures and stocks (NIFTY
+        // futures quote 0.10-0.20 wide); for options a tenth of a percent of
+        // the price, and never under a tick.
+        std::int64_t half = 0;
+        if (in.kind == LiveKind::Future || in.kind == LiveKind::Equity) {
+            half = tick * (1 + static_cast<std::int64_t>(2.0 * uniform()));
+        } else if (in.kind != LiveKind::Index) {
+            half = std::max<std::int64_t>(tick, (fair / 1000 / tick) * tick);   // RULE 11: safe-side floor -- a spread is at least one tick.
+        }
         const std::int64_t bid = fair - half > tick ? fair - half : tick;   // RULE 11: safe-side floor -- a bid is at least one tick.
         const std::int64_t ask = bid + (half > 0 ? 2 * half : tick);
         const std::int64_t lot = in.lot > 0 ? in.lot : 1;
