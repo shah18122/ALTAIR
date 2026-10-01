@@ -17,6 +17,7 @@
 //
 // Read-only: no order endpoint is reachable from this binary. Without --go it
 // prints what it would do and exits, like every other fetcher in app/.
+#include <app/fyers_env_session.hpp>
 #include <broker/fyers_api.hpp>
 #include <broker/fyers_data_socket.hpp>
 #include <broker/https_client.hpp>
@@ -209,9 +210,13 @@ int main(int argc, char** argv) {
     }
 
     // ---- credential -> hsm_key ---------------------------------------------
-    const auto session = read_session(source_path("data/fyers_session.json"));
+    auto session = read_session(source_path("data/fyers_session.json"));
+    if (!session) {   // a headless host: the day's session from the environment (app/fyers_env_session.hpp)
+        if (auto env = altair::fyers_env::from_environment()) { session = Session{std::move(env->client), std::move(env->access)}; }
+    }
     if (!session) {
-        std::printf("\n  no valid FYERS session; run altair_fyers_login first.\n");
+        std::printf("\n  no valid FYERS session; run altair_fyers_login first, or set\n"
+                    "  ALTAIR_FYERS_CLIENT_ID and ALTAIR_FYERS_ACCESS_TOKEN.\n");
         return 2;
     }
     const auto now_unix = static_cast<std::int64_t>(

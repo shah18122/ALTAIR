@@ -814,3 +814,32 @@ Results (ops/demo-trading.md):
     altair_depth_study summarises it.
   - Research only: a prediction under half the spread is not tradable by
     crossing it, and FYERS retail latency cannot quote passively at HFT speed.
+
+21. MAGNITUDE, AND FYERS ON HEADLESS HOSTS -- 2026-10-01
+------------------------------------------------------------------------------
+Owner's request: consider magnitude, not only direction; use FYERS history
+and live data (read-only; trading is not allowed on this API).
+  models/magnitude.hpp (new)  magnitude-weighted accuracy, |move| right vs
+                          wrong, payoff ratio, gross edge. Walk-forward
+                          probability calibration (binned, shrunk toward
+                          1/2). The value gate (2q - 1) x E|r| > cost, with
+                          E|r| = sigma x sqrt(2/pi) from HAR (test_magnitude).
+  models/curriculum.hpp   the tally now sums |move| right/wrong and the
+                          signed edge. The Summary sheet gains
+                          "Magnitude-weighted accuracy %" and "Gross edge bp /
+                          call" (test_curriculum).
+  app/magnitude_main.cpp (new)  altair_magnitude over the forecast logs:
+                          magnitude scoring and the gate per model and track.
+Result: on the daily tracks most models are slightly worse on big days (28-31
+of 42), on the NIFTY session tracks better (35-37 of 42). Gated, the best
+models reach +20 to +43 bp a trade (AR/ARMA, 10:15-close, t 2.5-3.2). None
+survives 1,136 tests (t > 4.09).
+  app/fyers_env_session.hpp (new)  altair_fyers_history and
+                          altair_fyers_ticker take the day's session from
+                          ALTAIR_FYERS_CLIENT_ID / ALTAIR_FYERS_ACCESS_TOKEN
+                          when data/fyers_session.json is absent; never
+                          printed.
+  Checked from the cloud session: the environment's network policy refuses
+  api-t1.fyers.in / public.fyers.in / socket.fyers.in (proxy 403), and no
+  FYERS credentials are present. With the hosts allowed and the two
+  variables set, the CLIs fetch history and stream live data from there.

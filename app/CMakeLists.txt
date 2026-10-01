@@ -299,6 +299,11 @@ add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
 target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
 target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# Magnitude-aware scoring and the per-call value gate over the curriculum's logs.
+add_executable(altair_magnitude magnitude_main.cpp)
+target_link_libraries(altair_magnitude PRIVATE altair_models altair_analytics altair_flags)
+target_include_directories(altair_magnitude PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
 # Order-book study over recorded FYERS depth (book/depth_study.hpp).
 add_executable(altair_depth_study depth_study_main.cpp)
 target_link_libraries(altair_depth_study PRIVATE altair_flags)

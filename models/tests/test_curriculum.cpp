@@ -298,6 +298,20 @@ void test_scoring() {
     vix.tradable = false;
     vix.cost_bp.clear();
     check(curriculum_tally(vix, run, 0, 0, tr.rows()).trades == 0, "an untradable index never trades");
+    {
+        // Magnitude: the same sums by hand.
+        double ar = 0.0, aw = 0.0, edge = 0.0;
+        for (std::size_t i = 0; i < tr.rows(); ++i) {
+            const auto c = static_cast<CurriculumCall>(run.calls[0][i]);
+            const double r = tr.ret(i);
+            edge += static_cast<double>(c.dir) * r;
+            if (r == 0.0) { continue; }
+            ((c.dir > 0) == (r > 0.0) ? ar : aw) += std::fabs(r);
+        }
+        check(std::fabs(t.weighted_accuracy() - ar / (ar + aw)) < 1e-12
+                  && std::fabs(t.gross_bp() - 1e4 * edge / static_cast<double>(tr.rows())) < 1e-9,
+              "magnitude-weighted accuracy and gross edge are the |move|- and move-weighted versions of the record");
+    }
     CurriculumRun none = run;
     for (auto& c : none.calls[0]) { c = curriculum_detail::from_direction(0); }
     const auto tn = curriculum_tally(tr, none, 0, 0, tr.rows());

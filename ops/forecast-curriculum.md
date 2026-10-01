@@ -382,6 +382,43 @@ measured in [ops/demo-trading.md](demo-trading.md). Selling the touch of a
 band edge loses. Selling both edges at 09:20 earns only on the variance
 clock, and mostly from the volatility premium.
 
+### Magnitude: right on the days that matter?
+
+Accuracy counts a 5 bp day and a 300 bp day alike. The Summary sheet now also
+gives each model two magnitude measures:
+- **magnitude-weighted accuracy:** the share of the market's movement the
+  model was on the right side of;
+- **gross edge, bp a call:** the mean of direction × move.
+
+`altair_magnitude` reads the per-forecast logs. It adds the |move| on right
+calls against wrong ones, and a **value gate** (`models/magnitude.hpp`): take
+a call only when (2q − 1) × E|r| beats the cost.
+- q is the model's own probability, calibrated walk-forward.
+- E|r| is σ√(2/π), with σ from a HAR forecast of that window's 5-minute
+  realised variance.
+- Both use only what was known when the call was made.
+
+On the 2026-10-01 run, at 6.3 bp:
+
+| Track | Median accuracy | Median magnitude-weighted | Models better on big moves | Median net bp / call | Gated share | Median gated net |
+|---|---|---|---|---|---|---|
+| NIFTY daily | 52.1 % | 51.1 % | 14 / 42 | −4.8 | 10 % | −4.7 |
+| BANKNIFTY daily | 51.4 % | 50.7 % | 11 / 42 | −5.1 | 11 % | −7.4 |
+| NIFTY FUT daily | 51.5 % | 50.9 % | 11 / 41 | −5.1 | 7 % | −12.9 |
+| NIFTY 09:20→close | 51.2 % | 52.4 % | 37 / 42 | −3.6 | 6 % | −0.3 |
+| BANKNIFTY 09:20→close | 50.5 % | 49.9 % | 19 / 42 | −6.5 | 6 % | −8.2 |
+| NIFTY 10:15→close | 52.3 % | 53.0 % | 35 / 42 | −3.4 | 7 % | −2.3 |
+| BANKNIFTY 10:15→close | 51.3 % | 51.0 % | 22 / 42 | −5.0 | 6 % | −3.1 |
+
+- **On the daily tracks, accuracy flatters the models.** Most are slightly
+  *less* right on big days than small ones.
+- **On the NIFTY session tracks it is the reverse.** 35–37 of 42 models are
+  more right on the big moves.
+- **The gate lifts the best models' edge per trade** to +20 to +43 bp, mostly
+  AR and ARMA on 10:15→close, with t ≈ 2.5–3.2.
+- **None survives the 1,136 gated tests,** which need t > 4.09. They are
+  candidates for a forward test, not findings.
+
 ### What would improve it next
 - **Broker-verified data:** run `ops\broker_audit.ps1`, then repeat the run.
 - **Inputs beyond price:** option-chain OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close.

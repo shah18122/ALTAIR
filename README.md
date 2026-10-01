@@ -112,6 +112,17 @@ information. It runs `altair_fyers_account` and `altair_fyers_quotes` (both
 read-only). Put the Kite instrument master at `data/instruments.csv` so monthly
 expiries and lot sizes resolve.
 
+**Headless hosts** (a cloud session, a scheduled job) have no browser for the
+login. `altair_fyers_history` and `altair_fyers_ticker` also accept the day's
+session from two environment variables. The file wins when both exist, and
+neither value is ever printed:
+- `ALTAIR_FYERS_CLIENT_ID`
+- `ALTAIR_FYERS_ACCESS_TOKEN`
+
+A FYERS token lasts one trading day, so the variable has to be refreshed with
+it. The host's network must also allow `api-t1.fyers.in`, `public.fyers.in`
+and `socket.fyers.in`. These CLIs contain no order endpoint.
+
 For ticks, open **Live Feed**, choose **FYERS (primary)** and press **Listen**.
 The live socket implements FYERS' HSM protocol natively in C++.
 `feed/tests/test_fyers_hsm.cpp` checks it byte for byte against vectors

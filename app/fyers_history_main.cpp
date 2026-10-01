@@ -1,5 +1,6 @@
 // app/fyers_history_main.cpp -- read-only FYERS history and 1m/5m audit fetch.
 #include <app/dataset_merge.hpp>
+#include <app/fyers_env_session.hpp>
 #include <app/price_text.hpp>
 #include <broker/fyers_api.hpp>
 #include <broker/fyers_historical.hpp>
@@ -153,8 +154,14 @@ int main(int argc, char** argv) {
         std::printf("refusing to overwrite an existing audit file\n");
         return 1;
     }
-    const auto session = read_session(source_path("data/fyers_session.json"));
-    if (!session) { std::printf("no bounded valid FYERS session; link first\n"); return 2; }
+    auto session = read_session(source_path("data/fyers_session.json"));
+    if (!session) {   // a headless host: the day's session from the environment (app/fyers_env_session.hpp)
+        if (const auto env = altair::fyers_env::from_environment()) { session = Session{env->client, env->access}; }
+    }
+    if (!session) {
+        std::printf("no bounded valid FYERS session: link first, or set ALTAIR_FYERS_CLIENT_ID and ALTAIR_FYERS_ACCESS_TOKEN\n");
+        return 2;
+    }
     const auto authorization = altair::fyers::authorization_header(
         session->client.c_str(), session->access.c_str());
     if (!authorization) return 2;

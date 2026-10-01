@@ -2535,6 +2535,21 @@ struct CurriculumTally {
     std::size_t trades = 0, trade_wins = 0;
     double net_bp = 0.0;
     double net_bp_sq = 0.0;
+    /// MAGNITUDE (models/magnitude.hpp): |move| summed over right and wrong
+    /// calls, and direction x move over every directed call. Accuracy counts a
+    /// 5 bp day and a 300 bp day alike; these do not.
+    double abs_right = 0.0, abs_wrong = 0.0, edge = 0.0;
+    std::size_t directed = 0;
+
+    /// Share of the market's movement the calls were on the right side of.
+    [[nodiscard]] double weighted_accuracy() const noexcept {
+        const double t = abs_right + abs_wrong;
+        return t > 0.0 ? abs_right / t : std::numeric_limits<double>::quiet_NaN();
+    }
+    /// Mean direction x move, bp: what the accuracy is worth before costs.
+    [[nodiscard]] double gross_bp() const noexcept {
+        return directed > 0 ? 1e4 * edge / static_cast<double>(directed) : std::numeric_limits<double>::quiet_NaN();
+    }
 
     /// Mean net bp per trade over its standard error: is the P&L luck?
     [[nodiscard]] double net_t() const noexcept {
@@ -2582,9 +2597,14 @@ curriculum_tally(const CurriculumTrack& tr, const CurriculumRun& run, std::size_
             t.net_bp_sq += net * net;
             if (net > 0.0) { ++t.trade_wins; }
         }
+        if (c.dir != 0) {
+            ++t.directed;
+            t.edge += static_cast<double>(c.dir) * tr.ret(i);
+        }
         if (out == 0) { ++t.flat; continue; }
         if (out > 0) { ++t.ups; }
         (c.dir == out ? t.right : t.wrong) += 1;
+        (c.dir == out ? t.abs_right : t.abs_wrong) += std::fabs(tr.ret(i));
         if (c.dir == 0) { ++t.no_direction; }
         if (std::isfinite(c.p_up)) {
             const double e = c.p_up - (out > 0 ? 1.0 : 0.0);

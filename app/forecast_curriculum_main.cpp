@@ -135,7 +135,8 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
     sh.name = "Summary";
     sh.freeze_rows = 1;
     const char* head[] = {"Track", "Model", "Family", "Forecasts", "Abstained", "Coverage %", "Right", "Wrong", "No direction", "Flat",
-                          "Accuracy %", "95% low %", "95% high %", "z vs coin", "p vs coin",
+                          "Accuracy %", "Magnitude-weighted accuracy %", "Gross edge bp / call",
+                          "95% low %", "95% high %", "z vs coin", "p vs coin",
                           "p (Bonferroni)", "Up-rate on same bars %", "vs best constant call (pts)", "p vs constant (Bonferroni)",
                           "Brier", "RMSE bp", "Random walk RMSE bp", "Skill vs RW %", "Price verdict",
                           "Trades (clear cost)", "Trade hit %", "Net bp / trade", "Net t-stat", "Net bp total",
@@ -143,7 +144,7 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
     std::vector<XlsxCell> h;
     for (const char* c : head) { h.push_back(XlsxCell::str(c, true)); }
     sh.rows.push_back(h);
-    sh.widths = {24, 24, 11, 10, 10, 10, 9, 9, 10, 7, 10, 9, 9, 9, 9, 11, 12, 12, 12, 8, 9, 11, 10, 22, 11, 10, 10, 9, 11, 11, 8, 52};
+    sh.widths = {24, 24, 11, 10, 10, 10, 9, 9, 10, 7, 10, 12, 11, 9, 9, 9, 9, 11, 12, 12, 12, 8, 9, 11, 10, 22, 11, 10, 10, 9, 11, 11, 8, 52};
     for (const auto& r : results) {
         if (!r.ok) {
             sh.rows.push_back({XlsxCell::str(r.track.name), XlsxCell::str("-"), XlsxCell::str("-"),
@@ -173,6 +174,7 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
                 XlsxCell::num(static_cast<double>(s.all.right)), XlsxCell::num(static_cast<double>(s.all.wrong)),
                 XlsxCell::num(static_cast<double>(s.all.no_direction)), XlsxCell::num(static_cast<double>(s.all.flat)),
                 XlsxCell::num(scored ? pct(s.accuracy) : nan, true),
+                XlsxCell::num(scored ? pct(s.all.weighted_accuracy()) : nan), XlsxCell::num(s.all.gross_bp()),
                 XlsxCell::num(scored ? pct(s.lo95) : nan), XlsxCell::num(scored ? pct(s.hi95) : nan),
                 XlsxCell::num(scored ? s.z_vs_half : nan), XlsxCell::num(scored ? s.p_vs_half : nan),
                 XlsxCell::num(scored ? s.p_adjusted : nan), XlsxCell::num(scored ? pct(s.up_rate) : nan),
