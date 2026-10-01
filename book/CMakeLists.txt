@@ -24,6 +24,11 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_microstructure_test tests/test_microstructure.cpp)
     target_link_libraries(altair_microstructure_test PRIVATE altair_book altair_flags)
     add_test(NAME microstructure COMMAND altair_microstructure_test)
+    # Order flow imbalance and the depth study (book/depth_study.hpp).
+    add_executable(altair_depth_study_test tests/test_depth_study.cpp)
+    target_link_libraries(altair_depth_study_test PRIVATE altair_flags)
+    target_include_directories(altair_depth_study_test PRIVATE ${CMAKE_SOURCE_DIR})
+    add_test(NAME depth_study COMMAND altair_depth_study_test)
 
     add_executable(altair_flow_test tests/test_flow.cpp)
     target_link_libraries(altair_flow_test PRIVATE altair_book altair_flags)

@@ -185,6 +185,10 @@ Demo Trading** page runs both and shows trades, per-model totals and equity.
   OU s-score (Avellaneda-Lee) with many small hedged positions.
   - The stock data comes from FYERS (`ops/fetch_universe.ps1`).
   - The universe is today's members, so results carry survivorship bias.
+- `altair_depth_study`: the HFT question asked honestly. It tests whether
+  order flow imbalance, imbalance and microprice in recorded FYERS depth
+  (`ops/record_depth.ps1`, `altair_fyers_ticker --stamp`) predict the next
+  mid move out of sample, and by more than half the spread.
 - `altair_pairs_futures`: walk-forward Engle-Granger pairs, long one future
   and short the other in whole lots, over `config/pairs.csv` (NIFTY-BANKNIFTY,
   CIPLA-SUNPHARMA, HDFCBANK-ICICIBANK and more). Stock legs come from FYERS via

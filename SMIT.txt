@@ -801,3 +801,16 @@ Results (ops/demo-trading.md):
     bias is stated in meta.csv.
   - Desktop page: one Run selector (option demo / pairs / vol premium /
     stat-arb) replaces three buttons; stat-arb tabs added.
+  Order-book research (microstructure).
+  - book/depth_study.hpp: Cont-Kukanov-Stoikov order flow imbalance (level 1
+    and 5), level-1 imbalance and the microprice offset. Reads recorded
+    depth JSONL into per-symbol books. Fits contemporaneous and out-of-sample
+    predictive regressions on a 1-second grid, skipping gaps, and scores them
+    against half the spread (test_depth_study).
+  - altair_fyers_ticker --stamp: each --jsonl line gets "recv_ms", since
+    depth updates carry no time of their own.
+  - ops/record_depth.ps1 records a session of 5-level depth (near-month
+    NIFTY/BANKNIFTY futures and 5 stocks) to data/ticks/ (git-ignored).
+    altair_depth_study summarises it.
+  - Research only: a prediction under half the spread is not tradable by
+    crossing it, and FYERS retail latency cannot quote passively at HFT speed.

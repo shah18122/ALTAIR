@@ -299,6 +299,11 @@ add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
 target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
 target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# Order-book study over recorded FYERS depth (book/depth_study.hpp).
+add_executable(altair_depth_study depth_study_main.cpp)
+target_link_libraries(altair_depth_study PRIVATE altair_flags)
+target_include_directories(altair_depth_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
 # The band-fade short-option demo: the range band's forecast, one lot, priced
 # synthetically, costed through risk/cost.hpp (refused while unverified).
 if(TARGET altair_charges_toml)

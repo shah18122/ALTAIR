@@ -298,6 +298,24 @@ Expense figures quoted from the demos are UNVERIFIED until config/charges.toml i
 
 ---
 
+## Order book
+
+### `cont-kukanov-stoikov-2014-ofi`
+- **Paper:** Cont, R., Kukanov, A. & Stoikov, S. (2014). The Price Impact of Order Book Events. Journal of Financial Econometrics 12(1), 47-88.
+- **Link:** https://doi.org/10.1093/jjfinec/nbt003 (arXiv:1011.6402)
+- **Claim:** Over short intervals, mid-price changes are driven by order flow imbalance at the best quotes, linearly, with a slope inversely proportional to market depth.
+- **Claimed on:** NYSE TAQ, 50 US stocks, 2010, intervals of seconds to minutes
+- **Inputs:** best bid/ask prices and sizes, every update
+- **Horizon:** seconds (contemporaneous)
+- **Formula:** `e_n = 1{Pb'>=Pb} qb' - 1{Pb'<=Pb} qb - 1{Pa'<=Pa} qa' + 1{Pa'>=Pa} qa; d(mid) = beta x sum e + noise, beta ~ 1/depth`
+- **Assumptions:** contemporaneous, not predictive; depth roughly constant over the interval.
+- **Impl:** `prototyped: book/depth_study.hpp (OFI level 1 and 5, imbalance, microprice; contemporaneous and out-of-sample predictive fits), app/depth_study_main.cpp; recordings by altair_fyers_ticker --depth --jsonl --stamp (ops/record_depth.ps1)`
+- **Status:** `unverified`
+- **Edge (bps, post-cost):** —
+- **On our data:** No NSE depth recorded yet; the study is tested on synthetic books (a planted lead is found out of sample, R2 0.28; a null market gives R2 0.002). A prediction under half the spread is not tradable by crossing it.
+
+---
+
 ## Option selling
 
 ### `black-1976-futures-options`

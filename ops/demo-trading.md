@@ -13,6 +13,7 @@ desktop's **Strategies → Demo Trading** page runs them and shows the results.
 | Real option prices | `app/bhavcopy.hpp` | `ops/fetch_bhavcopy.ps1` | `data/bhavcopy/<YYYY>/*.csv` (git-ignored) |
 | Cross-sectional stat-arb | `strategies/residual_reversion.hpp` | `altair_resid_reversion` | `data/verified/resid_reversion/{trades,daily}_<variant>.csv`, `summary.csv`, `meta.csv` |
 | Stock universe | `config/universe_nifty50.csv` | `ops/fetch_universe.ps1` | `data/pairs/<symbol>/1d/fyers.csv` (git-ignored, shared with the pairs) |
+| Order-book study | `book/depth_study.hpp` | `altair_depth_study` (record with `ops/record_depth.ps1`) | `data/verified/depth_study/summary.csv`; recordings in `data/ticks/` (git-ignored) |
 
 Every CLI here needs tomlplusplus, which provides the charges schedule.
 Without it they are not built. On the desktop page, pick one in the Run
@@ -272,6 +273,49 @@ the result. Historical membership is not transcribed.
 powershell -ExecutionPolicy Bypass -File ops\fetch_universe.ps1 -Go     # 50 stocks, daily, from 2015
 build\net\app\altair_resid_reversion.exe --unverified-costs
 ```
+
+## Order-book research (the HFT question)
+
+Market makers and HFT desks earn from the spread, and from signals that look
+seconds ahead in the order book. The best documented of these is **order flow
+imbalance** (Cont, Kukanov & Stoikov 2014): bids added or lifted, against asks
+added or hit. Over short intervals the mid moves linearly with it, with a
+slope of about 1 / depth.
+
+That is a *contemporaneous* fit. Whether the last few seconds' flow predicts
+the *next* few is a much weaker claim, and it is the one a trader needs.
+
+`book/depth_study.hpp` answers both from recorded FYERS depth, per symbol, on
+a 1-second grid:
+- the paper's contemporaneous regression, as a check on the data;
+- a predictive regression using OFI (level 1 and 5 levels), level-1 imbalance
+  and the microprice offset over the last 5 seconds. It is fitted on the
+  first half of the recording and scored on the second: out-of-sample R², how
+  often the sign is right, and how often the predicted move even exceeds half
+  the spread.
+
+The tests check it both ways. A synthetic market where past flow moves the
+mid scores R² 0.28 out of sample, with the sign right 67 % of the time. A
+market where it doesn't scores R² 0.002, with the sign right 50 % of the time.
+
+**There is no depth history in the dataset, so it has to be recorded.**
+`altair_fyers_ticker` already subscribes to 5-level depth. `--stamp` (new)
+adds the receive time that depth messages lack:
+
+```powershell
+.\build\net\app\altair_fyers_login.exe
+powershell -ExecutionPolicy Bypass -File ops\record_depth.ps1 -Go     # before 09:15; listens to 15:30
+build\net\app\altair_depth_study.exe --in data\ticks                # after a week of sessions
+```
+
+**What to expect, honestly.**
+- In the literature, the contemporaneous R² is high (about 65 % for US
+  stocks), and predictive power at seconds ahead is small.
+- A predicted move smaller than half the spread cannot be traded by crossing
+  the spread. It can only inform passive quoting, which needs queue position
+  and colocated latency that a FYERS retail connection does not have.
+- The study reports this as its verdict. It is research into what the book
+  says, not a strategy.
 
 ## Pairs hedged with futures
 
