@@ -40,6 +40,7 @@
 #include <models/band_curriculum.hpp>
 #include <risk/charges_toml.hpp>
 #include <risk/cost.hpp>
+#include <app/spec_today.hpp>
 #include <strategies/band_option_fade.hpp>
 
 #include <algorithm>
@@ -104,60 +105,6 @@ std::string fixed(double v, int d) {
 std::string iso_day(std::int64_t day) { return da::format_audit_time(day * 86'400, true).substr(0, 10); }
 std::string hhmm(std::int64_t t) { return da::format_audit_time(t, false).substr(11, 5); }
 
-/// Today's verified lot size from config/lot_size_history.csv: the OPEN row
-/// whose `verified` column carries a verification date ("NO" otherwise).
-/// History is not transcribed there, and is not guessed here.
-std::optional<double> lot_size_today(const fs::path& file, const std::string& symbol) {
-    std::ifstream in(file);
-    std::string line;
-    while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') { continue; }
-        std::vector<std::string> f;
-        std::stringstream ss(line);
-        for (std::string c; std::getline(ss, c, ',');) { f.push_back(c); }
-        if (f.size() >= 7 && f[0] == symbol && f[2] == "OPEN" && f[6].size() == 10 && f[6][4] == '-') {
-            double v = 0.0;
-            if (parse_double(f[3], v) && v > 0.0) { return v; }
-        }
-    }
-    return std::nullopt;
-}
-
-/// Today's strike step from the instrument master: the commonest gap between
-/// adjacent strikes of the nearest expiry's options on `name`.
-std::optional<double> strike_step_today(const fs::path& master, const std::string& name) {
-    std::ifstream in(master);
-    std::string line;
-    std::map<std::string, std::set<double>> by_expiry;
-    std::getline(in, line);   // header
-    while (std::getline(in, line)) {
-        // instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange
-        std::vector<std::string> f;
-        std::string cur;
-        bool quoted = false;
-        for (const char c : line) {
-            if (c == '"') { quoted = !quoted; continue; }
-            if (c == ',' && !quoted) { f.push_back(cur); cur.clear(); continue; }
-            cur += c;
-        }
-        f.push_back(cur);
-        if (f.size() < 12 || f[3] != name || f[10] != "NFO-OPT") { continue; }
-        double k = 0.0;
-        if (parse_double(f[6], k) && k > 0.0) { by_expiry[f[5]].insert(k); }
-    }
-    if (by_expiry.empty()) { return std::nullopt; }
-    const auto& strikes = by_expiry.begin()->second;   // ISO dates sort: the nearest first
-    std::map<double, int> gaps;
-    double prev = -1.0;
-    for (const double k : strikes) {
-        if (prev > 0.0) { ++gaps[std::round((k - prev) * 100.0) / 100.0]; }
-        prev = k;
-    }
-    double best = 0.0;
-    int count = 0;
-    for (const auto& [g, c] : gaps) { if (c > count) { best = g; count = c; } }
-    return best > 0.0 ? std::optional<double>{best} : std::nullopt;
-}
 
 struct Costs {
     bool priced = false;
@@ -438,8 +385,8 @@ int main(int argc, char** argv) {
     // Prepare every instrument once: band forecasts and the sessions they trade.
     std::vector<Prepared> prep;
     for (const Inst& in : insts) {
-        const auto lot = lot_size_today("config/lot_size_history.csv", in.name);
-        const auto step = strike_step_today("data/instruments.csv", in.name);
+        const auto lot = altair::spec_today::lot_size("config/lot_size_history.csv", in.name);
+        const auto step = altair::spec_today::strike_step("data/instruments.csv", in.name);
         if (!lot || !step) {
             std::printf("  %s: no verified lot size or strike step (config/lot_size_history.csv, data/instruments.csv) -- not run\n",
                         in.name.c_str());

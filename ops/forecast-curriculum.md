@@ -171,17 +171,22 @@ The **Tradability** sheet gives p* at two costs:
 - the history's average cost (mostly 2 bp STT);
 - today's cost (5 bp STT since 2026-04-01, plus 1.3 bp).
 
-It then sets the best models against p*. At 6.3 bp a round trip:
+It then sets the best models against p*. Measured on the 2026-10-01 run, at
+today's cost (6.3 bp a round trip):
 
-| Horizon | Break-even accuracy |
-|---|---|
-| 1m | about 99 % (a 1-minute move averages 3 bp) |
-| 5m | 95 % |
-| 15m | 75 % |
-| hourly | 63 % |
-| 09:20→close | 54–56 % |
-| 10:15→close | 55–57 % |
-| daily | 53.5–54.5 % |
+| Horizon | Mean move NIFTY / BANKNIFTY | Break-even NIFTY / BANKNIFTY | Best model accuracy |
+|---|---|---|---|
+| 1m | 2.4 / 3.4 bp | 180 % / 142 %: impossible | 51–54 % |
+| 5m | 5.5 / 7.5 bp | 108 % / 92 % | 52–57 % |
+| 15m | 9.2 / 12.6 bp | 84 % / 75 % | 52–53 % |
+| hourly | 17 / 23 bp | 68 % / 64 % | 51–55 % |
+| 09:20→close | 55 / 74 bp | 55.8 % / 54.2 % | 53–55 % |
+| 10:15→close | 48 / 64 bp | 56.6 % / 54.9 % | 53–56 % |
+| daily | 69 / 91 bp | 54.5 % / 53.5 % | 53–55.5 % |
+
+Only the daily and horizon tracks have break-evens a model reaches, and
+only on the confident slices: Consensus 75 % is right 55.5 % of the time on
+24 % of NIFTY days and 54.0 % on 35 % of BANKNIFTY days.
 
 ## No look-ahead
 
@@ -348,9 +353,41 @@ the time of day. That is what an option seller needs.
   - FUT: 55.3 → 54.8 %.
   - None of these moves is significant.
 
+### Other models as inputs (second pass, 2026-10-01)
+
+The full two-pass run took 100 minutes on 4 jobs and refused nothing for
+look-ahead. It covered 21 first-pass tracks, 4 horizon tracks and 34
+second-pass tracks: 1,428 model comparisons on the same rows, and 2,268
+model-track tests in all.
+
+- **Feeding models each other's forecasts does not reliably help.**
+  - The mean change in accuracy across a track's models is −1.4 to +1.1
+    points, mostly within ±0.5.
+  - McNemar on the same rows: 60 models nominally better, 32 nominally worse,
+    of 934 with a difference.
+  - Bonferroni-corrected, one change is significant, and it is for the
+    worse (DQN on NIFTY daily + models).
+- **The most consistent small gain is NIFTY daily + all:** 31 models better
+  and 8 worse, a mean of +0.7 points. None is significant on its own.
+- **The best net result at today's cost** is NIFTY 09:20→close + vol,
+  ARMA(1,1): +11.4 bp a trade, t = 2.45 over 546 trades. With 2,268 tests,
+  significance needs t ≈ 4, so it is a candidate for a forward test, not a
+  finding.
+- **Bands:** the best 80 % band (Heston variance drift) hits 79.1 % at 196 bp,
+  a 20 % better score than the constant band. The bands stay the forecast
+  that works.
+
+How a calibrated band does, and does not, turn into option P&L is
+measured in [ops/demo-trading.md](demo-trading.md). Selling the touch of a
+band edge loses. Selling both edges at 09:20 earns only on the variance
+clock, and mostly from the volatility premium.
+
 ### What would improve it next
 - **Broker-verified data:** run `ops\broker_audit.ps1`, then repeat the run.
 - **Inputs beyond price:** option-chain OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close.
 - **Order-book data:** the Atlas's microstructure rows (order-book imbalance, microprice, VPIN, Kyle's lambda) need recorded depth and trades, and they are the Atlas's likeliest source of short-horizon direction edge.
 - **A forward test** of the daily Consensus 75 % filter from October 2026, on data this run has never seen.
-- **Use the bands where they bite:** strike selection and position sizing for option selling, where a calibrated 80 % range is directly the product.
+- **Sell volatility the way a desk does:** set a realised-volatility
+  forecast against the option's implied vol and hedge the delta
+  (`strategies/vol_premium.hpp`), on real option prices rather than VIX-priced
+  ones.

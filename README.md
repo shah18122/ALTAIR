@@ -173,6 +173,13 @@ Demo Trading** page runs both and shows trades, per-model totals and equity.
     BANKNIFTY a trade with the stop; t = 3.4 and 7.1). It does so only since
     2021, and mostly from the volatility premium rather than the forecast.
   - It needs real intraday option prices before it means anything.
+- `altair_vol_premium`: the options-desk trade. Sell the at-the-money monthly
+  straddle when implied vol beats a HAR realised-vol forecast, delta hedged
+  with futures.
+  - On VIX-priced (synthetic) options it earns in every year to 2025 (t ≈ 5),
+    but the forecast adds nothing over selling every month.
+  - Real prices come from NSE bhavcopy (`ops/fetch_bhavcopy.ps1`,
+    `--source bhavcopy`).
 - `altair_pairs_futures`: walk-forward Engle-Granger pairs, long one future
   and short the other in whole lots, over `config/pairs.csv` (NIFTY-BANKNIFTY,
   CIPLA-SUNPHARMA, HDFCBANK-ICICIBANK and more). Stock legs come from FYERS via

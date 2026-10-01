@@ -683,6 +683,28 @@ Results (21 tracks, 42 direction models, 882 tests, 0 look-ahead refusals, 60 mi
   every state's density (a 5m overnight gap in the full window). Emissions
   are now scaled per step in log space, and a dead restart counts as failed.
 
+19. OTHER MODELS AS INPUTS, HORIZON TRACKS, TRADABILITY -- 2026-10-01
+------------------------------------------------------------------------------
+Owner's request: feed models each other's forecasts, the way the VIX
+forecast fed the index tracks, and find what is tradable.
+  models/curriculum_feeds.hpp (new)  first-pass out-of-sample forecasts as
+                          second-pass inputs (vol bands, regime, other
+                          timeframes, the other index, INDIA VIX, every
+                          model); as-of join, no look-ahead (test)
+  app/forecast_tracks.hpp  horizon tracks: NIFTY/BANKNIFTY 09:20 and 10:15
+                          to the close
+  Tradability sheet        break-even accuracy p* = 1/2 + cost/(2 E|r|)
+Results (59 tracks, 2,268 model-track tests, 100 min, 0 look-ahead refusals):
+  - Break-even at today's cost: 1m 142-180 % (impossible), 5m 92-108 %,
+    15m 75-84 %, hourly 64-68 %, daily 53.5-54.5 %, horizons 54-57 %.
+    Models reach 51-57 %.
+  - Feeds do not reliably help: mean change -1.4 to +1.1 points a track;
+    60 better / 32 worse nominally of 934. The one Bonferroni-significant
+    change is for the worse.
+  - Best net at today's cost: NIFTY 09:20-close + vol, ARMA(1,1), +11.4 bp
+    a trade, t = 2.45 on 546 trades. Not significant over 2,268 tests: a
+    forward-test candidate.
+
 20. DEMO TRADING, FUTURES PAIRS, RESEARCH CARDS -- 2026-10-01
 ------------------------------------------------------------------------------
 Owner's request: test "BANKNIFTY/NIFTY never exceeds 2.6"; build pair trading
@@ -745,3 +767,22 @@ Results (ops/demo-trading.md):
     On the variance clock it is t = 3.4 NIFTY and t = 7.1 BANKNIFTY, positive
     only since 2021, and mostly the volatility premium: a constant-width band
     gets most of it. Unproven until real intraday option prices agree.
+  Desk-style follow-up: the volatility premium, delta hedged.
+  - analytics/har_rv.hpp: session realised variance (5-minute bars plus the
+    overnight gap) and the HAR forecast (Corsi 2009), fitted in logs,
+    walk-forward, with no look-ahead (test_har_rv).
+  - strategies/vol_premium.hpp: sell the ATM monthly straddle when implied
+    vol beats the forecast by N vol points. Hedge with whole futures lots
+    reset at every close; buy back one session before expiry (test_vol_premium).
+  - app/bhavcopy.hpp: NSE F&O bhavcopy, legacy and UDiFF formats, columns by
+    name, monthly expiries, traded strikes only (test_bhavcopy).
+    ops/fetch_bhavcopy.ps1 fetches the files into data/bhavcopy/ (git-ignored).
+  - altair_vol_premium runs the variants always, har-0/2/4, stop2x, unhedged
+    and vixveto. The desktop Demo Trading page gains "Run vol premium" and
+    two tabs.
+  - Synthetic result: VIX was above the next 21 sessions' realised vol on
+    85.7 % of days, by 2.4 pts. The hedged straddle nets about +Rs 6,300 a
+    trade on NIFTY (t = 5.6) and +Rs 10,400 on BANKNIFTY (t = 5.3). The HAR
+    filter adds nothing over selling every month; the hedge halves the risk.
+    Real ATM IV is below VIX, so this overstates the premium: unproven until
+    bhavcopy prices agree.

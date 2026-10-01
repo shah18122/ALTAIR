@@ -9,6 +9,8 @@ desktop's **Strategies → Demo Trading** page runs them and shows the results.
 | Band models selling options, 1 lot | `strategies/band_option_fade.hpp` | `altair_band_option_demo` | `data/verified/band_option_demo/{trades_<rule>,summary,meta}.csv` |
 | Pairs hedged with futures | `strategies/pairs_futures.hpp` | `altair_pairs_futures` | `data/verified/pairs_futures/{trades,windows,summary,ratio}.csv` |
 | Stock legs for the pairs | `ops/fetch_pairs.ps1` | `altair_fyers_history` | `data/pairs/<name>/1d/fyers.csv` (git-ignored: broker data) |
+| Volatility premium, delta hedged | `strategies/vol_premium.hpp`, `analytics/har_rv.hpp` | `altair_vol_premium` | `data/verified/vol_premium/{trades_<variant>,summary,signals,forecast_eval,meta}.csv` |
+| Real option prices | `app/bhavcopy.hpp` | `ops/fetch_bhavcopy.ps1` | `data/bhavcopy/<YYYY>/*.csv` (git-ignored) |
 
 Both CLIs need tomlplusplus, which provides the charges schedule. Without it
 they are not built.
@@ -146,6 +148,84 @@ Output in `data/verified/band_option_demo/`:
   decomposition columns.
 - `summary.csv`: every rule × instrument × model.
 - `meta.csv`: every assumption, including the clock.
+
+## Volatility premium, delta hedged
+
+This is how an options desk sells volatility: on its size, not on direction.
+`strategies/vol_premium.hpp` works through each close:
+
+1. Price the at-the-money straddle of the first monthly expiry at least 10
+   sessions away.
+2. Solve its implied vol.
+3. Compare that with a forecast of realised vol over the same sessions:
+   HAR (Corsi 2009, `analytics/har_rv.hpp`), fitted in logs on 5-minute
+   realised variance plus the overnight gap, and refitted every day on only
+   what was known that day.
+4. When implied vol is rich, sell one lot, hedge its delta with whole futures
+   lots reset at every close, and buy it back one session before expiry.
+
+The variants run side by side, so the forecast's worth can be read against a
+control:
+
+| Variant | What it does |
+|---|---|
+| `always` | Sell every month, whatever the forecast says (the control). |
+| `har-0`, `har-2`, `har-4` | Sell when implied vol beats the HAR forecast by 0, 2 or 4 vol points. |
+| `har-2-stop2x` | `har-2`, bought back once the straddle costs 2× the credit. |
+| `har-2-unhedged` | `har-2` without the futures hedge. |
+| `har-2-vixveto` | `har-2`, skipping days the `Hedge` model calls INDIA VIX up. Needs `--vix-log`. |
+
+**Synthetic prices, 2015–2026.** Black-76 at INDIA VIX, flat across strikes.
+BANKNIFTY uses VIX × its 20-day realised-vol ratio, on NIFTY's expiry
+calendar. One lot, slippage 1 point a fill, UNVERIFIED expenses:
+
+| Variant | NIFTY net/trade | t | BANKNIFTY net/trade | t |
+|---|---|---|---|---|
+| always | +₹6,295 | 5.6 | +₹10,366 | 5.3 |
+| har-0 | +₹6,597 | 6.1 | +₹10,534 | 5.4 |
+| har-2 | +₹5,828 | 4.5 | +₹11,022 | 5.2 |
+| har-4 | +₹7,539 | 3.7 | +₹11,879 | 4.5 |
+| har-2-stop2x | +₹5,770 | 3.5 | +₹9,761 | 4.7 |
+| har-2-unhedged | +₹6,945 | 2.6 | +₹7,333 | 1.8 |
+| har-2-vixveto | +₹6,716 | 4.7 | +₹10,926 | 5.1 |
+
+What the numbers say:
+
+- **The premium is there.** INDIA VIX was above NIFTY's next-21-session
+  realised vol on 85.7 % of days, by 2.4 vol points on average.
+- **The forecast adds nothing.** Selling every month does as well as waiting
+  for HAR's signal.
+  - HAR does forecast realised vol better than its trailing value. Over 21
+    sessions its RMSE is 7.2 vol points against 8.1 (NIFTY), and 9.0 against
+    9.8 (BANKNIFTY).
+  - But the premium is present almost every month, so there is little to
+    filter.
+  - The VIX-direction veto and the stop change little.
+- **The hedge is the risk control.** Unhedged, the same trade's t-statistic
+  roughly halves.
+  - In March 2020, the straddle sold on 2020-02-27 at 17.6 % IV lost ₹191,655
+    on the options as realised vol reached 83 %.
+  - The futures hedge earned back ₹176,686, leaving −₹14,969 for the month.
+- **The years.** Every year from 2015 to 2025 is positive on NIFTY (`always`).
+  2026 so far is −₹23,000.
+
+**Why this is not yet a result.** Synthetic at-the-money options are priced
+at VIX. Real at-the-money IV usually sits below VIX, because VIX carries the
+put skew. Synthetic pricing therefore overstates the premium a straddle
+seller collects, possibly by most of the 2.4 points. The real test is the
+same engine on NSE's own closes:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops\fetch_bhavcopy.ps1 -From 2015-01-01           # dry run: lists the files
+powershell -ExecutionPolicy Bypass -File ops\fetch_bhavcopy.ps1 -From 2015-01-01 -Go       # fetch (paced; ~2,900 days)
+build\net\app\altair_vol_premium.exe --source bhavcopy --unverified-costs `
+    --vix-log data\verified\forecast_log\india_vix_daily.csv
+```
+
+`app/bhavcopy.hpp` reads both NSE formats: the legacy `fo…bhav.csv` through
+2024-07-05, and the UDiFF `BhavCopy_NSE_FO_…` files from 2024-07-08. It finds
+columns by name, keeps monthly expiries within ±20 % of the future, and
+prices only strikes that traded.
 
 ## Pairs hedged with futures
 

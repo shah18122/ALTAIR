@@ -55,7 +55,14 @@ void test_page(const QString& root) {
           "pair,ratio,days,min,min_date,max,max_date,last,last_date,p05,p50,p95,cap,days_above_cap,first_above,last_above\n"
           "NIFTY-BANKNIFTY,BANKNIFTY/NIFTY,10,0.6,2000-01-01,2.66,2019-07-05,2.40,2026-09-24,0.9,2.0,2.5,2.600,91,2019-03-26,2020-02-28\n");
 
+    const QString v = root + QStringLiteral("/data/verified/vol_premium/");
+    write(v + "summary.csv", "variant,instrument,trades,net_pnl\nalways,NIFTY,2,100\nhar-2,NIFTY,1,80\n");
+    write(v + "trades_always.csv", "instrument,variant,entry_date,net_pnl\nNIFTY,always,2024-01-02,60\nNIFTY,always,2024-02-01,40\n");
+    write(v + "trades_har-2.csv", "instrument,variant,entry_date,net_pnl\nNIFTY,har-2,2024-02-01,80\n");
+    write(v + "trades_aa_odd.csv", "something,else\n1,2\n");
+
     DemoTradingPage page(root);
+    check(page.vol_premium_trades() == 3, "vol premium: every variant's trades in one table; an unknown layout is left out");
     check(page.banner_text().contains(QStringLiteral("UNVERIFIED")) && page.banner_text().contains(QStringLiteral("VARIANCE")),
           "the banner carries the UNVERIFIED stamp and the clock the premiums ran on");
     check(page.rule_filter()->count() == 2 && page.rule_filter()->currentText() == QStringLiteral("touch"),

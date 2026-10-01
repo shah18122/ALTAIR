@@ -240,6 +240,20 @@ Expense figures quoted from the demos are UNVERIFIED until config/charges.toml i
 - **Edge (bps, post-cost):** —
 - **On our data:** In the fade demo the spread between the band models is small next to the loss every one of them makes.
 
+### `corsi-2009-har-rv`
+- **Paper:** Corsi, F. (2009). A Simple Approximate Long-Memory Model of Realized Volatility. Journal of Financial Econometrics 7(2), 174-196.
+- **Link:** https://doi.org/10.1093/jjfinec/nbp001 (SSRN 1365738)
+- **Claim:** Realised volatility is forecast well by a regression on its own last day, last week and last month (HAR): three horizons of traders, long memory without a long-memory model.
+- **Claimed on:** USD/CHF, S&P 500 and T-bond futures, intraday, 1990s-2000s
+- **Inputs:** intraday returns -> daily realised variance
+- **Horizon:** 1 day to 1 month
+- **Formula:** `RV(t+1..t+h) = b0 + bd RV_d + bw RV_w + bm RV_m (fitted here in logs, lognormal mean)`
+- **Assumptions:** variance components are stable; jumps not separated.
+- **Impl:** `prototyped: analytics/har_rv.hpp (walk-forward, no look-ahead; test_har_rv)`
+- **Status:** `unverified`
+- **Edge (bps, post-cost):** —
+- **On our data:** 21-session NIFTY realised vol: HAR RMSE 7.2 vol points against 8.1 for the trailing 22-day value; BANKNIFTY 9.0 against 9.8. As an entry filter for the short straddle it adds nothing over selling every month.
+
 ### `andersen-bollerslev-1997-intraday`
 - **Paper:** Andersen, T. G. & Bollerslev, T. (1997). Intraday Periodicity and Volatility Persistence in Financial Markets. Journal of Empirical Finance 4(2-3), 115-158.
 - **Link:** https://doi.org/10.1016/S0927-5398(97)00004-2
@@ -309,10 +323,10 @@ Expense figures quoted from the demos are UNVERIFIED until config/charges.toml i
 - **Horizon:** 30 days
 - **Formula:** `VRP = RV - SW (negative on average): sellers of variance earn it`
 - **Assumptions:** liquid strikes across the smile; the premium pays for crash risk.
-- **Impl:** `none (no NSE option-chain history in the dataset)`
+- **Impl:** `prototyped: strategies/vol_premium.hpp, app/vol_premium_main.cpp (synthetic VIX prices or NSE bhavcopy via app/bhavcopy.hpp)`
 - **Status:** `unverified`
 - **Edge (bps, post-cost):** —
-- **On our data:** Not testable here: the dataset has no option-chain history, and synthetic premiums at VIX cannot measure it. Needs NSE bhavcopy option data.
+- **On our data:** INDIA VIX was above NIFTY's next-21-session realised vol on 85.7 % of days, by 2.4 vol points on average (2015-2026). Selling the delta-hedged ATM monthly straddle every month at VIX-priced (SYNTHETIC) premiums nets Rs +6,295 a trade on NIFTY (t = 5.6, 136 trades) and Rs +10,366 on BANKNIFTY, UNVERIFIED expenses. Real ATM IV sits below VIX (VIX carries the put skew), so this overstates the premium: unproven until bhavcopy prices agree.
 
 ### `bakshi-kapadia-2003-delta-hedged`
 - **Paper:** Bakshi, G. & Kapadia, N. (2003). Delta-Hedged Gains and the Negative Market Volatility Risk Premium. Review of Financial Studies 16(2), 527-566.
@@ -323,10 +337,10 @@ Expense figures quoted from the demos are UNVERIFIED until config/charges.toml i
 - **Horizon:** to expiry
 - **Formula:** `gain = C_T - C_0 - sum delta_t (S_{t+1} - S_t) - financing`
 - **Assumptions:** frequent delta hedging.
-- **Impl:** `none: the band fade is NOT delta-hedged; it is a directional short option`
+- **Impl:** `prototyped: strategies/vol_premium.hpp (short straddle, futures delta hedge in whole lots, reset every close)`
 - **Status:** `unverified`
 - **Edge (bps, post-cost):** —
-- **On our data:** An unhedged one-day short option keeps the delta: it loses when the underlying keeps moving, which is what band touches do (see gao-2018).
+- **On our data:** The band fade is NOT delta-hedged and loses when the underlying keeps moving (see gao-2018). The hedged straddle in strategies/vol_premium.hpp roughly doubles the t-statistic of the same trade unhedged (NIFTY 4.5 vs 2.6, BANKNIFTY 5.2 vs 1.8, SYNTHETIC prices); in March 2020 the hedge earned back Rs 176,686 of a Rs 191,655 option loss.
 
 ### `coval-shumway-2001-option-returns`
 - **Paper:** Coval, J. D. & Shumway, T. (2001). Expected Option Returns. Journal of Finance 56(3), 983-1009.

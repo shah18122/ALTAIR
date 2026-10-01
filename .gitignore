@@ -131,6 +131,8 @@ data/verified/
 # Pair-trading closes fetched from FYERS (ops/fetch_pairs.ps1): broker data,
 # regenerable, not ours to publish.
 data/pairs/
+# NSE F&O bhavcopy files (ops/fetch_bhavcopy.ps1): bulky, fetched per machine.
+data/bhavcopy/
 
 # P36 hygiene. OPERATIONAL STATE, NOT SOURCE -- and git must not be able to
 # DELIVER either of these.

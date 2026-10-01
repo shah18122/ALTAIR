@@ -310,12 +310,23 @@ if(TARGET altair_charges_toml)
     add_executable(altair_pairs_futures pairs_futures_main.cpp)
     target_link_libraries(altair_pairs_futures PRIVATE altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_pairs_futures PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+    # The variance premium, sold delta hedged: HAR forecast against implied
+    # vol, on VIX-priced options or NSE bhavcopy closes.
+    add_executable(altair_vol_premium vol_premium_main.cpp)
+    target_link_libraries(altair_vol_premium PRIVATE altair_analytics altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_vol_premium PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 endif()
 if(ALTAIR_BUILD_TESTS)
     add_executable(altair_forecast_tracks_test tests/test_forecast_tracks.cpp)
     target_link_libraries(altair_forecast_tracks_test PRIVATE altair_models altair_flags)
     target_include_directories(altair_forecast_tracks_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME forecast_tracks COMMAND altair_forecast_tracks_test)
+    # NSE F&O bhavcopy, both formats, from fixtures written to a temp dir.
+    add_executable(altair_bhavcopy_test tests/test_bhavcopy.cpp)
+    target_link_libraries(altair_bhavcopy_test PRIVATE altair_flags)
+    target_include_directories(altair_bhavcopy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME bhavcopy COMMAND altair_bhavcopy_test)
     # End to end on the real dataset/: one daily track (INDIA VIX), every
     # direction and band model, zero look-ahead refusals or the exit code says
     # so. ~30 s optimised, several minutes under the Debug ASan build. Writes
