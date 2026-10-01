@@ -900,7 +900,7 @@ int main(int argc, char** argv) {
         const auto* pair = t.pair_dir.empty() ? nullptr : bars(t.pair_dir, t.tf);
         if (t.decide_minute > 0) {
             r.track = ft::build_session({t.name, t.instrument, t.decide_minute, own, vix, other_cost, pair, t.pair_name}, r.info);
-            r.log = true;
+            r.log = log;
             return;
         }
         if (t.tf == da::kDailyTf) {
@@ -1072,7 +1072,7 @@ int main(int argc, char** argv) {
                 r.base = q.base;
                 r.variant = q.variant;
                 r.info = b.info;
-                r.log = b.track.rows() < 20000;
+                r.log = log && b.track.rows() < 20000;
                 altair::FeedAttachInfo fi;
                 const std::string name = q.base + " + " + q.variant;
                 auto tr = altair::curriculum_attach_feeds(b.track, q.feeds, name, b.track.t[b.run.first_row], fi);
