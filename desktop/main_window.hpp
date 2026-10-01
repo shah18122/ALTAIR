@@ -62,6 +62,7 @@
 #include "feed_status.hpp"
 #include "fyers_link.hpp"
 #include "broker_page.hpp"
+#include "demo_trading_page.hpp"
 #include "arbitrage_workspace.hpp"
 #include "panels.hpp"
 #include "filter.hpp"
@@ -1497,6 +1498,11 @@ private:
             if (broker_page_ != nullptr) broker_page_->refresh();
         });
         pages_->addWidget(broker_page_);
+
+        // Paper trades from the band-fade option demo and the futures pairs.
+        // It runs the two research CLIs and reads what they wrote; it never
+        // reaches a broker.
+        pages_->addWidget(new DemoTradingPage);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

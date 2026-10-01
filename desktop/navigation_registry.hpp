@@ -15,7 +15,7 @@ inline constexpr std::array<NavigationGroup, 7> kNavigationGroups{{
     {"accounts", "Execution & Accounts", "ACC"},
     {"system", "System & Audit", "SYS"},
 }};
-inline constexpr std::array<NavigationPage, 35> kNavigationPages{{
+inline constexpr std::array<NavigationPage, 36> kNavigationPages{{
     {"market.grid", "Live Grid", 0},
     {"market.chart", "Chart", 0},
     {"market.terminal", "Terminal", 0},
@@ -51,10 +51,11 @@ inline constexpr std::array<NavigationPage, 35> kNavigationPages{{
     {"models.atlas", "Model Atlas", 3},
     {"accounts.fyers", "FYERS Primary", 5},
     {"accounts.brokers", "Brokers", 5},
+    {"strategies.demo-trading", "Demo Trading", 2},
 }};
 // Traversal order is NOT a legacy page index.
-inline constexpr std::array<int, 30> kNavigationOrder{{
-    2, 24, 21, 13, 7, 19, 8, 22, 31, 26, 20, 32, 3, 18, 17, 16, 29, 10, 30, 27, 9, 15, 14, 25, 6, 34, 12, 4, 23, 11
+inline constexpr std::array<int, 31> kNavigationOrder{{
+    2, 24, 21, 13, 7, 19, 8, 22, 31, 26, 20, 35, 32, 3, 18, 17, 16, 29, 10, 30, 27, 9, 15, 14, 25, 6, 34, 12, 4, 23, 11
 }};
 /// Resolve old routes without renumbering model/page-stack references.
 [[nodiscard]] constexpr int nav_destination(int index) noexcept {

@@ -158,6 +158,27 @@ cleaning) and a per-forecast log for the hourly and daily tracks. See
 [ops/forecast-curriculum.md](ops/forecast-curriculum.md) for the method and
 the results.
 
+## Demo trading: band-fade short options and futures pairs
+
+Paper trades only, never sent to a broker; the desktop's **Strategies →
+Demo Trading** page runs both and shows trades, per-model totals and equity.
+
+- `altair_band_option_demo`: when the day first touches a band model's
+  09:20 edge, sell one lot of the option at the first strike past it, then
+  buy it back at 15:20. Premiums are synthetic (Black-76 at INDIA VIX).
+  Every band model loses before expenses. Only 43–45 % of touches close back
+  inside the edge, so a touch is a breakout more often than a reversal.
+- `altair_pairs_futures`: walk-forward Engle-Granger pairs, long one future
+  and short the other in whole lots, over `config/pairs.csv` (NIFTY-BANKNIFTY,
+  CIPLA-SUNPHARMA, HDFCBANK-ICICIBANK and more). Stock legs come from FYERS via
+  `ops/fetch_pairs.ps1`. The BANKNIFTY/NIFTY ratio passed 2.6 on 91 days in
+  2019-20 (max 2.661).
+
+Expenses are refused while `config/charges.toml` is unverified. Pass
+`--unverified-costs` to price them with an UNVERIFIED stamp. See
+[ops/demo-trading.md](ops/demo-trading.md). The papers behind both are
+feature cards in [research/papers/index.md](research/papers/index.md).
+
 ## CI
 
 | Workflow | Runs | What it proves |

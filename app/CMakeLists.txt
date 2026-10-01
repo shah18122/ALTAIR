@@ -298,6 +298,19 @@ endif()
 add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
 target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
 target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+# The band-fade short-option demo: the range band's forecast, one lot, priced
+# synthetically, costed through risk/cost.hpp (refused while unverified).
+if(TARGET altair_charges_toml)
+    add_executable(altair_band_option_demo band_option_demo_main.cpp)
+    target_link_libraries(altair_band_option_demo PRIVATE altair_models altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_band_option_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+    # Pairs hedged with futures, walked forward over config/pairs.csv.
+    add_executable(altair_pairs_futures pairs_futures_main.cpp)
+    target_link_libraries(altair_pairs_futures PRIVATE altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_pairs_futures PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+endif()
 if(ALTAIR_BUILD_TESTS)
     add_executable(altair_forecast_tracks_test tests/test_forecast_tracks.cpp)
     target_link_libraries(altair_forecast_tracks_test PRIVATE altair_models altair_flags)

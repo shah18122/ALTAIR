@@ -128,6 +128,9 @@ data/live_forecast_scratch/
 # regenerable; broker data is not ours to publish.
 data/broker_audit/
 data/verified/
+# Pair-trading closes fetched from FYERS (ops/fetch_pairs.ps1): broker data,
+# regenerable, not ours to publish.
+data/pairs/
 
 # P36 hygiene. OPERATIONAL STATE, NOT SOURCE -- and git must not be able to
 # DELIVER either of these.

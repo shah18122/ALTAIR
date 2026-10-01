@@ -151,7 +151,7 @@ public:
             const auto id = nav_page_id(index);
             state_.recent.removeAll(id);
             state_.recent.prepend(id);
-            // Exactly35 registry identities; uniqueness proves the maximum size.
+            // One entry per registry identity; uniqueness proves the maximum size.
         }
         applying_ = true;
         const auto group = static_cast<std::size_t>(kNavigationPages[static_cast<std::size_t>(index)].group);
@@ -370,7 +370,7 @@ private:
     QLabel* notice_ = nullptr;
     NavigationResizeHandle* resize_handle_ = nullptr;
     std::array<QTreeWidgetItem*, 7> groups_{};
-    std::array<QTreeWidgetItem*, 35> pages_{};
+    std::array<QTreeWidgetItem*, kNavigationPages.size()> pages_{};
     std::array<QToolButton*, 7> rail_buttons_{};
 };
 } // namespace altair::ui

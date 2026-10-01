@@ -1068,9 +1068,15 @@ int main(int argc, char** argv) {
         std::vector<std::function<void(TrackResult&)>> makers;
         for (const auto& q : p2) {
             makers.push_back([&, q](TrackResult& r) {
-                const TrackResult& b = *find(q.base);
+                const TrackResult* bp = find(q.base);
                 r.base = q.base;
                 r.variant = q.variant;
+                if (bp == nullptr) {
+                    r.track.name = q.base + " + " + q.variant;
+                    r.error = "base track missing";
+                    return;
+                }
+                const TrackResult& b = *bp;
                 r.info = b.info;
                 r.log = log && b.track.rows() < 20000;
                 altair::FeedAttachInfo fi;
