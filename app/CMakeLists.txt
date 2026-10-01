@@ -316,6 +316,11 @@ if(TARGET altair_charges_toml)
     add_executable(altair_vol_premium vol_premium_main.cpp)
     target_link_libraries(altair_vol_premium PRIVATE altair_analytics altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_vol_premium PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+    # Cross-sectional residual reversion over config/universe_nifty50.csv.
+    add_executable(altair_resid_reversion resid_reversion_main.cpp)
+    target_link_libraries(altair_resid_reversion PRIVATE altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_resid_reversion PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 endif()
 if(ALTAIR_BUILD_TESTS)
     add_executable(altair_forecast_tracks_test tests/test_forecast_tracks.cpp)

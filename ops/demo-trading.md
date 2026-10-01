@@ -11,9 +11,12 @@ desktop's **Strategies → Demo Trading** page runs them and shows the results.
 | Stock legs for the pairs | `ops/fetch_pairs.ps1` | `altair_fyers_history` | `data/pairs/<name>/1d/fyers.csv` (git-ignored: broker data) |
 | Volatility premium, delta hedged | `strategies/vol_premium.hpp`, `analytics/har_rv.hpp` | `altair_vol_premium` | `data/verified/vol_premium/{trades_<variant>,summary,signals,forecast_eval,meta}.csv` |
 | Real option prices | `app/bhavcopy.hpp` | `ops/fetch_bhavcopy.ps1` | `data/bhavcopy/<YYYY>/*.csv` (git-ignored) |
+| Cross-sectional stat-arb | `strategies/residual_reversion.hpp` | `altair_resid_reversion` | `data/verified/resid_reversion/{trades,daily}_<variant>.csv`, `summary.csv`, `meta.csv` |
+| Stock universe | `config/universe_nifty50.csv` | `ops/fetch_universe.ps1` | `data/pairs/<symbol>/1d/fyers.csv` (git-ignored, shared with the pairs) |
 
-Both CLIs need tomlplusplus, which provides the charges schedule. Without it
-they are not built.
+Every CLI here needs tomlplusplus, which provides the charges schedule.
+Without it they are not built. On the desktop page, pick one in the Run
+selector and press **Run**.
 
 ## Expenses are refused until the charges are verified
 
@@ -226,6 +229,49 @@ build\net\app\altair_vol_premium.exe --source bhavcopy --unverified-costs `
 2024-07-05, and the UDiFF `BhavCopy_NSE_FO_…` files from 2024-07-08. It finds
 columns by name, keeps monthly expiries within ±20 % of the future, and
 prices only strikes that traded.
+
+## Cross-sectional statistical arbitrage
+
+This is the quant-fund version of pairs trading (Avellaneda & Lee 2010). It
+trades every stock in a universe, each against the factors that move it, with
+many small hedged bets at once. `strategies/residual_reversion.hpp` works
+through each close, for every stock:
+
+1. Regress its last 60 daily returns on the market's (NIFTY), and on the
+   leave-one-out mean of its sector peers.
+2. Model the cumulative residual as an Ornstein-Uhlenbeck process. Stocks
+   whose residual reverts slower than about 30 days are not traded.
+3. Score the s-score, centred on the day's cross-section.
+4. Open a long below −1.25 and a short above +1.25. Close a long once s rises
+   above −0.5, and a short once it falls below +0.75.
+
+Each position is ₹10 lakh of stock futures against β × that in NIFTY futures
+and the sector, with the betas frozen on the day it opens. A position decided
+at close t earns from close t+1. The test changes every price after a day and
+checks that nothing up to that day moves.
+
+Two variants run: `market+sector` and `market-only`. Expenses on all three
+legs, at entry and exit, go through risk/cost.hpp.
+
+**Universe.** `config/universe_nifty50.csv` holds today's NIFTY 50 (2026-09-30)
+in 13 sectors, rebuilt from the index changes since early 2025. Check it
+against NSE's own constituent file. Backtesting today's members over a decade
+is **survivorship bias**: they are the stocks that made it, and that flatters
+the result. Historical membership is not transcribed.
+
+**Status.** The engine is tested on synthetic data:
+- Reverting residuals: 866 trades, 83 % won.
+- Random-walk residuals: no edge, −1.2 against 80.5 of absolute P&L.
+- A shared sector shock: the sector factor cuts the daily P&L swing from
+  0.130 to 0.035.
+
+**Real results need the FYERS data**, which this environment cannot reach:
+
+```powershell
+.\build\net\app\altair_fyers_login.exe
+powershell -ExecutionPolicy Bypass -File ops\fetch_universe.ps1 -Go     # 50 stocks, daily, from 2015
+build\net\app\altair_resid_reversion.exe --unverified-costs
+```
 
 ## Pairs hedged with futures
 

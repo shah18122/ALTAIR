@@ -105,10 +105,10 @@ Expense figures quoted from the demos are UNVERIFIED until config/charges.toml i
 - **Horizon:** days
 - **Formula:** `s = (X - m) / sigma_eq; open at |s| > 1.25, close at |s| < 0.5-0.75; keep only fast reversion (kappa > 252/30)`
 - **Assumptions:** factor model is stable; ETF hedges available; costs of about 10 bp round trip.
-- **Impl:** `partial: strategies/pairs_futures.hpp (entry, exit and stop z, fast-reversion filter)`
+- **Impl:** `prototyped: strategies/residual_reversion.hpp + app/resid_reversion_main.cpp (market + leave-one-out sector factor, OU s-score 1.25 / 0.5 / 0.75, kappa > 252/30); the pairs walk (strategies/pairs_futures.hpp) uses the same filter`
 - **Status:** `unverified`
 - **Edge (bps, post-cost):** —
-- **On our data:** Thresholds here are 2.0 / 0.5 / 4.0 (Gatev's 2 sd); the 1.25 s-score is not tested.
+- **On our data:** Engine validated on synthetic panels (reverting residuals pay, random-walk residuals do not, no look-ahead). The NIFTY 50 run waits for ops/fetch_universe.ps1; today's constituents backtested over the past carry survivorship bias.
 
 ### `bertram-2010-optimal-thresholds`
 - **Paper:** Bertram, W. K. (2010). Analytic Solutions for Optimal Statistical Arbitrage Trading. Physica A 389(11), 2234-2243.

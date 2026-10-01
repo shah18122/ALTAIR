@@ -786,3 +786,18 @@ Results (ops/demo-trading.md):
     filter adds nothing over selling every month; the hedge halves the risk.
     Real ATM IV is below VIX, so this overstates the premium: unproven until
     bhavcopy prices agree.
+  Cross-sectional stat-arb (Avellaneda & Lee 2010).
+  - strategies/residual_reversion.hpp: per stock and close, OLS on the market
+    and the leave-one-out sector mean. The cumulative residual's AR(1) gives
+    kappa and the s-score, centred cross-sectionally. Open at |s| 1.25;
+    positions are hedged at their entry betas. Tested: reverting residuals
+    pay, random walks do not, no look-ahead, the sector factor hedges a
+    shared shock (test_residual_reversion).
+  - config/universe_nifty50.csv: today's NIFTY 50 (verify against NSE), 13
+    sectors, sharing data/pairs/ with the pairs. ops/fetch_universe.ps1
+    fetches it from FYERS.
+  - altair_resid_reversion: market+sector and market-only variants, all legs
+    costed as futures. Real results wait for the FYERS fetch; survivorship
+    bias is stated in meta.csv.
+  - Desktop page: one Run selector (option demo / pairs / vol premium /
+    stat-arb) replaces three buttons; stat-arb tabs added.

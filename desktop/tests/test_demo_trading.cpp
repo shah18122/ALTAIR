@@ -61,7 +61,12 @@ void test_page(const QString& root) {
     write(v + "trades_har-2.csv", "instrument,variant,entry_date,net_pnl\nNIFTY,har-2,2024-02-01,80\n");
     write(v + "trades_aa_odd.csv", "something,else\n1,2\n");
 
+    const QString sa = root + QStringLiteral("/data/verified/resid_reversion/");
+    write(sa + "summary.csv", "variant,trades,net_pnl\nmarket+sector,2,10\n");
+    write(sa + "trades_market+sector.csv", "symbol,side,net_pnl\nINFY,long,5\nTCS,short,5\n");
+
     DemoTradingPage page(root);
+    check(page.stat_arb_trades() == 2, "stat-arb: the market+sector trades are shown");
     check(page.vol_premium_trades() == 3, "vol premium: every variant's trades in one table; an unknown layout is left out");
     check(page.banner_text().contains(QStringLiteral("UNVERIFIED")) && page.banner_text().contains(QStringLiteral("VARIANCE")),
           "the banner carries the UNVERIFIED stamp and the clock the premiums ran on");
@@ -90,7 +95,7 @@ void test_page(const QString& root) {
 
 void test_empty(const QString& root) {
     DemoTradingPage page(root);
-    check(page.shown_trades() == 0 && page.banner_text().contains(QStringLiteral("Run option demo")),
+    check(page.shown_trades() == 0 && page.banner_text().contains(QStringLiteral("Option demo")),
           "no output yet: says how to make it rather than showing zeros");
 }
 

@@ -180,6 +180,11 @@ Demo Trading** page runs both and shows trades, per-model totals and equity.
     but the forecast adds nothing over selling every month.
   - Real prices come from NSE bhavcopy (`ops/fetch_bhavcopy.ps1`,
     `--source bhavcopy`).
+- `altair_resid_reversion`: the quant-fund version of pairs. Each NIFTY 50
+  stock's residual against the market and its sector peers is traded on an
+  OU s-score (Avellaneda-Lee) with many small hedged positions.
+  - The stock data comes from FYERS (`ops/fetch_universe.ps1`).
+  - The universe is today's members, so results carry survivorship bias.
 - `altair_pairs_futures`: walk-forward Engle-Granger pairs, long one future
   and short the other in whole lots, over `config/pairs.csv` (NIFTY-BANKNIFTY,
   CIPLA-SUNPHARMA, HDFCBANK-ICICIBANK and more). Stock legs come from FYERS via

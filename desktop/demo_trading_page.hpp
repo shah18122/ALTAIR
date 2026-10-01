@@ -314,7 +314,8 @@ public:
             "<b>DEMO TRADING</b> &nbsp;·&nbsp; paper trades only: nothing here is sent to a broker. "
             "One lot each. Band models sell options at the edges their 09:20 forecast set, under the rule "
             "you pick, and buy them back by 15:20; pairs go long one future and short the other; the vol premium "
-            "sells the monthly straddle delta hedged when implied vol beats a HAR forecast."), this);
+            "sells the monthly straddle delta hedged when implied vol beats a HAR forecast; stat-arb trades every NIFTY 50 "
+            "stock's residual against the market and its sector."), this);
         head->setWordWrap(true);
         v->addWidget(head);
 
@@ -324,11 +325,13 @@ public:
         v->addWidget(banner_);
 
         auto* controls = new QHBoxLayout;
-        run_options_ = new QPushButton(QStringLiteral("Run option demo"), this);
-        run_pairs_ = new QPushButton(QStringLiteral("Run pairs"), this);
-        run_vrp_ = new QPushButton(QStringLiteral("Run vol premium"), this);
-        run_vrp_->setToolTip(QStringLiteral("altair_vol_premium: sell the at-the-money monthly straddle when implied vol "
-                                            "beats a HAR forecast, delta hedged with futures"));
+        // One selector and one button: each entry is a research CLI that writes under data/verified/.
+        run_choice_ = new QComboBox(this);
+        run_choice_->addItem(QStringLiteral("Option demo (band models)"), QStringLiteral("altair_band_option_demo"));
+        run_choice_->addItem(QStringLiteral("Pairs with futures"), QStringLiteral("altair_pairs_futures"));
+        run_choice_->addItem(QStringLiteral("Vol premium (hedged straddle)"), QStringLiteral("altair_vol_premium"));
+        run_choice_->addItem(QStringLiteral("Stat-arb (NIFTY 50 residuals)"), QStringLiteral("altair_resid_reversion"));
+        run_ = new QPushButton(QStringLiteral("Run"), this);
         unverified_ = new QCheckBox(QStringLiteral("Price UNVERIFIED expenses"), this);
         unverified_->setToolTip(QStringLiteral("Pass --unverified-costs: price expenses from config/charges.toml although "
                                                "it is not verified. Every expense and net figure is then stamped UNVERIFIED."));
@@ -336,9 +339,8 @@ public:
         status_ = new QLabel(this);
         status_->setStyleSheet(QStringLiteral("color:%1;").arg(QString::fromLatin1(theme_token::kTextMuted)));
         status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        controls->addWidget(run_options_);
-        controls->addWidget(run_pairs_);
-        controls->addWidget(run_vrp_);
+        controls->addWidget(run_choice_);
+        controls->addWidget(run_);
         controls->addWidget(unverified_);
         controls->addWidget(reread);
         controls->addWidget(status_, 1);
@@ -371,6 +373,8 @@ public:
         pairs_trades_ = new demo_detail::CsvModel(this);
         pairs_windows_ = new demo_detail::CsvModel(this);
         vrp_summary_ = new demo_detail::CsvModel(this);
+        sa_summary_ = new demo_detail::CsvModel(this);
+        sa_trades_ = new demo_detail::CsvModel(this);
         vrp_trades_ = new demo_detail::CsvModel(this);
         summary_filter_ = new demo_detail::ColumnFilter(this);
         summary_filter_->setSourceModel(summary_);
@@ -402,12 +406,12 @@ public:
         tabs_->addTab(view(sorted(pairs_windows_)), QStringLiteral("Pairs · windows"));
         tabs_->addTab(view(sorted(vrp_summary_)), QStringLiteral("Vol premium · summary"));
         tabs_->addTab(view(sorted(vrp_trades_)), QStringLiteral("Vol premium · trades"));
+        tabs_->addTab(view(sorted(sa_summary_)), QStringLiteral("Stat-arb · summary"));
+        tabs_->addTab(view(sorted(sa_trades_)), QStringLiteral("Stat-arb · trades"));
         tabs_->addTab(ratio_, QStringLiteral("BANKNIFTY/NIFTY ratio"));
         v->addWidget(tabs_, 1);
 
-        connect(run_options_, &QPushButton::clicked, this, [this] { run(QStringLiteral("altair_band_option_demo")); });
-        connect(run_pairs_, &QPushButton::clicked, this, [this] { run(QStringLiteral("altair_pairs_futures")); });
-        connect(run_vrp_, &QPushButton::clicked, this, [this] { run(QStringLiteral("altair_vol_premium")); });
+        connect(run_, &QPushButton::clicked, this, [this] { run(run_choice_->currentData().toString()); });
         connect(reread, &QPushButton::clicked, this, [this] { reload(); });
         connect(rule_, &QComboBox::currentIndexChanged, this, [this](int) { load_rule(); });
         connect(instrument_, &QComboBox::currentIndexChanged, this, [this](int) { refilter(); });
@@ -424,6 +428,7 @@ public:
     [[nodiscard]] QComboBox* rule_filter() const { return rule_; }
     [[nodiscard]] int shown_summary_rows() const { return summary_filter_->rowCount(); }
     [[nodiscard]] int vol_premium_trades() const { return vrp_trades_->rowCount(); }
+    [[nodiscard]] int stat_arb_trades() const { return sa_trades_->rowCount(); }
 
 private:
     [[nodiscard]] QString out_dir(const QString& name) const {
@@ -456,6 +461,8 @@ private:
             }
             vrp_trades_->set(std::move(all));
         }
+        sa_summary_->set(demo_detail::read_csv(out_dir(QStringLiteral("resid_reversion")) + QStringLiteral("/summary.csv")));
+        sa_trades_->set(demo_detail::read_csv(out_dir(QStringLiteral("resid_reversion")) + QStringLiteral("/trades_market+sector.csv")));
         const QString costs = meta_.count(QStringLiteral("costs")) ? meta_[QStringLiteral("costs")] : QString{};
         costs_verified_ = costs == QLatin1String("verified");
 
@@ -490,7 +497,7 @@ private:
         summary_filter_->set_filter({{summary_->csv().column(QStringLiteral("rule")), rule}});
         auto& m = meta_;
         if (!have_meta_) {
-            banner_->setText(QStringLiteral("No option demo output yet in <code>%1</code>. Press <b>Run option demo</b>.")
+            banner_->setText(QStringLiteral("No option demo output yet in <code>%1</code>. Choose <b>Option demo</b> and press <b>Run</b>.")
                                  .arg(opt.toHtmlEscaped()));
             banner_->setStyleSheet(QStringLiteral("color:%1;").arg(QString::fromLatin1(theme_token::kTextMuted)));
         } else {
@@ -590,7 +597,7 @@ private:
     void reload_ratio() {
         const auto csv = demo_detail::read_csv(out_dir(QStringLiteral("pairs_futures")) + QStringLiteral("/ratio.csv"));
         if (csv.rows.empty()) {
-            ratio_->setText(QStringLiteral("No ratio output yet. Press <b>Run pairs</b>."));
+            ratio_->setText(QStringLiteral("No ratio output yet. Choose <b>Pairs with futures</b> and press <b>Run</b>."));
             return;
         }
         QString html;
@@ -629,14 +636,10 @@ private:
         if (name == QLatin1String("altair_vol_premium") && QFileInfo::exists(vix_log)) {
             args << QStringLiteral("--vix-log") << vix_log;   // adds the VIX-direction veto variant
         }
-        run_options_->setEnabled(false);
-        run_pairs_->setEnabled(false);
-        run_vrp_->setEnabled(false);
+        run_->setEnabled(false);
         status_->setText(QStringLiteral("running %1 ...").arg(name));
         const auto started = helper_.start(exe, args, root_dir_, 30 * 60 * 1000, [this, name](HelperProcessResult r) {
-            run_options_->setEnabled(true);
-            run_pairs_->setEnabled(true);
-            run_vrp_->setEnabled(true);
+            run_->setEnabled(true);
             if (!r.ran_to_completion()) {
                 status_->setText(QStringLiteral("%1 failed: %2").arg(name, r.detail));
                 return;
@@ -648,9 +651,7 @@ private:
             reload();
         });
         if (!started) {
-            run_options_->setEnabled(true);
-            run_pairs_->setEnabled(true);
-            run_vrp_->setEnabled(true);
+            run_->setEnabled(true);
             status_->setText(QStringLiteral("another run is still going"));
         }
     }
@@ -664,9 +665,8 @@ private:
     QLabel* status_{};
     QLabel* totals_{};
     QLabel* ratio_{};
-    QPushButton* run_options_{};
-    QPushButton* run_pairs_{};
-    QPushButton* run_vrp_{};
+    QComboBox* run_choice_{};
+    QPushButton* run_{};
     QCheckBox* unverified_{};
     QComboBox* rule_{};
     QComboBox* instrument_{};
@@ -679,6 +679,8 @@ private:
     demo_detail::CsvModel* pairs_windows_{};
     demo_detail::CsvModel* vrp_summary_{};
     demo_detail::CsvModel* vrp_trades_{};
+    demo_detail::CsvModel* sa_summary_{};
+    demo_detail::CsvModel* sa_trades_{};
     demo_detail::ColumnFilter* trade_filter_{};
     demo_detail::ColumnFilter* summary_filter_{};
     demo_detail::EquityChart* equity_{};

@@ -1,0 +1,69 @@
+# config/universe_nifty50.csv -- the stocks altair_resid_reversion trades, their sector, and
+# where their daily closes live.
+#
+# NIFTY 50 as of 2026-09-30, rebuilt from the index changes since early 2025:
+#   2025-03-28  +ETERNAL +JIOFIN       -BPCL -BRITANNIA
+#   2025-09-26  +INDIGO +MAXHEALTH     -HEROMOTOCO -INDUSINDBK
+#   2026-03-30  no change
+#   2026-09-30  +BSE                   -WIPRO
+# TMPV is the listed half of the Tata Motors demerger. CHECK THIS LIST against
+# NSE's own constituent file (niftyindices.com) before relying on it.
+#
+# SURVIVORSHIP: today's members, backtested over a decade, are the stocks that
+# survived into the index. Results on this list are biased upward; the
+# historical membership is not transcribed here.
+#
+# Sectors are this file's own grouping; a stock is hedged against the
+# leave-one-out mean of its sector peers (strategies/residual_reversion.hpp).
+# Directories are shared with config/pairs.csv; ops/fetch_universe.ps1 fills them.
+symbol,fyers,sector,dir
+AXISBANK,NSE:AXISBANK-EQ,banks,data/pairs/axisbank/1d
+HDFCBANK,NSE:HDFCBANK-EQ,banks,data/pairs/hdfcbank/1d
+ICICIBANK,NSE:ICICIBANK-EQ,banks,data/pairs/icicibank/1d
+KOTAKBANK,NSE:KOTAKBANK-EQ,banks,data/pairs/kotakbank/1d
+SBIN,NSE:SBIN-EQ,banks,data/pairs/sbin/1d
+BAJFINANCE,NSE:BAJFINANCE-EQ,finance,data/pairs/bajfinance/1d
+BAJAJFINSV,NSE:BAJAJFINSV-EQ,finance,data/pairs/bajajfinsv/1d
+HDFCLIFE,NSE:HDFCLIFE-EQ,finance,data/pairs/hdfclife/1d
+SBILIFE,NSE:SBILIFE-EQ,finance,data/pairs/sbilife/1d
+SHRIRAMFIN,NSE:SHRIRAMFIN-EQ,finance,data/pairs/shriramfin/1d
+JIOFIN,NSE:JIOFIN-EQ,finance,data/pairs/jiofin/1d
+BSE,NSE:BSE-EQ,finance,data/pairs/bse/1d
+HCLTECH,NSE:HCLTECH-EQ,it,data/pairs/hcltech/1d
+INFY,NSE:INFY-EQ,it,data/pairs/infy/1d
+TCS,NSE:TCS-EQ,it,data/pairs/tcs/1d
+TECHM,NSE:TECHM-EQ,it,data/pairs/techm/1d
+BAJAJ-AUTO,NSE:BAJAJ-AUTO-EQ,auto,data/pairs/bajajauto/1d
+EICHERMOT,NSE:EICHERMOT-EQ,auto,data/pairs/eichermot/1d
+M&M,NSE:M&M-EQ,auto,data/pairs/mm/1d
+MARUTI,NSE:MARUTI-EQ,auto,data/pairs/maruti/1d
+TMPV,NSE:TMPV-EQ,auto,data/pairs/tmpv/1d
+CIPLA,NSE:CIPLA-EQ,health,data/pairs/cipla/1d
+DRREDDY,NSE:DRREDDY-EQ,health,data/pairs/drreddy/1d
+SUNPHARMA,NSE:SUNPHARMA-EQ,health,data/pairs/sunpharma/1d
+APOLLOHOSP,NSE:APOLLOHOSP-EQ,health,data/pairs/apollohosp/1d
+MAXHEALTH,NSE:MAXHEALTH-EQ,health,data/pairs/maxhealth/1d
+HINDUNILVR,NSE:HINDUNILVR-EQ,fmcg,data/pairs/hindunilvr/1d
+ITC,NSE:ITC-EQ,fmcg,data/pairs/itc/1d
+NESTLEIND,NSE:NESTLEIND-EQ,fmcg,data/pairs/nestleind/1d
+TATACONSUM,NSE:TATACONSUM-EQ,fmcg,data/pairs/tataconsum/1d
+HINDALCO,NSE:HINDALCO-EQ,metals,data/pairs/hindalco/1d
+JSWSTEEL,NSE:JSWSTEEL-EQ,metals,data/pairs/jswsteel/1d
+TATASTEEL,NSE:TATASTEEL-EQ,metals,data/pairs/tatasteel/1d
+COALINDIA,NSE:COALINDIA-EQ,metals,data/pairs/coalindia/1d
+ONGC,NSE:ONGC-EQ,energy,data/pairs/ongc/1d
+RELIANCE,NSE:RELIANCE-EQ,energy,data/pairs/reliance/1d
+ADANIENT,NSE:ADANIENT-EQ,energy,data/pairs/adanient/1d
+NTPC,NSE:NTPC-EQ,power,data/pairs/ntpc/1d
+POWERGRID,NSE:POWERGRID-EQ,power,data/pairs/powergrid/1d
+ULTRACEMCO,NSE:ULTRACEMCO-EQ,infra,data/pairs/ultracemco/1d
+GRASIM,NSE:GRASIM-EQ,infra,data/pairs/grasim/1d
+LT,NSE:LT-EQ,infra,data/pairs/lt/1d
+ADANIPORTS,NSE:ADANIPORTS-EQ,infra,data/pairs/adaniports/1d
+ASIANPAINT,NSE:ASIANPAINT-EQ,consumer,data/pairs/asianpaint/1d
+TITAN,NSE:TITAN-EQ,consumer,data/pairs/titan/1d
+TRENT,NSE:TRENT-EQ,consumer,data/pairs/trent/1d
+ETERNAL,NSE:ETERNAL-EQ,consumer,data/pairs/eternal/1d
+INDIGO,NSE:INDIGO-EQ,consumer,data/pairs/indigo/1d
+BEL,NSE:BEL-EQ,capital-goods,data/pairs/bel/1d
+BHARTIARTL,NSE:BHARTIARTL-EQ,telecom,data/pairs/bhartiartl/1d

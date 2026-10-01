@@ -66,6 +66,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_vol_premium_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_vol_premium COMMAND altair_vol_premium_test)
 
+    add_executable(altair_residual_reversion_test tests/test_residual_reversion.cpp)
+    target_link_libraries(altair_residual_reversion_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_residual_reversion COMMAND altair_residual_reversion_test)
+
     add_executable(altair_stat_arb_test tests/test_stat_arb.cpp)
     target_link_libraries(altair_stat_arb_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_stat_arb COMMAND altair_stat_arb_test)
