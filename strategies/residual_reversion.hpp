@@ -128,6 +128,54 @@ struct RrScore {
     double m = 0.0, sigma_eq = 0.0, x_last = 0.0, kappa = 0.0, beta_m = 0.0, beta_s = 0.0;
 };
 
+
+/// Every stock's s-score inputs at close t, from returns t-window+1 .. t;
+/// `msum`/`mn` accumulate the scored stocks' m for the cross-sectional centre.
+/// Shared by the walk-forward (rr_run) and the live model (rr_scores_at), so
+/// the two cannot drift apart.
+inline void score_day(const RrPanel& p, const std::vector<std::vector<double>>& sec, const std::vector<bool>& has_peers,
+                      std::size_t t, const RrPolicy& pol, std::vector<RrScore>& sc, double& msum, std::size_t& mn) {
+    const std::size_t N = p.ret.size();
+    std::vector<double> y, x1, x2, e, xs, xn;
+    for (std::size_t i = 0; i < N; ++i) {
+        sc[i] = {};
+        y.clear(); x1.clear(); x2.clear();
+        const bool use_sec = pol.sector_factor && has_peers[i];
+        bool ok = true;
+        for (std::size_t k = t + 1 - pol.window; k <= t && ok; ++k) {
+            const double ri = p.ret[i][k], rm = p.market[k];
+            const double rs = use_sec ? sec[i][k] : 0.0;
+            if (!std::isfinite(ri) || !std::isfinite(rm) || !std::isfinite(rs)) { ok = false; break; }
+            y.push_back(ri);
+            x1.push_back(rm);
+            x2.push_back(rs);
+        }
+        if (!ok) { continue; }
+        double a = 0, bm = 0, bs = 0;
+        if (!ols(y, x1, use_sec ? &x2 : nullptr, a, bm, bs, e)) { continue; }
+        // Cumulative residual and its AR(1).
+        xs.assign(e.size(), 0.0);
+        double c = 0.0;
+        for (std::size_t k = 0; k < e.size(); ++k) { c += e[k]; xs[k] = c; }
+        xn.assign(xs.begin() + 1, xs.end());
+        const std::vector<double> xl(xs.begin(), xs.end() - 1);
+        double aa = 0, bb = 0, unused = 0;
+        std::vector<double> z;
+        if (!ols(xn, xl, nullptr, aa, bb, unused, z)) { continue; }
+        if (!(bb > 0.0) || !(bb < 1.0)) { continue; }
+        const double kappa = -std::log(bb) * 252.0;
+        if (kappa < pol.min_kappa) { continue; }
+        double zz = 0.0;
+        for (const double v : z) { zz += v * v; }
+        const double var_z = zz / static_cast<double>(z.size() - 2);
+        const double sigma_eq = std::sqrt(var_z / (1.0 - bb * bb));
+        if (!(sigma_eq > 0.0)) { continue; }
+        sc[i] = {true, aa / (1.0 - bb), sigma_eq, xs.back(), kappa, bm, use_sec ? bs : 0.0};
+        msum += sc[i].m;
+        ++mn;
+    }
+}
+
 } // namespace rr_detail
 
 /// The leave-one-out mean return of stock i's sector peers on day t; NaN when it has none that day.
@@ -172,7 +220,6 @@ struct RrScore {
     struct Open { bool on = false; RrTrade t; };
     std::vector<Open> open(N);
     std::vector<rr_detail::RrScore> sc(N);
-    std::vector<double> y, x1, x2, e, xs, xn;
     for (std::size_t t = 0; t < T; ++t) {
         // 1. Positions held from close t-1 to close t earn day t's hedged return.
         for (std::size_t i = 0; i < N; ++i) {
@@ -197,43 +244,7 @@ struct RrScore {
         if (t + 1 < pol.window) { continue; }
         double msum = 0.0;
         std::size_t mn = 0;
-        for (std::size_t i = 0; i < N; ++i) {
-            sc[i] = {};
-            y.clear(); x1.clear(); x2.clear();
-            const bool use_sec = pol.sector_factor && has_peers[i];
-            bool ok = true;
-            for (std::size_t k = t + 1 - pol.window; k <= t && ok; ++k) {
-                const double ri = p.ret[i][k], rm = p.market[k];
-                const double rs = use_sec ? sec[i][k] : 0.0;
-                if (!std::isfinite(ri) || !std::isfinite(rm) || !std::isfinite(rs)) { ok = false; break; }
-                y.push_back(ri);
-                x1.push_back(rm);
-                x2.push_back(rs);
-            }
-            if (!ok) { continue; }
-            double a = 0, bm = 0, bs = 0;
-            if (!rr_detail::ols(y, x1, use_sec ? &x2 : nullptr, a, bm, bs, e)) { continue; }
-            // Cumulative residual and its AR(1).
-            xs.assign(e.size(), 0.0);
-            double c = 0.0;
-            for (std::size_t k = 0; k < e.size(); ++k) { c += e[k]; xs[k] = c; }
-            xn.assign(xs.begin() + 1, xs.end());
-            const std::vector<double> xl(xs.begin(), xs.end() - 1);
-            double aa = 0, bb = 0, unused = 0;
-            std::vector<double> z;
-            if (!rr_detail::ols(xn, xl, nullptr, aa, bb, unused, z)) { continue; }
-            if (!(bb > 0.0) || !(bb < 1.0)) { continue; }
-            const double kappa = -std::log(bb) * 252.0;
-            if (kappa < pol.min_kappa) { continue; }
-            double zz = 0.0;
-            for (const double v : z) { zz += v * v; }
-            const double var_z = zz / static_cast<double>(z.size() - 2);
-            const double sigma_eq = std::sqrt(var_z / (1.0 - bb * bb));
-            if (!(sigma_eq > 0.0)) { continue; }
-            sc[i] = {true, aa / (1.0 - bb), sigma_eq, xs.back(), kappa, bm, use_sec ? bs : 0.0};
-            msum += sc[i].m;
-            ++mn;
-        }
+        rr_detail::score_day(p, sec, has_peers, t, pol, sc, msum, mn);
         if (mn == 0) { continue; }
         const double mbar = msum / static_cast<double>(mn);
         out.scored += mn;
@@ -267,6 +278,49 @@ struct RrScore {
             tr.kappa = sc[i].kappa;
             open[i] = {true, tr};
         }
+    }
+    return out;
+}
+
+
+/// One stock's s-score at the panel's LAST day, as rr_run would compute it at
+/// that close: NaN when the stock has no usable score. The live model appends
+/// today's return so far as the last day and decides near the close on these.
+struct RrLiveScore {
+    double s = std::numeric_limits<double>::quiet_NaN();
+    double kappa = 0.0, beta_m = 0.0, beta_s = 0.0;
+};
+
+[[nodiscard]] inline std::expected<std::vector<RrLiveScore>, RrError> rr_scores_at_last(const RrPanel& p, const RrPolicy& pol) {
+    const std::size_t T = p.day.size(), N = p.ret.size();
+    if (pol.window < 20) { return std::unexpected(RrError::BadPolicy); }
+    if (T < pol.window || p.market.size() != T || p.sector.size() != N) { return std::unexpected(RrError::BadPanel); }
+    for (const auto& r : p.ret) { if (r.size() != T) { return std::unexpected(RrError::BadPanel); } }
+    std::vector<bool> has_peers(N, false);
+    for (std::size_t i = 0; i < N; ++i) {
+        for (std::size_t j = 0; j < N && p.sector[i] >= 0; ++j) {
+            if (j != i && p.sector[j] == p.sector[i]) { has_peers[i] = true; break; }
+        }
+    }
+    std::vector<std::vector<double>> sec(N, std::vector<double>(T, std::numeric_limits<double>::quiet_NaN()));
+    if (pol.sector_factor) {
+        for (std::size_t i = 0; i < N; ++i) {
+            for (std::size_t t = T - pol.window; t < T; ++t) { sec[i][t] = rr_sector_return(p, i, t); }
+        }
+    }
+    std::vector<rr_detail::RrScore> sc(N);
+    double msum = 0.0;
+    std::size_t mn = 0;
+    rr_detail::score_day(p, sec, has_peers, T - 1, pol, sc, msum, mn);
+    std::vector<RrLiveScore> out(N);
+    if (mn == 0) { return out; }
+    const double mbar = msum / static_cast<double>(mn);
+    for (std::size_t i = 0; i < N; ++i) {
+        if (!sc[i].ok) { continue; }
+        out[i].s = (sc[i].x_last - (sc[i].m - mbar)) / sc[i].sigma_eq;
+        out[i].kappa = sc[i].kappa;
+        out[i].beta_m = sc[i].beta_m;
+        out[i].beta_s = sc[i].beta_s;
     }
     return out;
 }

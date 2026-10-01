@@ -843,3 +843,58 @@ survives 1,136 tests (t > 4.09).
   api-t1.fyers.in / public.fyers.in / socket.fyers.in (proxy 403), and no
   FYERS credentials are present. With the hosts allowed and the two
   variables set, the CLIs fetch history and stream live data from there.
+
+22. LIVE TERMINAL: STREAMING PRICES AND LIVE MODELS -- 2026-10-01
+------------------------------------------------------------------------------
+Owner's request: live streaming like Greeksoft GETS, tick-by-tick terminal
+prices, the models running live. Choices: indices + futures, the option
+chains, NIFTY 50 and depth; vol bands, direction + magnitude gate, option
+selling, pairs + stat-arb; signals auto paper-trade.
+  server/quote_payload.hpp (new)  topic 3: OHLC, previous close, bid/ask
+                          and sizes, ATP, totals, circuits, LTT; byte vector
+                          checked (test_quote_payload). PriceBus gets
+                          publish_quote, and an OUT-OF-BOUNDS WRITE IS FIXED:
+                          seq_ had three slots, so a fourth topic wrote past
+                          it. Unknown topics are now refused
+                          (test_price_bus_topics).
+  live/universe.hpp (new) Kite token <-> FYERS ticker for indices, near
+                          futures, ATM +/- 20 chains, NIFTY 50 and stock
+                          futures; latest close by DATE, not file name
+                          (vendor_pre2015.csv sorted last and read BANKNIFTY
+                          as 18,701).
+  live/sim.hpp (new)      a deterministic simulated market, every frame
+                          flagged SIM; parity holds to 0.10 rupee.
+  app/fyers_price_frames.hpp (new)  FYERS socket updates into trade, quote
+                          and book frames; requotes are not trades.
+  app/price_service_main.cpp  --fyers [--go] and --sim; board replay for
+                          late subscribers; data/live/universe.csv and
+                          feed_status.json.
+  desktop/live_market.hpp (new)  the Terminal opens on a live market watch
+                          (every tick applied, flashing cells), depth, time
+                          and sales, and a live chain with market IV and
+                          delta; it auto-connects and can start a FYERS or
+                          SIM feed. "&" labels fixed (they rendered without
+                          their ampersand).
+  live/bars.hpp, paper.hpp, engine.hpp, models.hpp (new)  one-minute bars on
+                          the feed's clock; a paper book that fills at the
+                          bid and ask and charges every fill; the vol band,
+                          strangles, pairs and stat-arb models; 15:15 rolls
+                          and 15:20 square-off (test_engine).
+  strategies/residual_reversion.hpp  the s-score loop is shared by the
+                          backtest and the live model (rr_scores_at_last).
+  app/forecast_tracks.hpp build_session(partial_last_day): today's 10:15 row
+                          for live use only.
+  app/live_direction.hpp, live_engine_main.cpp (new)  altair_live_engine:
+                          the direction models behind the gate, and the files
+                          data/live/engine_state.json and paper/*.csv.
+  desktop/live_models.hpp (new)  Terminal -> Models: every model's state and
+                          reason, positions marked tick by tick, paper trades
+                          and P&L by model.
+Verified here on SIM only. FYERS is refused by this environment's network
+policy. On a 30x simulated session:
+  * the strangles sold at 09:20 and squared off at 15:20 with expenses;
+  * every direction model's gate stayed shut (-1.6 to -11 bp after costs);
+  * pairs watched at |z| < 2;
+  * stat-arb abstained (no data/pairs history).
+SIM P&L is the simulator's random walk and means nothing. See
+ops/live-terminal.md.

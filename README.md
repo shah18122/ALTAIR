@@ -169,6 +169,31 @@ cleaning) and a per-forecast log for the hourly and daily tracks. See
 [ops/forecast-curriculum.md](ops/forecast-curriculum.md) for the method and
 the results.
 
+## Live terminal: streaming prices and live models
+
+**Terminal → Watch** is a GETS-style market watch fed by `altair_price_service`.
+
+- **Sources:** FYERS live (`--fyers --go`), or `--sim` when the market is shut.
+  SIM is always marked SIM.
+- **Streams:** indices, near futures, both option chains (ATM ± 20), the NIFTY 50
+  and their futures.
+  - The watch has LTP, change, bid/ask with sizes, volume, OI, OHLC and LTT, and
+    moved prices flash.
+  - Five-level depth, and time & sales listing every trade.
+  - A live chain with IV and Δ inverted from market prices.
+
+**Terminal → Models** runs `altair_live_engine` on the same stream and paper-trades
+each model's signals: fills at bid/ask, expenses on every fill, and net P&L by
+model. The models:
+- the HAR vol band;
+- the 09:20 band-edge strangles;
+- the 10:15-to-close direction models behind the magnitude gate;
+- BANKNIFTY/NIFTY pairs;
+- NIFTY 50 stat-arb.
+
+Every model says what it is doing and why. No orders, ever. See
+[ops/live-terminal.md](ops/live-terminal.md).
+
 ## Demo trading: band-fade short options and futures pairs
 
 Paper trades only, never sent to a broker; the desktop's **Strategies →

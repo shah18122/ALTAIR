@@ -291,6 +291,13 @@ public:
         }
     }
 
+    /// Open one of the Terminal's views (watch, chain, models, positions,
+    /// operations), for --terminal-view: the same reason as --stream.
+    /// False when there is no such view.
+    bool show_terminal_view(const QString& view) {
+        return terminal_ != nullptr && terminal_->show_view(view);
+    }
+
     /// Start replay after the first paint so startup remains responsive.
     void start_replay() {
         if (!timer_->isActive() && !replayer_.exhausted()) {

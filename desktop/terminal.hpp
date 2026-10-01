@@ -56,6 +56,7 @@
 #include "funds_summary.hpp"
 #include "gets_workspace.hpp"
 #include "live_market.hpp"
+#include "live_models.hpp"
 #include "position_table.hpp"
 #include "price_client.hpp"
 #include "data/series_io.hpp"
@@ -303,6 +304,10 @@ public:
         watch_btn_->setToolTip(QStringLiteral(
             "Live market watch: every tick, quotes, depth, time and sales, and the live option chain"));
         h->addWidget(watch_btn_);
+        models_btn_ = new QPushButton(QStringLiteral("Models"), strip);
+        models_btn_->setToolTip(QStringLiteral(
+            "Live models: what each is doing and why, paper positions marked tick by tick, paper trades with expenses and net P&L"));
+        h->addWidget(models_btn_);
         positions_btn_ = new QPushButton(QStringLiteral("Positions"), strip);
         positions_btn_->setToolTip(QStringLiteral(
             "GETS-style workspace: positions and funds, Greek watch, portfolio Greeks, simulation, "
@@ -329,6 +334,8 @@ public:
         client_->set_read_buffer(1024 * 1024);
         live_ = new LiveMarketWatch(client_, {}, surface_);
         surface_->addWidget(live_);
+        models_ = new LiveModelsPanel(client_, {}, surface_);
+        surface_->addWidget(models_);
         account_surface_ = new QWidget(surface_);
         account_surface_->setObjectName(QStringLiteral("accountSurface"));
         auto* account_layout = new QVBoxLayout(account_surface_);
@@ -457,6 +464,8 @@ public:
         v->addWidget(surface_, 1);
         connect(watch_btn_, &QPushButton::clicked, this,
                 [this] { surface_->setCurrentWidget(live_); });
+        connect(models_btn_, &QPushButton::clicked, this,
+                [this] { surface_->setCurrentWidget(models_); });
         connect(positions_btn_, &QPushButton::clicked, this,
                 [this] { surface_->setCurrentWidget(gets_); });
         connect(operations_btn_, &QPushButton::clicked, this,
@@ -553,6 +562,16 @@ public:
     [[nodiscard]] LiveFeedPanel* feed() const noexcept { return feed_; }
     [[nodiscard]] OptionChainPanel* chain() const noexcept { return chain_; }
     [[nodiscard]] LiveMarketWatch* market_watch() const noexcept { return live_; }
+    [[nodiscard]] LiveModelsPanel* live_models() const noexcept { return models_; }
+    /// Show a view by name: watch, chain, models, positions, operations.
+    bool show_view(const QString& v) {
+        if (v == QLatin1String("watch")) { surface_->setCurrentWidget(live_); return true; }
+        if (v == QLatin1String("chain")) { surface_->setCurrentWidget(live_); live_->show_chain(); return true; }
+        if (v == QLatin1String("models")) { surface_->setCurrentWidget(models_); return true; }
+        if (v == QLatin1String("positions")) { surface_->setCurrentWidget(gets_); return true; }
+        if (v == QLatin1String("operations")) { surface_->setCurrentWidget(split_); return true; }
+        return false;
+    }
     [[nodiscard]] PriceClient* stream() const noexcept { return client_; }
     [[nodiscard]] FundsSummaryModel* funds_model() const noexcept { return funds_model_; }
     [[nodiscard]] PositionTableModel* positions_model() const noexcept { return positions_model_; }
@@ -814,7 +833,9 @@ private:
     LiveFeedPanel* feed_ = nullptr;
     PriceClient* client_ = nullptr;
     LiveMarketWatch* live_ = nullptr;
+    LiveModelsPanel* models_ = nullptr;
     QPushButton* watch_btn_ = nullptr;
+    QPushButton* models_btn_ = nullptr;
     QTimer reconnect_;
     bool auto_connect_ = true;
     QLabel* stream_state_ = nullptr;

@@ -78,6 +78,7 @@ struct TrackInfo {
     std::size_t no_spot{};          ///< futures rows dropped: no spot close for the basis
     std::size_t roll_excluded{};    ///< futures outcomes that cross an expiry
     std::size_t expiries{};
+    bool partial_last = false;      ///< live: the last row is today's, its outcome a placeholder
     double basis_on_expiry_bp = std::numeric_limits<double>::quiet_NaN();
     double basis_jump_after_bp = std::numeric_limits<double>::quiet_NaN();
     std::size_t warmup{};           ///< bars used only as history for the first features
@@ -647,6 +648,13 @@ struct SessionInputs {
     double other_cost_bp = 1.3;
     const std::vector<da::AuditBar>* pair = nullptr;  ///< the paired instrument's 5-minute bars
     std::string pair_name{};
+    /// LIVE USE ONLY. When the last day is today, still in progress, and its
+    /// bars run unbroken from 09:15 to at least the decision bar, it gets a
+    /// row too: its features are all known at the decision, and its outcome --
+    /// the close, hours away -- is a placeholder (the decision price), marked
+    /// by TrackInfo::partial_last. Off, as for every backtest: an unfinished
+    /// day has no outcome to score.
+    bool partial_last_day = false;
 };
 
 /// From a moment in the session to its close, one decision a day: long
@@ -703,11 +711,22 @@ struct SessionInputs {
         return day - vix_days[k] <= 7 ? vix_last[k] : std::numeric_limits<double>::quiet_NaN();
     };
 
+    // Today, unfinished: the bars so far are the start of the 09:15 grid.
+    const auto prefix = [&](const DaySpan& sp) {
+        if (sp.e - sp.b > per_day) { return false; }
+        for (std::size_t k = 0; k < sp.e - sp.b; ++k) {
+            if (da::audit_minute_of_day(bars[sp.b + k].t) != 555 + 5 * static_cast<std::int64_t>(k)) { return false; }
+        }
+        return true;
+    };
+
     std::int32_t day_ordinal = -1;
     std::vector<double> row(tr.p);
     for (std::size_t q = 0; q < days.size(); ++q) {
         const DaySpan& sp = days[q];
-        if (!full(sp)) { ++info.short_days; continue; }
+        const bool partial = in.partial_last_day && q + 1 == days.size() && !full(sp) && prefix(sp)
+                          && sp.e - sp.b > k_dec;
+        if (!full(sp) && !partial) { ++info.short_days; continue; }
         if (q < 6 || k_dec + 1 >= per_day) { ++info.warmup; continue; }
         const DaySpan& p1 = days[q - 1];
         const double pc = bars[p1.e - 1].c, ppc = bars[days[q - 2].e - 1].c, pc5 = bars[days[q - 6].e - 1].c;
@@ -747,8 +766,9 @@ struct SessionInputs {
         row[c++] = std::log(v / v_pc);
         row[c++] = std::log(v / v_open);
         const da::AuditBar& last = bars[sp.e - 1];
+        if (partial) { info.partial_last = true; }
         detail::push_row(tr, row, sp.day * kDaySec + static_cast<std::int64_t>(in.decide_minute) * 60,
-                         sp.day * kDaySec + kCloseSec, ++day_ordinal, d.c, last.c,
+                         sp.day * kDaySec + kCloseSec, ++day_ordinal, d.c, partial ? d.c : last.c,
                          futures_cost_bp(sp.day, in.other_cost_bp),
                          static_cast<std::uint16_t>(da::audit_weekday(sp.day)), pv);
     }

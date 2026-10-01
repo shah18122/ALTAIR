@@ -255,6 +255,39 @@ void test_session() {
               && std::fabs(tr.x[1] - std::log(own[day6].o / own[day6 - 1].c)) < 1e-12,
           "return since the open and the overnight gap, both known at 10:15");
     check(tr.cost_bp.size() == tr.rows() && tr.horizon == "10:15 to the close", "costed like a futures trade");
+
+    // Live: today, unfinished, up to 10:30 -- 16 bars from 09:15.
+    std::vector<da::AuditBar> own2 = own, vix2 = vix;
+    for (int k = 0; k < 16; ++k) {
+        const std::int64_t t = (d0 + 9) * 86'400 + (555 + 5 * k) * 60;
+        const double c = 110.0 + 0.01 * k;
+        own2.push_back(bar(t, c - 0.01, c + 0.05, c - 0.05, c));
+        vix2.push_back(bar(t, 15.0, 15.1, 14.9, 15.0));
+    }
+    ft::TrackInfo i2;
+    const auto off = ft::build_session({"T 10:15", "T", 615, &own2, &vix2, 1.3, nullptr, ""}, i2);
+    check(off.rows() == 2 && !i2.partial_last, "without the live flag an unfinished day gets no row");
+    ft::SessionInputs live{"T 10:15", "T", 615, &own2, &vix2, 1.3, nullptr, ""};
+    live.partial_last_day = true;
+    ft::TrackInfo i3;
+    const auto on = ft::build_session(live, i3);
+    check(on.rows() == 3 && i3.partial_last && altair::curriculum_check_track(on).has_value(),
+          "with it, today's 10:15 row is built and the track still passes the checks");
+    check(on.anchor[2] == own2[own.size() + 11].c && on.actual[2] == on.anchor[2]
+              && on.t[2] == (d0 + 9) * 86'400 + 615 * 60,
+          "today's row: decided at 10:15, its outcome a placeholder until the close");
+    check(std::fabs(on.x[2 * on.p] - std::log(own2[own.size() + 11].c / own2[own.size()].o)) < 1e-12,
+          "and its features are the same arithmetic as a finished day's");
+    std::vector<da::AuditBar> early = own, vearly = vix;
+    for (int k = 0; k < 8; ++k) {   // only to 09:55: the decision bar has not closed
+        const std::int64_t t = (d0 + 9) * 86'400 + (555 + 5 * k) * 60;
+        early.push_back(bar(t, 109.99, 110.05, 109.95, 110.0));
+        vearly.push_back(bar(t, 15.0, 15.1, 14.9, 15.0));
+    }
+    ft::SessionInputs before{"T 10:15", "T", 615, &early, &vearly, 1.3, nullptr, ""};
+    before.partial_last_day = true;
+    ft::TrackInfo i4;
+    check(ft::build_session(before, i4).rows() == 2 && !i4.partial_last, "before 10:15 today has no row");
 }
 
 } // namespace

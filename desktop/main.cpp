@@ -340,6 +340,15 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --terminal-view watch|chain|models|positions|operations opens that view
+    // of the Terminal, for the same reason: a capture script cannot click.
+    for (int i = 1; i + 1 < args.size(); ++i) {
+        if (args[i] == QStringLiteral("--terminal-view") && !window.show_terminal_view(args[i + 1])) {
+            std::fprintf(stderr, "--terminal-view \"%s\": no such view (watch, chain, models, positions, operations).\n",
+                         qPrintable(args[i + 1]));
+        }
+    }
+
     // --compute presses the button on whatever page --page opened. Separate
     // from --page because most pages have no button, and a flag that silently
     // does nothing on two thirds of the nav is worse than one that says so.

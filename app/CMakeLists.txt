@@ -312,6 +312,25 @@ target_include_directories(altair_depth_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 
 # The band-fade short-option demo: the range band's forecast, one lot, priced
 # synthetically, costed through risk/cost.hpp (refused while unverified).
+# The live models, paper-trading on altair_price_service's stream: bars from
+# ticks, the strangle, direction-gate, pairs and stat-arb models, a paper book
+# that fills at the bid and ask and charges every fill. Reads a loopback
+# socket and writes data/live/; no broker, no OMS, no orders.
+find_package(Boost CONFIG QUIET COMPONENTS headers)
+if(TARGET altair_charges_toml AND Boost_FOUND)
+    add_executable(altair_live_engine live_engine_main.cpp)
+    target_link_libraries(altair_live_engine PRIVATE
+        altair_live altair_models altair_strategies altair_analytics altair_charges_toml altair_flags Boost::headers)
+    target_include_directories(altair_live_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_live_engine PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        target_link_libraries(altair_live_engine PRIVATE ws2_32 mswsock)
+    endif()
+    if(ALTAIR_BUILD_TESTS)
+        add_test(NAME live_engine_help COMMAND altair_live_engine --help)
+    endif()
+endif()
+
 if(TARGET altair_charges_toml)
     add_executable(altair_band_option_demo band_option_demo_main.cpp)
     target_link_libraries(altair_band_option_demo PRIVATE altair_models altair_strategies altair_charges_toml altair_flags)

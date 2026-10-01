@@ -632,7 +632,7 @@ public:
         auto* bar = new QHBoxLayout;
         group_ = new QComboBox(this);
         group_->addItem(QStringLiteral("All"), QString());
-        for (const char* g : {"Indices", "Futures", "NIFTY options", "BANKNIFTY options", "NIFTY 50"})
+        for (const char* g : {"Indices", "Futures", "NIFTY options", "BANKNIFTY options", "NIFTY 50", "Stock futures"})
             group_->addItem(QString::fromLatin1(g), QString::fromLatin1(g));
         search_ = new QLineEdit(this);
         search_->setPlaceholderText(QStringLiteral("Search symbol…"));
@@ -764,6 +764,8 @@ public:
         if (r < 0) return;
         view_->setCurrentIndex(filter_->mapFromSource(model_->index(r, 0)));
     }
+    /// Bring the live option chain to the front of the side panel.
+    void show_chain() { side_->setCurrentWidget(chain_); }
     void set_rows_for_test(std::vector<LiveRow> rows) {
         model_->set_rows(rows);
         chain_->set_rows(rows);

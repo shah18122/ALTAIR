@@ -212,6 +212,7 @@ struct LiveUniverseOptions {
     int depth_strikes = 5;              ///< each side of ATM with the 5-level book
     int futures = 2;                    ///< nearest N futures per index
     bool stocks = true;
+    bool stock_futures = true;          ///< the stocks' near and next futures (stat-arb trades and rolls them)
 };
 
 struct LiveUniverse {
@@ -321,6 +322,30 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
             in.group = "NIFTY 50";
             in.depth = true;
             rep.instruments.push_back(std::move(in));
+        }
+    }
+    if (o.stocks && o.stock_futures) {
+        std::map<std::string, std::vector<const LiveKiteRow*>> fut;
+        for (const auto& r : rows)
+            if (r.segment == "NFO-FUT" && r.expiry_day >= o.today) fut[r.name].push_back(&r);
+        for (const auto& s : stocks) {
+            auto it = fut.find(s.symbol);
+            if (it == fut.end()) { rep.notes.push_back(s.symbol + ": no stock future in the master"); continue; }
+            auto& v = it->second;
+            std::sort(v.begin(), v.end(), [](const LiveKiteRow* a, const LiveKiteRow* b) { return a->expiry_day < b->expiry_day; });
+            for (std::size_t k = 0; k < v.size() && k < 2; ++k) {
+                LiveInstrument in;
+                in.token = v[k]->token;
+                in.fyers = "NSE:" + v[k]->symbol;
+                in.symbol = v[k]->symbol;
+                in.underlying = s.symbol;
+                in.kind = LiveKind::Future;
+                in.expiry_day = v[k]->expiry_day;
+                in.lot = v[k]->lot;
+                in.tick = v[k]->tick;
+                in.group = "Stock futures";
+                rep.instruments.push_back(std::move(in));
+            }
         }
     }
     return rep;
