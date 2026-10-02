@@ -5,16 +5,20 @@
 
 namespace altair::ui {
 struct NavigationPage { const char* id; const char* label; int group; };
-struct NavigationGroup { const char* id; const char* label; const char* short_label; };
+struct NavigationGroup { const char* id; const char* label; const char* short_label; const char* glyph; };
+// The group ID is stable (saved state uses it); its label, glyph and place in
+// the sidebar are presentation.
 inline constexpr std::array<NavigationGroup, 7> kNavigationGroups{{
-    {"market", "Market & Terminal", "MKT"},
-    {"options", "Options & Volatility", "OPT"},
-    {"strategies", "Strategies", "STR"},
-    {"models", "Models & Research", "MDL"},
-    {"risk", "Risk & Portfolio", "RSK"},
-    {"accounts", "Execution & Accounts", "ACC"},
-    {"system", "System & Audit", "SYS"},
+    {"market", "Trading", "TRD", "\u25B2"},
+    {"options", "Options & Volatility", "OPT", "\u223F"},
+    {"strategies", "Strategies", "STR", "\u265E"},
+    {"models", "Models & Research", "MDL", "\u25C6"},
+    {"risk", "Risk & Portfolio", "RSK", "\u25CE"},
+    {"accounts", "Brokers & Execution", "BRK", "\u21C4"},
+    {"system", "System & Audit", "SYS", "\u2699"},
 }};
+/// The order groups appear in: trading and the brokers that feed it first.
+inline constexpr std::array<int, 7> kNavigationGroupOrder{{0, 5, 1, 2, 3, 4, 6}};
 inline constexpr std::array<NavigationPage, 36> kNavigationPages{{
     {"market.grid", "Live Grid", 0},
     {"market.chart", "Chart", 0},
@@ -54,8 +58,9 @@ inline constexpr std::array<NavigationPage, 36> kNavigationPages{{
     {"strategies.demo-trading", "Demo Trading", 2},
 }};
 // Traversal order is NOT a legacy page index.
+// Within a group: what is used most comes first (Demo Trading, Forecast).
 inline constexpr std::array<int, 31> kNavigationOrder{{
-    2, 24, 21, 13, 7, 19, 8, 22, 31, 26, 20, 35, 32, 3, 18, 17, 16, 29, 10, 30, 27, 9, 15, 14, 25, 6, 34, 12, 4, 23, 11
+    2, 24, 34, 12, 21, 13, 7, 35, 19, 8, 22, 31, 26, 20, 18, 32, 3, 17, 16, 29, 10, 30, 27, 9, 15, 14, 25, 6, 4, 23, 11
 }};
 /// Resolve old routes without renumbering model/page-stack references.
 [[nodiscard]] constexpr int nav_destination(int index) noexcept {

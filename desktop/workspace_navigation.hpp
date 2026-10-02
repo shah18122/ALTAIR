@@ -24,58 +24,54 @@ public:
         setObjectName(QStringLiteral("workspaceNavigation"));
         setAccessibleName(QStringLiteral("Workspace navigation"));
         setStyleSheet(QStringLiteral(
-            "#workspaceNavigation{background:#11181D;color:#D5DDE2;}"
-            "#navBrand{background:#182229;border:1px solid #2A3943;"
-            "border-radius:7px;padding:8px;}"
-            "#navBrandTitle{color:#F0B765;font-size:15px;font-weight:700;"
-            "letter-spacing:1px;}"
-            "#navBrandSub{color:#8295A0;font-size:10px;letter-spacing:1px;}"
-            "#navSummary{color:#7F929D;font-size:10px;padding:5px 2px;}"
-            "#navSearch{color:#D5DDE2;background:#202D35;border:1px solid #344751;"
-            "border-radius:5px;padding:7px;text-align:left;}"
-            "#navSearch:hover{background:#2A3A44;border-color:#B47A3A;}"
-            "#navSearch:pressed{background:#172229;}"
-            "#workspaceTree{background:#11181D;color:#D5DDE2;border:0;"
-            "font-size:12px;outline:0;}"
-            "#workspaceTree::item{height:29px;padding:2px 4px;}"
-            "#workspaceTree::item:selected{background:#2B3A44;color:#F0B765;"
-            "border-left:2px solid #D89143;}"
-            "#workspaceTree::item:hover{background:#1D2A32;}"
-            "#workspaceNavigation QToolButton{color:#C4D0D6;background:#1B2830;"
-            "border:1px solid #2F414B;border-radius:4px;padding:8px 4px;"
-            "text-align:left;}"
-            "#workspaceNavigation QToolButton:hover{background:#253640;"
-            "border-color:#B47A3A;}"
-            "#workspaceNavigation QToolButton:checked{color:#F0B765;"
-            "background:#26343B;border-color:#B47A3A;}"));
+            "#workspaceNavigation{background:#0D1318;color:#D5DDE2;border-right:1px solid #1E2A32;}"
+            "#navBrand{background:transparent;border:0;border-bottom:1px solid #1E2A32;padding:2px 2px 10px 2px;}"
+            "#navBrandTitle{color:#F0B765;font-size:18px;font-weight:800;letter-spacing:3px;}"
+            "#navBrandSub{color:#6E8390;font-size:10px;letter-spacing:1px;}"
+            "#navSearch{color:#9FB0B9;background:#141D23;border:1px solid #24323B;"
+            "border-radius:8px;padding:8px 10px;text-align:left;}"
+            "#navSearch:hover{background:#1A262E;border-color:#B47A3A;color:#D5DDE2;}"
+            "#navSearch:pressed{background:#10171C;}"
+            "#workspaceTree{background:#0D1318;color:#C9D4DA;border:0;font-size:12px;outline:0;}"
+            "#workspaceTree::item{height:28px;padding:1px 6px;border-radius:6px;margin:1px 2px;}"
+            "#workspaceTree::item:selected{background:#2A2418;color:#F0B765;}"
+            "#workspaceTree::item:hover:!selected{background:#17222A;}"
+            "#workspaceTree::branch{background:#0D1318;}"
+            "#workspaceNavigation QToolButton{color:#C4D0D6;background:#141D23;"
+            "border:1px solid #24323B;border-radius:8px;padding:8px 2px;font-size:15px;}"
+            "#workspaceNavigation QToolButton:hover{background:#1D2A32;border-color:#B47A3A;}"
+            "#workspaceNavigation QToolButton:checked{color:#F0B765;background:#2A2418;border-color:#B47A3A;}"
+            "#workspaceNavigation QToolButton::menu-indicator{image:none;width:0;}"));
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(8, 10, 8, 8);
         auto* brand = new QWidget(this);
         brand->setObjectName(QStringLiteral("navBrand"));
         auto* brand_layout = new QVBoxLayout(brand);
         brand_layout->setContentsMargins(8, 6, 8, 6);
-        heading_ = new QLabel(QStringLiteral("ALTAIR / WORKSPACE"), brand);
+        heading_ = new QLabel(QStringLiteral("ALTAIR"), brand);
         heading_->setObjectName(QStringLiteral("navBrandTitle"));
-        auto* subheading = new QLabel(QStringLiteral("CONTROL ROOM  ·  PAPER-SAFE UI"), brand);
+        auto* subheading = new QLabel(QStringLiteral("Trading workstation  ·  paper"), brand);
         subheading->setObjectName(QStringLiteral("navBrandSub"));
         brand_layout->addWidget(heading_);
         brand_layout->addWidget(subheading);
         layout->addWidget(brand);
-        search_button_ = new QPushButton(QStringLiteral("⌕  Find workspace"), this);
+        search_button_ = new QPushButton(QStringLiteral("⌕   Search pages…        Ctrl+K"), this);
         search_button_->setObjectName(QStringLiteral("navSearch"));
         search_button_->setAccessibleName(QStringLiteral("Search workspaces"));
         search_button_->setToolTip(QStringLiteral(
             "Search pages and saved favourites · Ctrl+K"));
         layout->addWidget(search_button_);
-        summary_ = new QLabel(QStringLiteral("%1 workspaces  ·  7 groups")
-                             .arg(kNavigationOrder.size()), this);
+        // The old "31 workspaces · 7 groups" count line said nothing a
+        // trader uses; the tree below is the summary.
+        summary_ = new QLabel(this);
         summary_->setObjectName(QStringLiteral("navSummary"));
-        layout->addWidget(summary_);
+        summary_->hide();
         tree_ = new QTreeWidget(this);
         tree_->setObjectName(QStringLiteral("workspaceTree"));
         tree_->setAccessibleName(QStringLiteral("Workspaces grouped by function"));
         tree_->setHeaderHidden(true);
-        tree_->setIndentation(14);
+        tree_->setIndentation(10);
+        tree_->setAnimated(true);
         tree_->setUniformRowHeights(true);
         tree_->setExpandsOnDoubleClick(false);
         tree_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -83,10 +79,11 @@ public:
         compact_ = new QWidget(this);
         auto* rail = new QVBoxLayout(compact_);
         rail->setContentsMargins(0, 0, 0, 0);
-        for (std::size_t g = 0; g < kNavigationGroups.size(); ++g) {
+        for (const int gi : kNavigationGroupOrder) {
+            const auto g = static_cast<std::size_t>(gi);
             const auto& group = kNavigationGroups[g];
             auto* button = new QToolButton(compact_);
-            button->setText(QString::fromUtf8(group.short_label));
+            button->setText(QString::fromUtf8(group.glyph));
             button->setAccessibleName(QString::fromUtf8(group.label));
             button->setToolTip(QString::fromUtf8(group.label));
             button->setCheckable(true);
@@ -203,9 +200,9 @@ public:
         auto* recent = menu->addMenu(QStringLiteral("Recent pages"));
         for (const auto& id : state_.recent) add_route(recent, nav_page_index(id));
         menu->addSeparator();
-        for (std::size_t g = 0; g < kNavigationGroups.size(); ++g)
-            fill_group(menu->addMenu(QString::fromUtf8(kNavigationGroups[g].label)
-                .replace(QLatin1Char('&'), QStringLiteral("&&"))), static_cast<int>(g));
+        for (const int g : kNavigationGroupOrder)
+            fill_group(menu->addMenu(QString::fromUtf8(kNavigationGroups[static_cast<std::size_t>(g)].label)
+                .replace(QLatin1Char('&'), QStringLiteral("&&"))), g);
     }
     void restore_state(QSettings& settings) {
         bool recovered = false;
@@ -299,19 +296,18 @@ private:
         }
         saved->setExpanded(true);
         saved->setHidden(state_.favourites.isEmpty());
-        for (std::size_t g = 0; g < kNavigationGroups.size(); ++g) {
+        for (const int gi : kNavigationGroupOrder) {
+            const auto g = static_cast<std::size_t>(gi);
             const auto& group = kNavigationGroups[g];
-            std::size_t page_count = 0;
-            for (const int index : kNavigationOrder)
-                if (kNavigationPages[static_cast<std::size_t>(index)].group == static_cast<int>(g)) ++page_count;
             groups_[g] = new QTreeWidgetItem(tree_,
-                {QString::fromUtf8(group.label) + QStringLiteral("  ·  ")
-                 + QString::number(static_cast<qulonglong>(page_count))});
+                {QStringLiteral("%1   %2").arg(QString::fromUtf8(group.glyph), QString::fromUtf8(group.label).toUpper())});
             groups_[g]->setToolTip(0, QString::fromUtf8(group.label));
             QFont group_font = groups_[g]->font(0);
-            group_font.setWeight(QFont::DemiBold);
+            group_font.setWeight(QFont::Bold);
+            group_font.setPointSizeF(group_font.pointSizeF() * 0.85);
+            group_font.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
             groups_[g]->setFont(0, group_font);
-            groups_[g]->setForeground(0, QColor(QStringLiteral("#AEBFC8")));
+            groups_[g]->setForeground(0, QColor(QStringLiteral("#7F95A1")));
             groups_[g]->setData(0, Qt::UserRole + 1, QString::fromUtf8(group.id));
             groups_[g]->setExpanded(state_.expanded.contains(QString::fromUtf8(group.id)));
         }

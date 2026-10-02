@@ -104,13 +104,18 @@ altair_fyers_ticker --go --depth --seconds 60 \
     --symbols NSE:NIFTY50-INDEX,NSE:SBIN-EQ    # live stream -> data/fyers_ticks.json
 ```
 
-In the desktop, open **Terminal → Positions & Greeks** and press **Refresh FYERS**
-for the GETS-style workspace: positions and funds, Greek market watch (IV and
-Greeks per contract, user IV override), portfolio Greek summary, what-if
-simulation, expense and margin, trade history, RMS, top movers and index
-information. It runs `altair_fyers_account` and `altair_fyers_quotes` (both
-read-only). Put the Kite instrument master at `data/instruments.csv` so monthly
-expiries and lot sizes resolve.
+In the desktop, press **Alt+F6** in the Terminal for the net position window. Its
+*Broker account · GETS* tab is the GETS-style workspace:
+- positions and funds;
+- the Greek market watch (IV and Greeks per contract, user IV override) and the
+  portfolio Greek summary;
+- what-if simulation, expense and margin;
+- trade history, RMS, top movers and index information.
+
+Prices come live from the stream. The account is fetched by itself
+(`altair_fyers_account`, read-only) every minute while the window is open. Put
+the Kite instrument master at `data/instruments.csv` so that monthly expiries
+and lot sizes resolve.
 
 **Headless hosts** (a cloud session, a scheduled job) have no browser for the
 login. `altair_fyers_history` and `altair_fyers_ticker` also accept the day's
@@ -171,10 +176,20 @@ the results.
 
 ## Live terminal: streaming prices and live models
 
-**Terminal → Watch** is a GETS-style market watch fed by `altair_price_service`.
+**Terminal** is a GETS-style market watch fed by `altair_price_service`, and it
+starts the live feed by itself.
 
-- **Sources:** FYERS live (`--fyers --go`), or `--sim` when the market is shut.
-  SIM is always marked SIM.
+- **Sources:** live from FYERS, else Kite (`--live --go`). When the market is
+  shut, use `--sim`, optionally for a chosen past day (`--date`), when the
+  indices follow that day's real minute closes. SIM is always marked SIM.
+- **Views:** Market Watch or Option Chain. **Insert** adds any NSE equity or NSE
+  F&O scrip to the feed; **Delete** removes one.
+- **Paper orders:** + / − (F1 / F2) open a buy or sell window. Fills are at the
+  live bid and ask, with expenses. The other windows:
+  - F3 order book;
+  - F8 trade book;
+  - Alt+F6 net position, the only place positions show;
+  - plus the rest of the GETS keys.
 - **Streams:** indices, near futures, both option chains (ATM ± 20), the NIFTY 50
   and their futures.
   - The watch has LTP, change, bid/ask with sizes, volume, OI, OHLC and LTT, and

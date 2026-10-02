@@ -1,5 +1,8 @@
 // Forecast training runs off the GUI thread; admitted trade updates use a cached model.
 #pragma once
+
+#include <algorithm>
+#include <cmath>
 #include "live_forecast.hpp"
 #include "price_client.hpp"
 #include <models/stream_forecast.hpp>
@@ -17,6 +20,16 @@ struct ForecastTrainingResult {
     QString error;
     QString provider;
     std::size_t loaded = 0, excluded = 0, older = 0;
+    /// Stored bars the broker's fresh fetch REVISED (a different close at the
+    /// same bar end), and the largest revision in basis points. The fetched
+    /// bar wins: a bar captured mid-session, or by the other broker, differs
+    /// from the settled print by a few paise, and refusing the whole training
+    /// run over that was the "Fetched bar conflicts with stored history" error.
+    std::size_t revised = 0;
+    double max_revision_bp = 0.0;
+    /// Duplicate stamps inside the stored files with different closes; the
+    /// later row is kept.
+    std::size_t duplicate_stamps = 0;
 };
 
 /// Tracks only connection epochs and post-reset bar continuity. No broker or
@@ -128,7 +141,11 @@ inline ForecastTrainingResult train_forecast_page(const QString& root, const QSt
             prior_end = end;
             ++valid_rows;
             if (bars.contains(end) && bars.value(end) != price) {
-                result.error = QStringLiteral("Conflicting duplicate timestamp in %1").arg(name); return result;
+                // A repeated stamp with a different close: the later row is
+                // the newer capture, so it replaces the earlier one, counted.
+                bars.insert(end, price);
+                ++result.duplicate_stamps;
+                continue;
             }
             if (!bars.contains(end) && bars.size() >= kTrainingBars && end <= bars.firstKey()) {
                 ++result.older;
@@ -152,7 +169,15 @@ inline ForecastTrainingResult train_forecast_page(const QString& root, const QSt
                 ++result.excluded; continue;
             }
             if (bars.contains(end) && bars.value(end) != fresh.bars.closes[i]) {
-                result.error = QStringLiteral("Fetched bar conflicts with stored history"); return result;
+                // THE BROKER'S BAR WINS. The stored one was captured earlier
+                // (often mid-bar) or by the other broker; the fetch is the
+                // settled print. Counted and sized, never silent.
+                const double before = bars.value(end);
+                const double bp = before > 0.0 ? std::fabs(fresh.bars.closes[i] / before - 1.0) * 1e4 : 0.0;
+                result.max_revision_bp = std::max(result.max_revision_bp, bp);
+                ++result.revised;
+                bars.insert(end, fresh.bars.closes[i]);
+                continue;
             }
             if (!bars.contains(end) && bars.size() >= kTrainingBars && end <= bars.firstKey()) {
                 ++result.older;
@@ -264,6 +289,9 @@ private:
                 .arg(fitted_->training_rows).arg(fitted_->validation_rows).arg(fitted_->scored_rows).arg(fitted_->chosen_depth)
                 .arg(fitted_->rmse_bps, 0, 'f', 3).arg(fitted_->naive_rmse_bps, 0, 'f', 3)
                 .arg(result->loaded).arg(result->older).arg(result->excluded).arg(fitted_->skipped_windows);
+            if (result->revised > 0 || result->duplicate_stamps > 0)
+                metrics_ += QString("Broker fetch revised %1 stored bar(s), largest change %2 bp; %3 repeated stamp(s) in the files kept their later row\n")
+                    .arg(result->revised).arg(result->max_revision_bp, 0, 'f', 2).arg(result->duplicate_stamps);
             const auto estimate = fitted_->predict(completed_, end_);
             if (estimate) latest_ = *estimate;
             live_status_ = "Historical forecast from last completed bar — waiting for live trades";

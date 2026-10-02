@@ -16,9 +16,14 @@
 // No check description here may contain the substring FAIL.
 
 #include "../kite_link.hpp"
+#include "../combined_account.hpp"
 
-#include <QCoreApplication>
+#include <QApplication>
+#include <QDir>
+#include <QElapsedTimer>
+#include <QFile>
 #include <QString>
+#include <QTemporaryDir>
 
 #include <cstdio>
 
@@ -42,7 +47,7 @@ using namespace altair::ui;
 
 int main(int argc, char** argv)
 {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     std::printf("P26-01 -- the Kite link panel\n");
 
     // -----------------------------------------------------------------------
@@ -119,6 +124,96 @@ int main(int argc, char** argv)
     // must not happen is a path being returned for a file that is not there.
     check(exe.isEmpty() || QFileInfo(exe).exists(),
           "the returned path, if any, is a file that exists");
+
+    // -----------------------------------------------------------------------
+    // 4. The button says what happened, where it was clicked.
+    // -----------------------------------------------------------------------
+    std::printf("\n[4] a refused login is visible next to the button\n");
+    {
+        KiteLinkPanel panel(Role::Admin, [] { return QString{}; });
+        panel.set_helper_for_test(QString{});
+        panel.open_login();
+        auto* out = panel.outcome();
+        check(out != nullptr && !out->isHidden()
+                  && out->kind() == LoginOutcomeKind::Problem
+                  && out->text().contains(QStringLiteral("build.bat net")),
+              "with no helper built, the click explains how to build it");
+    }
+#ifndef _WIN32
+    {
+        QTemporaryDir dir;
+        const QString script = dir.filePath(QStringLiteral("fake_kite_login.sh"));
+        QFile f(script);
+        f.open(QIODevice::WriteOnly);
+        f.write("#!/bin/sh\necho 'Kite app credentials are incomplete in the OS vault or environment.'\nexit 2\n");
+        f.close();
+        f.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        KiteLinkPanel panel(Role::Admin, [] { return QString{}; });
+        panel.set_helper_for_test(script);
+        panel.open_login();
+        auto* out = panel.outcome();
+        check(out->kind() == LoginOutcomeKind::Working && !out->isHidden(),
+              "the click shows it is working at once");
+        QElapsedTimer t;
+        t.start();
+        while (out->kind() == LoginOutcomeKind::Working && t.elapsed() < 10000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        check(out->kind() == LoginOutcomeKind::Problem
+                  && out->text().contains(QStringLiteral("credentials are not saved")),
+              "credentials missing: the message names the form that fixes it");
+        check(out->url().isEmpty(), "no login link is offered when there is no URL");
+    }
+#endif
+
+    // -----------------------------------------------------------------------
+    // 5. Both brokers' snapshots read into one book.
+    // -----------------------------------------------------------------------
+    std::printf("\n[5] FYERS and Zerodha snapshots combine\n");
+    {
+        QTemporaryDir dir;
+        const auto write = [&dir](const char* name, const char* body) {
+            QFile f(dir.filePath(QString::fromLatin1(name)));
+            f.open(QIODevice::WriteOnly);
+            f.write(body);
+            return f.fileName();
+        };
+        const QString fy = write("fyers_account.json", R"({"schema_version":1,"broker":"FYERS",
+            "fetched_at_unix":1790000000,"account_id":"XS1234",
+            "funds_status":200,"funds_state":"present",
+            "funds":{"fund_limit":[{"id":1,"title":"Total Balance","equityAmount":150000},
+                                   {"id":2,"title":"Utilized Amount","equityAmount":50000},
+                                   {"id":10,"title":"Available Balance","equityAmount":100000}]},
+            "positions_status":200,"positions_state":"present",
+            "positions":{"netPositions":[{"symbol":"NSE:NIFTY26OCTFUT","netQty":75,"netAvg":25000,
+                                          "ltp":25100,"pl":7500,"productType":"MARGIN"}]}})");
+        const QString kt = write("kite_account.json", R"({"schema_version":1,"broker":"ZERODHA_KITE",
+            "fetched_at_unix":1790000000,"account_id":"AB1234",
+            "margins_status":200,
+            "margins":{"data":{"equity":{"net":40000.5,"available":{"live_balance":40000.5},
+                                         "utilised":{"debits":9999.5}}}},
+            "positions_status":200,
+            "positions":{"data":{"net":[{"tradingsymbol":"BANKNIFTY26OCTFUT","quantity":-30,
+                                         "average_price":56000,"last_price":56100,"pnl":-3000,
+                                         "product":"NRML"}]}}})");
+        const auto now = QDateTime::fromSecsSinceEpoch(1790000060, QTimeZone::UTC);
+        const CombinedAccount a = read_combined_account(fy, kt, now);
+        check(a.funds.size() == 2 && a.funds[0].present && a.funds[1].present,
+              "both brokers' funds are read");
+        check(a.funds[0].available == 100000.0 && a.funds[0].used == 50000.0
+                  && a.funds[0].age_s == 60,
+              "FYERS funds map by row title, with the snapshot age");
+        check(a.funds[1].available == 40000.5 && a.funds[1].account == QStringLiteral("AB1234"),
+              "Zerodha equity margin maps to available");
+        check(a.positions.size() == 2 && a.total_pnl() == 4500.0,
+              "positions from both brokers, one P&L");
+        check(a.positions[1].qty == -30 && a.positions[1].broker == QStringLiteral("Zerodha"),
+              "each row keeps its broker and sign");
+        const CombinedAccount none = read_combined_account(dir.filePath(QStringLiteral("nope.json")),
+                                                           kt, now);
+        check(!none.funds[0].present && none.notes.size() == 1
+                  && none.notes[0].startsWith(QStringLiteral("FYERS")),
+              "a missing snapshot is said, not shown as zero");
+    }
 
     std::printf("\n%s -- %d failing check(s)\n",
                 failures == 0 ? "PASS" : "FAILED", failures);

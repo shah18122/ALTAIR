@@ -39,6 +39,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -47,8 +48,10 @@
 
 #include <app/fyers_env_session.hpp>
 #include <app/fyers_price_frames.hpp>
+#include <app/kite_price_frames.hpp>
 #include <app/live_feed_sources.hpp>
 #include <broker/fyers_api.hpp>
+#include <broker/credential_store.hpp>
 #include <broker/https_client.hpp>
 #include <broker/kite_ticker.hpp>
 #include <feed/fyers_hsm.hpp>
@@ -75,7 +78,9 @@ void usage(const char* exe) {
         "  %s --go [--port N] [--seconds N] [--tokens a,b,c]\n"
         "  %s --fyers [--go] [--until HH:MM] [--strikes N] [--depth-strikes N]\n"
         "      [--no-stocks] [--atm-nifty X] [--atm-banknifty X]\n"
-        "  %s --sim [--speed N] [--from HH:MM] [--seed N]\n\n"
+        "  %s --kite [--go] [same options as --fyers]\n"
+        "  %s --live [--go] [same options as --fyers]\n"
+        "  %s --sim [--date YYYY-MM-DD] [--speed N] [--from HH:MM] [--seed N]\n\n"
         "  --fyers             the LIVE TERMINAL feed from FYERS: NIFTY, BANKNIFTY,\n"
         "                      INDIA VIX, the near futures, both option chains\n"
         "                      (ATM +/- --strikes, default 20) and the NIFTY 50, with\n"
@@ -84,11 +89,21 @@ void usage(const char* exe) {
         "                      ALTAIR_FYERS_ACCESS_TOKEN. Without --go: prints the\n"
         "                      universe and exits. Runs until --until (default 15:35\n"
         "                      IST), reconnecting after a drop.\n"
+        "  --kite              the same live universe from the Kite ticker (full\n"
+        "                      mode: trades, quotes and 5-level depth). Needs the Kite\n"
+        "                      API key (OS vault or ALTAIR_KITE_API_KEY) and today's\n"
+        "                      data/kite_session.json.\n"
+        "  --live              FYERS when its session is good today, else Kite; and\n"
+        "                      Kite if FYERS refuses the socket. The desktop's\n"
+        "                      \"Start live feed\" runs this.\n"
         "  --sim               the same universe, SIMULATED and flagged SIM on every\n"
         "                      frame: the terminal and the live models with the\n"
         "                      market shut. --speed: simulated seconds per second\n"
         "                      (default 1); --from: the session time to start at\n"
-        "                      (default 09:15).\n"
+        "                      (default 09:15). --date: simulate that day -- the\n"
+        "                      previous closes are the session before it, and when\n"
+        "                      dataset/ holds that day's 1-minute bars, NIFTY,\n"
+        "                      BANKNIFTY and INDIA VIX follow them.\n"
         "  --replay nifty 1m   serve bars from dataset/spot/<symbol>/<iv>/\n"
         "  --go                serve LIVE from Kite. Needs\n"
         "                      ALTAIR_KITE_API_KEY and data/kite_session.json\n"
@@ -107,7 +122,7 @@ void usage(const char* exe) {
         "It binds 127.0.0.1 only. This carries live market data derived from\n"
         "a trading credential and protocol.hpp's session layer does not exist\n"
         "yet, so there is nothing to authenticate a remote reader with.\n",
-        exe, exe, exe, exe);
+        exe, exe, exe, exe, exe, exe);
 }
 
 /// Environment variable, or empty. _dupenv_s on MSVC because getenv is
@@ -307,8 +322,13 @@ void fyers_spots(const FySession& s, double& nifty, double& banknifty) {
 }
 
 /// Stream the universe from FYERS until `deadline_unix` or Ctrl+C.
+/// Returned by run_fyers/run_kite when the market watch added scrips: the
+/// caller rebuilds the universe and reconnects with them.
+inline constexpr int kRestartForWatchlist = 10;
+
 int run_fyers(const FySession& session, const std::vector<altair::live::LiveInstrument>& u,
-              altair::live_sources::SharedBus& bus, std::int64_t deadline_unix, const std::string& status_path) {
+              altair::live_sources::SharedBus& bus, std::int64_t deadline_unix, const std::string& status_path,
+              const std::function<bool()>& watch_changed = {}) {
     namespace hsm = altair::fyers_hsm;
     using altair::live_sources::FeedStatus;
     FeedStatus st;
@@ -402,6 +422,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     std::vector<altair::fyers_frames::LastTrade> last(u.size());
     altair::fyers_frames::Frames f;
     bool auth_rejected = false;
+    bool restart = false;
     const auto emit = [&](const hsm::HsmUpdate& up) {
         if (up.cookie >= u.size()) { return; }
         const std::int64_t recv = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -430,6 +451,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
             st.clients = bus.clients();
             st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
             altair::live_sources::write_status(status_path, st);
+            if (watch_changed && watch_changed()) { restart = true; return false; }
         }
         return !g_stop.load() && unix_now() < deadline_unix;
     };
@@ -447,6 +469,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         const auto run = altair::fyers_data_socket_run(
             {hsm::auth_frame(*hsm_key, source), hsm::mode_frame(false, hsm::kDefaultChannel)}, on_frame,
             hsm::ping_frame(), std::chrono::seconds{hsm::kPingSeconds}, std::chrono::seconds{left});
+        if (restart) { break; }
         if (run) {
             last_error.reset();
             if (run->interrupted) { break; }
@@ -466,6 +489,11 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         const long backoff = attempt < 3 ? (1L << attempt) : 8L;
         std::this_thread::sleep_for(std::chrono::seconds{backoff});
     }
+    if (restart) {
+        std::printf("  watchlist changed: reconnecting with the new scrips\n");
+        std::fflush(stdout);
+        return kRestartForWatchlist;
+    }
     if (st.state != "refused") { st.state = "stopped"; }
     st.clients = bus.clients();
     st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
@@ -475,6 +503,183 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
                 static_cast<unsigned long long>(st.books), static_cast<unsigned long long>(st.reconnects));
     if (auth_rejected) { return 4; }
     return last_error && st.trades == 0 ? 4 : 0;
+}
+
+struct KiteCreds { std::string api_key, access; };
+
+/// Kite ticker credentials: the API key from the OS vault (where Brokers >
+/// Log in · Kite saves it) or ALTAIR_KITE_API_KEY, and TODAY's access token
+/// from data/kite_session.json. Never printed. `why` says what is missing.
+[[nodiscard]] std::optional<KiteCreds> kite_creds(const std::string& session_path, std::int64_t today,
+                                                 std::string& why) {
+    KiteCreds c;
+    const auto stored = altair::broker::load_credential({"altair.kite", "api-key"});
+    c.api_key = stored ? *stored : env_or_empty("ALTAIR_KITE_API_KEY");
+    if (c.api_key.empty()) {
+        why = "no Kite API key (save it in Brokers > Log in - Kite, or set ALTAIR_KITE_API_KEY)";
+        return std::nullopt;
+    }
+    if (!read_access_token(session_path.c_str(), c.access)) {
+        why = "no Kite session (log in to Kite)";
+        return std::nullopt;
+    }
+    // A Kite token lives for one IST day: login_time must be today.
+    std::ifstream in(session_path, std::ios::binary);
+    const std::string all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::size_t at = all.find("\"login_time\"");
+    const std::size_t q1 = at == std::string::npos ? at : all.find('"', all.find(':', at) + 1);
+    const std::string day = q1 == std::string::npos ? std::string{} : all.substr(q1 + 1, 10);
+    if (day != altair::live::day_text(today)) {
+        why = "the Kite session is from " + (day.empty() ? std::string("an unknown day") : day)
+              + "; log in to Kite again";
+        return std::nullopt;
+    }
+    return c;
+}
+
+/// FYERS is usable today: a session exists and its token has not expired.
+[[nodiscard]] bool fyers_usable(const std::optional<FySession>& s, std::string& why) {
+    if (!s) { why = "no FYERS session (log in to FYERS)"; return false; }
+    const auto key = altair::fyers_hsm::hsm_key_from_token(s->access, unix_now());
+    if (!key) { why = std::string("FYERS token: ") + altair::fyers_hsm::error_text(key.error()); return false; }
+    return true;
+}
+
+/// Stream the universe from the Kite ticker, full mode, until `deadline_unix`.
+int run_kite(const KiteCreds& creds, const std::vector<altair::live::LiveInstrument>& u,
+             altair::live_sources::SharedBus& bus, std::int64_t deadline_unix, const std::string& status_path,
+             const std::function<bool()>& watch_changed = {}) {
+    using altair::live_sources::FeedStatus;
+    FeedStatus st;
+    st.source = "kite";
+    st.state = "connecting";
+    st.instruments = u.size();
+    altair::live_sources::write_status(status_path, st);
+
+    // The decoder maps (Kite, token) to a canonical id; token_of[id] maps it
+    // back. Registered once per token: a reconnect after a watchlist change
+    // finds the earlier ones already there.
+    std::vector<std::uint32_t> tokens, token_of;
+    tokens.reserve(u.size());
+    for (const auto& i : u) {
+        if (!g_specs.id_of(altair::FeedSource::Kite, i.token)) {
+            altair::ContractSpec cs{};
+            cs.token[static_cast<std::size_t>(altair::FeedSource::Kite)] = i.token;
+            std::snprintf(cs.symbol, sizeof(cs.symbol), "TOKEN%u", i.token);
+            cs.lot_size = altair::LotSize{1};
+            cs.tick_size = altair::Price{1};
+            cs.price_scale = 100;
+            if (!g_specs.add(cs)) { continue; }
+        }
+        const auto id = g_specs.id_of(altair::FeedSource::Kite, i.token);
+        if (!id) { continue; }
+        const auto at = static_cast<std::size_t>(*id);
+        if (token_of.size() <= at) token_of.resize(at + 1, 0);
+        token_of[at] = i.token;
+        tokens.push_back(i.token);
+    }
+    if (tokens.empty()) {
+        st.state = "refused";
+        st.error = "nothing subscribable";
+        altair::live_sources::write_status(status_path, st);
+        return 3;
+    }
+    constexpr std::size_t kMax = 4096;
+    std::vector<altair::Tick> ticks(kMax);
+    std::vector<altair::DepthUpdate> depths(kMax);
+    std::uint32_t seq = 0;
+    bool restart = false;
+    auto last_status = std::chrono::steady_clock::now();
+    const auto on_frame = [&](const unsigned char* raw, std::size_t len) {
+        const std::int64_t recv_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        if (st.state != "streaming") { st.state = "streaming"; }
+        // Quotes first, so a row has its previous close before its price.
+        altair::kite_frames::quotes_from_frame(raw, len, recv_ns,
+            [&bus](const altair::QuotePayload& q, std::int64_t ns) { bus.quote(q, ns); });
+        const auto r = altair::decode_kite_frame(raw, len, g_specs, altair::Timestamp{recv_ns}, seq,
+                                                 ticks.data(), kMax, depths.data(), kMax);
+        if (!r) { return; }
+        for (std::size_t i = 0; i < r->ticks; ++i) {
+            const altair::Tick& t = ticks[i];
+            const auto idx = static_cast<std::size_t>(t.id);
+            if (idx >= token_of.size() || token_of[idx] == 0) { continue; }
+            altair::PricePayload p;
+            p.token = token_of[idx];
+            p.last_paise = t.last.raw();
+            p.last_qty = t.last_qty.raw();
+            p.exchange_ts_ns = t.exchange_ts.ns_since_epoch();
+            if (t.volume.raw() > 0) { p.flags |= altair::kPriceHasVolume; p.volume = t.volume.raw(); }
+            if (t.oi > 0) { p.flags |= altair::kPriceHasOi; p.oi = t.oi; }
+            if ((t.flags & static_cast<std::uint16_t>(altair::TickFlag::NoExchangeTs)) != 0) {
+                p.flags |= altair::kPriceNoExchTs;
+            }
+            const std::int64_t ns = p.exchange_ts_ns != 0 ? p.exchange_ts_ns : recv_ns;
+            bus.trade(p, ns);
+            st.engine_ns = ns;
+        }
+        for (std::size_t i = 0; i < r->depths; ++i) {
+            const altair::DepthUpdate& d = depths[i];
+            const auto idx = static_cast<std::size_t>(d.id);
+            if (idx >= token_of.size() || token_of[idx] == 0) { continue; }
+            const auto levels = static_cast<std::uint16_t>(
+                std::min<std::size_t>(altair::kMaxDepthLevels, std::max(d.bid_levels, d.ask_levels)));
+            if (levels == 0) { continue; }
+            altair::PricePayload p;
+            p.token = token_of[idx];
+            p.exchange_ts_ns = d.exchange_ts.ns_since_epoch();
+            p.flags |= altair::kPriceHasBook;
+            p.depth_levels = levels;
+            altair::PriceLevel bids[altair::kMaxDepthLevels]{};
+            altair::PriceLevel asks[altair::kMaxDepthLevels]{};
+            for (std::uint16_t k = 0; k < levels; ++k) {
+                bids[k] = {d.bid[k].px.raw(), d.bid[k].qty.raw(), d.bid[k].orders, 0};
+                asks[k] = {d.ask[k].px.raw(), d.ask[k].qty.raw(), d.ask[k].orders, 0};
+            }
+            bus.book(p, bids, asks, p.exchange_ts_ns != 0 ? p.exchange_ts_ns : recv_ns);
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_status > std::chrono::seconds(2)) {
+            last_status = now;
+            st.clients = bus.clients();
+            st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
+            altair::live_sources::write_status(status_path, st);
+            if (watch_changed && watch_changed()) restart = true;
+        }
+    };
+    const auto done = [deadline_unix, &restart] { return restart || g_stop.load() || unix_now() >= deadline_unix; };
+    std::printf("  subscribing %zu token(s) on the Kite ticker, full mode\n", tokens.size());
+    std::fflush(stdout);
+    int rc = 0;
+    for (long attempt = 0; !done(); ++attempt) {
+        if (attempt > 0) {
+            ++st.reconnects;
+            st.state = "reconnecting";
+            altair::live_sources::write_status(status_path, st);
+        }
+        const auto stats = altair::kite_ticker_run(creds.api_key, creds.access, tokens,
+                                                   altair::TickerMode::Full, on_frame, done);
+        if (restart) {
+            std::printf("  watchlist changed: reconnecting with the new scrips\n");
+            std::fflush(stdout);
+            return kRestartForWatchlist;
+        }
+        if (stats) { break; }
+        st.error = altair::ticker_error_text(stats.error());
+        std::printf("  kite feed error: %s\n", st.error.c_str());
+        std::fflush(stdout);
+        if (bus.trades() == 0 && attempt >= 2) { st.state = "refused"; rc = 4; break; }
+        const long backoff = attempt < 3 ? (1L << attempt) : 8L;
+        std::this_thread::sleep_for(std::chrono::seconds{backoff});
+    }
+    if (st.state != "refused") { st.state = "stopped"; }
+    st.clients = bus.clients();
+    st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
+    altair::live_sources::write_status(status_path, st);
+    std::printf("  stopped: %llu trade(s), %llu quote(s), %llu book(s) published\n",
+                static_cast<unsigned long long>(st.trades), static_cast<unsigned long long>(st.quotes),
+                static_cast<unsigned long long>(st.books));
+    return rc;
 }
 
 }  // namespace
@@ -488,10 +693,11 @@ int main(int argc, char** argv) {
     // NIFTY 50, NIFTY BANK, INDIA VIX -- the three the ticker has always
     // defaulted to. Overridable, because P38 needs an option chain here.
     std::vector<std::uint32_t> sub_tokens{256265u, 260105u, 264969u};
-    bool fyers = false, sim = false, stocks = true;
+    bool fyers = false, sim = false, kite = false, live_auto = false, stocks = true;
     int until_min = 15 * 60 + 35, from_min = 9 * 60 + 15, strikes = 20, depth_strikes = 5;
     double speed = 1.0, atm_nifty = 0.0, atm_banknifty = 0.0;
     std::uint64_t seed = 20261001;
+    std::string sim_date;   // YYYY-MM-DD: simulate that day instead of today
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -525,6 +731,12 @@ int main(int argc, char** argv) {
             fyers = true;
         } else if (a == "--sim") {
             sim = true;
+        } else if (a == "--kite") {
+            kite = true;
+        } else if (a == "--date" && i + 1 < argc) {
+            sim_date = argv[++i];
+        } else if (a == "--live") {
+            live_auto = true;
         } else if (a == "--until" && i + 1 < argc) {
             until_min = parse_hhmm(argv[++i]);
         } else if (a == "--from" && i + 1 < argc) {
@@ -549,7 +761,13 @@ int main(int argc, char** argv) {
         }
     }
     if (fyers) { mode = mode == "live" ? "fyers" : "fyers-dry"; }
+    else if (kite) { mode = mode == "live" ? "kite" : "kite-dry"; }
+    else if (live_auto) { mode = mode == "live" ? "auto" : "auto-dry"; }
     if (sim) { mode = "sim"; }
+    if (!sim_date.empty() && (altair::live::parse_day(sim_date) == 0 || mode != "sim")) {
+        std::printf("--date YYYY-MM-DD goes with --sim\n");
+        return 2;
+    }
     if (until_min < 0 || from_min < 0 || !(speed > 0.0 && speed <= 1000.0) || strikes < 0 || strikes > 60
         || depth_strikes < 0 || depth_strikes > strikes) {
         std::printf("--until/--from must be HH:MM, --speed 0..1000, --strikes 0..60, "
@@ -563,14 +781,40 @@ int main(int argc, char** argv) {
     }
 
     // ---- the live terminal: FYERS or simulated, over the whole universe ----
-    if (mode == "fyers" || mode == "fyers-dry" || mode == "sim") {
+    if (mode == "fyers" || mode == "fyers-dry" || mode == "sim" || mode == "kite" || mode == "kite-dry"
+        || mode == "auto" || mode == "auto-dry") {
         const std::string src = ALTAIR_SOURCE_DIR;
         const std::string ds = ALTAIR_DATASET_DIR;
-        const std::int64_t today = altair::live::ist_today(unix_now());
+        const std::int64_t today = sim_date.empty() ? altair::live::ist_today(unix_now())
+                                                    : altair::live::parse_day(sim_date);
         std::optional<FySession> session;
+        std::optional<KiteCreds> kcreds;
         double nifty = atm_nifty, bnf = atm_banknifty;
-        if (mode == "fyers") {
+        // FYERS first, Kite second: which one serves today is decided here,
+        // from what is logged in, and said.
+        if (mode == "auto" || mode == "auto-dry") {
+            std::string fy_why, ki_why;
             session = fyers_session(src + "/data/fyers_session.json");
+            const bool fy_ok = fyers_usable(session, fy_why);
+            kcreds = kite_creds(src + "/data/kite_session.json", today, ki_why);
+            if (fy_ok) {
+                std::printf("live source: FYERS%s\n", kcreds ? " (Kite on standby)" : "");
+                mode = mode == "auto" ? "fyers" : "fyers-dry";
+            } else if (kcreds) {
+                std::printf("live source: Kite (FYERS: %s)\n", fy_why.c_str());
+                session.reset();
+                mode = mode == "auto" ? "kite" : "kite-dry";
+            } else {
+                std::printf("no live source today.\n  FYERS: %s\n  Kite: %s\n", fy_why.c_str(), ki_why.c_str());
+                return 2;
+            }
+        } else if (mode == "kite" || mode == "kite-dry") {
+            std::string why;
+            kcreds = kite_creds(src + "/data/kite_session.json", today, why);
+            if (!kcreds) { std::printf("Kite: %s\n", why.c_str()); return 2; }
+        }
+        if (mode == "fyers") {
+            if (!session) session = fyers_session(src + "/data/fyers_session.json");
             if (!session) {
                 std::printf("no valid FYERS session: run altair_fyers_login first, or set\n"
                             "ALTAIR_FYERS_CLIENT_ID and ALTAIR_FYERS_ACCESS_TOKEN.\n");
@@ -583,8 +827,8 @@ int main(int argc, char** argv) {
                 if (!(bnf > 0.0) && b > 0.0) { bnf = b; std::printf("BANKNIFTY now %.2f (FYERS quote)\n", b); }
             }
         }
-        if (!(nifty > 0.0)) { nifty = altair::live::last_close(ds + "/spot/nifty/1d"); std::printf("NIFTY ATM from the last close in dataset/: %.2f\n", nifty); }
-        if (!(bnf > 0.0)) { bnf = altair::live::last_close(ds + "/spot/banknifty/1d"); std::printf("BANKNIFTY ATM from the last close in dataset/: %.2f\n", bnf); }
+        if (!(nifty > 0.0)) { nifty = altair::live_sources::sim_close(ds + "/spot/nifty/1d", sim_date); std::printf("NIFTY ATM from the last close in dataset/: %.2f\n", nifty); }
+        if (!(bnf > 0.0)) { bnf = altair::live_sources::sim_close(ds + "/spot/banknifty/1d", sim_date); std::printf("BANKNIFTY ATM from the last close in dataset/: %.2f\n", bnf); }
 
         std::string err;
         const auto rows = altair::live::read_kite_master(src + "/data/instruments.csv", err);
@@ -596,14 +840,18 @@ int main(int argc, char** argv) {
         uo.strikes = strikes;
         uo.depth_strikes = depth_strikes;
         uo.stocks = stocks;
-        const auto uni = altair::live::build_universe(
+        auto uni = altair::live::build_universe(
             rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);
+        const std::string live_dir = src + "/data/live";
+        const std::string watch_path = live_dir + "/watchlist.csv";
+        // The market watch's added scrips (data/live/watchlist.csv).
+        std::vector<std::uint32_t> watched = altair::live::read_watchlist(watch_path);
+        altair::live::add_watchlist(uni.instruments, rows, watched, uni.notes);
         for (const auto& n : uni.notes) { std::printf("  note: %s\n", n.c_str()); }
         std::size_t depth_n = 0;
         for (const auto& i : uni.instruments) { depth_n += i.depth ? 1 : 0; }
         std::printf("universe: %zu instrument(s), %zu with depth, expiries on or after %s\n",
                     uni.instruments.size(), depth_n, altair::live::day_text(today).c_str());
-        const std::string live_dir = src + "/data/live";
         std::error_code ec;
         std::filesystem::create_directories(live_dir, ec);
         if (!altair::live::write_universe(live_dir + "/universe.csv", uni.instruments)) {
@@ -611,11 +859,12 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::printf("wrote %s/universe.csv\n", live_dir.c_str());
-        if (mode == "fyers-dry") {
+        if (mode == "fyers-dry" || mode == "kite-dry") {
             for (std::size_t i = 0; i < uni.instruments.size() && i < 12; ++i) {
                 std::printf("  %-10u %s\n", uni.instruments[i].token, uni.instruments[i].fyers.c_str());
             }
-            std::printf("\nDRY RUN. No socket was opened. Add --go to stream from FYERS.\n");
+            std::printf("\nDRY RUN. No socket was opened. Add --go to stream from %s.\n",
+                        mode == "kite-dry" ? "Kite" : "FYERS");
             return 0;
         }
 
@@ -627,7 +876,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::printf("altair price service on 127.0.0.1:%u  [%s]\n", static_cast<unsigned>(bus.port()),
-                    mode == "sim" ? "SIMULATED" : "FYERS LIVE");
+                    mode == "sim" ? "SIMULATED" : mode == "kite" ? "KITE LIVE" : "FYERS LIVE");
         std::fflush(stdout);
         std::signal(SIGINT, on_stop_signal);
         std::signal(SIGTERM, on_stop_signal);
@@ -635,13 +884,60 @@ int main(int argc, char** argv) {
         altair::live_sources::Poller poller(shared);
         const std::string status = live_dir + "/feed_status.json";
         const auto started = std::chrono::steady_clock::now();
+        // The watchlist file, checked every couple of seconds: new tokens are
+        // added to the universe (and universe.csv, which the desktop reads).
+        std::error_code wec;
+        auto watch_stamp = std::filesystem::last_write_time(watch_path, wec);
+        const auto take_new_watch = [&]() -> std::vector<altair::live::LiveInstrument> {
+            std::error_code e;
+            const auto stamp = std::filesystem::last_write_time(watch_path, e);
+            if (e || stamp == watch_stamp) return {};
+            watch_stamp = stamp;
+            const auto now_watched = altair::live::read_watchlist(watch_path);
+            const std::size_t before = uni.instruments.size();
+            std::vector<std::string> notes;
+            altair::live::add_watchlist(uni.instruments, rows, now_watched, notes);
+            for (const auto& n : notes) { std::printf("  note: %s\n", n.c_str()); }
+            std::vector<altair::live::LiveInstrument> added(uni.instruments.begin() + static_cast<std::ptrdiff_t>(before),
+                                                           uni.instruments.end());
+            if (!added.empty()) {
+                (void)altair::live::write_universe(live_dir + "/universe.csv", uni.instruments);
+                for (const auto& in : added) std::printf("  added %s\n", in.symbol.c_str());
+                std::fflush(stdout);
+            }
+            return added;
+        };
         if (mode == "sim") {
             const std::int64_t start_ns = ist_unix(today, from_min) * 1'000'000'000LL;
+            if (!sim_date.empty()) std::printf("simulating %s from %02d:%02d\n", sim_date.c_str(), from_min / 60, from_min % 60);
             altair::live_sources::run_sim(
-                shared, uni.instruments, altair::live_sources::sim_seeds(src, ds, uni.instruments), seed, start_ns,
-                speed, status, [&] {
+                shared, uni.instruments, altair::live_sources::sim_seeds(src, ds, uni.instruments, sim_date), seed,
+                start_ns, speed, status,
+                [&] {
                     return g_stop.load() || (seconds > 0 && std::chrono::steady_clock::now() - started
                                                                 >= std::chrono::seconds(seconds));
+                },
+                [&](altair::live::LiveSim& sim) {
+                    if (sim_date.empty()) return;
+                    // A past day: the indices follow its real minute closes.
+                    auto n = altair::live::day_minutes(ds + "/spot/nifty/1m", sim_date);
+                    auto b = altair::live::day_minutes(ds + "/spot/banknifty/1m", sim_date);
+                    auto v = altair::live::day_minutes(ds + "/spot/indiavix/1m", sim_date);
+                    std::printf("  %s on disk: %zu NIFTY, %zu BANKNIFTY, %zu VIX minute(s)%s\n", sim_date.c_str(),
+                                n.size(), b.size(), v.size(),
+                                n.empty() ? " -- no real path; a random walk from the previous close" : "");
+                    sim.set_anchors(std::move(n), std::move(b), std::move(v));
+                },
+                [&] {
+                    std::vector<std::pair<altair::live::LiveInstrument, double>> out;
+                    for (auto& in : take_new_watch()) {
+                        std::string dir = in.symbol;
+                        for (auto& c : dir) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+                        const double close = in.kind == altair::live::LiveKind::Equity
+                            ? altair::live_sources::sim_close(src + "/data/pairs/" + dir + "/1d", sim_date) : 0.0;
+                        out.emplace_back(std::move(in), close);
+                    }
+                    return out;
                 });
             std::printf("sim stopped: %llu trade(s), %llu quote(s), %llu book(s)\n",
                         static_cast<unsigned long long>(shared.trades()),
@@ -651,7 +947,22 @@ int main(int argc, char** argv) {
         }
         std::int64_t deadline = ist_unix(today, until_min);
         if (seconds > 0 && unix_now() + seconds < deadline) { deadline = unix_now() + seconds; }
-        return run_fyers(*session, uni.instruments, shared, deadline, status);
+        const std::function<bool()> watch_changed = [&] { return !take_new_watch().empty(); };
+        bool on_kite = mode == "kite";
+        for (;;) {
+            int rc = on_kite ? run_kite(*kcreds, uni.instruments, shared, deadline, status, watch_changed)
+                             : run_fyers(*session, uni.instruments, shared, deadline, status, watch_changed);
+            // FYERS refused the socket and Kite is logged in: carry on from Kite.
+            if (!on_kite && rc == 4 && kcreds && !g_stop.load() && unix_now() < deadline) {
+                std::printf("FYERS refused the feed; switching to Kite\n");
+                std::fflush(stdout);
+                on_kite = true;
+                continue;
+            }
+            // New scrips: reconnect with them (the board cache keeps the rest).
+            if (rc == kRestartForWatchlist && !g_stop.load() && unix_now() < deadline) continue;
+            return rc == kRestartForWatchlist ? 0 : rc;
+        }
     }
 
     boost::asio::io_context io;

@@ -43,9 +43,16 @@ struct NavigationState {
     const auto raw_favourites = settings.value(QStringLiteral("favourites"));
     const auto expanded = raw_expanded.toStringList();
     auto favourites = raw_favourites.toStringList();
+    // QSettings writes an EMPTY list as @Invalid() and reads it back as an
+    // invalid QVariant. A present key holding nothing is an empty list, not
+    // a corrupt one; only a missing key or a non-list value is malformed.
+    const auto list_ok = [&settings](const QString& key, const QVariant& v) {
+        return settings.contains(key) && (!v.isValid() || v.canConvert<QStringList>());
+    };
     bool valid = schema_ok && (schema == 1 || schema == 2) && mode_ok && mode >= 0 && mode <= 2 &&
                  last_ok && last >= 0 && last <= 1 && nav_known_id(page) &&
-                 raw_expanded.canConvert<QStringList>() && raw_favourites.canConvert<QStringList>() &&
+                 list_ok(QStringLiteral("expanded"), raw_expanded) &&
+                 list_ok(QStringLiteral("favourites"), raw_favourites) &&
                  expanded.size() <= 7 && favourites.size() <= 36;
     for (const auto& id : expanded) valid = valid && nav_known_group(id);
     for (const auto& id : favourites) valid = valid && nav_known_id(id);

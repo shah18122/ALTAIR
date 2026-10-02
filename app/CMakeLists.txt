@@ -165,7 +165,7 @@ if(ALTAIR_HAVE_NET)
         add_executable(altair_price_service price_service_main.cpp)
         target_link_libraries(altair_price_service PRIVATE
             altair_server altair_broker_net altair_feed altair_instruments
-            altair_live altair_flags Boost::headers)
+            altair_live altair_credential_store altair_flags Boost::headers)
         target_compile_definitions(altair_price_service PRIVATE
             ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
             ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -388,4 +388,10 @@ if(ALTAIR_BUILD_TESTS)
     target_include_directories(altair_fyers_price_frames_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME fyers_price_frames COMMAND altair_fyers_price_frames_test)
+    add_executable(altair_kite_price_frames_test tests/test_kite_price_frames.cpp)
+    target_link_libraries(altair_kite_price_frames_test PRIVATE
+        altair_server altair_feed altair_instruments altair_flags)
+    target_include_directories(altair_kite_price_frames_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME kite_price_frames COMMAND altair_kite_price_frames_test)
 endif()

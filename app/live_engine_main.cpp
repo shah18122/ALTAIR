@@ -236,14 +236,16 @@ void write_atomic(const fs::path& path, const std::string& body) {
 void usage(const char* exe) {
     std::printf(
         "  The live models, paper-trading on altair_price_service's stream.\n\n"
-        "    %s [--port 7421] [--until HH:MM] [--seconds N] [--root DIR] [--unverified-costs]\n\n"
+        "    %s [--port 7421] [--until HH:MM] [--seconds N] [--root DIR] [--unverified-costs] [--date YYYY-MM-DD]\n\n"
         "    --port     the price service's loopback port (default 7421)\n"
         "    --until    stop once the feed's own clock reaches this IST time (default 15:35)\n"
         "    --seconds  stop after N seconds (tests)\n"
         "    --root     the tree holding dataset/, config/ and data/ (default: the source tree)\n"
         "    --unverified-costs  price expenses from config/charges.toml although it is UNVERIFIED;\n"
-        "               every expense and net figure is then marked UNVERIFIED\n\n"
-        "  Start the feed first: altair_price_service --fyers --go (live) or --sim.\n"
+        "               every expense and net figure is then marked UNVERIFIED\n"
+        "    --date     the day being traded, for a simulated past day (--sim --date): history\n"
+        "               stops the day before it\n\n"
+        "  Start the feed first: altair_price_service --live --go (FYERS, else Kite) or --sim.\n"
         "  Writes data/live/engine_state.json and data/live/paper/*.csv. Places no orders.\n",
         exe);
 }
@@ -254,6 +256,7 @@ int main(int argc, char** argv) {
     unsigned short port = 7421;
     int until = 15 * 60 + 35, seconds = 0;
     bool unverified_costs = false;
+    std::string date;   // a simulated past day (altair_price_service --sim --date)
     fs::path root = ALTAIR_SOURCE_DIR;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -264,12 +267,16 @@ int main(int argc, char** argv) {
         if (a == "--seconds" && has) { seconds = std::atoi(argv[++i]); continue; }
         if (a == "--root" && has) { root = argv[++i]; continue; }
         if (a == "--unverified-costs") { unverified_costs = true; continue; }
+        if (a == "--date" && has) { date = argv[++i]; continue; }
         std::printf("unknown argument %s\n", a.c_str());
         usage(argv[0]);
         return 2;
     }
     if (until < 0) { std::printf("--until must be HH:MM\n"); return 2; }
-    const std::int64_t today = lv::ist_today(unix_now());
+    if (!date.empty() && lv::parse_day(date) == 0) { std::printf("--date must be YYYY-MM-DD\n"); return 2; }
+    // History stops the day before the session being traded: today, or the
+    // simulated day.
+    const std::int64_t today = date.empty() ? lv::ist_today(unix_now()) : lv::parse_day(date);
     const fs::path live_dir = root / "data/live", paper_dir = live_dir / "paper";
     std::error_code ec;
     fs::create_directories(paper_dir, ec);

@@ -41,7 +41,18 @@
 #include <analytics/iv.hpp>
 
 #include <QAbstractTableModel>
+#include <QCheckBox>
 #include <QComboBox>
+#include <QCompleter>
+#include <QDateEdit>
+#include <QDir>
+#include <QEvent>
+#include <QKeyEvent>
+#include <QMenu>
+#include <QSet>
+#include <QStackedWidget>
+#include <QStringListModel>
+#include <QTimeEdit>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QFile>
@@ -65,6 +76,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -189,6 +201,7 @@ public:
                   PrevClose, Ltt, Trades, ColumnCount };
     static constexpr int SortRole = Qt::UserRole + 1;
     static constexpr int GroupRole = Qt::UserRole + 2;
+    static constexpr int TokenRole = Qt::UserRole + 3;
     /// How long a moved cell stays lit.
     static constexpr qint64 kFlashMs = 450;
 
@@ -249,6 +262,7 @@ public:
         if (!idx.isValid() || idx.row() < 0 || idx.row() >= rowCount()) return {};
         const LiveRow& row = rows_[static_cast<std::size_t>(idx.row())];
         if (role == GroupRole) return row.group;
+        if (role == TokenRole) return static_cast<qulonglong>(row.token);
         const LivePrice* p = client_ != nullptr ? client_->price(row.token) : nullptr;
         const QuotePayload* q = p != nullptr && p->has_quote ? &p->quote : nullptr;
         const qint64 ltp = p != nullptr ? p->last_paise : 0;
@@ -375,16 +389,22 @@ public:
     using QSortFilterProxyModel::QSortFilterProxyModel;
     void set_group(const QString& g) { group_ = g; invalidateFilter(); }
     void set_text(const QString& t) { text_ = t.trimmed(); invalidateFilter(); }
+    /// Scrips removed from the watch (Delete).
+    void set_hidden(QSet<quint32> h) { hidden_ = std::move(h); invalidateFilter(); }
 
 protected:
     [[nodiscard]] bool filterAcceptsRow(int r, const QModelIndex& parent) const override {
         const QModelIndex i = sourceModel()->index(r, 0, parent);
+        if (!hidden_.isEmpty()
+            && hidden_.contains(static_cast<quint32>(sourceModel()->data(i, LiveWatchModel::TokenRole).toULongLong())))
+            return false;
         if (!group_.isEmpty() && sourceModel()->data(i, LiveWatchModel::GroupRole).toString() != group_) return false;
         return text_.isEmpty() || sourceModel()->data(i, Qt::DisplayRole).toString().contains(text_, Qt::CaseInsensitive);
     }
 
 private:
     QString group_, text_;
+    QSet<quint32> hidden_;
 };
 
 // ---------------------------------------------------------------------------
@@ -504,12 +524,28 @@ public:
                                 this);
         grid_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
         grid_->horizontalHeader()->setDefaultSectionSize(70);
+        // OI and volume in Indian grouping need the room.
+        for (int c : {COi, CVol, PVol, POi}) grid_->setColumnWidth(c, 96);
         v->addWidget(grid_, 1);
+        grid_->setSelectionMode(QAbstractItemView::SingleSelection);
+        grid_->setSelectionBehavior(QAbstractItemView::SelectItems);
         connect(under_, &QComboBox::currentIndexChanged, this, [this](int) { refresh(); });
+        // A cell on the call side picks the call, on the put side the put:
+        // that is the scrip + / − and the market picture act on.
+        connect(grid_, &QTableWidget::currentCellChanged, this, [this](int r, int c, int, int) {
+            const quint32 tok = token_at(r, c);
+            if (tok != 0 && on_pick) on_pick(tok);
+        });
     }
 
     void set_rows(const std::vector<LiveRow>& rows) { rows_ = rows; refresh(); }
     [[nodiscard]] QTableWidget* grid() const noexcept { return grid_; }
+    /// The option under a cell: calls left of the strike, puts right of it.
+    [[nodiscard]] quint32 token_at(int r, int c) const {
+        if (r < 0 || r >= static_cast<int>(row_tokens_.size()) || c == Strike) return 0;
+        return c < Strike ? row_tokens_[static_cast<std::size_t>(r)].first : row_tokens_[static_cast<std::size_t>(r)].second;
+    }
+    std::function<void(quint32)> on_pick;
 
     void refresh() {
         const QString under = under_->currentText();
@@ -573,6 +609,8 @@ public:
                   .arg(QString::fromLatin1(theme_token::kTextMuted), QDate(1970, 1, 1).addDays(expiry).toString(QStringLiteral("dd-MMM-yyyy")))
                   .arg(years * 365.0, 0, 'f', 2).arg(forward / 100.0, 0, 'f', 2).arg(fwd_from).arg(rate_ * 100.0, 0, 'f', 2));
         grid_->setRowCount(static_cast<int>(strikes.size()));
+        row_tokens_.clear();
+        for (const auto& [k, pr] : strikes) row_tokens_.emplace_back(pr.ce, pr.pe);
         int r = 0;
         const QColor itm(0x2A, 0x26, 0x18), plain(0x15, 0x18, 0x1D), atm_bg(0x3A, 0x32, 0x12);
         const QColor fg(0xD0, 0xD6, 0xDE), strike_fg(0xF4, 0xC9, 0x5D);
@@ -609,6 +647,7 @@ private:
     QComboBox* under_ = nullptr;
     QLabel* head_ = nullptr;
     QTableWidget* grid_ = nullptr;
+    std::vector<std::pair<quint32, quint32>> row_tokens_;
     double rate_ = 0.065;
 };
 
@@ -616,8 +655,68 @@ private:
 // The page
 // ---------------------------------------------------------------------------
 
+/// One row of the instrument master the scrip search offers.
+struct MasterScrip {
+    quint32 token = 0;
+    QString symbol, exchange, segment, display;
+};
+
+/// The NSE equities and NSE F&O contracts of data/instruments.csv (the Kite
+/// master), for the scrip search. Read on first use: it is ~9 MB.
+[[nodiscard]] inline std::vector<MasterScrip> load_master_scrips(const QString& path) {
+    std::vector<MasterScrip> out;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return out;
+    QTextStream in(&f);
+    const auto split = [](const QString& line) {
+        QStringList fields;
+        QString cur;
+        bool quoted = false;
+        for (const QChar c : line) {
+            if (c == QLatin1Char('"')) { quoted = !quoted; continue; }
+            if (c == QLatin1Char(',') && !quoted) { fields << cur; cur.clear(); continue; }
+            cur += c;
+        }
+        fields << cur;
+        return fields;
+    };
+    const QStringList head = split(in.readLine());
+    const int c_tok = static_cast<int>(head.indexOf(QStringLiteral("instrument_token")));
+    const int c_sym = static_cast<int>(head.indexOf(QStringLiteral("tradingsymbol")));
+    const int c_name = static_cast<int>(head.indexOf(QStringLiteral("name")));
+    const int c_exp = static_cast<int>(head.indexOf(QStringLiteral("expiry")));
+    const int c_type = static_cast<int>(head.indexOf(QStringLiteral("instrument_type")));
+    const int c_seg = static_cast<int>(head.indexOf(QStringLiteral("segment")));
+    const int c_ex = static_cast<int>(head.indexOf(QStringLiteral("exchange")));
+    if (c_tok < 0 || c_sym < 0 || c_seg < 0 || c_ex < 0 || c_type < 0) return out;
+    const int need = std::max({c_tok, c_sym, c_seg, c_ex, c_type, c_name, c_exp}) + 1;
+    out.reserve(100000);
+    while (!in.atEnd()) {
+        const QStringList c = split(in.readLine());
+        if (c.size() < need) continue;
+        const QString ex = c[c_ex], seg = c[c_seg], type = c[c_type];
+        const bool eq = ex == QLatin1String("NSE") && seg == QLatin1String("NSE") && type == QLatin1String("EQ");
+        const bool fo = ex == QLatin1String("NFO") && (seg == QLatin1String("NFO-FUT") || seg == QLatin1String("NFO-OPT"));
+        if (!eq && !fo) continue;
+        MasterScrip m;
+        m.token = c[c_tok].toUInt();
+        if (m.token == 0) continue;
+        m.symbol = c[c_sym];
+        m.exchange = ex;
+        m.segment = seg;
+        const QString name = c_name >= 0 ? c[c_name] : QString();
+        const QString expiry = c_exp >= 0 ? c[c_exp] : QString();
+        m.display = eq ? QStringLiteral("%1  ·  NSE EQ  ·  %2").arg(m.symbol, name)
+                       : QStringLiteral("%1  ·  %2  ·  %3").arg(m.symbol, seg == QLatin1String("NFO-FUT") ? QStringLiteral("FUT") : type, expiry);
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
 class LiveMarketWatch final : public QWidget {
 public:
+    enum class View { Watch, Chain };
+
     /// `root`: where data/live/ is (the source tree by default).
     LiveMarketWatch(PriceClient* client, QString root = {}, QWidget* parent = nullptr)
         : QWidget(parent), client_(client), root_(std::move(root)) {
@@ -627,41 +726,77 @@ public:
         setObjectName(QStringLiteral("liveMarketWatch"));
         auto* v = new QVBoxLayout(this);
         v->setContentsMargins(6, 6, 6, 6);
-        v->setSpacing(6);
+        v->setSpacing(5);
 
+        // ---- row 1: group, find, add a scrip, the live feed --------------
         auto* bar = new QHBoxLayout;
         group_ = new QComboBox(this);
         group_->addItem(QStringLiteral("All"), QString());
-        for (const char* g : {"Indices", "Futures", "NIFTY options", "BANKNIFTY options", "NIFTY 50", "Stock futures"})
+        for (const char* g : {"Indices", "Futures", "NIFTY options", "BANKNIFTY options", "NIFTY 50", "Stock futures", "Watchlist"})
             group_->addItem(QString::fromLatin1(g), QString::fromLatin1(g));
         search_ = new QLineEdit(this);
-        search_->setPlaceholderText(QStringLiteral("Search symbol…"));
+        search_->setObjectName(QStringLiteral("watchFind"));
+        search_->setPlaceholderText(QStringLiteral("Find in watch  (Ctrl+F)"));
         search_->setClearButtonEnabled(true);
-        search_->setMaximumWidth(220);
-        start_live_ = new QPushButton(QStringLiteral("Start FYERS feed"), this);
+        search_->setMaximumWidth(200);
+        add_ = new QComboBox(this);
+        add_->setObjectName(QStringLiteral("scripSearch"));
+        add_->setEditable(true);
+        add_->setInsertPolicy(QComboBox::NoInsert);
+        add_->setMinimumWidth(320);
+        add_->lineEdit()->setPlaceholderText(QStringLiteral("＋ Add scrip: type a symbol, e.g. SBIN or NIFTY26OCT  (Insert)"));
+        add_->setToolTip(QStringLiteral("Search NSE equities and NSE F&O from the instrument master; pick one to add it to the "
+                                        "watch. The feed starts streaming it within a few seconds."));
+        start_live_ = new QPushButton(QStringLiteral("▶ Start live feed"), this);
+        start_live_->setObjectName(QStringLiteral("startLiveFeed"));
         start_live_->setToolTip(QStringLiteral(
-            "Run altair_price_service --fyers --go: live ticks, quotes and depth for the indices, near futures, "
-            "both option chains (ATM ±20) and the NIFTY 50. Needs a FYERS login for today (altair_fyers_login)."));
-        start_sim_ = new QPushButton(QStringLiteral("Start SIM feed"), this);
-        start_sim_->setToolTip(QStringLiteral(
-            "Run altair_price_service --sim: the same universe, SIMULATED, for when the market is shut. "
-            "Every price it shows is marked SIM."));
-        stop_ = new QPushButton(QStringLiteral("Stop feed"), this);
+            "Run altair_price_service --live --go: FYERS when its session is good today, else Kite. Live ticks, quotes and "
+            "depth for the indices, near futures, both option chains (ATM ±20), the NIFTY 50 and your added scrips."));
+        stop_ = new QPushButton(QStringLiteral("■ Stop"), this);
         stop_->setEnabled(false);
-        bar->addWidget(new QLabel(QStringLiteral("Watch"), this));
+        auto_start_ = new QCheckBox(QStringLiteral("Live on open"), this);
+        auto_start_->setToolTip(QStringLiteral("Start the live feed by itself when the Terminal opens and nothing is streaming"));
         bar->addWidget(group_);
         bar->addWidget(search_);
-        bar->addStretch();
+        bar->addWidget(add_, 1);
         bar->addWidget(start_live_);
-        bar->addWidget(start_sim_);
         bar->addWidget(stop_);
+        bar->addWidget(auto_start_);
         v->addLayout(bar);
 
+        // ---- row 2: status, and the simulator for a chosen day ------------
+        auto* bar2 = new QHBoxLayout;
         status_ = new QLabel(this);
         status_->setTextFormat(Qt::RichText);
         status_->setWordWrap(true);
-        v->addWidget(status_);
+        bar2->addWidget(status_, 1);
+        sim_date_ = new QDateEdit(QDate::currentDate(), this);
+        sim_date_->setObjectName(QStringLiteral("simDate"));
+        sim_date_->setCalendarPopup(true);
+        sim_date_->setDisplayFormat(QStringLiteral("dd-MMM-yyyy"));
+        sim_date_->setMaximumDate(QDate::currentDate());
+        sim_date_->setToolTip(QStringLiteral(
+            "The day to simulate. The previous closes are the session before it; when dataset/ has that day's "
+            "1-minute bars, NIFTY, BANKNIFTY and INDIA VIX follow them minute by minute."));
+        sim_from_ = new QTimeEdit(QTime(9, 15), this);
+        sim_from_->setDisplayFormat(QStringLiteral("HH:mm"));
+        sim_from_->setTimeRange(QTime(9, 15), QTime(15, 29));
+        sim_speed_ = new QComboBox(this);
+        for (int x : {1, 5, 10, 30, 60, 120, 300})
+            sim_speed_->addItem(QStringLiteral("%1×").arg(x), x);
+        start_sim_ = new QPushButton(QStringLiteral("Start SIM"), this);
+        start_sim_->setObjectName(QStringLiteral("startSimFeed"));
+        start_sim_->setToolTip(QStringLiteral("Run altair_price_service --sim for the chosen day, time and speed. Every price "
+                                              "it shows is marked SIM."));
+        bar2->addWidget(new QLabel(QStringLiteral("SIM"), this));
+        bar2->addWidget(sim_date_);
+        bar2->addWidget(new QLabel(QStringLiteral("from"), this));
+        bar2->addWidget(sim_from_);
+        bar2->addWidget(sim_speed_);
+        bar2->addWidget(start_sim_);
+        v->addLayout(bar2);
 
+        // ---- the watch and the chain, with depth and trades beside them ---
         model_ = new LiveWatchModel(client_, this);
         filter_ = new LiveWatchFilter(this);
         filter_->setSourceModel(model_);
@@ -674,6 +809,7 @@ public:
         view_->setSelectionBehavior(QAbstractItemView::SelectRows);
         view_->setSelectionMode(QAbstractItemView::SingleSelection);
         view_->setAlternatingRowColors(true);
+        view_->setContextMenuPolicy(Qt::CustomContextMenu);
         view_->verticalHeader()->hide();
         view_->verticalHeader()->setDefaultSectionSize(21);
         view_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
@@ -682,33 +818,36 @@ public:
         view_->setColumnWidth(LiveWatchModel::Symbol, 168);
         view_->setColumnWidth(LiveWatchModel::Ltp, 104);   // room for the price and its arrow
         view_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
+        chain_ = new LiveChainView(client_, this);
+        main_ = new QStackedWidget(this);
+        main_->addWidget(view_);
+        main_->addWidget(chain_);
 
-        side_ = new QTabWidget(this);
-        auto* dt = new QWidget(side_);
-        auto* dv = new QVBoxLayout(dt);
-        dv->setContentsMargins(0, 4, 0, 0);
-        sel_ = new QLabel(QStringLiteral("Select a row."), dt);
+        side_ = new QWidget(this);
+        auto* dv = new QVBoxLayout(side_);
+        dv->setContentsMargins(0, 0, 0, 0);
+        sel_ = new QLabel(QStringLiteral("Select a row."), side_);
         sel_->setTextFormat(Qt::RichText);
         sel_->setWordWrap(true);
         dv->addWidget(sel_);
+        auto* depth_title = new QLabel(QStringLiteral("MARKET DEPTH — best five"), side_);
+        depth_title->setObjectName(QStringLiteral("sectionKicker"));
+        dv->addWidget(depth_title);
         depth_ = make_live_table(6, {QStringLiteral("Orders"), QStringLiteral("Bid Qty"), QStringLiteral("Bid"),
-                                     QStringLiteral("Ask"), QStringLiteral("Ask Qty"), QStringLiteral("Orders")}, dt);
+                                     QStringLiteral("Ask"), QStringLiteral("Ask Qty"), QStringLiteral("Orders")}, side_);
         depth_->setMaximumHeight(160);
         dv->addWidget(depth_);
-        auto* tape_title = new QLabel(QStringLiteral("TIME & SALES — every trade, newest first"), dt);
+        auto* tape_title = new QLabel(QStringLiteral("TIME & SALES — every trade, newest first"), side_);
         tape_title->setObjectName(QStringLiteral("sectionKicker"));
         dv->addWidget(tape_title);
-        tape_ = make_live_table(3, {QStringLiteral("Time (IST)"), QStringLiteral("Price"), QStringLiteral("Qty")}, dt);
+        tape_ = make_live_table(3, {QStringLiteral("Time (IST)"), QStringLiteral("Price"), QStringLiteral("Qty")}, side_);
         dv->addWidget(tape_, 1);
-        side_->addTab(dt, QStringLiteral("Depth && trades"));
-        chain_ = new LiveChainView(client_, side_);
-        side_->addTab(chain_, QStringLiteral("Option chain"));
 
         auto* split = new QSplitter(Qt::Horizontal, this);
-        split->addWidget(view_);
+        split->addWidget(main_);
         split->addWidget(side_);
-        split->setStretchFactor(0, 62);
-        split->setStretchFactor(1, 38);
+        split->setStretchFactor(0, 68);
+        split->setStretchFactor(1, 32);
         v->addWidget(split, 1);
 
         connect(group_, &QComboBox::currentIndexChanged, this,
@@ -717,9 +856,15 @@ public:
         connect(view_->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
                 [this](const QModelIndex& cur, const QModelIndex&) {
                     const QModelIndex src = filter_->mapToSource(cur);
-                    selected_ = src.isValid() ? model_->rows()[static_cast<std::size_t>(src.row())].token : 0;
-                    refresh_side();
+                    if (src.isValid()) pick(model_->rows()[static_cast<std::size_t>(src.row())].token);
                 });
+        chain_->on_pick = [this](quint32 tok) { pick(tok); };
+        connect(view_, &QTableView::customContextMenuRequested, this, [this](const QPoint& at) { context_menu(at); });
+        view_->installEventFilter(this);
+        chain_->grid()->installEventFilter(this);
+        add_->installEventFilter(this);
+        connect(add_, &QComboBox::activated, this, [this](int) { add_from_box(); });
+        connect(add_->lineEdit(), &QLineEdit::returnPressed, this, [this] { add_from_box(); });
         if (client_ != nullptr) {
             connect(client_, &PriceClient::priceUpdated, this, [this](unsigned tok) {
                 model_->touch(tok);
@@ -738,12 +883,13 @@ public:
         side_timer_.setInterval(250);
         connect(&side_timer_, &QTimer::timeout, this, [this] {
             if (side_dirty_) { side_dirty_ = false; refresh_side(); }
-            if (++chain_tick_ % 2 == 0 && side_->currentWidget() == chain_ && isVisible()) chain_->refresh();
+            if (++chain_tick_ % 2 == 0 && main_->currentWidget() == chain_ && isVisible()) chain_->refresh();
         });
         side_timer_.start();
         status_timer_.setInterval(2000);
         connect(&status_timer_, &QTimer::timeout, this, [this] { reload_universe(false); refresh_status(); });
         status_timer_.start();
+        load_hidden();
         reload_universe(true);
         refresh_status();
     }
@@ -758,22 +904,255 @@ public:
     [[nodiscard]] LiveChainView* chain() const noexcept { return chain_; }
     [[nodiscard]] QTableWidget* tape() const noexcept { return tape_; }
     [[nodiscard]] QTableWidget* depth() const noexcept { return depth_; }
+    [[nodiscard]] QComboBox* scrip_search() const noexcept { return add_; }
     [[nodiscard]] QString status_text() const { return status_->text(); }
+    [[nodiscard]] quint32 selected_token() const noexcept { return selected_; }
+    [[nodiscard]] const LiveRow* row_of_token(quint32 token) const {
+        const int r = model_->row_of(token);
+        return r >= 0 ? &model_->rows()[static_cast<std::size_t>(r)] : nullptr;
+    }
     void select_token(quint32 token) {
         const int r = model_->row_of(token);
         if (r < 0) return;
         view_->setCurrentIndex(filter_->mapFromSource(model_->index(r, 0)));
+        pick(token);
     }
-    /// Bring the live option chain to the front of the side panel.
-    void show_chain() { side_->setCurrentWidget(chain_); }
+
+    /// Market Watch or Option Chain in the main area.
+    void set_view(View v) {
+        main_->setCurrentWidget(v == View::Chain ? static_cast<QWidget*>(chain_) : view_);
+        if (v == View::Chain) { chain_->refresh(); chain_->grid()->setFocus(); }
+        else view_->setFocus();
+        if (on_view_changed) on_view_changed(v);
+    }
+    [[nodiscard]] View view_mode() const { return main_->currentWidget() == chain_ ? View::Chain : View::Watch; }
+    void show_chain() { set_view(View::Chain); }
+    void focus_find() { search_->setFocus(); search_->selectAll(); }
+    void focus_add() {
+        ensure_master();
+        add_->setFocus();
+        add_->lineEdit()->selectAll();
+    }
+
     void set_rows_for_test(std::vector<LiveRow> rows) {
         model_->set_rows(rows);
         chain_->set_rows(rows);
     }
+    /// Tests: use this master instead of reading data/instruments.csv.
+    void set_master_for_test(std::vector<MasterScrip> m) { install_master(std::move(m)); }
+
+    /// Add a scrip to the watch by Kite token: written to
+    /// data/live/watchlist.csv, which the price service streams. False when
+    /// the master does not know it.
+    bool add_scrip(quint32 token) {
+        ensure_master();
+        const auto it = std::find_if(master_.begin(), master_.end(), [token](const MasterScrip& m) { return m.token == token; });
+        if (it == master_.end()) return false;
+        hidden_.remove(token);
+        save_hidden();
+        filter_->set_hidden(hidden_);
+        QStringList lines = read_watch_file();
+        const QString tok = QString::number(token);
+        bool have = false;
+        for (const QString& l : lines) have = have || l.section(QLatin1Char(','), 0, 0) == tok;
+        if (!have) lines << QStringLiteral("%1,%2").arg(tok, it->symbol);
+        write_watch_file(lines);
+        if (model_->row_of(token) < 0) {
+            LiveRow r;
+            r.token = token;
+            r.symbol = it->symbol;
+            r.fyers = it->exchange == QLatin1String("NSE") ? QStringLiteral("NSE:%1-EQ").arg(it->symbol)
+                                                           : QStringLiteral("NSE:%1").arg(it->symbol);
+            r.group = QStringLiteral("Watchlist");
+            r.kind = it->segment == QLatin1String("NSE") ? QStringLiteral("equity")
+                   : it->segment == QLatin1String("NFO-FUT") ? QStringLiteral("future") : QStringLiteral("option");
+            pending_.push_back(r);
+            auto rows = model_->rows();
+            rows.push_back(r);
+            model_->set_rows(rows);
+        }
+        select_token(token);
+        note_ = QStringLiteral("Added %1. %2").arg(it->symbol,
+            feed_ != nullptr || (client_ != nullptr && client_->connected())
+                ? QStringLiteral("The feed picks it up in a few seconds.")
+                : QStringLiteral("It streams once a feed is running."));
+        refresh_status();
+        return true;
+    }
+
+    /// Remove a scrip from the watch (Delete). It stays out until added again.
+    void remove_scrip(quint32 token) {
+        if (token == 0) return;
+        hidden_.insert(token);
+        save_hidden();
+        QStringList lines = read_watch_file();
+        lines.erase(std::remove_if(lines.begin(), lines.end(), [token](const QString& l) {
+                        return l.section(QLatin1Char(','), 0, 0) == QString::number(token);
+                    }), lines.end());
+        write_watch_file(lines);
+        filter_->set_hidden(hidden_);
+        const LiveRow* r = row_of_token(token);
+        note_ = QStringLiteral("Removed %1 from the watch.").arg(r != nullptr ? r->symbol : QString::number(token));
+        refresh_status();
+    }
+    void restore_removed() {
+        hidden_.clear();
+        save_hidden();
+        filter_->set_hidden(hidden_);
+    }
+
+    /// Start the live feed by itself (once) when nothing is streaming a few
+    /// seconds after the Terminal opens.
+    void set_autostart(bool on) {
+        auto_start_->setChecked(on);
+        if (!on || autostart_armed_) return;
+        autostart_armed_ = true;
+        QTimer::singleShot(3500, this, [this] {
+            if (auto_start_->isChecked() && feed_ == nullptr && (client_ == nullptr || !client_->connected())) {
+                auto_started_ = true;
+                start_feed(false);
+            }
+        });
+    }
+    [[nodiscard]] QCheckBox* autostart_box() const noexcept { return auto_start_; }
+
+    /// + and − on the watch or the chain.
+    std::function<void(bool buy)> on_order_key;
+    std::function<void(View)> on_view_changed;
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override {
+        if (e->type() == QEvent::KeyPress) {
+            const auto* k = static_cast<QKeyEvent*>(e);
+            if (obj == add_) {
+                if (k->key() == Qt::Key_Escape) { add_->clearEditText(); view_->setFocus(); return true; }
+                return false;
+            }
+            if (k->key() == Qt::Key_Plus || (k->key() == Qt::Key_Equal && (k->modifiers() & Qt::ShiftModifier))) {
+                if (on_order_key) on_order_key(true);
+                return true;
+            }
+            if (k->key() == Qt::Key_Minus || k->key() == Qt::Key_Underscore) {
+                if (on_order_key) on_order_key(false);
+                return true;
+            }
+            if (obj == view_ && k->key() == Qt::Key_Delete) { remove_scrip(selected_); return true; }
+            if (k->key() == Qt::Key_Insert) { focus_add(); return true; }
+        }
+        if (e->type() == QEvent::FocusIn && obj == add_) ensure_master();
+        return QWidget::eventFilter(obj, e);
+    }
 
 private:
+    void pick(quint32 token) {
+        if (token == 0) return;
+        selected_ = token;
+        refresh_side();
+    }
+
+    void context_menu(const QPoint& at) {
+        QMenu menu(this);
+        auto* buy = menu.addAction(QStringLiteral("Buy  (+ / F1)"));
+        auto* sell = menu.addAction(QStringLiteral("Sell  (− / F2)"));
+        menu.addSeparator();
+        auto* add = menu.addAction(QStringLiteral("Add scrip…  (Insert)"));
+        auto* remove = menu.addAction(QStringLiteral("Remove scrip  (Delete)"));
+        auto* restore = menu.addAction(QStringLiteral("Restore removed scrips (%1)").arg(hidden_.size()));
+        restore->setEnabled(!hidden_.isEmpty());
+        QAction* chosen = menu.exec(view_->viewport()->mapToGlobal(at));
+        if (chosen == buy && on_order_key) on_order_key(true);
+        else if (chosen == sell && on_order_key) on_order_key(false);
+        else if (chosen == add) focus_add();
+        else if (chosen == remove) remove_scrip(selected_);
+        else if (chosen == restore) restore_removed();
+    }
+
+    // ---- the scrip search -------------------------------------------------
+    void ensure_master() {
+        if (master_loaded_) return;
+        master_loaded_ = true;
+        install_master(load_master_scrips(root_ + QStringLiteral("/data/instruments.csv")));
+        if (master_.empty()) {
+            note_ = QStringLiteral("No instrument master at data/instruments.csv: run altair_kite_update (or the "
+                                   "fetch scripts) to get it, then scrips can be added.");
+            refresh_status();
+        }
+    }
+    void install_master(std::vector<MasterScrip> m) {
+        master_loaded_ = true;
+        master_ = std::move(m);
+        QStringList names;
+        names.reserve(static_cast<qsizetype>(master_.size()));
+        for (const auto& x : master_) names << x.display;
+        auto* list = new QStringListModel(names, add_);
+        auto* completer = new QCompleter(list, add_);
+        completer->setCaseSensitivity(Qt::CaseInsensitive);
+        completer->setFilterMode(Qt::MatchContains);
+        completer->setMaxVisibleItems(14);
+        completer->setCompletionMode(QCompleter::PopupCompletion);
+        add_->setCompleter(completer);
+        connect(completer, qOverload<const QString&>(&QCompleter::activated), this,
+                [this](const QString& text) { add_by_display(text); });
+    }
+    void add_by_display(const QString& text) {
+        const QString t = text.trimmed();
+        if (t.isEmpty()) return;
+        const QString sym = t.section(QStringLiteral("  ·  "), 0, 0).trimmed();
+        for (const auto& m : master_)
+            if (m.display == t || m.symbol.compare(sym, Qt::CaseInsensitive) == 0) {
+                add_scrip(m.token);
+                add_->clearEditText();
+                view_->setFocus();
+                return;
+            }
+        note_ = QStringLiteral("No NSE equity or NSE F&O scrip called %1 in the master.").arg(t.toHtmlEscaped());
+        refresh_status();
+    }
+    void add_from_box() { ensure_master(); add_by_display(add_->currentText()); }
+
+    // ---- watchlist and removed-scrip files ----------------------------------
+    [[nodiscard]] QString live_path(const char* name) const { return root_ + QStringLiteral("/data/live/") + QString::fromLatin1(name); }
+    [[nodiscard]] QStringList read_watch_file() const {
+        QStringList out;
+        QFile f(live_path("watchlist.csv"));
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return out;
+        QTextStream in(&f);
+        while (!in.atEnd()) {
+            const QString l = in.readLine().trimmed();
+            if (!l.isEmpty() && l.at(0).isDigit()) out << l;
+        }
+        return out;
+    }
+    void write_watch_file(const QStringList& lines) const {
+        QDir().mkpath(root_ + QStringLiteral("/data/live"));
+        QFile f(live_path("watchlist.csv"));
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return;
+        QTextStream out(&f);
+        out << "token,symbol\n";
+        for (const QString& l : lines) out << l << '\n';
+    }
+    void load_hidden() {
+        hidden_.clear();
+        QFile f(live_path("watch_removed.csv"));
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream in(&f);
+            while (!in.atEnd()) {
+                const quint32 t = in.readLine().section(QLatin1Char(','), 0, 0).toUInt();
+                if (t != 0) hidden_.insert(t);
+            }
+        }
+        filter_->set_hidden(hidden_);
+    }
+    void save_hidden() const {
+        QDir().mkpath(root_ + QStringLiteral("/data/live"));
+        QFile f(live_path("watch_removed.csv"));
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return;
+        QTextStream out(&f);
+        for (quint32 t : hidden_) out << t << '\n';
+    }
+
     void reload_universe(bool force) {
-        const QString path = root_ + QStringLiteral("/data/live/universe.csv");
+        const QString path = live_path("universe.csv");
         const QFileInfo fi(path);
         const qint64 stamp = fi.exists() ? fi.lastModified().toMSecsSinceEpoch() : 0;
         if (!force && stamp == universe_stamp_) return;
@@ -781,6 +1160,13 @@ private:
         auto rows = load_live_universe(path);
         from_file_ = !rows.empty();
         if (rows.empty()) rows = default_live_universe();
+        // Scrips added here that the feed has not written back yet.
+        for (auto it = pending_.begin(); it != pending_.end();) {
+            const bool streamed = std::any_of(rows.begin(), rows.end(), [&](const LiveRow& r) { return r.token == it->token; });
+            if (streamed) { it = pending_.erase(it); continue; }
+            rows.push_back(*it);
+            ++it;
+        }
         model_->set_rows(rows);
         chain_->set_rows(rows);
         if (selected_ == 0) {
@@ -790,7 +1176,9 @@ private:
                 if (r.kind == QLatin1String("future") && r.underlying == QLatin1String("NIFTY")) { selected_ = r.token; break; }
             if (selected_ == 0 && !rows.empty()) selected_ = rows.front().token;
         }
-        select_token(selected_);
+        const int r = model_->row_of(selected_);
+        if (r >= 0) view_->setCurrentIndex(filter_->mapFromSource(model_->index(r, 0)));
+        refresh_side();
     }
 
     void refresh_side() {
@@ -817,9 +1205,10 @@ private:
         const QString muted = QString::fromLatin1(theme_token::kTextMuted);
         QString stream;
         if (client_ == nullptr || !client_->connected()) {
-            stream = QStringLiteral("<span style='color:%1'>● NOT CONNECTED</span> <span style='color:%2'>to the price "
-                                    "service on 127.0.0.1:7421 — start a feed here, or run altair_price_service.</span>")
-                         .arg(QStringLiteral("#8A93A2"), muted);
+            stream = QStringLiteral("<span style='color:%1'>● NOT CONNECTED</span> <span style='color:%2'>%3</span>")
+                         .arg(QStringLiteral("#8A93A2"), muted,
+                              feed_ != nullptr ? QStringLiteral("starting the feed…")
+                                               : QStringLiteral("no feed running — Start live feed, or Start SIM for a chosen day."));
         } else {
             const LivePrice* n = client_->price(256265u);
             const bool sim = n != nullptr && n->simulated, rep = n != nullptr && n->replay;
@@ -827,55 +1216,76 @@ private:
                               : rep ? QStringLiteral("REPLAY") : QStringLiteral("LIVE");
             const QString col = sim || rep ? QStringLiteral("#F4C95D") : QStringLiteral("#7FD17F");
             stream = QStringLiteral("<span style='color:%1'>● %2</span> <span style='color:%3'>%4 instruments · "
-                                    "%5 frames · %6 gaps (%7 missed) · engine %8 IST</span>")
+                                    "%5 frames · %6 gaps · feed time %7 IST</span>")
                          .arg(col, tag, muted).arg(client_->instruments()).arg(client_->frames()).arg(client_->gaps())
-                         .arg(client_->missed()).arg(live_detail::ist(n != nullptr ? n->exchange_ts_ns : 0, false));
+                         .arg(live_detail::ist(n != nullptr ? n->exchange_ts_ns : 0, false));
         }
         QString feed;
-        QFile f(root_ + QStringLiteral("/data/live/feed_status.json"));
+        QFile f(live_path("feed_status.json"));
         if (f.open(QIODevice::ReadOnly)) {
             const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
             const qint64 age = QDateTime::currentSecsSinceEpoch() - o.value(QStringLiteral("written_unix")).toInteger();
-            feed = QStringLiteral(" &nbsp; <span style='color:%1'>feed: %2 %3%4, %5 trades, %6 quotes, %7 books%8</span>")
-                       .arg(muted, o.value(QStringLiteral("source")).toString(), o.value(QStringLiteral("state")).toString())
-                       .arg(age > 10 ? QStringLiteral(" (status %1 s old)").arg(age) : QString())
-                       .arg(o.value(QStringLiteral("trades")).toInteger()).arg(o.value(QStringLiteral("quotes")).toInteger())
-                       .arg(o.value(QStringLiteral("books")).toInteger())
-                       .arg(o.value(QStringLiteral("error")).toString().isEmpty()
-                                ? QString() : QStringLiteral(" · ") + o.value(QStringLiteral("error")).toString().toHtmlEscaped());
+            if (age < 120)
+                feed = QStringLiteral(" &nbsp; <span style='color:%1'>source %2 · %3%4</span>")
+                           .arg(muted, o.value(QStringLiteral("source")).toString().toUpper(),
+                                o.value(QStringLiteral("state")).toString())
+                           .arg(o.value(QStringLiteral("error")).toString().isEmpty()
+                                    ? QString() : QStringLiteral(" · ") + o.value(QStringLiteral("error")).toString().toHtmlEscaped());
         }
         const QString uni = from_file_ ? QString()
-            : QStringLiteral(" &nbsp; <span style='color:%1'>(no data/live/universe.csv yet: indices only until a feed starts)</span>").arg(muted);
-        status_->setText(stream + feed + uni);
+            : QStringLiteral(" &nbsp; <span style='color:%1'>(indices only until a feed writes data/live/universe.csv)</span>").arg(muted);
+        const QString note = note_.isEmpty() ? QString()
+            : QStringLiteral("<br><span style='color:#E3B341'>%1</span>").arg(note_);
+        status_->setText(stream + feed + uni + note);
     }
 
     void start_feed(bool sim) {
         if (feed_ != nullptr) return;
         const QString exe = live_detail::find_helper(QStringLiteral("altair_price_service"));
         if (exe.isEmpty()) {
-            status_->setText(QStringLiteral("<span style='color:#F07A6A'>altair_price_service is not built "
-                                            "(it needs Boost; build the net preset).</span>"));
+            note_ = QStringLiteral("altair_price_service is not built (it needs Boost; build the net preset: .\\build.bat net).");
+            refresh_status();
             return;
         }
         feed_ = new QProcess(this);
         feed_->setWorkingDirectory(root_);
         feed_->setProcessChannelMode(QProcess::MergedChannels);
         connect(feed_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
-            const QString tail = QString::fromLocal8Bit(feed_->readAll()).trimmed().section(QChar('\n'), -2);
+            const QString out = QString::fromLocal8Bit(feed_->readAll()).trimmed();
             feed_->deleteLater();
             feed_ = nullptr;
             start_live_->setEnabled(true);
             start_sim_->setEnabled(true);
             stop_->setEnabled(false);
-            if (code != 0)
-                status_->setText(QStringLiteral("<span style='color:#F07A6A'>feed exited %1: %2</span>")
-                                     .arg(code).arg(tail.toHtmlEscaped()));
+            if (code == 2 && out.contains(QStringLiteral("no live source today"))) {
+                note_ = QStringLiteral("No live feed: %1 — log in on the Brokers page, or Start SIM.")
+                            .arg(out.section(QStringLiteral("no live source today."), 1).simplified().toHtmlEscaped());
+            } else if (code != 0) {
+                note_ = QStringLiteral("feed exited %1: %2").arg(code).arg(out.section(QChar('\n'), -2).toHtmlEscaped());
+            } else {
+                note_ = QStringLiteral("feed stopped.");
+            }
+            refresh_status();
         });
-        const QStringList args = sim ? QStringList{QStringLiteral("--sim")} : QStringList{QStringLiteral("--fyers"), QStringLiteral("--go")};
+        QStringList args;
+        if (sim) {
+            args << QStringLiteral("--sim") << QStringLiteral("--speed") << QString::number(sim_speed_->currentData().toInt())
+                 << QStringLiteral("--from") << sim_from_->time().toString(QStringLiteral("HH:mm"));
+            if (sim_date_->date() != QDate::currentDate())
+                args << QStringLiteral("--date") << sim_date_->date().toString(Qt::ISODate);
+            note_ = QStringLiteral("SIM %1 from %2 at %3.").arg(sim_date_->date().toString(QStringLiteral("dd-MMM-yyyy")),
+                                                                 sim_from_->time().toString(QStringLiteral("HH:mm")),
+                                                                 sim_speed_->currentText());
+        } else {
+            args << QStringLiteral("--live") << QStringLiteral("--go");
+            note_ = auto_started_ ? QStringLiteral("Starting the live feed by itself (FYERS, else Kite)…")
+                                  : QStringLiteral("Starting the live feed (FYERS, else Kite)…");
+        }
         feed_->start(exe, args);
         start_live_->setEnabled(false);
         start_sim_->setEnabled(false);
         stop_->setEnabled(true);
+        refresh_status();
         // Connect once it has had a moment to bind; the Terminal also retries.
         QTimer::singleShot(1500, this, [this] {
             if (client_ != nullptr && !client_->connected()) client_->start(QStringLiteral("127.0.0.1"), 7421);
@@ -893,23 +1303,36 @@ private:
     LiveWatchModel* model_ = nullptr;
     LiveWatchFilter* filter_ = nullptr;
     QTableView* view_ = nullptr;
-    QTabWidget* side_ = nullptr;
+    QStackedWidget* main_ = nullptr;
+    QWidget* side_ = nullptr;
     QLabel* sel_ = nullptr;
     QTableWidget* depth_ = nullptr;
     QTableWidget* tape_ = nullptr;
     LiveChainView* chain_ = nullptr;
     QComboBox* group_ = nullptr;
     QLineEdit* search_ = nullptr;
+    QComboBox* add_ = nullptr;
     QPushButton* start_live_ = nullptr;
     QPushButton* start_sim_ = nullptr;
     QPushButton* stop_ = nullptr;
+    QCheckBox* auto_start_ = nullptr;
+    QDateEdit* sim_date_ = nullptr;
+    QTimeEdit* sim_from_ = nullptr;
+    QComboBox* sim_speed_ = nullptr;
     QLabel* status_ = nullptr;
     QProcess* feed_ = nullptr;
     QTimer side_timer_, status_timer_;
+    std::vector<MasterScrip> master_;
+    std::vector<LiveRow> pending_;
+    QSet<quint32> hidden_;
+    QString note_;
     quint32 selected_ = 0;
     bool side_dirty_ = false;
     bool labelled_ = false;
     bool from_file_ = false;
+    bool master_loaded_ = false;
+    bool autostart_armed_ = false;
+    bool auto_started_ = false;
     qint64 universe_stamp_ = -1;
     int chain_tick_ = 0;
 };

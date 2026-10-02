@@ -18,7 +18,11 @@
 //   * Futures: spot x exp(6.5 % x T) plus a little basis noise.
 //   * Options: Black-76 on the simulated future, at VIX (1.2 x VIX for
 //     BANKNIFTY) with a symmetric smile; quoted around that value.
-//   * Stocks: beta 1 to NIFTY plus 20 % idiosyncratic vol.
+//   * Stocks: beta 0.6-1.4 to NIFTY plus 20 % idiosyncratic vol. Stock
+//     futures and options price off their own stock, not NIFTY.
+//   * A past day (set_anchors): NIFTY, BANKNIFTY and INDIA VIX follow that
+//     day's real 1-minute closes, with a Brownian bridge between them, so the
+//     simulated session lands on every real close at its minute.
 //   * Liquidity: indices print every second; futures and stocks on most
 //     steps; options less often the further they are from the money.
 // Deterministic for a given seed, so a test can pin its output.
@@ -66,24 +70,40 @@ public:
         : u_(std::move(universe)), rng_(seed == 0 ? 0x9E3779B97F4A7C15ull : seed), now_ns_(start_ns),
           nifty_(seeds.nifty), bnf_(seeds.banknifty), vix_(seeds.vix), vix0_(seeds.vix) {
         st_.resize(u_.size());
-        for (std::size_t i = 0; i < u_.size(); ++i) {
-            const auto& in = u_[i];
-            double px = 0.0;
-            if (in.kind == LiveKind::Equity) {
-                const auto it = seeds.stocks.find(in.symbol);
-                px = it != seeds.stocks.end() && it->second > 0.0 ? it->second : 1000.0;
-                st_[i].beta = 0.6 + 0.8 * uniform();
-            } else {
-                px = theo(i);
+        // Equities first: a stock's futures and options price off it.
+        for (int pass = 0; pass < 2; ++pass)
+            for (std::size_t i = 0; i < u_.size(); ++i) {
+                const bool equity = u_[i].kind == LiveKind::Equity;
+                if (equity != (pass == 0)) continue;
+                const auto it = seeds.stocks.find(u_[i].symbol);
+                init(i, it != seeds.stocks.end() ? it->second : 0.0);
             }
-            st_[i].fair = px;
-            st_[i].prev_close = round_tick(px, in);
-            st_[i].ltp = st_[i].prev_close;
-            st_[i].oi = in.kind == LiveKind::Future || in.kind == LiveKind::Call || in.kind == LiveKind::Put
-                            ? in.lot * static_cast<std::int64_t>(2000 + 8000 * uniform())
-                            : 0;
-        }
     }
+
+    /// Add an instrument mid-session: the market watch's scrip search. Its
+    /// previous close is its fair value now (`equity_close` for a stock, when
+    /// known). A token already simulated is left alone.
+    void add(LiveInstrument in, double equity_close = 0.0) {
+        for (const auto& have : u_) if (have.token == in.token) return;
+        u_.push_back(std::move(in));
+        st_.emplace_back();
+        init(u_.size() - 1, equity_close);
+    }
+
+    /// Follow a real day: each index lands on every one of these minute
+    /// closes at its minute, on a Brownian bridge between them. The level at
+    /// the start is the last close at or before it.
+    void set_anchors(std::vector<LiveMinute> nifty, std::vector<LiveMinute> banknifty, std::vector<LiveMinute> vix) {
+        an_[0] = std::move(nifty);
+        an_[1] = std::move(banknifty);
+        an_[2] = std::move(vix);
+        double* level[3] = {&nifty_, &bnf_, &vix_};
+        for (int k = 0; k < 3; ++k)
+            for (const auto& m : an_[k])
+                if (m.end_ns <= now_ns_) *level[k] = m.close;
+        for (std::size_t i = 0; i < u_.size(); ++i) if (u_[i].kind != LiveKind::Equity) st_[i].fair = theo(i);
+    }
+    [[nodiscard]] bool anchored() const noexcept { return !an_[0].empty(); }
 
     [[nodiscard]] std::int64_t now_ns() const noexcept { return now_ns_; }
     [[nodiscard]] const std::vector<LiveInstrument>& universe() const noexcept { return u_; }
@@ -97,10 +117,10 @@ public:
         const double sq = std::sqrt(dt);
         const double zn = normal(), zb = 0.8 * zn + 0.6 * normal(), zv = -0.6 * zn + 0.8 * normal();
         const double sn = vix_ / 100.0;
-        nifty_ *= std::exp(-0.5 * sn * sn * dt + sn * sq * zn);
         const double sb = 1.25 * sn;
-        bnf_ *= std::exp(-0.5 * sb * sb * dt + sb * sq * zb);
-        vix_ += 4.0 * (vix0_ - vix_) * dt + 0.9 * vix_ * sq * zv;
+        if (!bridge(0, nifty_, sn, zn, dt_ns)) nifty_ *= std::exp(-0.5 * sn * sn * dt + sn * sq * zn);
+        if (!bridge(1, bnf_, sb, zb, dt_ns)) bnf_ *= std::exp(-0.5 * sb * sb * dt + sb * sq * zb);
+        if (!bridge(2, vix_, 0.9, zv, dt_ns)) vix_ += 4.0 * (vix0_ - vix_) * dt + 0.9 * vix_ * sq * zv;
         if (!(vix_ > 5.0)) vix_ = 5.0;   // RULE 11: safe-side floor -- a simulated VIX at or below 5 has no market meaning; it only keeps the vol positive.
         second_acc_ += dt_ns;
         const bool index_print = second_acc_ >= 1'000'000'000;
@@ -138,6 +158,10 @@ public:
     void board(Emit&& emit) {
         for (std::size_t i = 0; i < u_.size(); ++i) emit(u_[i], make_event(i, false));
     }
+    template <class Emit>
+    void board_one(std::size_t i, Emit&& emit) {
+        if (i < u_.size()) emit(u_[i], make_event(i, false));
+    }
 
 private:
     struct State {
@@ -164,7 +188,44 @@ private:
     [[nodiscard]] double spot_of(const LiveInstrument& in) const noexcept {
         if (in.underlying == "BANKNIFTY") return bnf_;
         if (in.underlying == "INDIAVIX") return vix_;
+        if (in.underlying == "NIFTY") return nifty_;
+        // A stock's derivative: the stock itself, when it is simulated.
+        for (std::size_t j = 0; j < u_.size() && j < st_.size(); ++j)
+            if (u_[j].kind == LiveKind::Equity && u_[j].symbol == in.underlying && st_[j].fair > 0.0) return st_[j].fair;
         return nifty_;
+    }
+
+    void init(std::size_t i, double equity_close) {
+        const auto& in = u_[i];
+        double px = 0.0;
+        if (in.kind == LiveKind::Equity) {
+            px = equity_close > 0.0 ? equity_close : 1000.0;
+            st_[i].beta = 0.6 + 0.8 * uniform();
+        } else {
+            px = theo(i);
+        }
+        st_[i].fair = px;
+        st_[i].prev_close = round_tick(px, in);
+        st_[i].ltp = st_[i].prev_close;
+        st_[i].oi = in.kind == LiveKind::Future || in.kind == LiveKind::Call || in.kind == LiveKind::Put
+                        ? in.lot * static_cast<std::int64_t>(2000 + 8000 * uniform())
+                        : 0;
+    }
+
+    /// One step of the Brownian bridge toward the next real close of index
+    /// `k`. False when there is no close ahead (no anchors, or past the last).
+    bool bridge(int k, double& level, double sigma, double z, std::int64_t dt_ns) {
+        auto& a = an_[k];
+        std::size_t& c = cursor_[k];
+        while (c < a.size() && a[c].end_ns <= now_ns_ - dt_ns) ++c;
+        if (c >= a.size() || !(level > 0.0)) return false;
+        const double rem = static_cast<double>(a[c].end_ns - now_ns_);   // after this step
+        const double x = std::log(level), target = std::log(a[c].close);
+        if (rem <= 0.0) { level = a[c].close; return true; }
+        const double step = static_cast<double>(dt_ns);
+        const double var_years = step * 1e-9 / kLiveSimSecondsPerYear * rem / (rem + step);
+        level = std::exp(x + (target - x) * step / (rem + step) + sigma * std::sqrt(var_years) * z);
+        return true;
     }
     [[nodiscard]] double years_to(std::int64_t expiry_day) const noexcept {
         const std::int64_t close_ns = (expiry_day * 86400 + 10 * 3600) * 1'000'000'000LL;   // 15:30 IST
@@ -286,6 +347,8 @@ private:
     std::int64_t now_ns_;
     std::int64_t second_acc_ = 0;
     double nifty_, bnf_, vix_, vix0_;
+    std::vector<LiveMinute> an_[3];
+    std::size_t cursor_[3] = {0, 0, 0};
 };
 
 /// A trade frame and a book frame share the PricePayload type but not its

@@ -130,19 +130,20 @@ struct FyersState {
                 QStringLiteral("Invalid or future-dated FYERS session metadata; link again.")};
     }
     return {FyersLink::CredentialsPresent,
-            QStringLiteral("FYERS is configured as PRIMARY; open the FYERS link page to complete the browser OAuth exchange.")};
+            QStringLiteral("No FYERS session today: Brokers → Log in to FYERS.")};
 }
 
-/// Probe configured metadata without reading environment variable values.
+/// Probe the session metadata. App credentials are NOT judged here: they
+/// live in the OS vault (Brokers → Log in · FYERS → App credentials), which
+/// this process never reads, so an unset environment variable says nothing.
+/// The state is the session: saved, missing or malformed.
 [[nodiscard]] inline FyersState probe_fyers() {
 #ifdef ALTAIR_FYERS_SESSION_FILE
     const QString path = QStringLiteral(ALTAIR_FYERS_SESSION_FILE);
 #else
     const QString path = QStringLiteral("data/fyers_session.json");
 #endif
-    return probe_fyers(path, qEnvironmentVariableIsSet("ALTAIR_FYERS_CLIENT_ID"),
-                       qEnvironmentVariableIsSet("ALTAIR_FYERS_SECRET"),
-                       QDateTime::currentDateTimeUtc());
+    return probe_fyers(path, true, true, QDateTime::currentDateTimeUtc());
 }
 
 [[nodiscard]] inline QString fyers_label(FyersLink link) {
@@ -150,7 +151,7 @@ struct FyersState {
     case FyersLink::SessionSaved:
         return QStringLiteral("FYERS — SESSION SAVED · UNVERIFIED");
     case FyersLink::CredentialsPresent:
-        return QStringLiteral("FYERS — PRIMARY · READY TO LINK");
+        return QStringLiteral("FYERS — NOT LOGGED IN");
     case FyersLink::NotConfigured:
         return QStringLiteral("FYERS — PRIMARY · SETUP REQUIRED");
     case FyersLink::Malformed:
@@ -432,7 +433,7 @@ probe_service_snapshot(const QString& path, broker_view::BrokerId expected,
 #if ALTAIR_HAVE_NET
         s.link = BrokerLink::NoSession;
 #endif
-        s.detail = QStringLiteral("no %1 — run the browser login.")
+        s.detail = QStringLiteral("no %1 — log in on Brokers → Log in to Kite.")
                        .arg(session_path);
         return s;
     }

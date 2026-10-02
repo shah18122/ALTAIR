@@ -110,7 +110,7 @@ public:
 
         auto* actions = new QHBoxLayout;
         save_ = new QPushButton(QStringLiteral("Save / replace"), this);
-        connect_ = new QPushButton(QStringLiteral("Save & connect"), this);
+        connect_ = new QPushButton(QStringLiteral("Save && connect"), this);
         remove_ = new QPushButton(QStringLiteral("Delete saved credentials"), this);
         actions->addWidget(save_);
         actions->addWidget(connect_);
@@ -138,6 +138,14 @@ public:
                          [this] { save(true); });
         QObject::connect(remove_, &QPushButton::clicked, this,
                          [this] { erase(); });
+    }
+
+    /// Put the cursor in the first empty field, for a login that was refused
+    /// because nothing is saved yet.
+    void focus_first() {
+        QLineEdit* target = first_->text().isEmpty() ? first_
+                          : secret_->text().isEmpty() ? secret_ : redirect_;
+        target->setFocus(Qt::OtherFocusReason);
     }
 
 private:

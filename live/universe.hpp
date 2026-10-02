@@ -419,6 +419,116 @@ inline constexpr const char* kLiveUniverseHeader = "token,fyers,symbol,underlyin
     return best;
 }
 
+/// The latest close strictly BEFORE `day_iso` ("YYYY-MM-DD"): the previous
+/// session's close, for a simulation of that day. 0 when there is none.
+[[nodiscard]] inline double last_close_before(const std::string& dir, const std::string& day_iso) {
+    std::error_code ec;
+    std::string best_stamp;
+    double best = 0.0;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        if (e.path().extension() != ".csv") continue;
+        std::ifstream in(e.path());
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] < '0' || line[0] > '9') continue;
+            const auto c = split_csv(line);
+            if (c.size() < 5 || c[0].compare(0, 10, day_iso) >= 0 || c[0] < best_stamp) continue;
+            const double v = std::atof(c[4].c_str());
+            if (v > 0.0) { best_stamp = c[0]; best = v; }
+        }
+    }
+    return best;
+}
+
+/// One minute bar's close and the instant it closed (ns since the epoch).
+struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
+
+/// A day's 1-minute closes from a dataset partition, oldest first, de-duplicated
+/// by stamp. Stamps are the minute's START ("2026-09-09T09:15:00+05:30", IST);
+/// the close is reached a minute later. Empty when the day is not on disk.
+[[nodiscard]] inline std::vector<LiveMinute> day_minutes(const std::string& dir, const std::string& day_iso) {
+    std::map<std::int64_t, double> by_end;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        if (e.path().extension() != ".csv") continue;
+        std::ifstream in(e.path());
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.size() < 19 || line.compare(0, 10, day_iso) != 0 || line[10] != 'T') continue;
+            const auto c = split_csv(line);
+            if (c.size() < 5) continue;
+            const int hh = std::atoi(c[0].substr(11, 2).c_str()), mm = std::atoi(c[0].substr(14, 2).c_str());
+            const std::int64_t day = parse_day(c[0].substr(0, 10));
+            const double v = std::atof(c[4].c_str());
+            if (day == 0 || !(v > 0.0)) continue;
+            const std::int64_t start_s = day * 86400 + hh * 3600 + mm * 60 - 19800;
+            by_end[(start_s + 60) * 1'000'000'000LL] = v;
+        }
+    }
+    std::vector<LiveMinute> out;
+    out.reserve(by_end.size());
+    for (const auto& [t, v] : by_end) out.push_back({t, v});
+    return out;
+}
+
+/// One row of the Kite master as a streamable instrument: what the market
+/// watch's scrip search adds. NSE equity -> "NSE:<SYM>-EQ"; NSE F&O ->
+/// "NSE:<SYM>" (FYERS and Kite share the derivative trading symbol). Other
+/// exchanges and segments are not streamed; nullopt says so.
+[[nodiscard]] inline std::optional<LiveInstrument> instrument_from_master(const LiveKiteRow& r) {
+    LiveInstrument in;
+    in.token = r.token;
+    in.symbol = r.symbol;
+    in.lot = r.lot > 0 ? r.lot : 1;
+    in.tick = r.tick > 0.0 ? r.tick : 0.05;
+    in.group = "Watchlist";
+    in.depth = true;
+    if (r.exchange == "NSE" && r.segment == "NSE" && r.type == "EQ") {
+        in.kind = LiveKind::Equity;
+        in.fyers = "NSE:" + r.symbol + "-EQ";
+        in.underlying = r.symbol;
+        return in;
+    }
+    if (r.exchange == "NFO" && (r.segment == "NFO-FUT" || r.segment == "NFO-OPT")) {
+        in.kind = r.segment == "NFO-FUT" ? LiveKind::Future : r.type == "CE" ? LiveKind::Call : LiveKind::Put;
+        in.fyers = "NSE:" + r.symbol;
+        in.underlying = r.name;
+        in.expiry_day = r.expiry_day;
+        in.strike = in.kind == LiveKind::Future ? 0.0 : r.strike;
+        return in;
+    }
+    return std::nullopt;
+}
+
+/// data/live/watchlist.csv: the scrips the market watch added, by Kite token.
+/// "token,symbol" with a header; unreadable lines are skipped.
+[[nodiscard]] inline std::vector<std::uint32_t> read_watchlist(const std::string& path) {
+    std::vector<std::uint32_t> out;
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] < '0' || line[0] > '9') continue;
+        const unsigned long long t = std::strtoull(line.c_str(), nullptr, 10);
+        if (t > 0 && t <= 0xFFFFFFFFull && std::find(out.begin(), out.end(), static_cast<std::uint32_t>(t)) == out.end())
+            out.push_back(static_cast<std::uint32_t>(t));
+    }
+    return out;
+}
+
+/// The universe plus the watchlist's additions (tokens already present or
+/// not streamable are skipped and named in `notes`).
+inline void add_watchlist(std::vector<LiveInstrument>& u, const std::vector<LiveKiteRow>& master,
+                          const std::vector<std::uint32_t>& tokens, std::vector<std::string>& notes) {
+    for (std::uint32_t t : tokens) {
+        if (std::any_of(u.begin(), u.end(), [t](const LiveInstrument& i) { return i.token == t; })) continue;
+        const auto row = std::find_if(master.begin(), master.end(), [t](const LiveKiteRow& r) { return r.token == t; });
+        if (row == master.end()) { notes.push_back("watchlist token " + std::to_string(t) + " is not in the master"); continue; }
+        auto in = instrument_from_master(*row);
+        if (!in) { notes.push_back("watchlist " + row->symbol + ": only NSE equity and NSE F&O stream"); continue; }
+        u.push_back(std::move(*in));
+    }
+}
+
 /// Today in IST, as days since epoch.
 [[nodiscard]] inline std::int64_t ist_today(std::int64_t unix_seconds) noexcept {
     return (unix_seconds + 19800) / 86400;
