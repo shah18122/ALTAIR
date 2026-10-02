@@ -113,6 +113,10 @@ qt_add_executable(altair_desktop
     live_forecast.hpp
     stream_forecast_page.hpp
     kite_link.hpp
+    login_outcome.hpp
+    combined_account.hpp
+    paper_oms.hpp
+    paper_windows.hpp
     chain_panel.hpp
     analytics_panel.hpp
     # P36-01. The Model Atlas. atlas.hpp has no Q_OBJECT, but listing both
@@ -775,6 +779,34 @@ if(ALTAIR_BUILD_TESTS)
         endif()
         add_test(NAME desktop_live_market COMMAND altair_live_market_test)
 
+        # The paper order book behind + / − and its windows, and the market
+        # watch's scrip add/remove.
+        qt_add_executable(altair_paper_oms_test
+            tests/test_paper_oms.cpp
+            paper_oms.hpp
+            paper_windows.hpp
+            live_market.hpp
+            price_client.hpp
+            theme.hpp)
+        target_link_libraries(altair_paper_oms_test PRIVATE
+            altair_types altair_time altair_server altair_analytics altair_flags Boost::headers
+            Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+        target_include_directories(altair_paper_oms_test
+            PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        set_target_properties(altair_paper_oms_test
+            PROPERTIES WIN32_EXECUTABLE OFF)
+        if(WIN32)
+            target_link_libraries(altair_paper_oms_test
+                PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME desktop_paper_oms COMMAND altair_paper_oms_test)
+        set_tests_properties(desktop_paper_oms PROPERTIES TIMEOUT 60 ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+        if(WIN32)
+            set_tests_properties(desktop_paper_oms PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        endif()
+
         # The live models panel: engine state and paper trades from files,
         # positions marked tick by tick from the real bus and client.
         qt_add_executable(altair_live_models_test
@@ -973,7 +1005,9 @@ if(ALTAIR_BUILD_TESTS)
     # by not running.
     qt_add_executable(altair_kite_link_test
         tests/test_kite_link.cpp
-        kite_link.hpp)
+        kite_link.hpp
+        login_outcome.hpp
+        combined_account.hpp)
     target_link_libraries(altair_kite_link_test PRIVATE
         altair_types altair_time Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_kite_link_test
@@ -982,6 +1016,12 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     set_target_properties(altair_kite_link_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_kite_link COMMAND altair_kite_link_test)
+    set_tests_properties(desktop_kite_link PROPERTIES TIMEOUT 60 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+    if(WIN32)
+        set_tests_properties(desktop_kite_link PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
 
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
     # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.

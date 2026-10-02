@@ -128,6 +128,46 @@ int main() {
     check(last_close(part.string()) == 55438.5, "the latest close is the latest date, whatever the file is called");
 
     std::filesystem::remove_all(dir);
+    // The market watch's scrip search: master rows into streamable instruments.
+    {
+        using namespace altair::live;
+        LiveKiteRow eq;
+        eq.token = 779521; eq.symbol = "SBIN"; eq.name = "STATE BANK OF INDIA"; eq.type = "EQ";
+        eq.segment = "NSE"; eq.exchange = "NSE"; eq.tick = 0.05; eq.lot = 1;
+        LiveKiteRow opt;
+        opt.token = 12345678; opt.symbol = "SBIN26OCT800CE"; opt.name = "SBIN"; opt.type = "CE";
+        opt.segment = "NFO-OPT"; opt.exchange = "NFO"; opt.strike = 800; opt.lot = 750; opt.tick = 0.05;
+        opt.expiry_day = parse_day("2026-10-27");
+        LiveKiteRow mcx;
+        mcx.token = 99; mcx.symbol = "GOLD"; mcx.segment = "MCX-FUT"; mcx.exchange = "MCX";
+        const auto e = instrument_from_master(eq);
+        const auto o = instrument_from_master(opt);
+        check(e && e->kind == LiveKind::Equity && e->fyers == "NSE:SBIN-EQ" && e->group == "Watchlist",
+              "an NSE equity streams as NSE:<SYM>-EQ in the Watchlist group");
+        check(o && o->kind == LiveKind::Call && o->fyers == "NSE:SBIN26OCT800CE" && o->underlying == "SBIN"
+                  && o->strike == 800 && o->lot == 750,
+              "an NFO option keeps its symbol, underlying, strike and lot");
+        check(!instrument_from_master(mcx), "an exchange the feed does not carry is refused, not guessed");
+
+        const auto dir = std::filesystem::temp_directory_path() / "altair_watch_test";
+        std::filesystem::create_directories(dir);
+        {
+            std::ofstream w(dir / "watchlist.csv");
+            w << "token,symbol\n779521,SBIN\n12345678,SBIN26OCT800CE\n779521,SBIN\n99,GOLD\n5,NOPE\n";
+        }
+        const auto toks = read_watchlist((dir / "watchlist.csv").string());
+        check(toks.size() == 4 && toks[0] == 779521u, "the watchlist file reads tokens once each, in order");
+        std::vector<LiveInstrument> u;
+        LiveInstrument have;
+        have.token = 779521;
+        u.push_back(have);
+        std::vector<std::string> notes;
+        add_watchlist(u, {eq, opt, mcx}, toks, notes);
+        check(u.size() == 2 && u[1].token == 12345678u && notes.size() == 2,
+              "added: what is new and streamable; noted: what is not");
+        std::filesystem::remove_all(dir);
+    }
+
     std::printf("%s\n", failures == 0 ? "all live universe checks passed" : "live universe checks did not pass");
     return failures == 0 ? 0 : 1;
 }

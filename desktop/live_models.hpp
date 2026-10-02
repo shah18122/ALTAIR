@@ -135,7 +135,7 @@ public:
         start_ = new QPushButton(QStringLiteral("Start models"), this);
         start_->setToolTip(QStringLiteral(
             "Run altair_live_engine: every live model on the price service's stream, paper-trading its signals. "
-            "Start the feed first (Watch → Start FYERS / SIM feed). Places no orders."));
+            "Start the feed first (Market Watch → Start live feed, or Start SIM). Places no orders."));
         stop_ = new QPushButton(QStringLiteral("Stop models"), this);
         stop_->setEnabled(false);
         unverified_ = new QCheckBox(QStringLiteral("Price UNVERIFIED expenses"), this);
@@ -234,6 +234,8 @@ public:
         mark();
     }
     [[nodiscard]] QTableWidget* models_table() const noexcept { return models_; }
+    /// "Price UNVERIFIED expenses": the Terminal's paper orders follow it too.
+    [[nodiscard]] bool price_unverified() const { return unverified_->isChecked(); }
     [[nodiscard]] QTableWidget* positions_table() const noexcept { return positions_; }
     [[nodiscard]] QTableWidget* trades_table() const noexcept { return trades_; }
     [[nodiscard]] QTableWidget* by_model_table() const noexcept { return by_model_; }

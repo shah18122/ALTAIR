@@ -176,6 +176,16 @@ void settings_contract() {
     restored.restore_state(settings);
     check(!restored.recovery_notice().isEmpty(), "non-list group setting visibly recovers");
     restored.save_state(settings);
+    settings.setValue(QStringLiteral("favourites"), QStringList{});
+    settings.setValue(QStringLiteral("expanded"), QStringList{});
+    settings.sync();
+    {
+        // Re-read from disk: the empty list is stored as @Invalid().
+        QSettings reread(directory.filePath(QStringLiteral("nav.ini")), QSettings::IniFormat);
+        restored.restore_state(reread);
+    }
+    check(restored.recovery_notice().isEmpty(), "empty favourites and groups round-trip without a recovery notice");
+    restored.save_state(settings);
     settings.remove(QStringLiteral("favourites"));
     restored.restore_state(settings);
     check(!restored.recovery_notice().isEmpty(), "incomplete settings schema visibly recovers");

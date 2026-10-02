@@ -39,6 +39,7 @@
 #include "broker_status.hpp"
 #include "credential_setup.hpp"
 #include "helper_process.hpp"
+#include "login_outcome.hpp"
 
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -141,9 +142,10 @@ public:
                 "them — the button below opens the page in your browser and "
                 "stops.<br><br>"
                 "Step 2 is the checksum and the token exchange, and that runs "
-                "in <code>altair_kite_login</code>, a separate process. The api "
-                "key and secret are read from the environment by that process. "
-                "This window never holds them and links no broker code."),
+                "in <code>altair_kite_login</code>, a separate process. It reads "
+                "the API key and secret from the OS vault (<i>App credentials</i> "
+                "below) or the environment. This window never holds them and "
+                "links no broker code."),
             this);
         head->setWordWrap(true);
         head->setStyleSheet(QStringLiteral(
@@ -158,7 +160,7 @@ public:
             where->setText(QStringLiteral(
                 "<b>altair_kite_login was not found.</b> It needs an HTTPS "
                 "client and is built by the <code>net</code> preset only. "
-                "Run <code>build.bat net</code>. This is not a broken install; "
+                "Run <code>.\\build.bat net</code>. This is not a broken install; "
                 "a default build simply has no transport to Kite."));
             where->setStyleSheet(QStringLiteral("color:#F85149;"));
         } else {
@@ -167,18 +169,22 @@ public:
         }
         v->addWidget(where);
 
-        v->addWidget(new BrokerCredentialForm(
-            CredentialBroker::Kite, role_, [this] { step_open(); },
+        creds_ = new BrokerCredentialForm(
+            CredentialBroker::Kite, role_, [this] { open_login(); },
             [this] {
                 if (on_linked_) (void)on_linked_();
-            }, this));
+            }, this);
+        v->addWidget(creds_);
 
         auto* box = new QGroupBox(QStringLiteral("Link"), this);
         auto* bv = new QVBoxLayout(box);
 
         open_ = new QPushButton(
             QStringLiteral("1 · Open the Kite login in your browser"), box);
+        open_->setObjectName(QStringLiteral("kiteOpenLogin"));
         bv->addWidget(open_);
+        outcome_ = new LoginOutcome(box);
+        bv->addWidget(outcome_);
 
         auto* hint = new QLabel(
             QStringLiteral(
@@ -205,7 +211,8 @@ public:
 
         const bool allowed = may(role_, Capability::ChangeFeedSource);
         const bool have = !exe_.isEmpty();
-        open_->setEnabled(allowed && have);
+        // Open stays clickable without the helper: the click says why.
+        open_->setEnabled(allowed);
         exchange_->setEnabled(allowed && have);
         if (!allowed) {
             auto* no = new QLabel(
@@ -226,9 +233,20 @@ public:
             "process never prints an access token at all."));
         v->addWidget(log_, 1);
 
-        connect(open_, &QPushButton::clicked, this, [this] { step_open(); });
+        connect(open_, &QPushButton::clicked, this, [this] { open_login(); });
         connect(exchange_, &QPushButton::clicked, this,
                 [this] { step_exchange(); });
+    }
+
+    /// Step 1, as the button runs it. Public for the Brokers card's "Log in".
+    void open_login() { step_open(); }
+
+    [[nodiscard]] LoginOutcome* outcome() const noexcept { return outcome_; }
+
+    /// Tests point the panel at a stand-in helper.
+    void set_helper_for_test(const QString& path) {
+        exe_ = path;
+        set_link_buttons_enabled(true);
     }
 
 private:
@@ -237,7 +255,7 @@ private:
     void set_link_buttons_enabled(bool enabled) {
         const bool permitted = may(role_, Capability::ChangeFeedSource);
         const bool available = !exe_.isEmpty();
-        open_->setEnabled(enabled && permitted && available);
+        open_->setEnabled(enabled && permitted);
         exchange_->setEnabled(enabled && permitted && available);
     }
 
@@ -280,33 +298,64 @@ private:
     }
 
     void step_open() {
+        outcome_->hide_url();
+        if (!may(role_, Capability::ChangeFeedSource)) {
+            outcome_->show_state(LoginOutcomeKind::Problem,
+                QStringLiteral("Linking a broker account requires the admin role."));
+            return;
+        }
+        if (exe_.isEmpty()) {
+            outcome_->show_state(LoginOutcomeKind::Problem, QStringLiteral(
+                "<b>altair_kite_login is not in this build.</b> It needs the "
+                "<code>net</code> preset: run <code>.\\build.bat net</code> in "
+                "PowerShell, then start the desktop from <code>build\\net\\desktop</code>."));
+            say(QStringLiteral("\n· altair_kite_login was not found"));
+            return;
+        }
+        outcome_->show_state(LoginOutcomeKind::Working,
+                             QStringLiteral("Asking altair_kite_login for the login URL…"));
         say(QStringLiteral("\n· asking %1 for the login URL...").arg(exe_));
         start_helper(exe_, {}, 30000, {}, [this](HelperProcessResult result) {
             if (!result.ran_to_completion()) {
+                outcome_->show_state(LoginOutcomeKind::Problem,
+                    QStringLiteral("<b>The Kite helper did not run:</b> %1")
+                        .arg(result.detail.toHtmlEscaped()));
                 say(QStringLiteral("· Kite helper failed: %1").arg(result.detail));
                 return;
             }
-            // Exit 2 is "credentials are not configured", and its message is
-            // the useful one. A no-argument run returns the browser URL with
-            // success; a helper launched by hand no longer looks like a crash.
+            // Exit 2 is "credentials are not configured". This is the case
+            // that looked like a dead button: say it where the click was, and
+            // put the cursor in the form that fixes it.
             if (result.exit_code == 2) {
                 say(result.output.trimmed());
-                say(QStringLiteral(
-                    "· save API key, API secret and the exact registered redirect "
-                    "URL in the App credentials form above, then try again."));
+                outcome_->show_state(LoginOutcomeKind::Problem, QStringLiteral(
+                    "<b>Kite app credentials are not saved yet.</b> Fill <b>Kite API key</b>, "
+                    "<b>Kite API secret</b> and the <b>redirect URL registered on "
+                    "developers.kite.trade</b> in <i>App credentials</i> above, then press "
+                    "<b>Save &amp; connect</b>; the login opens straight after."));
+                if (creds_ != nullptr) creds_->focus_first();
                 return;
             }
             const QString url = login_url_from(result.output);
             if (url.isEmpty()) {
+                const QString first = result.output.trimmed().section(QLatin1Char('\n'), 0, 0);
+                outcome_->show_state(LoginOutcomeKind::Problem,
+                    QStringLiteral("<b>No login URL came back</b> (exit %1): %2")
+                        .arg(result.exit_code).arg(first.toHtmlEscaped()));
                 say(QStringLiteral("· no login URL in the output:"));
                 say(result.output.trimmed());
                 return;
             }
+            outcome_->show_url(url);
             say(QStringLiteral("· opening the Kite login in your browser"));
-            if (!QDesktopServices::openUrl(QUrl(url))) {
-                say(QStringLiteral(
-                    "· could not open a browser. The URL is in the output of "
-                    "`altair_kite_login` with no arguments."));
+            if (QDesktopServices::openUrl(QUrl(url))) {
+                outcome_->show_state(LoginOutcomeKind::Done, QStringLiteral(
+                    "<b>Kite login opened in your browser.</b> Log in, then copy the whole "
+                    "address you land on (it has <code>request_token=</code>) into the box "
+                    "below and press <b>2</b>. If no browser appeared, use the link below."));
+            } else {
+                outcome_->show_state(LoginOutcomeKind::Problem, QStringLiteral(
+                    "<b>No browser opened.</b> Click or copy the login link below."));
             }
         });
     }
@@ -314,9 +363,13 @@ private:
     void step_exchange() {
         const QString arg = paste_->text().trimmed();
         if (arg.isEmpty()) {
+            outcome_->show_state(LoginOutcomeKind::Problem,
+                QStringLiteral("Paste the whole address the Kite login sent you to, then press 2."));
             say(QStringLiteral("\n· nothing pasted"));
             return;
         }
+        if (exe_.isEmpty()) return;
+        outcome_->show_state(LoginOutcomeKind::Working, QStringLiteral("Exchanging the request token…"));
         say(QStringLiteral("\n· exchanging %1").arg(redact_request_token(arg)));
         start_helper(exe_, {QStringLiteral("--stdin")}, 30000,
                      arg.toUtf8() + '\n',
@@ -327,6 +380,9 @@ private:
             }
             say(result.output.trimmed());
             if (result.exit_code == 0) {
+                outcome_->hide_url();
+                outcome_->show_state(LoginOutcomeKind::Done,
+                    QStringLiteral("<b>Kite session saved for today.</b> The token is now spent."));
                 // Clear the box: the token is now spent, and a second press
                 // with the same value gets a misleading 403.
                 paste_->clear();
@@ -344,6 +400,10 @@ private:
                     "window that can."));
 #endif
             } else {
+                outcome_->show_state(LoginOutcomeKind::Problem,
+                    QStringLiteral("<b>Kite refused the exchange</b> (exit %1). Request tokens are "
+                                   "single use and expire in minutes: log in again and paste the "
+                                   "new address.").arg(result.exit_code));
                 say(QStringLiteral(
                     "· exchange did not succeed (exit %1). The token was not "
                     "spent if Kite refused the checksum; it was if Kite "
@@ -433,6 +493,8 @@ private:
     QPushButton* exchange_ = nullptr;
     QLineEdit* paste_ = nullptr;
     QPlainTextEdit* log_ = nullptr;
+    BrokerCredentialForm* creds_ = nullptr;
+    LoginOutcome* outcome_ = nullptr;
     // Destroyed first, suppressing any in-flight callback before the widget
     // fields above are torn down.
     HelperProcess helper_;

@@ -162,12 +162,18 @@ inline void write_status(const std::string& path, const FeedStatus& s) {
 }
 
 /// Seeds for the simulator: yesterday's closes from dataset/ and data/pairs/.
+/// With `day_iso` ("YYYY-MM-DD"), the closes of the session before that day.
+[[nodiscard]] inline double sim_close(const std::string& dir, const std::string& day_iso) {
+    return day_iso.empty() ? live::last_close(dir) : live::last_close_before(dir, day_iso);
+}
+
 [[nodiscard]] inline live::LiveSimSeeds sim_seeds(const std::string& source_dir, const std::string& dataset_dir,
-                                                  const std::vector<live::LiveInstrument>& u) {
+                                                  const std::vector<live::LiveInstrument>& u,
+                                                  const std::string& day_iso = {}) {
     live::LiveSimSeeds s;
-    const double n = live::last_close(dataset_dir + "/spot/nifty/1d");
-    const double b = live::last_close(dataset_dir + "/spot/banknifty/1d");
-    const double v = live::last_close(dataset_dir + "/spot/indiavix/1d");
+    const double n = sim_close(dataset_dir + "/spot/nifty/1d", day_iso);
+    const double b = sim_close(dataset_dir + "/spot/banknifty/1d", day_iso);
+    const double v = sim_close(dataset_dir + "/spot/indiavix/1d", day_iso);
     if (n > 0.0) s.nifty = n;
     if (b > 0.0) s.banknifty = b;
     if (v > 0.0) s.vix = v;
@@ -175,19 +181,23 @@ inline void write_status(const std::string& path, const FeedStatus& s) {
         if (i.kind != live::LiveKind::Equity) continue;
         std::string dir = i.symbol;
         for (auto& c : dir) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
-        const double c = live::last_close(source_dir + "/data/pairs/" + dir + "/1d");
+        const double c = sim_close(source_dir + "/data/pairs/" + dir + "/1d", day_iso);
         if (c > 0.0) s.stocks[i.symbol] = c;
     }
     return s;
 }
 
 /// Run the simulator: `speed` simulated seconds per wall second, from
-/// `start_ns`, until 15:30 IST that day or `stop()` says so.
-template <class Stop>
+/// `start_ns`, until 15:30 IST that day or `stop()` says so. `setup(sim)` runs
+/// once before the first step (a past day's anchors); `added()` is asked every
+/// couple of seconds for instruments to add mid-session (the market watch's
+/// scrip search), as (instrument, equity close or 0) pairs.
+template <class Stop, class Setup, class Added>
 inline void run_sim(SharedBus& bus, const std::vector<live::LiveInstrument>& u, const live::LiveSimSeeds& seeds,
                     std::uint64_t seed, std::int64_t start_ns, double speed, const std::string& status_path,
-                    Stop&& stop) {
+                    Stop&& stop, Setup&& setup, Added&& added) {
     live::LiveSim sim(u, seeds, seed, start_ns);
+    setup(sim);
     const std::int64_t close_ns = (live::ist_today(start_ns / 1'000'000'000LL) * 86400 + 10 * 3600) * 1'000'000'000LL;
     constexpr std::int64_t kStep = 100'000'000;   // 100 ms of simulated time
     const auto wall_step = std::chrono::nanoseconds(static_cast<std::int64_t>(static_cast<double>(kStep) / speed));
@@ -214,6 +224,16 @@ inline void run_sim(SharedBus& bus, const std::vector<live::LiveInstrument>& u, 
         const auto now = std::chrono::steady_clock::now();
         if (now - last_status > std::chrono::seconds(2)) {
             last_status = now;
+            for (auto& [in, close] : added()) {
+                const std::size_t before = sim.universe().size();
+                sim.add(in, close);
+                if (sim.universe().size() == before) continue;
+                // Its opening quote at once, so the new row has a previous close.
+                sim.board_one(sim.universe().size() - 1, [&](const live::LiveInstrument&, const live::LiveSimEvent& ev) {
+                    bus.quote(ev.quote, sim.now_ns());
+                });
+            }
+            st.instruments = sim.universe().size();
             st.clients = bus.clients();
             st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
             st.engine_ns = sim.now_ns();
@@ -223,6 +243,14 @@ inline void run_sim(SharedBus& bus, const std::vector<live::LiveInstrument>& u, 
     }
     st.state = "stopped";
     write_status(status_path, st);
+}
+
+template <class Stop>
+inline void run_sim(SharedBus& bus, const std::vector<live::LiveInstrument>& u, const live::LiveSimSeeds& seeds,
+                    std::uint64_t seed, std::int64_t start_ns, double speed, const std::string& status_path,
+                    Stop&& stop) {
+    run_sim(bus, u, seeds, seed, start_ns, speed, status_path, std::forward<Stop>(stop), [](live::LiveSim&) {},
+            [] { return std::vector<std::pair<live::LiveInstrument, double>>{}; });
 }
 
 } // namespace altair::live_sources

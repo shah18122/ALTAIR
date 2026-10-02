@@ -100,8 +100,6 @@
 namespace altair::ui {
 
 
-inline constexpr int kFrameIntervalMs = 16;
-
 /// IST, +05:30 with no DST -- the market's clock, and the one this window
 /// displays. ONE definition: there were briefly two, and a second local
 /// shadowed the first at /W4. A timezone constant is exactly the thing that
@@ -173,13 +171,31 @@ public:
         build_watchlist();
         build_chart();
         build_pages();
-        build_toolbar();
         build_status();
         build_workspace_controls();
 
-        timer_ = new QTimer(this);
-        timer_->setInterval(kFrameIntervalMs);
-        connect(timer_, &QTimer::timeout, this, &MainWindow::pump);
+        // The shell follows the LIVE stream the Terminal holds, not a replay.
+        // The replay tape still exists for --prime and the chart's history,
+        // but nothing plays it on a timer any more.
+        if (terminal_ != nullptr && terminal_->stream() != nullptr) {
+            auto* stream = terminal_->stream();
+            connect(stream, &PriceClient::priceUpdated, this, [this, stream](unsigned token) {
+                live_arrival_ms_ = QDateTime::currentMSecsSinceEpoch();
+                const LivePrice* p = stream->price(token);
+                if (p == nullptr) return;
+                live_sim_ = p->simulated;
+                live_replay_ = p->replay;
+                if (p->exchange_ts_ns > live_ts_ns_) {
+                    live_ts_ns_ = p->exchange_ts_ns;
+                    live_clock_.observe(Timestamp(live_ts_ns_));
+                }
+            });
+            connect(stream, &PriceClient::statusChanged, this, [this] { refresh_status(); });
+        }
+        status_timer_ = new QTimer(this);
+        status_timer_->setInterval(500);
+        connect(status_timer_, &QTimer::timeout, this, &MainWindow::refresh_status);
+        status_timer_->start();
 
         auto* full = new QAction(this);
         // Escape belongs to focused widgets/dialogs and the Terminal chain.
@@ -291,19 +307,16 @@ public:
         }
     }
 
+    /// Start the live feed by itself when the Terminal opens and nothing streams.
+    void set_live_feed_on_open(bool on) {
+        if (terminal_ != nullptr) terminal_->set_autostart_feed(on);
+    }
+
     /// Open one of the Terminal's views (watch, chain, models, positions,
     /// operations), for --terminal-view: the same reason as --stream.
     /// False when there is no such view.
     bool show_terminal_view(const QString& view) {
         return terminal_ != nullptr && terminal_->show_view(view);
-    }
-
-    /// Start replay after the first paint so startup remains responsive.
-    void start_replay() {
-        if (!timer_->isActive() && !replayer_.exhausted()) {
-            timer_->start();
-            play_->setText(QStringLiteral("❚❚  Pause"));
-        }
     }
 
     bool compute_current() {
@@ -406,19 +419,6 @@ private Q_SLOTS:
         }
     }
 
-    void toggle_play() {
-        if (timer_->isActive()) {
-            timer_->stop();
-            play_->setText(QStringLiteral("▶  Play"));
-        } else {
-            if (replayer_.exhausted()) {
-                return;
-            }
-            timer_->start();
-            play_->setText(QStringLiteral("❚❚  Pause"));
-        }
-    }
-
     void restart() {
         replayer_ = Replayer(ticks_, count_);
         model_->reset_values();
@@ -426,11 +426,6 @@ private Q_SLOTS:
         last_ts_ns_ = 0;
         clock_ = MarketClock(DemoSessionTimes::trading(),
                              DemoSessionTimes::pre_open());
-        play_->setEnabled(true);
-        if (!timer_->isActive()) {
-            timer_->start();
-            play_->setText(QStringLiteral("❚❚  Pause"));
-        }
         refresh_status();
     }
 
@@ -453,32 +448,6 @@ private Q_SLOTS:
             last_ts_ns_ = t->ts.ns_since_epoch();
             clock_.observe(t->ts);
             ++applied_;
-        }
-        refresh_status();
-    }
-
-    void pump() {
-        const int budget = speed_->currentData().toInt();
-        int drained = 0;
-        while (drained < budget) {
-            const auto t = replayer_.next();
-            if (!t.has_value()) {
-                timer_->stop();
-                play_->setText(QStringLiteral("▶  Play"));
-                play_->setEnabled(false);
-                break;
-            }
-            model_->apply_tick(*t);
-            last_ts_ns_ = t->ts.ns_since_epoch();
-            clock_.observe(t->ts);
-            // THE RECEIVE CLOCK, not the tick's exchange timestamp. Staleness
-            // is a question about us, and a replay of an old session emits old
-            // timestamps forever -- it would look permanently fresh by its own
-            // clock. feed/tick.hpp carries recv_ts for exactly this.
-            feed_.observe_arrival(QDateTime::currentMSecsSinceEpoch()
-                                  * 1'000'000LL);
-            ++applied_;
-            ++drained;
         }
         refresh_status();
     }
@@ -591,17 +560,13 @@ private:
         nav_settings_->beginGroup(QStringLiteral("workspace/v1/") +
                                   QString::fromLatin1(user_.toUtf8().toHex()));
         nav_->restore_state(*nav_settings_);
-        auto* replay_bar = findChild<QToolBar*>();
         auto* bar = new QToolBar(QStringLiteral("Workspaces"), this);
         bar->setObjectName(QStringLiteral("workspaceToolbar"));
         bar->setMovable(false);
         bar->setFloatable(false);
         // Recovery controls must not be hidden through the toolbar context menu.
         bar->toggleViewAction()->setEnabled(false);
-        if (replay_bar) {
-            insertToolBar(replay_bar, bar);
-            insertToolBarBreak(replay_bar);
-        } else addToolBar(bar);
+        addToolBar(bar);
         nav_toggle_ = bar->addAction(QStringLiteral("Hide navigation"));
         nav_toggle_->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")));
         connect(nav_toggle_, &QAction::triggered, this, [this] { nav_->toggle_visibility(); });
@@ -681,15 +646,6 @@ private:
             "color:#D9EAF2;background:#1C2B36;border:1px solid #2F4A5A;"
             "border-radius:11px;font-weight:700;padding:3px 10px;"));
         bar->addWidget(mode_badge_);
-        connection_badge_ = new QLabel(QStringLiteral("  FYERS —  ·  KITE —  "), bar);
-        connection_badge_->setObjectName(QStringLiteral("brokerConnectionBadge"));
-        connection_badge_->setAccessibleName(QStringLiteral("Verified broker connections"));
-        connection_badge_->setToolTip(QStringLiteral(
-            "Only fresh, service-verified read-only evidence is shown as connected."));
-        connection_badge_->setStyleSheet(QStringLiteral(
-            "color:#AFC0C9;background:#161B22;border:1px solid #30363D;"
-            "border-radius:11px;padding:3px 10px;"));
-        bar->addWidget(connection_badge_);
         nav_->on_state_changed = [this] {
             refresh_workspace_controls();
             nav_->save_state(*nav_settings_);
@@ -717,7 +673,6 @@ private:
             "QComboBox:hover,QPushButton:hover{border-color:#484F58;}"
             "QLabel{color:#E6EDF3;}");
         bar->setStyleSheet(chrome);
-        if (replay_bar) replay_bar->setStyleSheet(chrome);
         menuBar()->setStyleSheet(chrome);
         menu->setStyleSheet(chrome);
         layout->setStyleSheet(chrome);
@@ -1562,67 +1517,27 @@ private:
         }
     }
 
-    void build_toolbar() {
-        auto* bar = addToolBar(QStringLiteral("Replay"));
-        bar->setMovable(false);
-
-        play_ = new QPushButton(QStringLiteral("❚❚  Pause"));
-        connect(play_, &QPushButton::clicked, this, &MainWindow::toggle_play);
-        bar->addWidget(play_);
-
-        auto* restart = new QPushButton(QStringLiteral("⟲  Restart"));
-        connect(restart, &QPushButton::clicked, this, &MainWindow::restart);
-        bar->addWidget(restart);
-
-        bar->addSeparator();
-        bar->addWidget(new QLabel(QStringLiteral(" Speed ")));
-        speed_ = new QComboBox;
-        // Ticks drained per 16 ms frame. Named in ticks, not in "x", because
-        // a multiplier implies a wall-clock relationship the replay does not
-        // have -- the tape's own timestamps are what advance.
-        speed_->addItem(QStringLiteral("10 ticks/frame"), 10);
-        speed_->addItem(QStringLiteral("40 ticks/frame"), 40);
-        speed_->addItem(QStringLiteral("200 ticks/frame"), 200);
-        speed_->addItem(QStringLiteral("1000 ticks/frame"), 1000);
-        speed_->setCurrentIndex(1);
-        bar->addWidget(speed_);
-
-        bar->addSeparator();
-        scrub_ = new QSlider(Qt::Horizontal);
-        scrub_->setMinimum(0);
-        scrub_->setMaximum(static_cast<int>(count_));
-        scrub_->setMinimumWidth(260);
-        connect(scrub_, &QSlider::sliderReleased, this, [this] {
-            seek(scrub_->value());
-        });
-        bar->addWidget(scrub_);
-    }
-
     void build_status() {
         pill_ = new QLabel;
-        fyers_pill_ = new QLabel;
-        broker_pill_ = new QLabel;
+        pill_->setObjectName(QStringLiteral("liveFeedPill"));
+        broker_status_ = new QLabel;
+        broker_status_->setObjectName(QStringLiteral("brokerStatus"));
+        broker_status_->setTextFormat(Qt::RichText);
+        broker_status_->setCursor(Qt::PointingHandCursor);
+        // One quiet line for both brokers; a click opens the Brokers page,
+        // where logging in happens.
+        connect(broker_status_, &QLabel::linkActivated, this, [this] {
+            show_page(QStringLiteral("accounts.brokers"));
+        });
         who_ = new QLabel;
         phase_ = new QLabel;
         engine_clock_ = new QLabel;
         wall_clock_ = new QLabel;
-        progress_ = new QLabel;
-        filters_ = new QLabel;
 
+        // Data first ("is anything arriving"), broker sessions second ("can we
+        // talk to the broker"): independent questions, so two separate items.
         statusBar()->addWidget(pill_);
-        statusBar()->addWidget(fyers_pill_);
-        // Broker priority and broker session are separate pills, because they
-        // answer different questions. FYERS is the configured primary; Kite
-        // remains the secondary session indicator.
-        //
-        // The first is "is data arriving" and the second is "can we talk to
-        // the broker". They are independent: a replay shows LIVE with the
-        // broker untouched, and a good Kite session shows NO DATA until
-        // something subscribes. One pill covering both would have to pick a
-        // colour for a state that is half green.
-        statusBar()->addWidget(broker_pill_);
-        statusBar()->addWidget(progress_);
-        statusBar()->addWidget(filters_);
+        statusBar()->addWidget(broker_status_);
         statusBar()->addPermanentWidget(who_);
         statusBar()->addPermanentWidget(phase_);
         statusBar()->addPermanentWidget(engine_clock_);
@@ -1660,15 +1575,10 @@ private:
             service_now);
 #endif
         const FyersState fyers = probe_fyers();
-        fyers_pill_->setText(QStringLiteral("  %1  ").arg(
-            fyers_service ? service_broker_label(*fyers_service) : fyers_label(fyers.link)));
-        fyers_pill_->setStyleSheet(
-            QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;")
-                .arg((fyers_service ? broker_colour(fyers_service->authentication)
-                                    : fyers_colour(fyers.link)).name()));
-        fyers_pill_->setToolTip(fyers_service
-            ? QStringLiteral("Fresh service evidence from a verified read-only call.")
-            : fyers.detail);
+        const QString fyers_text = fyers_service
+            ? service_broker_label(*fyers_service) : fyers_label(fyers.link);
+        const QColor fyers_dot = fyers_service
+            ? broker_colour(fyers_service->authentication) : fyers_colour(fyers.link);
 
 #ifdef ALTAIR_SESSION_FILE
         const QString path = QStringLiteral(ALTAIR_SESSION_FILE);
@@ -1685,156 +1595,82 @@ private:
             QStringLiteral("data/kite_account.json"), broker_view::BrokerId::ZerodhaKite,
             service_now);
 #endif
-        QString text = QStringLiteral("  %1").arg(
-            kite_service ? service_broker_label(*kite_service) : broker_label(b.link));
-        if (!b.user_id.isEmpty()) {
-            text += QStringLiteral(" · %1").arg(b.user_id);
-        }
-        text += QStringLiteral("  ");
-        broker_pill_->setText(text);
-        broker_pill_->setStyleSheet(
-            QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;")
-                .arg(broker_colour(kite_service ? kite_service->authentication : b.link).name()));
-        // The label is the state; the tooltip is what to DO about it. A pill
-        // that only shows a colour makes the operator go looking for the
-        // reason, which is the moment they stop trusting the pill.
-        broker_pill_->setToolTip(kite_service
-            ? QStringLiteral("Fresh service evidence from a verified read-only call.")
-            : b.detail);
-        if (connection_badge_ != nullptr) {
-            const QString fyers_text = fyers_service
-                ? service_broker_label(*fyers_service) : fyers_label(fyers.link);
-            const QString kite_text = kite_service
-                ? service_broker_label(*kite_service) : broker_label(b.link);
-            connection_badge_->setText(QStringLiteral("  %1  ·  %2  ")
-                .arg(fyers_text, kite_text));
-            connection_badge_->setToolTip(QStringLiteral(
-                "FYERS: %1\nKite: %2\nOnly fresh service verification is treated as connected.")
-                .arg(fyers_pill_->toolTip(), broker_pill_->toolTip()));
-        }
+        QString kite_text = kite_service ? service_broker_label(*kite_service) : broker_label(b.link);
+        if (!b.user_id.isEmpty()) kite_text += QStringLiteral(" · %1").arg(b.user_id);
+        const QColor kite_dot = broker_colour(kite_service ? kite_service->authentication : b.link);
+        broker_status_->setText(QStringLiteral(
+            "<a href='brokers' style='color:#AFC0C9;text-decoration:none'>"
+            "<span style='color:%1'>●</span> %2 &nbsp; "
+            "<span style='color:%3'>●</span> %4</a>")
+            .arg(fyers_dot.name(), fyers_text.toHtmlEscaped(),
+                 kite_dot.name(), kite_text.toHtmlEscaped()));
+        // The label is the state; the tooltip is what to DO about it.
+        broker_status_->setToolTip(QStringLiteral("FYERS: %1\nKite: %2\n\nClick to open Brokers.")
+            .arg(fyers_service ? QStringLiteral("fresh service evidence from a verified read-only call.")
+                               : fyers.detail,
+                 kite_service ? QStringLiteral("fresh service evidence from a verified read-only call.")
+                              : b.detail));
     }
 
     void refresh_status() {
         // Rule 10's one live field. Pushed IN rather than the panel reaching
-        // for the replayer: the audit page reports what the engine did, and a
-        // page that could pull its own position could report a different one
-        // from the grid beside it.
+        // for the replayer: the audit page reports what the engine did.
         if (audit_panel_ != nullptr) {
             audit_panel_->set_tick_seqno(static_cast<std::uint64_t>(applied_));
         }
-        // The broker probe opens a file, so it runs every ~5 s rather than
-        // every frame. A session's state changes on the scale of a login, not
-        // a repaint, and re-reading it 60 times a second would be a syscall
-        // storm to answer a question whose answer is hours old.
+        // The broker probe opens a file, so it runs every ~5 s: a session's
+        // state changes on the scale of a login, not a repaint.
         if (since_broker_-- <= 0) {
-            since_broker_ = 300;
+            since_broker_ = 10;
             refresh_broker_pill();
         }
-        const std::int64_t now_ns =
-            QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
-        const Liveness live = feed_.liveness(now_ns);
-        const std::int64_t age = feed_.age_ns(now_ns);
-        // pill_text, not liveness_label: the pill said "LIVE · Replay" in
-        // green. See feed_status.hpp.
-        pill_->setText(
-            QStringLiteral("  %1%2  ")
-                .arg(pill_text(live, feed_.source()),
-                     age < 0 ? QString()
-                             : QStringLiteral(" · last tick %1 ms ago")
-                                   .arg(age / 1'000'000)));
-        pill_->setStyleSheet(
-            QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;")
-                .arg(pill_colour(live, feed_.source()).name()));
-        who_->setText(QStringLiteral(" %1 (%2) ")
-                          .arg(user_, role_name(role_)));
+        who_->setText(QStringLiteral(" %1 (%2) ").arg(user_, role_name(role_)));
 
-        if (++since_chart_ >= 15) {
-            since_chart_ = 0;
-            // Only the live replay needs redrawing. A series loaded from
-            // disk does not change under us, and reloading it four times a
-            // second would re-read 8,756 rows to draw the same picture.
-            if (pages_->currentIndex() == 1
-                && source_ != nullptr
-                && source_->currentData().toString().isEmpty()) {
-                rebuild_chart();
-            }
-        }
-        scrub_->blockSignals(true);
-        scrub_->setValue(static_cast<int>(applied_));
-        scrub_->blockSignals(false);
-
-        // WHICH TAPE, named before anything else on the line. A grid of real
-        // prices and one of fabricated prices are indistinguishable, and
-        // P11Q-01's first version put real tickers on a random walk.
-        const QString src =
-            tape_real_
-                // THE DATES, NOT JUST THE COUNT. "last 20 sessions" is
-                // equally true of a tape ending today and one ending three
-                // weeks ago, and the dataset is filled by a manual fetch
-                // behind a daily Kite login -- so a stale tape is the normal
-                // state, not an edge case, and only the end date shows it.
-                ? QStringLiteral(" REAL · 1-min closes · %1 sessions, "
-                                 "%2 → %3 ")
-                      .arg(tape_sessions_)
-                      // IST as a real QTimeZone, which is the idiom already
-                      // used in panels.hpp -- not a UTC instant with 19800
-                      // seconds bolted on. Qt::UTC as a time-spec is
-                      // deprecated in 6.8 and the offset trick reads as a
-                      // magic number wherever it appears.
-                      .arg(QDateTime::fromMSecsSinceEpoch(
-                               tape_first_ns_ / 1'000'000, ist_tz())
-                               .toString(QStringLiteral("dd MMM")))
-                      .arg(QDateTime::fromMSecsSinceEpoch(
-                               tape_last_ns_ / 1'000'000, ist_tz())
-                               .toString(QStringLiteral("dd MMM yyyy")))
-                : QStringLiteral(" SYNTHETIC · random walk, not market data ");
-        progress_->setText(
-            src + QStringLiteral("·  tick %1 / %2   ·   unknown-instrument "
-                                 "ticks: %3 ")
-                      .arg(applied_).arg(count_).arg(model_->unknown_ticks()));
-        progress_->setStyleSheet(
-            tape_real_ ? QStringLiteral("color:#3FB950;")
-                       : QStringLiteral("color:#B9770B;font-weight:bold;"));
-        if (!tape_real_ && !tape_error_.isEmpty()) {
-            progress_->setToolTip(
-                QStringLiteral("No real tape: %1").arg(tape_error_));
-        }
-
-        const int shown = proxy_->rowCount();
-        const int total = model_->rowCount();
-        filters_->setText(
-            shown == total
-                ? QStringLiteral(" %1 rows ").arg(total)
-                : QStringLiteral(" %1 of %2 rows — %3 filter(s) active ")
-                      .arg(shown).arg(total).arg(proxy_->active_filter_count()));
-
-        const SessionPhase p = clock_.phase();
-        phase_->setText(QStringLiteral(" %1 ").arg(phase_label(p)));
-        phase_->setStyleSheet(
-            QStringLiteral("color:%1;font-weight:bold;")
-                .arg(phase_colour(p).name()));
-
-        // THE ENGINE CLOCK: read off the tick, never QDateTime::currentDateTime().
-        //
-        // Displayed in IST, because that is the market's clock and the session
-        // window is expressed in it. Showing UTC next to a phase derived from
-        // IST is how a screen reads "CLOSED" at what looks like mid-session --
-        // which is exactly what the first version of this window did.
-        if (clock_.has_engine_time()) {
-            const auto engine = QDateTime::fromMSecsSinceEpoch(
-                last_ts_ns_ / 1'000'000, ist_tz());
-            engine_clock_->setText(
-                QStringLiteral(" engine %1 IST ")
-                    .arg(engine.toString(QStringLiteral("HH:mm:ss.zzz"))));
+        // THE LIVE FEED, as the Terminal's stream sees it. SIM and REPLAY are
+        // named by the frames' own flags and are never shown as LIVE.
+        const PriceClient* stream = terminal_ != nullptr ? terminal_->stream() : nullptr;
+        const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+        QString text, colour;
+        if (stream == nullptr || !stream->connected()) {
+            text = QStringLiteral("○ NO FEED · start it in Terminal");
+            colour = QStringLiteral("#6E7681");
+        } else if (live_arrival_ms_ == 0) {
+            text = QStringLiteral("● CONNECTED · waiting for the first tick");
+            colour = QStringLiteral("#B9770B");
         } else {
-            // No tick yet, so there is no engine time. Blank, not 00:00:00 --
-            // absence is not zero here either.
-            engine_clock_->setText(QStringLiteral(" engine — "));
+            const double age_s = static_cast<double>(now_ms - live_arrival_ms_) / 1000.0;
+            const bool stale = age_s > 30.0;
+            const QString kind = live_sim_ ? QStringLiteral("SIM")
+                               : live_replay_ ? QStringLiteral("REPLAY") : QStringLiteral("LIVE");
+            text = QStringLiteral("● %1 · %2 ticks · %3 gaps · last %4 s%5")
+                       .arg(kind)
+                       .arg(QLocale().toString(static_cast<qulonglong>(stream->frames())))
+                       .arg(stream->gaps())
+                       .arg(age_s, 0, 'f', 1)
+                       .arg(stale ? QStringLiteral(" · STALE") : QString());
+            colour = stale ? QStringLiteral("#DA3633")
+                   : (live_sim_ || live_replay_) ? QStringLiteral("#B9770B") : QStringLiteral("#238636");
         }
-        wall_clock_->setText(
-            QStringLiteral(" wall %1 ")
-                .arg(QDateTime::currentDateTime().toString(
-                    QStringLiteral("HH:mm:ss"))));
+        pill_->setText(QStringLiteral("  %1  ").arg(text));
+        pill_->setStyleSheet(QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;border-radius:3px;")
+                                 .arg(colour));
+
+        // Phase and clock from the FEED's time stamps, never the wall clock:
+        // a SIM session at 30x runs its own day.
+        const SessionPhase p = live_clock_.phase();
+        phase_->setText(live_clock_.has_engine_time() ? QStringLiteral(" %1 ").arg(phase_label(p))
+                                                      : QStringLiteral(" — "));
+        phase_->setStyleSheet(QStringLiteral("color:%1;font-weight:bold;").arg(phase_colour(p).name()));
+        if (live_clock_.has_engine_time()) {
+            const auto feed_time = QDateTime::fromMSecsSinceEpoch(live_ts_ns_ / 1'000'000, ist_tz());
+            engine_clock_->setText(QStringLiteral(" feed %1 IST ")
+                                       .arg(feed_time.toString(QStringLiteral("HH:mm:ss"))));
+        } else {
+            // No tick yet, so there is no feed time. Blank, not 00:00:00.
+            engine_clock_->setText(QStringLiteral(" feed — "));
+        }
+        wall_clock_->setText(QStringLiteral(" wall %1 ")
+                                 .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
     }
 
     // BORROWED until the first reload, OWNED after it. `ticks_` starts
@@ -1863,26 +1699,24 @@ private:
     QComboBox* source_ = nullptr;
     QComboBox* instrument_ = nullptr;
     QComboBox* bucket_ = nullptr;
-    int since_chart_ = 0;
 
-    QPushButton* play_ = nullptr;
-    QComboBox* speed_ = nullptr;
-    QSlider* scrub_ = nullptr;
 
     QLabel* pill_ = nullptr;
-    QLabel* fyers_pill_ = nullptr;
-    QLabel* broker_pill_ = nullptr;
+    QLabel* broker_status_ = nullptr;
     QLabel* mode_badge_ = nullptr;
-    QLabel* connection_badge_ = nullptr;
     int since_broker_ = 0;
     QLabel* who_ = nullptr;
     QLabel* phase_ = nullptr;
     QLabel* engine_clock_ = nullptr;
     QLabel* wall_clock_ = nullptr;
-    QLabel* progress_ = nullptr;
-    QLabel* filters_ = nullptr;
 
-    QTimer* timer_ = nullptr;
+    QTimer* status_timer_ = nullptr;
+    // The live stream's state, for the status bar.
+    qint64 live_arrival_ms_ = 0;
+    std::int64_t live_ts_ns_ = 0;
+    bool live_sim_ = false;
+    bool live_replay_ = false;
+    MarketClock live_clock_{DemoSessionTimes::trading(), DemoSessionTimes::pre_open()};
     std::size_t applied_ = 0;
     std::int64_t last_ts_ns_ = 0;
 

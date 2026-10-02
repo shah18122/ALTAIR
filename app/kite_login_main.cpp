@@ -247,7 +247,7 @@ int main(int argc, char** argv)
                     api_key.empty() ? " API key" : "",
                     api_secret.empty() ? " API secret" : "",
                     redirect.empty() ? " registered redirect URL" : "");
-        std::printf("Open Brokers > Zerodha > App credentials, save all three, "
+        std::printf("Open Brokers > Log in - Kite > App credentials, save all three, "
                     "then start a new browser login. Do not paste secrets into logs.\n");
         return 2;
     }

@@ -57,10 +57,14 @@
 #include "gets_workspace.hpp"
 #include "live_market.hpp"
 #include "live_models.hpp"
+#include "paper_oms.hpp"
+#include "paper_windows.hpp"
 #include "position_table.hpp"
 #include "price_client.hpp"
 #include "data/series_io.hpp"
 
+#include <QButtonGroup>
+#include <QDialog>
 #include <QFile>
 #include <QHBoxLayout>
 #include <QKeySequence>
@@ -81,6 +85,11 @@
 
 #include <cstdint>
 #include <expected>
+
+#if ALTAIR_HAVE_CHARGES_TOML
+#include <app/demo_costs.hpp>
+#include <risk/charges_toml.hpp>
+#endif
 
 namespace altair::ui {
 
@@ -285,7 +294,7 @@ public:
         h->setSpacing(18);
         auto* title = new QLabel(QStringLiteral(
             "<span style='color:#F4C95D;font-weight:bold;letter-spacing:2px'>"
-            "ALTAIR TERMINAL</span>"), strip);
+            "TERMINAL</span>"), strip);
         h->addWidget(title);
         nifty_ = make_tile(strip, h);
         bnf_ = make_tile(strip, h);
@@ -294,32 +303,38 @@ public:
         stream_state_ = new QLabel(strip);
         stream_state_->setTextFormat(Qt::RichText);
         h->addWidget(stream_state_);
+        // The stream connects by itself and keeps retrying; the button stays
+        // for scripts and tests but the trader never needs it.
         stream_btn_ = new QPushButton(QStringLiteral("Connect stream"), strip);
-        stream_btn_->setToolTip(QStringLiteral(
-            "Subscribe to altair_price_service on 127.0.0.1:7421. Start it "
-            "with --replay nifty 1m to test without a Kite token, or --go for "
-            "live."));
-        h->addWidget(stream_btn_);
-        watch_btn_ = new QPushButton(QStringLiteral("Watch"), strip);
-        watch_btn_->setToolTip(QStringLiteral(
-            "Live market watch: every tick, quotes, depth, time and sales, and the live option chain"));
-        h->addWidget(watch_btn_);
-        models_btn_ = new QPushButton(QStringLiteral("Models"), strip);
-        models_btn_->setToolTip(QStringLiteral(
-            "Live models: what each is doing and why, paper positions marked tick by tick, paper trades with expenses and net P&L"));
-        h->addWidget(models_btn_);
-        positions_btn_ = new QPushButton(QStringLiteral("Positions"), strip);
-        positions_btn_->setToolTip(QStringLiteral(
-            "GETS-style workspace: positions and funds, Greek watch, portfolio Greeks, simulation, "
-            "expenses, trade history, RMS, top movers and indices"));
-        h->addWidget(positions_btn_);
-        operations_btn_ = new QPushButton(QStringLiteral("Operations"), strip);
-        operations_btn_->setToolTip(QStringLiteral("Legacy order, queue and emergency controls"));
-        h->addWidget(operations_btn_);
-        // The key legend lives in the title's tooltip: on the strip it pushed
-        // the index tiles and the buttons into clipped text on a laptop.
+        stream_btn_->hide();
+        toast_ = new QLabel(strip);
+        toast_->setObjectName(QStringLiteral("terminalToast"));
+        toast_->setTextFormat(Qt::RichText);
+        h->addWidget(toast_);
+        const auto view_button = [&](const QString& text, const QString& tip) {
+            auto* b = new QPushButton(text, strip);
+            b->setCheckable(true);
+            b->setToolTip(tip);
+            h->addWidget(b);
+            return b;
+        };
+        watch_btn_ = view_button(QStringLiteral("Market Watch"), QStringLiteral(
+            "F4 · every scrip ticking: LTP, change, best bid/ask, volume, OI, OHLC; depth and time & sales beside it"));
+        chain_btn_ = view_button(QStringLiteral("Option Chain"), QStringLiteral(
+            "Ctrl+O · CE | strike | PE, live, with IV and Δ from the market mid; click a side to trade it"));
+        models_btn_ = view_button(QStringLiteral("Models"), QStringLiteral(
+            "Ctrl+M · live models: what each is doing and why, paper positions and trades with expenses"));
+        auto* views = new QButtonGroup(this);
+        views->setExclusive(true);
+        views->addButton(watch_btn_);
+        views->addButton(chain_btn_);
+        views->addButton(models_btn_);
+        watch_btn_->setChecked(true);
+        keys_btn_ = new QPushButton(QStringLiteral("⌨ Keys"), strip);
+        keys_btn_->setToolTip(QStringLiteral("F12 · every shortcut: + / − orders, F3 order book, F8 trade book, Alt+F6 net position…"));
+        h->addWidget(keys_btn_);
         title->setToolTip(QStringLiteral(
-            "F1 buy · F2 sell · F3 book · F4 chain · F5 watch · Esc back (Operations view)"));
+            "+ / F1 buy · − / F2 sell · F3 order book · F8 trade book · Alt+F6 net position · F5 market picture · F12 all keys"));
         v->addWidget(strip);
 
         // ---- ACCOUNT-FIRST SURFACE -------------------------------------
@@ -343,7 +358,7 @@ public:
         account_layout->setSpacing(8);
 
         account_state_ = new QLabel(QStringLiteral(
-            "No FYERS snapshot applied yet. Press Refresh FYERS above."), account_surface_);
+            "No FYERS snapshot yet. It is fetched by itself while this window is open (it needs a FYERS login today)."), account_surface_);
         account_state_->setObjectName(QStringLiteral("accountCaveat"));
         account_state_->setWordWrap(true);
         account_layout->addWidget(account_state_);
@@ -420,17 +435,58 @@ public:
         // P4-07 + GETS: the account surface is the first tab of the GETS
         // workspace, which adds the Greek, RMS and market tabs beside it and
         // feeds this Terminal the typed FYERS snapshot on every refresh.
-        gets_ = new GetsWorkspace(account_surface_, surface_);
+        // Positions are shown only in the net position window (Alt+F6): the
+        // paper book first, then the broker account and GETS tabs.
+        net_window_ = new NetPositionWindow(this);
+        gets_ = new GetsWorkspace(account_surface_, net_window_);
         gets_->on_account = [this](const GetsTypedAccount& typed) { apply_gets_account(typed); };
-        surface_->addWidget(gets_);
+        // Live prices for the GETS tabs: every streamed FYERS ticker, from
+        // its last tick (data/live/universe.csv maps ticker -> token).
+        gets_->set_live_quotes([this](GetsQuotes& quotes) -> int {
+            if (!client_->connected()) return 0;
+            int priced = 0;
+            for (const auto& r : live_->model()->rows()) {
+                if (r.fyers.isEmpty()) continue;
+                const LivePrice* p = client_->price(r.token);
+                if (p == nullptr || p->last_paise <= 0) continue;
+                GetsQuote g;
+                g.symbol = r.fyers;
+                g.ok = true;
+                g.description = r.symbol;
+                g.ltp = p->last_paise;
+                const QuotePayload* q = p->has_quote ? &p->quote : nullptr;
+                if (q != nullptr && q->has(kQuoteHasPrevClose) && q->prev_close > 0) {
+                    g.prev_close = q->prev_close;
+                    g.change = p->last_paise - q->prev_close;
+                    g.change_pct = 100.0 * static_cast<double>(p->last_paise - q->prev_close) / static_cast<double>(q->prev_close);
+                }
+                if (q != nullptr && q->has(kQuoteHasOhlc)) { g.open = q->open; g.high = q->high; g.low = q->low; }
+                if (q != nullptr && q->has(kQuoteHasAtp)) g.atp = q->avg_price;
+                if (p->has_volume) g.volume = p->volume;
+                g.time = p->exchange_ts_ns / 1'000'000'000LL;
+                if (!quotes.by_symbol.contains(g.symbol)) quotes.order << g.symbol;
+                quotes.by_symbol.insert(g.symbol, g);
+                ++priced;
+            }
+            return priced;
+        });
+        net_window_->add_tab(gets_, QStringLiteral("Broker account · GETS"));
 
         connect(position_filter_, &QLineEdit::textChanged, this,
                 [this](const QString& text) {
             positions_proxy_->setFilterFixedString(text);
         });
 
-        // ---- LEGACY OPERATIONS SURFACE ---------------------------------
-        split_ = new QSplitter(Qt::Horizontal, surface_);
+        // ---- LEGACY OPERATIONS WINDOW ----------------------------------
+        // The gated order ticket, the intent queue, the halt control and the
+        // feed panel: one window, opened by Halt controls. The market view no
+        // longer carries them -- orders are + and −, the book is F3.
+        ops_window_ = new QDialog(this);
+        ops_window_->setObjectName(QStringLiteral("operationsWindow"));
+        paper_ui::tool_window(ops_window_, QStringLiteral("Operations · halt, intent queue, gated ticket"), QSize(1180, 620));
+        auto* ops_layout = new QVBoxLayout(ops_window_);
+        ops_layout->setContentsMargins(4, 4, 4, 4);
+        split_ = new QSplitter(Qt::Horizontal, ops_window_);
         watch_ = new WatchlistPanel(role, split_);
         split_->addWidget(watch_);
         chain_ = new OptionChainPanel(split_);
@@ -458,18 +514,20 @@ public:
         split_->setStretchFactor(0, 24);
         split_->setStretchFactor(1, 50);
         split_->setStretchFactor(2, 26);
-        surface_->addWidget(split_);
-        // A TERMINAL OPENS ON THE MARKET. The account tabs are one click away.
+        ops_layout->addWidget(split_);
+        // A TERMINAL OPENS ON THE MARKET.
         surface_->setCurrentWidget(live_);
         v->addWidget(surface_, 1);
-        connect(watch_btn_, &QPushButton::clicked, this,
-                [this] { surface_->setCurrentWidget(live_); });
-        connect(models_btn_, &QPushButton::clicked, this,
-                [this] { surface_->setCurrentWidget(models_); });
-        connect(positions_btn_, &QPushButton::clicked, this,
-                [this] { surface_->setCurrentWidget(gets_); });
-        connect(operations_btn_, &QPushButton::clicked, this,
-                [this] { surface_->setCurrentWidget(split_); });
+        connect(watch_btn_, &QPushButton::clicked, this, [this] { show_view(QStringLiteral("watch")); });
+        connect(chain_btn_, &QPushButton::clicked, this, [this] { show_view(QStringLiteral("chain")); });
+        connect(models_btn_, &QPushButton::clicked, this, [this] { show_view(QStringLiteral("models")); });
+        connect(keys_btn_, &QPushButton::clicked, this, [this] { show_keys(); });
+        live_->on_view_changed = [this](LiveMarketWatch::View view) {
+            if (surface_->currentWidget() != live_) return;
+            (view == LiveMarketWatch::View::Chain ? chain_btn_ : watch_btn_)->setChecked(true);
+        };
+        live_->on_order_key = [this](bool buy) { open_order(buy); };
+        build_paper_book();
 
         // ---- WIRES ------------------------------------------------------
         //
@@ -526,23 +584,33 @@ public:
         // F1 and F2 FOCUS the ticket; they never submit. The typed
         // confirmation is the safety property and a hotkey that bypassed it
         // would be a one-keystroke order.
-        const auto key = [this](int k, auto fn) {
-            auto* sc = new QShortcut(QKeySequence(k), this);
+        const auto key = [this](QKeySequence k, auto fn) {
+            auto* sc = new QShortcut(k, this);
             sc->setContext(Qt::WidgetWithChildrenShortcut);
             connect(sc, &QShortcut::activated, this, fn);
         };
-        key(Qt::Key_F1, [this] {
-            right_->setCurrentWidget(ticket_);
-            ticket_->focus_side(true);
-        });
-        key(Qt::Key_F2, [this] {
-            right_->setCurrentWidget(ticket_);
-            ticket_->focus_side(false);
-        });
-        key(Qt::Key_F3, [this] { right_->setCurrentWidget(pending_); });
-        key(Qt::Key_F4, [this] { chain_->setFocus(); });
-        key(Qt::Key_F5, [this] { watch_->setFocus(); });
-        key(Qt::Key_Escape, [this] { chain_->setFocus(); });
+        // GETS / ODIN keys. F1/F2 OPEN A PAPER ORDER WINDOW; the gated live
+        // ticket stays in Operations and is never reachable by a hotkey.
+        key(QKeySequence(Qt::Key_F1), [this] { open_order(true); });
+        key(QKeySequence(Qt::Key_F2), [this] { open_order(false); });
+        key(QKeySequence(Qt::Key_F3), [this] { show_book(order_book_); });
+        key(QKeySequence(Qt::Key_F4), [this] { show_view(QStringLiteral("watch")); });
+        key(QKeySequence(Qt::CTRL | Qt::Key_O), [this] { show_view(QStringLiteral("chain")); });
+        key(QKeySequence(Qt::CTRL | Qt::Key_M), [this] { show_view(QStringLiteral("models")); });
+        key(QKeySequence(Qt::Key_F5), [this] { show_market_picture(); });
+        key(QKeySequence(Qt::Key_F6), [this] { show_market_picture(); });
+        key(QKeySequence(Qt::SHIFT | Qt::Key_F9), [this] { show_market_picture(); });
+        key(QKeySequence(Qt::SHIFT | Qt::Key_F7), [this] { show_security_info(); });
+        key(QKeySequence(Qt::Key_F8), [this] { show_book(trade_book_); });
+        key(QKeySequence(Qt::ALT | Qt::Key_F6), [this] { show_net_position(); });
+        key(QKeySequence(Qt::Key_F10), [this] { show_book(message_log_); });
+        key(QKeySequence(Qt::SHIFT | Qt::Key_F1), [this] { cancel_order(order_book_->selected()); });
+        key(QKeySequence(Qt::SHIFT | Qt::Key_F2), [this] { modify_order(order_book_->selected()); });
+        key(QKeySequence(Qt::SHIFT | Qt::Key_F3), [this] { cancel_all_orders(); });
+        key(QKeySequence(Qt::CTRL | Qt::Key_F), [this] { show_view(QStringLiteral("watch")); live_->focus_find(); });
+        key(QKeySequence(Qt::Key_Insert), [this] { show_view(QStringLiteral("watch")); live_->focus_add(); });
+        key(QKeySequence(Qt::Key_F12), [this] { show_keys(); });
+        key(QKeySequence(Qt::CTRL | Qt::Key_Slash), [this] { show_keys(); });
 
         seed_strip_from_disk();
         refresh_stream();
@@ -563,13 +631,24 @@ public:
     [[nodiscard]] OptionChainPanel* chain() const noexcept { return chain_; }
     [[nodiscard]] LiveMarketWatch* market_watch() const noexcept { return live_; }
     [[nodiscard]] LiveModelsPanel* live_models() const noexcept { return models_; }
-    /// Show a view by name: watch, chain, models, positions, operations.
+    /// Show a view by name: watch, chain, models; positions opens the net
+    /// position window (Alt+F6) and operations the operations window.
     bool show_view(const QString& v) {
-        if (v == QLatin1String("watch")) { surface_->setCurrentWidget(live_); return true; }
-        if (v == QLatin1String("chain")) { surface_->setCurrentWidget(live_); live_->show_chain(); return true; }
-        if (v == QLatin1String("models")) { surface_->setCurrentWidget(models_); return true; }
-        if (v == QLatin1String("positions")) { surface_->setCurrentWidget(gets_); return true; }
-        if (v == QLatin1String("operations")) { surface_->setCurrentWidget(split_); return true; }
+        if (v == QLatin1String("watch")) {
+            surface_->setCurrentWidget(live_);
+            live_->set_view(LiveMarketWatch::View::Watch);
+            watch_btn_->setChecked(true);
+            return true;
+        }
+        if (v == QLatin1String("chain")) {
+            surface_->setCurrentWidget(live_);
+            live_->set_view(LiveMarketWatch::View::Chain);
+            chain_btn_->setChecked(true);
+            return true;
+        }
+        if (v == QLatin1String("models")) { surface_->setCurrentWidget(models_); models_btn_->setChecked(true); return true; }
+        if (v == QLatin1String("positions")) { show_net_position(); return true; }
+        if (v == QLatin1String("operations")) { show_window(ops_window_); return true; }
         return false;
     }
     [[nodiscard]] PriceClient* stream() const noexcept { return client_; }
@@ -578,12 +657,34 @@ public:
     [[nodiscard]] QTableView* positions_view() const noexcept { return positions_view_; }
     [[nodiscard]] GetsWorkspace* gets() const noexcept { return gets_; }
     [[nodiscard]] bool account_surface_visible() const noexcept {
-        return surface_ != nullptr && surface_->currentWidget() == gets_;
+        return net_window_ != nullptr && net_window_->isVisible() && net_window_->tabs()->currentWidget() == gets_;
     }
     void show_account_surface() {
-        surface_->setCurrentWidget(gets_);
+        show_net_position();
+        net_window_->tabs()->setCurrentWidget(gets_);
         gets_->tabs()->setCurrentWidget(account_surface_);
     }
+
+    // ---- the paper book ------------------------------------------------------
+    [[nodiscard]] PaperOms& paper() noexcept { return oms_; }
+    [[nodiscard]] NetPositionWindow* net_position() const noexcept { return net_window_; }
+    [[nodiscard]] PaperOrderBookWindow* order_book() const noexcept { return order_book_; }
+    [[nodiscard]] PaperTradeBookWindow* trade_book() const noexcept { return trade_book_; }
+    [[nodiscard]] QDialog* operations_window() const noexcept { return ops_window_; }
+    /// Where manual_orders.csv and manual_trades.csv go (tests: a temp dir).
+    void set_paper_dir(const QString& dir) { paper_dir_ = dir; }
+    /// Start the live feed by itself when nothing streams (main.cpp; never in tests).
+    void set_autostart_feed(bool on) { live_->set_autostart(on); }
+
+    /// Place a paper order as the order window would (tests, square-off).
+    std::expected<int, QString> place_paper(PaperOrder o) {
+        const PaperQuote q = paper_ui::quote_of(client_, o.inst.token);
+        const auto r = oms_.place(std::move(o), q, now_ns());
+        books_dirty();
+        return r;
+    }
+    /// The paper instrument for a watch row.
+    [[nodiscard]] static PaperInstrument paper_instrument(const LiveRow& r) { return paper_instrument_of(r); }
 
     /// Apply the FYERS snapshot the GETS workspace built. A stale or refused
     /// snapshot leaves the tables as they were and says so above them.
@@ -608,7 +709,7 @@ public:
         } else {
             account_state_->setText(QStringLiteral(
                 "FYERS snapshot of %1 IST not applied (%2). The tables below keep their previous rows; "
-                "press Refresh FYERS.")
+                "the next fetch is within a minute.")
                 .arg(at, applied.error() == TerminalAccountError::SnapshotUnusable
                              ? QStringLiteral("older than its 30 s validity")
                              : QStringLiteral("rows refused by the table")));
@@ -661,8 +762,8 @@ public:
     }
 
     void show_halt_controls() {
-        surface_->setCurrentWidget(split_);
         right_->setCurrentWidget(halt_);
+        show_window(ops_window_);
     }
     /// For tests: what a strip tile currently SAYS.
     [[nodiscard]] QString tile_text(unsigned tok) const {
@@ -691,6 +792,192 @@ public:
     }
 
 private:
+    [[nodiscard]] static std::int64_t now_ns() { return QDateTime::currentMSecsSinceEpoch() * 1'000'000LL; }
+
+    static void show_window(QWidget* w) {
+        w->show();
+        w->raise();
+        w->activateWindow();
+    }
+
+    void toast(const QString& text, bool good = true) {
+        toast_->setText(QStringLiteral("<span style='color:%1'>%2</span>")
+                            .arg(good ? QStringLiteral("#7EE787") : QStringLiteral("#FF7B72"), text.toHtmlEscaped()));
+        toast_timer_.start(8000);
+    }
+
+    void build_paper_book() {
+        order_book_ = new PaperOrderBookWindow(this);
+        trade_book_ = new PaperTradeBookWindow(this);
+        message_log_ = new QDialog(this);
+        message_log_->setObjectName(QStringLiteral("messageLog"));
+        paper_ui::tool_window(message_log_, QStringLiteral("Message log (F10)"), QSize(760, 320));
+        auto* ml = new QVBoxLayout(message_log_);
+        log_text_ = new QPlainTextEdit(message_log_);
+        log_text_->setReadOnly(true);
+        log_text_->setMaximumBlockCount(5000);
+        ml->addWidget(log_text_);
+        picture_ = new MarketPictureWindow(client_, this);
+        order_book_->on_cancel = [this](int id) { cancel_order(id); };
+        order_book_->on_modify = [this](int id) { modify_order(id); };
+        order_book_->on_cancel_all = [this] { cancel_all_orders(); };
+        net_window_->on_square_off = [this](const PaperPosition& p) {
+            if (p.net == 0) return;
+            PaperOrder o;
+            o.inst = p.inst;
+            o.product = p.product;
+            o.side = p.net > 0 ? PaperSide::Sell : PaperSide::Buy;
+            o.type = PaperType::Market;
+            o.qty = std::llabs(p.net);
+            o.note = QStringLiteral("square off");
+            const auto r = place_paper(o);
+            toast(r ? QStringLiteral("Square off %1 sent").arg(p.inst.symbol) : r.error(), r.has_value());
+        };
+#ifdef ALTAIR_SOURCE_DIR
+        paper_dir_ = QStringLiteral(ALTAIR_SOURCE_DIR "/data/live/paper");
+#else
+        paper_dir_ = QStringLiteral("data/live/paper");
+#endif
+        {
+            std::vector<PaperOrder> orders;
+            std::vector<PaperTrade> trades;
+            paper_store::load(paper_dir_ + QStringLiteral("/manual_orders.csv"),
+                              paper_dir_ + QStringLiteral("/manual_trades.csv"), now_ns(), orders, trades);
+            oms_.restore(std::move(orders), std::move(trades));
+        }
+        oms_.on_trade = [this](const PaperTrade& t) {
+            (void)paper_store::append_trade(paper_dir_ + QStringLiteral("/manual_trades.csv"), t);
+        };
+        oms_.on_order = [this](const PaperOrder& o) {
+            (void)paper_store::append_order(paper_dir_ + QStringLiteral("/manual_orders.csv"), o);
+        };
+#if ALTAIR_HAVE_CHARGES_TOML
+        if (const auto rep = load_charges_file(ALTAIR_CHARGES_TOML, schedules_); rep) charges_verified_ = rep->verified;
+        else schedules_.clear();
+#endif
+        oms_.set_expenses([this](const PaperTrade& t) -> std::optional<double> {
+#if ALTAIR_HAVE_CHARGES_TOML
+            // Refused while config/charges.toml is unverified, as everywhere,
+            // unless "Price UNVERIFIED expenses" (Models) is ticked.
+            if (schedules_.empty() || (!charges_verified_ && !models_->price_unverified())) return std::nullopt;
+            std::vector<ChargeSchedule> s = schedules_;
+            for (auto& x : s) x.verified = true;
+            const Segment seg = t.inst.exchange == QLatin1String("NSE") ? Segment::Cash
+                              : t.inst.symbol.endsWith(QLatin1String("FUT")) ? Segment::Fut : Segment::Opt;
+            const auto c = demo_costs::fill(seg, t.side == PaperSide::Buy ? Side::Buy : Side::Sell,
+                                            static_cast<double>(t.qty), static_cast<double>(t.price_paise) / 100.0,
+                                            (t.ns > 0 ? t.ns : now_ns()) / 1'000'000'000LL + 19800, s);
+            if (!c.priced) return std::nullopt;
+            return c.total;
+#else
+            (void)t;
+            return std::nullopt;
+#endif
+        });
+        connect(client_, &PriceClient::priceUpdated, this, [this](unsigned tok) {
+            oms_.on_quote(tok, paper_ui::quote_of(client_, tok));
+            if (oms_.open_orders() > 0 || net_window_->isVisible()) books_dirty();
+        });
+        books_timer_.setInterval(300);
+        books_timer_.setSingleShot(true);
+        connect(&books_timer_, &QTimer::timeout, this, [this] { refresh_books(); });
+        toast_timer_.setSingleShot(true);
+        connect(&toast_timer_, &QTimer::timeout, this, [this] { toast_->clear(); });
+        refresh_books();
+    }
+
+    void books_dirty() { if (!books_timer_.isActive()) books_timer_.start(); }
+
+    void refresh_books() {
+        for (const QString& m : oms_.take_messages()) {
+            log_text_->appendPlainText(QStringLiteral("%1  %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), m));
+            const bool bad = m.startsWith(QLatin1String("REJECTED"));
+            if (m.startsWith(QLatin1String("EXECUTED")) || bad || m.startsWith(QLatin1String("placed"))
+                || m.startsWith(QLatin1String("cancelled")))
+                toast(m, !bad);
+        }
+        if (order_book_->isVisible()) order_book_->refresh(oms_);
+        if (trade_book_->isVisible()) trade_book_->refresh(oms_);
+        if (net_window_->isVisible()) net_window_->refresh(oms_);
+    }
+
+    void show_book(QDialog* w) {
+        if (w == order_book_) order_book_->refresh(oms_);
+        if (w == trade_book_) trade_book_->refresh(oms_);
+        show_window(w);
+    }
+    void show_net_position() {
+        net_window_->refresh(oms_);
+        show_window(net_window_);
+    }
+    void show_keys() {
+        QDialog d(this);
+        d.setWindowTitle(QStringLiteral("Terminal keys"));
+        auto* l = new QVBoxLayout(&d);
+        auto* text = new QLabel(shortcut_help_html(), &d);
+        text->setTextFormat(Qt::RichText);
+        l->addWidget(text);
+        auto* ok = new QPushButton(QStringLiteral("Close"), &d);
+        connect(ok, &QPushButton::clicked, &d, &QDialog::accept);
+        l->addWidget(ok, 0, Qt::AlignRight);
+        d.exec();
+    }
+    void show_market_picture() {
+        const LiveRow* r = live_->row_of_token(live_->selected_token());
+        if (r == nullptr) { toast(QStringLiteral("Select a scrip first"), false); return; }
+        picture_->show_for(*r);
+        show_window(picture_);
+    }
+    void show_security_info() {
+        const LiveRow* r = live_->row_of_token(live_->selected_token());
+        if (r == nullptr) { toast(QStringLiteral("Select a scrip first"), false); return; }
+        QDialog d(this);
+        d.setWindowTitle(QStringLiteral("Security information · %1").arg(r->symbol));
+        auto* l = new QVBoxLayout(&d);
+        auto* text = new QLabel(security_info_html(*r, client_->price(r->token)), &d);
+        text->setTextFormat(Qt::RichText);
+        text->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        l->addWidget(text);
+        d.exec();
+    }
+
+    /// + / F1 and − / F2: the order window for the selected scrip.
+    void open_order(bool buy) {
+        const LiveRow* r = live_->row_of_token(live_->selected_token());
+        if (r == nullptr) { toast(QStringLiteral("Select a scrip in the watch or the chain first"), false); return; }
+        const PaperInstrument inst = paper_instrument(*r);
+        if (!inst.tradable) {
+            toast(QStringLiteral("%1 is an index: pick its future or an option").arg(r->symbol), false);
+            return;
+        }
+        PaperOrderWindow w(buy ? PaperSide::Buy : PaperSide::Sell, inst, client_, this);
+        if (w.exec() != QDialog::Accepted) return;
+        const auto placed = place_paper(w.order());
+        if (!placed) toast(placed.error(), false);
+    }
+    void cancel_order(int id) {
+        if (id <= 0) { toast(QStringLiteral("Select a pending order in the order book (F3)"), false); return; }
+        if (!oms_.cancel(id, now_ns())) toast(QStringLiteral("Order #%1 is not pending").arg(id), false);
+        books_dirty();
+    }
+    void cancel_all_orders() {
+        const int n = oms_.cancel_all(now_ns());
+        if (n == 0) toast(QStringLiteral("No pending orders"), false);
+        books_dirty();
+    }
+    void modify_order(int id) {
+        const PaperOrder* o = oms_.order(id);
+        if (o == nullptr || o->status != PaperStatus::Open) {
+            toast(QStringLiteral("Select a pending order in the order book (F3) to modify"), false);
+            return;
+        }
+        PaperOrderWindow w(o->side, o->inst, client_, this, o);
+        if (w.exec() != QDialog::Accepted) return;
+        if (!oms_.modify(id, w.qty(), w.limit_paise(), paper_ui::quote_of(client_, o->inst.token)))
+            toast(QStringLiteral("Modify refused: quantity must be whole lots and a limit needs a price"), false);
+        books_dirty();
+    }
+
     enum class TileTag : std::uint8_t { Close, Live, Replay, Sim };
 
     struct Tile {
@@ -800,13 +1087,11 @@ private:
         const LivePrice* n = client_->price(256265u);
         const bool replay = n != nullptr && n->replay;
         const bool sim = n != nullptr && n->simulated;
-        stream_state_->setText(QStringLiteral(
-            "<span style='color:%1'>● %2</span> "
-            "<span style='color:#8A93A2'>%3 frames · %4 gaps</span>")
+        // Short on the strip; the counts are in the status bar and the tooltip.
+        stream_state_->setText(QStringLiteral("<span style='color:%1'>● %2</span>")
             .arg(replay || sim ? QStringLiteral("#F4C95D") : QStringLiteral("#7FD17F"))
-            .arg(sim ? QStringLiteral("SIM") : replay ? QStringLiteral("REPLAY") : QStringLiteral("LIVE"))
-            .arg(client_->frames())
-            .arg(client_->gaps()));
+            .arg(sim ? QStringLiteral("SIM") : replay ? QStringLiteral("REPLAY") : QStringLiteral("LIVE")));
+        stream_state_->setToolTip(QStringLiteral("%1 frames · %2 gaps").arg(client_->frames()).arg(client_->gaps()));
         stream_btn_->setText(QStringLiteral("Disconnect"));
     }
 
@@ -816,8 +1101,23 @@ private:
     QLabel* account_state_ = nullptr;
     GetsWorkspace* gets_ = nullptr;
     QHash<std::uint32_t, InstrumentDisplay> instrument_names_;
-    QPushButton* positions_btn_ = nullptr;
-    QPushButton* operations_btn_ = nullptr;
+    QPushButton* chain_btn_ = nullptr;
+    QPushButton* keys_btn_ = nullptr;
+    QLabel* toast_ = nullptr;
+    QDialog* ops_window_ = nullptr;
+    NetPositionWindow* net_window_ = nullptr;
+    PaperOrderBookWindow* order_book_ = nullptr;
+    PaperTradeBookWindow* trade_book_ = nullptr;
+    QDialog* message_log_ = nullptr;
+    QPlainTextEdit* log_text_ = nullptr;
+    MarketPictureWindow* picture_ = nullptr;
+    PaperOms oms_;
+    QString paper_dir_;
+    QTimer books_timer_, toast_timer_;
+#if ALTAIR_HAVE_CHARGES_TOML
+    std::vector<ChargeSchedule> schedules_;
+    bool charges_verified_ = false;
+#endif
     FundsSummaryModel* funds_model_ = nullptr;
     QTableView* funds_view_ = nullptr;
     PositionTableModel* positions_model_ = nullptr;

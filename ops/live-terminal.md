@@ -1,37 +1,114 @@
-# Live terminal: streaming prices and live models
+# Live terminal: streaming prices, paper orders and live models
 
-The Terminal opens on a live market watch that ticks. The live models run on the
-same stream and paper-trade their signals. Nothing in this path can place an order.
+The Terminal opens on a live market watch that ticks, and it starts the live feed
+by itself. Orders are **paper**: + and − open a GETS-style order window, and fills
+come from the live bid and ask. The live models run on the same stream and
+paper-trade their own signals. Nothing in this path can place a real order.
 
 ```
-FYERS data socket ──► altair_price_service ──► 127.0.0.1:7421 ──► desktop Terminal (Watch, chain, depth, T&S)
-   (or --sim)            trades / quotes / book                 └► altair_live_engine ──► data/live/ ──► Terminal → Models
+FYERS socket ─┐
+              ├─► altair_price_service --live ──► 127.0.0.1:7421 ──► Terminal (watch, chain, depth, T&S, paper orders)
+Kite ticker ──┘    (or --sim [--date D])                          └► altair_live_engine ──► data/live/ ──► Terminal → Models
 ```
 
 ## Running it (Windows, market hours)
 
-1. Log in to FYERS for the day: `altair_fyers_login`. This writes `data/fyers_session.json`; the token lasts one trading day.
-2. Desktop → **Terminal → Watch → Start FYERS feed**. This runs
-   `altair_price_service --fyers --go`, and the Terminal connects to it by itself.
-3. **Terminal → Models → Start models**. This runs `altair_live_engine`.
+1. **Log in for the day** on **Brokers**, to either broker:
+   - **Log in to FYERS**, or
+   - **Log in to Kite**.
+
+   If a login can't start, the reason appears under the button. For example,
+   "app credentials are not saved yet" puts the cursor in the form that fixes
+   it, and the login link is shown with a **Copy** button.
+2. **Open Terminal.** If nothing is streaming after a few seconds, the Terminal
+   runs `altair_price_service --live --go` itself:
+   - FYERS is used when its session is good today, otherwise Kite.
+   - If FYERS refuses the socket, the feed carries on from Kite.
+
+   **Start live feed** does the same by hand; **Live on open** turns the
+   automatic start off.
+3. **Terminal → Models → Start models** runs `altair_live_engine`.
    - Tick **Price UNVERIFIED expenses** to have expenses charged while
      `config/charges.toml` is unverified. Every figure is then marked UNVERIFIED.
+     The paper orders follow the same tick box.
    - Unticked, expenses are refused, as in every demo, and P&L is gross.
-4. When the market is shut, **Start SIM feed** runs the same universe
-   simulated. Every price is marked **SIM** on every screen, and nothing learned
-   from it is evidence about the market.
+4. **When the market is shut,** pick a day, a start time and a speed next to
+   **Start SIM**. The previous closes are the session before that day. When
+   `dataset/` holds that day's 1-minute bars, NIFTY, BANKNIFTY and INDIA VIX
+   follow them minute by minute: a Brownian bridge lands on every real close.
+   Every price is marked **SIM**, and nothing learned from it is evidence about
+   the market.
 
 From a shell, the same steps:
 
 ```
-altair_price_service --fyers            # dry run: prints the universe it would stream
-altair_price_service --fyers --go       # live, until 15:35 IST (--until HH:MM)
-altair_price_service --sim --speed 30 --from 09:15   # a simulated session, 30x
-altair_live_engine [--unverified-costs]  # the models; stops when the feed's clock passes 15:35
+altair_price_service --live            # dry run: says which broker it would use, writes the universe
+altair_price_service --live --go       # live, FYERS else Kite, until 15:35 IST (--until HH:MM)
+altair_price_service --fyers --go      # FYERS only        (--kite --go: Kite only)
+altair_price_service --sim --date 2026-09-24 --from 10:00 --speed 30   # that day, simulated, 30x
+altair_live_engine [--unverified-costs] [--date 2026-09-24]   # stops when the feed's clock passes 15:35
 ```
 
-On a headless host, set `ALTAIR_FYERS_CLIENT_ID` and `ALTAIR_FYERS_ACCESS_TOKEN`
-instead of `data/fyers_session.json`.
+Credentials:
+- **FYERS:** `data/fyers_session.json`, or on a headless host
+  `ALTAIR_FYERS_CLIENT_ID` and `ALTAIR_FYERS_ACCESS_TOKEN`.
+- **Kite:** the API key from the OS vault (Brokers → Log in · Kite → App
+  credentials) or `ALTAIR_KITE_API_KEY`, plus today's `data/kite_session.json`.
+
+## The Terminal
+
+- **Views:** **Market Watch** (F4) or **Option Chain** (Ctrl+O) in the main area,
+  with depth and time & sales of the selected scrip beside it. **Models** is
+  Ctrl+M.
+- **Adding a scrip:** **Insert**, or type in **＋ Add scrip**. It searches NSE
+  equities and NSE F&O in `data/instruments.csv` and adds the scrip to
+  `data/live/watchlist.csv`.
+  - The feed picks it up within a few seconds: SIM adds it in place, and FYERS
+    and Kite reconnect with it.
+  - **Delete** removes the selected scrip; right-click → *Restore removed
+    scrips* brings removed ones back.
+- **Positions are only in Alt+F6.** The net position window holds:
+  - the paper book;
+  - *Broker account · GETS*: positions and funds, Greek watch, portfolio
+    Greeks, simulation, expenses, trade history, RMS, movers and indices.
+
+  These are priced live from the stream. The account snapshot is fetched by
+  itself every minute while the window is open; there is no Refresh button.
+- **Halt controls** (toolbar) opens the Operations window: halt, the intent
+  queue and the gated ticket.
+
+### Keys (GETS / ODIN)
+
+| Key | What |
+|---|---|
+| **+** or **F1** | Buy order window for the selected scrip (blue) |
+| **−** or **F2** | Sell order window (red); F1/F2 inside it switch side |
+| F3 | Order book. Shift+F1 cancels, Shift+F2 modifies, Shift+F3 cancels every pending order |
+| F8 | Trade book |
+| Alt+F6 | Net position |
+| F5 / F6 / Shift+F9 | Market picture (best five) and snap quote |
+| Shift+F7 | Security information |
+| F10 | Message log |
+| Insert / Delete | Add / remove a scrip |
+| Ctrl+F | Find in the watch |
+| F12 or Ctrl+/ | Every key |
+
+### Paper orders
+
+- **MKT** fills at once: a buy at the ask, a sell at the bid. With no quote yet,
+  it waits for one. An index is refused.
+- **LMT** rests until the book crosses it, then fills at that ask or bid. It
+  never fills at a price the book did not show.
+- Quantity is whole lots and a limit is on the tick; anything else is refused,
+  and the refusal is in the order book.
+- **Positions** net per scrip and product. Realised P&L is taken on what
+  closes, and the open part is marked tick by tick: a long at the bid, a short
+  at the ask. **Square off** sends a paper market order for the net quantity.
+- **Expenses** are charged per fill through `risk/cost.hpp` (brokerage as in
+  the demos). Unpriced is shown as unpriced, not zero.
+- **Persistence:** `data/live/paper/manual_orders.csv` (an event log) and
+  `manual_trades.csv`. A restart rebuilds the book. A day order left open from
+  an earlier day shows as expired.
 
 ## What streams
 
@@ -63,7 +140,7 @@ Each instrument carries three frame types:
   sizes, ATP, total buy/sell, circuits and last-trade time;
 - book: five levels a side.
 
-## The Watch
+## The watch in detail
 
 - **Market watch:**
   - One row per instrument: LTP (with ▲/▼), change, % change, bid qty, bid, ask,
@@ -130,7 +207,11 @@ model came close. The 10:15-to-close track is the one the research shortlisted.
 | File | Written by | What |
 |---|---|---|
 | `universe.csv` | price service | what streams, and under which token |
-| `feed_status.json` | price service | source, state, counts, last error |
+| `feed_status.json` | price service | source (fyers, kite or sim), state, counts, last error |
+| `watchlist.csv` | Terminal (Insert / ＋ Add scrip) | scrips added to the watch, by Kite token; the price service streams them |
+| `watch_removed.csv` | Terminal (Delete) | scrips removed from the watch |
+| `paper/manual_orders.csv` | Terminal | every paper order and each change of state (+ / − orders) |
+| `paper/manual_trades.csv` | Terminal | every paper fill, at the bid or ask it dealt at, with expenses |
 | `engine_state.json` | engine, every second | each model's state, signal and reason, and the open positions |
 | `paper/trades.csv` | engine | every round trip: date, model, symbol, side, qty, entry and exit, gross, expenses, net, why in, why out, LIVE/SIM, VERIFIED/UNVERIFIED/UNPRICED |
 | `paper/fills.csv` | engine | every fill, at the bid or ask it dealt at |
@@ -147,5 +228,10 @@ model came close. The 10:15-to-close track is the one the research shortlisted.
   10:15 direction decisions. A late start is reported, not back-filled.
 - **The strangle sells the nearest streamed expiry at the real bid.** The backtest
   sold a monthly contract at a modelled price, so the two are not the same trade.
-- **SIM proves nothing about the market.** SIM P&L is the simulator's random walk;
-  it shows the plumbing, not an edge.
+- **SIM proves nothing about the market.** SIM P&L is the simulator's random walk
+  (between real minute closes, on a past day); it shows the plumbing, not an edge.
+- **A past SIM day uses today's contracts.** The instrument master lists live
+  contracts only, so the chain on a simulated past day is today's expiries,
+  valued at the simulated clock.
+- **Paper fills take the touch.** A paper order never queues behind other size
+  and never moves the market; a real order of size would.

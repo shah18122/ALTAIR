@@ -10,12 +10,12 @@
 //   altair_fyers_account  -> data/fyers_account.json (funds, positions,
 //                            orders, trade book)
 //   altair_fyers_quotes   -> data/fyers_quotes.json  (LTP, change, OHLC)
-// "Refresh FYERS" runs both, account first, so the quotes request can include
-// every open position and its underlying. Nothing here opens a socket or
-// reads a credential, and nothing here can place an order.
-//
-// NOT LIVE TICKS. Each refresh is a snapshot and every tab says how old it
-// is. Auto-refresh (60 s) re-runs the helpers while the Terminal is open.
+// The account helper runs by itself every minute while these tabs are open,
+// with no button to press. PRICES ARE LIVE: every symbol the price service
+// streams is priced from its last tick (set_live_source), refreshed every
+// second; only what the stream does not carry falls back to the helper's
+// quote snapshot. Nothing here opens a socket or reads a credential, and
+// nothing here can place an order.
 #pragma once
 
 #include "gets_data.hpp"
@@ -75,15 +75,6 @@ public:
         auto* h = new QHBoxLayout(bar);
         h->setContentsMargins(10, 6, 10, 6);
         h->setSpacing(8);
-        refresh_ = new QPushButton(QStringLiteral("Refresh FYERS"), bar);
-        refresh_->setToolTip(QStringLiteral(
-            "Run altair_fyers_account then altair_fyers_quotes (read-only GETs) and reload every tab"));
-        quotes_btn_ = new QPushButton(QStringLiteral("Quotes only"), bar);
-        quotes_btn_->setToolTip(QStringLiteral("Refresh market quotes without re-reading the account"));
-        reread_ = new QPushButton(QStringLiteral("Re-read files"), bar);
-        reread_->setToolTip(QStringLiteral("Reload the last snapshots from disk; no network"));
-        auto_ = new QCheckBox(QStringLiteral("Auto 60 s"), bar);
-        auto_->setToolTip(QStringLiteral("Re-run the helpers every 60 seconds while this Terminal is visible"));
         rate_ = new QDoubleSpinBox(bar);
         rate_->setRange(0.0, 20.0);
         rate_->setDecimals(2);
@@ -94,10 +85,6 @@ public:
         status_ = new QLabel(bar);
         status_->setObjectName(QStringLiteral("getsStatus"));
         status_->setTextFormat(Qt::PlainText);
-        h->addWidget(refresh_);
-        h->addWidget(quotes_btn_);
-        h->addWidget(reread_);
-        h->addWidget(auto_);
         h->addWidget(new QLabel(QStringLiteral("Rate"), bar));
         h->addWidget(rate_);
         h->addWidget(status_, 1);
@@ -119,18 +106,19 @@ public:
         build_index_tab();
 
         paths_default();
-        connect(refresh_, &QPushButton::clicked, this, [this] { refresh(true); });
-        connect(quotes_btn_, &QPushButton::clicked, this, [this] { refresh(false); });
-        connect(reread_, &QPushButton::clicked, this, [this] { reload(); });
         connect(rate_, &QDoubleSpinBox::valueChanged, this, [this](double) { recompute(); });
+        // The account, every minute while these tabs are on screen.
         timer_.setInterval(60'000);
         connect(&timer_, &QTimer::timeout, this, [this] {
             if (isVisible() && !runner_.active()) refresh(true);
         });
-        connect(auto_, &QCheckBox::toggled, this, [this](bool on) {
-            if (on) timer_.start(); else timer_.stop();
-            if (settings_) settings_->setValue(QStringLiteral("gets/auto"), on);
+        timer_.start();
+        // Live prices, every second while on screen.
+        live_timer_.setInterval(1000);
+        connect(&live_timer_, &QTimer::timeout, this, [this] {
+            if (isVisible()) apply_live_quotes();
         });
+        live_timer_.start();
     }
 
     // ---- wiring ----------------------------------------------------------------
@@ -138,6 +126,11 @@ public:
     /// Called with a typed snapshot after every reload that has one, so the
     /// Terminal's positions and funds tables stay in step with these tabs.
     std::function<void(const GetsTypedAccount&)> on_account;
+
+    /// Live prices: `fill` overlays the stream's last prices on the quote
+    /// snapshot (by FYERS ticker) and returns how many it priced; 0 when the
+    /// stream is not connected. The Terminal supplies it.
+    void set_live_quotes(std::function<int(GetsQuotes&)> fill) { live_fill_ = std::move(fill); }
 
     /// Persist the watch list, user IVs, RMS limits and auto-refresh here.
     /// Without settings nothing is written (tests, first run).
@@ -152,7 +145,6 @@ public:
         stop_->setValue(settings_->value(QStringLiteral("gets/rms_stop"), 95.0).toDouble());
         max_open_->setValue(settings_->value(QStringLiteral("gets/rms_max_open"), 50).toInt());
         max_loss_->setValue(settings_->value(QStringLiteral("gets/rms_max_loss"), 0).toInt());
-        auto_->setChecked(settings_->value(QStringLiteral("gets/auto"), false).toBool());
         recompute();
     }
 
@@ -251,8 +243,26 @@ protected:
         if (!loaded_once_) {
             loaded_once_ = true;
             reload();
+            // The first showing also fetches, so nobody has to press anything.
+            if (!find_helper(QStringLiteral("altair_fyers_account")).isEmpty()) {
+                QTimer::singleShot(0, this, [this] { if (!runner_.active()) refresh(true); });
+            }
         }
+        apply_live_quotes();
         QWidget::showEvent(event);
+    }
+
+    /// Overlay the stream's last prices on the quote snapshot, by FYERS ticker.
+    void apply_live_quotes() {
+        if (!live_fill_) return;
+        const int priced = live_fill_(quotes_);
+        live_priced_ = priced;
+        if (priced == 0) return;
+        quotes_.loaded = true;
+        quotes_.error.clear();
+        quotes_.fetched_at = QDateTime::currentSecsSinceEpoch();
+        live_priced_ = priced;
+        recompute();
     }
 
 private:
@@ -350,7 +360,7 @@ private:
                 set_watch(w);
             }
             add_edit_->clear();
-            status_->setText(QStringLiteral("%1 added; press Quotes only to price it").arg(s));
+            status_->setText(QStringLiteral("%1 added; it is priced live when the feed streams it, else on the next account refresh").arg(s));
         };
         connect(add, &QPushButton::clicked, this, add_symbol);
         connect(add_edit_, &QLineEdit::returnPressed, this, add_symbol);
@@ -590,7 +600,7 @@ private:
         trades_model_->set_rows(gets_trade_rows(account_));
         trades_note_->setText(account_.trades_ok
             ? QStringLiteral("%1 trade(s) today from the FYERS trade book.").arg(account_.trades.size())
-            : QStringLiteral("No trade book in the snapshot (HTTP %1). Refresh FYERS; older helpers did not fetch it.")
+            : QStringLiteral("No trade book in the snapshot (HTTP %1). It is fetched again within a minute; older helpers did not fetch it.")
                   .arg(account_.tradebook_status));
         fill_rms();
         fill_movers();
@@ -694,7 +704,9 @@ private:
         } else {
             parts << account_.error;
         }
-        if (quotes_.loaded) {
+        if (live_priced_ > 0) {
+            parts << QStringLiteral("LIVE prices for %1 symbol(s) from the feed").arg(live_priced_);
+        } else if (quotes_.loaded) {
             parts << QStringLiteral("quotes %1 (%2 s old, %3 symbols%4)")
                          .arg(QDateTime::fromSecsSinceEpoch(quotes_.fetched_at, QTimeZone(19800)).toString(QStringLiteral("HH:mm:ss")))
                          .arg(now_s - quotes_.fetched_at)
@@ -787,18 +799,12 @@ private:
         status_->setText(QStringLiteral("%1 is not in this build; build the net preset (build.bat net)").arg(helper));
     }
 
-    void set_busy(bool busy, const QString& text) {
-        refresh_->setEnabled(!busy);
-        quotes_btn_->setEnabled(!busy);
-        status_->setText(text);
-    }
+    void set_busy(bool, const QString& text) { status_->setText(text); }
 
     void run_quotes() {
         const QString exe = find_helper(QStringLiteral("altair_fyers_quotes"));
         if (exe.isEmpty()) {
             report_missing(QStringLiteral("altair_fyers_quotes"));
-            refresh_->setEnabled(true);
-            quotes_btn_->setEnabled(true);
             reload();
             return;
         }
@@ -816,8 +822,6 @@ private:
         const auto started = runner_.start(exe, args, working_dir(), 60'000, [this](HelperProcessResult r) {
             const bool ok = r.ran_to_completion() && r.exit_code == 0;
             reload();
-            refresh_->setEnabled(true);
-            quotes_btn_->setEnabled(true);
             if (!ok) status_->setText(QStringLiteral("quotes failed: %1  ·  %2").arg(last_line(r), status_->text()));
         });
         if (!started) set_busy(false, QStringLiteral("could not start the quotes helper"));
@@ -826,10 +830,6 @@ private:
     // ---- state ---------------------------------------------------------------------
 
     QTabWidget* tabs_{};
-    QPushButton* refresh_{};
-    QPushButton* quotes_btn_{};
-    QPushButton* reread_{};
-    QCheckBox* auto_{};
     QDoubleSpinBox* rate_{};
     QLabel* status_{};
 
@@ -871,7 +871,9 @@ private:
     std::optional<Timestamp> fixed_now_;
     int fixed_year_{};
     bool loaded_once_{};
-    QTimer timer_;
+    int live_priced_{};
+    QTimer timer_, live_timer_;
+    std::function<int(GetsQuotes&)> live_fill_;
 
     GetsAccount account_;
     GetsQuotes quotes_;

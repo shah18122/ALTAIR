@@ -137,6 +137,59 @@ int main() {
     check(vix != seen.end() && vix->second.last > 500 && vix->second.last < 3000, "VIX stays in a sane range");
     std::printf("    parity checked on %d steps, worst gap %.2f rupees\n", parity_steps, worst_parity);
     check(parity_steps > 100 && worst_parity < 5.0, "calls, puts and the future are priced off one forward");
+    // A stock future prices off its stock, not off NIFTY.
+    {
+        using namespace altair::live;
+        auto u = universe();
+        LiveInstrument f;
+        f.token = 5; f.symbol = "SBIN26OCTFUT"; f.underlying = "SBIN"; f.kind = LiveKind::Future;
+        f.lot = 750; f.tick = 0.05; f.expiry_day = parse_day("2026-10-27");
+        u.push_back(f);
+        LiveSimSeeds seeds;
+        seeds.nifty = 24000; seeds.banknifty = 54000; seeds.vix = 13; seeds.stocks["SBIN"] = 800;
+        LiveSim sim(u, seeds, 7, (parse_day("2026-10-01") * 86400 + 3 * 3600 + 45 * 60) * 1'000'000'000LL);
+        std::int64_t fut_pc = 0;
+        sim.board([&](const LiveInstrument& in, const LiveSimEvent& ev) { if (in.token == 5) fut_pc = ev.quote.prev_close; });
+        check(fut_pc > 79'000 && fut_pc < 82'000, "a stock future's previous close sits by its stock (800), not NIFTY");
+
+        // Added mid-session: priced at once, then simulated like the rest.
+        LiveInstrument rel;
+        rel.token = 6; rel.symbol = "RELIANCE"; rel.underlying = "RELIANCE"; rel.kind = LiveKind::Equity;
+        rel.lot = 1; rel.tick = 0.05; rel.depth = true;
+        sim.add(rel, 1400.0);
+        sim.add(rel, 9999.0);   // twice: ignored
+        int rel_events = 0;
+        std::int64_t rel_pc = 0;
+        sim.board_one(sim.universe().size() - 1, [&](const LiveInstrument&, const LiveSimEvent& ev) { rel_pc = ev.quote.prev_close; });
+        for (int k = 0; k < 50; ++k)
+            sim.step(100'000'000, [&](const LiveInstrument& in, const LiveSimEvent&) { rel_events += in.token == 6; });
+        check(sim.universe().size() == 9 && rel_pc == 140'000 && rel_events > 0,
+              "an instrument added mid-session gets its close and then ticks");
+    }
+
+    // A past day: the index lands on every real minute close.
+    {
+        using namespace altair::live;
+        LiveSimSeeds seeds;
+        seeds.nifty = 24000; seeds.banknifty = 54000; seeds.vix = 13;
+        const std::int64_t open_ns = (parse_day("2026-09-24") * 86400 + 3 * 3600 + 45 * 60) * 1'000'000'000LL;
+        LiveSim sim(universe(), seeds, 11, open_ns);
+        std::vector<LiveMinute> n;
+        const double closes[] = {24100.0, 24050.0, 24180.0, 24175.5};
+        for (int m = 0; m < 4; ++m) n.push_back({open_ns + (m + 1) * 60'000'000'000LL, closes[m]});
+        sim.set_anchors(n, {}, {});
+        double worst = 0.0;
+        std::int64_t last_index = 0;
+        for (int step = 1; step <= 4 * 600; ++step) {
+            sim.step(100'000'000, [&](const LiveInstrument& in, const LiveSimEvent& ev) {
+                if (in.token == kLiveNiftyToken && ev.trade) last_index = ev.price.last_paise;
+            });
+            if (step % 600 == 0) worst = std::max(worst, std::fabs(sim.nifty() - closes[step / 600 - 1]));
+        }
+        check(sim.anchored() && worst < 1e-6, "on each real close's minute the simulated index is that close");
+        check(last_index > 0, "and it still prints between them");
+    }
+
     std::printf("%s\n", failures == 0 ? "all live sim checks passed" : "live sim checks did not pass");
     return failures == 0 ? 0 : 1;
 }

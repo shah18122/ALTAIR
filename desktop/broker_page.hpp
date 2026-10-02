@@ -7,6 +7,11 @@
 // providers separate, gives FYERS primary priority, and never loads a token
 // into the desktop process.
 //
+// Both brokers sit side by side with their login on the card itself, and the
+// Overview reads both read-only snapshots into one combined book. The live
+// feed takes FYERS when its session is good and Kite otherwise
+// (altair_price_service --live), so the two work as one.
+//
 // The layout takes the useful shape from the Greeksoft reference terminal:
 // a broker/account strip first, then positions/holdings/orders and linking
 // actions behind tabs.  The reference binaries and databases remain external
@@ -17,6 +22,7 @@
 #include "account_widgets.hpp"
 #include "broker_activity.hpp"
 #include "broker_status.hpp"
+#include "combined_account.hpp"
 #include "fyers_link.hpp"
 #include "fyers_panel.hpp"
 #include "kite_link.hpp"
@@ -88,12 +94,13 @@ public:
         auto* header = new QHBoxLayout;
         auto* title_stack = new QVBoxLayout;
         title_stack->setSpacing(2);
-        auto* eyebrow = new QLabel(QStringLiteral("EXECUTION INFRASTRUCTURE"), this);
+        auto* eyebrow = new QLabel(QStringLiteral("ACCOUNTS  ·  LOGIN  ·  LIVE FEED"), this);
         eyebrow->setObjectName(QStringLiteral("brokerEyebrow"));
-        auto* title = new QLabel(QStringLiteral("Broker operations"), this);
+        auto* title = new QLabel(QStringLiteral("Brokers"), this);
         title->setObjectName(QStringLiteral("brokerTitle"));
         auto* subtitle = new QLabel(QStringLiteral(
-            "Link accounts, inspect attributed snapshots, and audit routing from one read-only control plane."), this);
+            "FYERS and Zerodha together: log in to either from its card, see both accounts as one book, "
+            "and the live feed uses whichever is logged in."), this);
         subtitle->setObjectName(QStringLiteral("brokerSubtitle"));
         subtitle->setWordWrap(true);
         title_stack->addWidget(eyebrow);
@@ -110,7 +117,7 @@ public:
         route->setObjectName(QStringLiteral("routeRail"));
         auto* route_layout = new QHBoxLayout(route);
         route_layout->setContentsMargins(14, 10, 14, 10);
-        auto* route_caption = new QLabel(QStringLiteral("MARKET DATA ROUTE"), route);
+        auto* route_caption = new QLabel(QStringLiteral("LIVE FEED"), route);
         route_caption->setObjectName(QStringLiteral("brokerMetricLabel"));
         route_layout->addWidget(route_caption);
         route_label_ = new QLabel(route);
@@ -144,61 +151,56 @@ public:
         auto* metric_row = new QHBoxLayout(metrics);
         metric_row->setContentsMargins(14, 9, 14, 9);
         metric_row->setSpacing(26);
-        metric_row->addLayout(metric(QStringLiteral("DATA PRIORITY"), QStringLiteral("FYERS → KITE")));
-        metric_row->addLayout(metric(QStringLiteral("ORDER PREFERENCE"), QStringLiteral("ZERODHA KITE")));
-        metric_row->addLayout(metric(QStringLiteral("ACCOUNT MODE"), QStringLiteral("READ ONLY")));
-        metric_row->addLayout(metric(QStringLiteral("FAILOVER"), QStringLiteral("EPOCH VERIFIED")));
+        metric_row->addLayout(metric(QStringLiteral("LIVE FEED"), QStringLiteral("FYERS, ELSE KITE")));
+        metric_row->addLayout(metric(QStringLiteral("ACCOUNTS"), QStringLiteral("BOTH · READ ONLY")));
+        metric_row->addLayout(metric(QStringLiteral("ORDERS"), QStringLiteral("PAPER ONLY")));
+        metric_row->addLayout(metric(QStringLiteral("FAILOVER"), QStringLiteral("AT FEED START")));
         metric_row->addStretch(1);
         ov->addWidget(metrics);
 
-        auto* data_note = new QLabel(
-            QStringLiteral(
-                "<b>Connection status</b>  Saved sessions require verification. "
-                "A live source is shown only after the service reports a verified "
-                "connection and fresh data. Local read-only account snapshots "
-                "remain available in each broker tab. Orders are disabled here."), overview);
-        data_note->setWordWrap(true);
-        data_note->setObjectName(QStringLiteral("brokerNotice"));
-        ov->addWidget(data_note);
-        ov->addStretch(1);
+        combined_ = new CombinedAccountView(fyers_account_path(), kite_account_path(), overview);
+        ov->addWidget(combined_, 1);
 
         tabs_ = new QTabWidget(this);
         tabs_->setObjectName(QStringLiteral("brokerWorkspaceTabs"));
         tabs_->setDocumentMode(true);
         tabs_->addTab(overview, QStringLiteral("Overview"));
+        fyers_link_ = new FyersLinkPanel(
+            role_,
+            [this]() {
+                refresh();
+                if (on_changed_) on_changed_();
+                if (fyers_account_ != nullptr) fyers_account_->refresh_from_broker();
+            },
+            tabs_);
+        tabs_->addTab(fyers_link_, QStringLiteral("Log in · FYERS"));
+        kite_link_ = new KiteLinkPanel(
+            role_,
+            [this]() {
+                refresh();
+                if (on_changed_) on_changed_();
+                return QString{};
+            },
+            tabs_);
+        tabs_->addTab(kite_link_, QStringLiteral("Log in · Kite"));
         fyers_account_ = new FyersAccountPanel(
             fyers_account_path(), [this] {
                 refresh();
                 if (on_changed_) on_changed_();
             }, tabs_);
-        tabs_->addTab(fyers_account_,
-                      QStringLiteral("FYERS account"));
-        tabs_->addTab(new KitePanel(kite_account_path(), kite_session_path(), tabs_),
-                      QStringLiteral("Zerodha account"));
+        tabs_->addTab(fyers_account_, QStringLiteral("FYERS account"));
+        kite_account_ = new KitePanel(kite_account_path(), kite_session_path(), tabs_);
+        tabs_->addTab(kite_account_, QStringLiteral("Zerodha account"));
         tabs_->addTab(new BrokerActivityPanel(activity_projection_path(), tabs_),
-                      QStringLiteral("Activity & routes"));
-        tabs_->addTab(new KiteLinkPanel(
-                          role_,
-                          [this]() {
-                              refresh();
-                              if (on_changed_) on_changed_();
-                              return QString{};
-                          },
-                          tabs_),
-                      QStringLiteral("Link Zerodha"));
-        tabs_->addTab(new FyersLinkPanel(
-                          role_,
-                          [this]() {
-                              if (fyers_account_ != nullptr) {
-                                  tabs_->setCurrentWidget(fyers_account_);
-                                  fyers_account_->refresh_from_broker();
-                              } else {
-                                  refresh();
-                                  if (on_changed_) on_changed_();
-                              }
-                          },
-                          tabs_),
-                      QStringLiteral("Link FYERS"));
+                      QStringLiteral("Activity && routes"));
+        // A login outcome is repeated on its card, so the Overview says what
+        // happened even before the tab is looked at.
+        fyers_link_->outcome()->on_change = [this](LoginOutcomeKind k, const QString& html) {
+            card_note(fyers_note_, k, html);
+        };
+        kite_link_->outcome()->on_change = [this](LoginOutcomeKind k, const QString& html) {
+            card_note(kite_note_, k, html);
+        };
         root->addWidget(tabs_, 1);
 
         refresh();
@@ -212,8 +214,9 @@ public:
         const auto kite_service = probe_service_snapshot(
             kite_account_path(), broker_view::BrokerId::ZerodhaKite, service_now);
         const FyersState fyers = probe_fyers();
-        const BrokerState kite = probe_broker(
-            kite_session_path(), qEnvironmentVariableIsSet("ALTAIR_KITE_API_KEY"));
+        // The API key lives in the OS vault, which this process never reads;
+        // the session file is what says whether Kite is logged in.
+        const BrokerState kite = probe_broker(kite_session_path(), true);
 
         fyers_state_->setText(fyers_service ? service_broker_label(*fyers_service)
                                             : fyers_label(fyers.link));
@@ -233,13 +236,15 @@ public:
             : kite_detail(kite));
         kite_detail_->setToolTip(kite_detail_->text());
 
+        if (combined_ != nullptr) combined_->refresh();
         const bool fyers_snapshot = QFileInfo::exists(fyers_account_path());
         const bool kite_snapshot = QFileInfo::exists(kite_account_path());
-        route_label_->setText(fyers_service && fyers_service->feed == broker_view::FeedStatus::Live
-            ? QStringLiteral("LIVE SOURCE  ·  FYERS")
-            : kite_service && kite_service->feed == broker_view::FeedStatus::Live
-                ? QStringLiteral("LIVE SOURCE  ·  ZERODHA KITE")
-                : QStringLiteral("LIVE SOURCE  ·  NOT VERIFIED"));
+        const bool fyers_ready = fyers_service.has_value() || fyers.link == FyersLink::SessionSaved;
+        const bool kite_ready = kite_service.has_value()
+            || kite.link == BrokerLink::Unverified || kite.link == BrokerLink::Authenticated;
+        route_label_->setText(fyers_ready ? QStringLiteral("FYERS  ·  Kite on standby")
+                              : kite_ready ? QStringLiteral("ZERODHA KITE  ·  FYERS not logged in")
+                                           : QStringLiteral("NONE  ·  log in to FYERS or Kite"));
         if (fyers_snapshot && kite_snapshot) {
             route_hint_->setText(QStringLiteral(
                 "Read-only FYERS and Zerodha snapshots are available; each tab shows its own age."));
@@ -256,6 +261,15 @@ public:
     }
 
 private:
+    static void card_note(QLabel* note, LoginOutcomeKind kind, const QString& html) {
+        if (note == nullptr) return;
+        note->setStyleSheet(kind == LoginOutcomeKind::Done ? QStringLiteral("color:#7EE787;font-size:11px;")
+                            : kind == LoginOutcomeKind::Problem ? QStringLiteral("color:#FF7B72;font-size:11px;")
+                                                                : QStringLiteral("color:#E3B341;font-size:11px;"));
+        note->setText(html);
+        note->show();
+    }
+
     static QString status_css(const QColor& colour) {
         return QStringLiteral("color:#FFFFFF;background:%1;font-weight:700;"
                               "padding:3px 6px;border-radius:3px;")
@@ -333,7 +347,7 @@ private:
         names->setSpacing(0);
         auto* name = new QLabel(QStringLiteral("FYERS"), box);
         name->setObjectName(QStringLiteral("brokerCardTitle"));
-        auto* role = new QLabel(QStringLiteral("PRIMARY MARKET DATA"), box);
+        auto* role = new QLabel(QStringLiteral("MARKET DATA (FIRST CHOICE) · ACCOUNT"), box);
         role->setObjectName(QStringLiteral("brokerCardRole"));
         names->addWidget(name); names->addWidget(role);
         header->addLayout(names, 1);
@@ -351,14 +365,22 @@ private:
         scope->setObjectName(QStringLiteral("brokerCardScope"));
         v->addWidget(scope);
         auto* actions = new QHBoxLayout;
-        auto* account = new QPushButton(QStringLiteral("Open account"), box);
-        account->setObjectName(QStringLiteral("brokerPrimaryAction"));
-        auto* link = new QPushButton(QStringLiteral("Manage connection"), box);
-        link->setObjectName(QStringLiteral("brokerSecondaryAction"));
-        connect(account, &QPushButton::clicked, this, [this] { tabs_->setCurrentIndex(1); });
-        connect(link, &QPushButton::clicked, this, [this] { tabs_->setCurrentIndex(5); });
-        actions->addWidget(account); actions->addWidget(link); actions->addStretch(1);
+        auto* login = new QPushButton(QStringLiteral("Log in to FYERS"), box);
+        login->setObjectName(QStringLiteral("brokerPrimaryAction"));
+        auto* account = new QPushButton(QStringLiteral("Account"), box);
+        account->setObjectName(QStringLiteral("brokerSecondaryAction"));
+        connect(login, &QPushButton::clicked, this, [this] {
+            tabs_->setCurrentWidget(fyers_link_);
+            fyers_link_->open_login();
+        });
+        connect(account, &QPushButton::clicked, this, [this] { tabs_->setCurrentWidget(fyers_account_); });
+        actions->addWidget(login); actions->addWidget(account); actions->addStretch(1);
         v->addLayout(actions);
+        fyers_note_ = new QLabel(box);
+        fyers_note_->setObjectName(QStringLiteral("brokerLoginNote"));
+        fyers_note_->setWordWrap(true);
+        fyers_note_->hide();
+        v->addWidget(fyers_note_);
         return box;
     }
 
@@ -378,7 +400,7 @@ private:
         names->setSpacing(0);
         auto* name = new QLabel(QStringLiteral("Zerodha Kite"), box);
         name->setObjectName(QStringLiteral("brokerCardTitle"));
-        auto* role = new QLabel(QStringLiteral("SECONDARY · ORDER PREFERENCE"), box);
+        auto* role = new QLabel(QStringLiteral("MARKET DATA (STANDBY) · ACCOUNT"), box);
         role->setObjectName(QStringLiteral("brokerCardRole"));
         names->addWidget(name); names->addWidget(role);
         header->addLayout(names, 1);
@@ -396,14 +418,22 @@ private:
         scope->setObjectName(QStringLiteral("brokerCardScope"));
         v->addWidget(scope);
         auto* actions = new QHBoxLayout;
-        auto* account = new QPushButton(QStringLiteral("Open account"), box);
-        account->setObjectName(QStringLiteral("brokerPrimaryAction"));
-        auto* link = new QPushButton(QStringLiteral("Manage connection"), box);
-        link->setObjectName(QStringLiteral("brokerSecondaryAction"));
-        connect(account, &QPushButton::clicked, this, [this] { tabs_->setCurrentIndex(2); });
-        connect(link, &QPushButton::clicked, this, [this] { tabs_->setCurrentIndex(4); });
-        actions->addWidget(account); actions->addWidget(link); actions->addStretch(1);
+        auto* login = new QPushButton(QStringLiteral("Log in to Kite"), box);
+        login->setObjectName(QStringLiteral("brokerPrimaryAction"));
+        auto* account = new QPushButton(QStringLiteral("Account"), box);
+        account->setObjectName(QStringLiteral("brokerSecondaryAction"));
+        connect(login, &QPushButton::clicked, this, [this] {
+            tabs_->setCurrentWidget(kite_link_);
+            kite_link_->open_login();
+        });
+        connect(account, &QPushButton::clicked, this, [this] { tabs_->setCurrentWidget(kite_account_); });
+        actions->addWidget(login); actions->addWidget(account); actions->addStretch(1);
         v->addLayout(actions);
+        kite_note_ = new QLabel(box);
+        kite_note_->setObjectName(QStringLiteral("brokerLoginNote"));
+        kite_note_->setWordWrap(true);
+        kite_note_->hide();
+        v->addWidget(kite_note_);
         return box;
     }
 
@@ -417,6 +447,12 @@ private:
     QLabel* kite_state_ = nullptr;
     QLabel* kite_detail_ = nullptr;
     FyersAccountPanel* fyers_account_ = nullptr;
+    KitePanel* kite_account_ = nullptr;
+    FyersLinkPanel* fyers_link_ = nullptr;
+    KiteLinkPanel* kite_link_ = nullptr;
+    CombinedAccountView* combined_ = nullptr;
+    QLabel* fyers_note_ = nullptr;
+    QLabel* kite_note_ = nullptr;
 };
 
 } // namespace altair::ui

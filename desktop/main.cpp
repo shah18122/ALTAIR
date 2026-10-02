@@ -341,13 +341,23 @@ int main(int argc, char** argv) {
     }
 
     // --terminal-view watch|chain|models|positions|operations opens that view
-    // of the Terminal, for the same reason: a capture script cannot click.
+    // of the Terminal (positions: the Alt+F6 net position window; operations:
+    // the halt/queue window), for the same reason: a capture script cannot click.
     for (int i = 1; i + 1 < args.size(); ++i) {
         if (args[i] == QStringLiteral("--terminal-view") && !window.show_terminal_view(args[i + 1])) {
             std::fprintf(stderr, "--terminal-view \"%s\": no such view (watch, chain, models, positions, operations).\n",
                          qPrintable(args[i + 1]));
         }
     }
+
+    // LIVE BY DEFAULT: the Terminal starts the live feed itself (FYERS, else
+    // Kite) when nothing is streaming a few seconds after it opens. A capture
+    // or check run (--page, --stream, --terminal-view, --compute, --train)
+    // and --no-live-feed leave it alone.
+    const bool scripted = args.contains(QStringLiteral("--page")) || args.contains(QStringLiteral("--stream"))
+                       || args.contains(QStringLiteral("--terminal-view")) || args.contains(QStringLiteral("--compute"))
+                       || args.contains(QStringLiteral("--train")) || args.contains(QStringLiteral("--no-live-feed"));
+    window.set_live_feed_on_open(!scripted);
 
     // --compute presses the button on whatever page --page opened. Separate
     // from --page because most pages have no button, and a flag that silently

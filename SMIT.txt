@@ -216,9 +216,11 @@ Tests:
     Expect "Authentication done", "Subscribed", ticks > 0. If FYERS refuses
     the socket token, re-run altair_fyers_login (tokens are daily). --source
     changes the client name sent at auth if FYERS objects to it.
- 2. On your PC: build.bat net, open Terminal -> Positions & Greeks, press
-    Refresh FYERS. Put the Kite master at data/instruments.csv so monthly
-    expiries and lot sizes resolve (section 13).
+ 2. On your PC: .\build.bat net, log in on Brokers (FYERS or Kite), open
+    Terminal: the live feed starts by itself (FYERS, else Kite). + / - place
+    paper orders; Alt+F6 shows positions (paper book and the FYERS account,
+    fetched by itself). Put the Kite master at data/instruments.csv so scrips
+    can be added (Insert) and monthly expiries and lot sizes resolve (section 13).
  2b. Build the desktop on Windows (Qt 6.8) and check the new theme on every
     page. All colours are tokens in desktop/theme.hpp.
  3. Put the FYERS ticker under the continuous supervisor / price service
