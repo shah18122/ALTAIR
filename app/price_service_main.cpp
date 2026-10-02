@@ -657,14 +657,25 @@ int run_kite(const KiteCreds& creds, const std::vector<altair::live::LiveInstrum
             st.state = "reconnecting";
             altair::live_sources::write_status(status_path, st);
         }
+        // The whole session, not the ticker's 60-second default: a run that
+        // ends early (the server closed, or the connection went silent) is
+        // reconnected below, and done() stops it within a fraction of a second.
+        const auto left = std::chrono::seconds{std::max<std::int64_t>(1, deadline_unix - unix_now())};
         const auto stats = altair::kite_ticker_run(creds.api_key, creds.access, tokens,
-                                                   altair::TickerMode::Full, on_frame, done);
+                                                   altair::TickerMode::Full, on_frame, done, left);
         if (restart) {
             std::printf("  watchlist changed: reconnecting with the new scrips\n");
             std::fflush(stdout);
             return kRestartForWatchlist;
         }
-        if (stats) { break; }
+        if (stats && done()) { break; }
+        if (stats) {
+            std::printf("  kite feed ended early; reconnecting\n");
+            std::fflush(stdout);
+            attempt = 0;   // it was streaming: not a refusal
+            std::this_thread::sleep_for(std::chrono::seconds{1});   // and never a hot loop against a closing server
+            continue;
+        }
         st.error = altair::ticker_error_text(stats.error());
         std::printf("  kite feed error: %s\n", st.error.c_str());
         std::fflush(stdout);
@@ -881,7 +892,6 @@ int main(int argc, char** argv) {
         std::signal(SIGINT, on_stop_signal);
         std::signal(SIGTERM, on_stop_signal);
         altair::live_sources::SharedBus shared(bus);
-        altair::live_sources::Poller poller(shared);
         const std::string status = live_dir + "/feed_status.json";
         const auto started = std::chrono::steady_clock::now();
         // The watchlist file, checked every couple of seconds: new tokens are
@@ -1161,9 +1171,12 @@ int main(int argc, char** argv) {
                 sub_tokens.size());
     std::fflush(stdout);
 
+    // Bounded by --seconds when given, else by the session (Ctrl-C): never
+    // by the ticker's 60-second default.
     const auto stats = altair::kite_ticker_run(
         api_key, access, sub_tokens, altair::TickerMode::Full, on_frame,
-        expired);
+        [&] { return expired() || g_stop.load(); },
+        seconds > 0 ? std::chrono::seconds{seconds} : std::chrono::seconds{24 * 3600});
 
     std::printf("frames %zu, ticks+books published %zu, unknown token %zu, "
                 "undecodable %zu\n",

@@ -44,6 +44,7 @@
 #include <QVariant>
 #include <QTimer>
 
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -74,6 +75,11 @@ struct LivePrice {
     bool simulated = false;   ///< altair_price_service --sim: never shown as live
     std::uint64_t updates = 0;
     std::uint64_t trades = 0;
+    /// Feed time (the frame's engine time) of the last quote and the last
+    /// book: what a paper fill is judged fresh against. 0 = never.
+    std::int64_t quote_ns = 0;
+    std::int64_t book_ns = 0;
+    std::int64_t last_ns = 0;   ///< feed time of the newest frame for this instrument
 
     /// The quote topic (server/quote_payload.hpp): OHLC, previous close, top
     /// of book, ATP, totals, circuits. `quote.flags` says which are present.
@@ -105,6 +111,10 @@ public:
             // what happened: the cap looked set, the kernel stayed unbounded,
             // and a flood at a stopped reader still coalesced nothing.
             apply_read_cap();
+            // A new connection is a new stream: its first frames are the
+            // bus's baseline for this client, at whatever sequence the
+            // service is at now (and a restarted service starts again at 1).
+            seq_.clear();
             Q_EMIT statusChanged();
         });
         connect(sock_, &QTcpSocket::disconnected, this,
@@ -236,30 +246,54 @@ private:
         }
     }
 
-    void apply(const FrameHeader& h, const DecodedPrice& d) {
-        ++frames_;
-
-        // Sequence is per topic. A gap on trades does not invalidate the book,
-        // which is exactly why protocol.hpp gives every topic its own counter.
+    /// Per-topic sequence. A Snapshot (a late joiner's baseline, sent to this
+    /// client alone) carries the sequence the stream is AT; a Delta must be
+    /// exactly one past the last. False for a duplicate Delta (skip it).
+    bool sequence(const FrameHeader& h) {
         auto& seen = seq_[h.topic];
+        if (h.kind == FrameKind::Snapshot) {
+            if (seen != 0 && h.seq > seen) {
+                ++gaps_;
+                missed_ += h.seq - seen;
+                if (h.topic == kTopicTrades) trade_missed_ += h.seq - seen;
+            }
+            seen = h.seq;
+            return true;
+        }
+        if (seen != 0 && h.seq <= seen) return false;
         if (seen != 0 && h.seq > seen + 1) {
             ++gaps_;
             missed_ += h.seq - seen - 1;
             if (h.topic == kTopicTrades) trade_missed_ += h.seq - seen - 1;
         }
         seen = h.seq;
+        return true;
+    }
+
+    void apply(const FrameHeader& h, const DecodedPrice& d) {
+        ++frames_;
+
+        // Sequence is per topic. A gap on trades does not invalidate the book,
+        // which is exactly why protocol.hpp gives every topic its own counter.
+        if (!sequence(h)) return;
+        const bool snapshot = h.kind == FrameKind::Snapshot;
 
         LivePrice& lp = last_[d.payload.token];
         ++lp.updates;
         lp.replay = d.payload.has(kPriceReplay);
         lp.simulated = d.payload.has(kPriceSimulated);
         lp.exchange_ts_ns = d.payload.exchange_ts_ns;
+        lp.last_ns = std::max(lp.last_ns, h.engine_time_ns);
         if (h.topic == kTopicTrades) {
             lp.last_paise = d.payload.last_paise;
             lp.last_qty = d.payload.last_qty;
-            ++lp.trades;
-            lp.tape.push_back(LiveTapePrint{d.payload.exchange_ts_ns, d.payload.last_paise, d.payload.last_qty});
-            if (lp.tape.size() > kLiveTapeDepth) { lp.tape.pop_front(); }
+            // A snapshot is the last trade as it stood, not a new print: it
+            // sets the price but is neither counted nor put on the tape.
+            if (!snapshot) {
+                ++lp.trades;
+                lp.tape.push_back(LiveTapePrint{d.payload.exchange_ts_ns, d.payload.last_paise, d.payload.last_qty});
+                if (lp.tape.size() > kLiveTapeDepth) { lp.tape.pop_front(); }
+            }
             // ABSENCE IS NOT ZERO, so the presence bit is carried through
             // rather than collapsed into the value. A grid that draws 0 for an
             // index's volume is claiming a measurement nobody made.
@@ -269,27 +303,25 @@ private:
             if (lp.has_oi) { lp.oi = d.payload.oi; }
         } else if (h.topic == kTopicBook) {
             lp.levels = d.payload.depth_levels;
+            lp.book_ns = h.engine_time_ns;
             for (std::size_t i = 0; i < kMaxDepthLevels; ++i) {
                 lp.bids[i] = d.bids[i];
                 lp.asks[i] = d.asks[i];
             }
         }
         Q_EMIT priceUpdated(d.payload.token);
-        if (h.topic == kTopicTrades) Q_EMIT tradeUpdated(d.payload.token);
+        if (h.topic == kTopicTrades && !snapshot) Q_EMIT tradeUpdated(d.payload.token);
     }
 
     void apply_quote(const FrameHeader& h, const QuotePayload& q) {
         ++frames_;
-        auto& seen = seq_[h.topic];
-        if (seen != 0 && h.seq > seen + 1) {
-            ++gaps_;
-            missed_ += h.seq - seen - 1;
-        }
-        seen = h.seq;
+        if (!sequence(h)) return;
         LivePrice& lp = last_[q.token];
         ++lp.updates;
         lp.quote = q;
         lp.has_quote = true;
+        if (q.has(kQuoteHasTop)) lp.quote_ns = h.engine_time_ns;
+        lp.last_ns = std::max(lp.last_ns, h.engine_time_ns);
         lp.replay = q.has(kQuoteReplay);
         lp.simulated = q.has(kQuoteSimulated);
         Q_EMIT priceUpdated(q.token);

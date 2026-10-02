@@ -94,6 +94,21 @@ if(ALTAIR_BUILD_TESTS)
         add_test(NAME kite_ticker COMMAND altair_kite_ticker_test)
     endif()
 
+    # The ticker's read loop, against a local WebSocket server over plain TCP:
+    # idle, heartbeat-only, stop and close all end it promptly. Header-only
+    # Beast; no TLS, no credential, no network beyond loopback.
+    find_package(Boost CONFIG QUIET COMPONENTS headers)
+    if(Boost_FOUND)
+        add_executable(altair_ws_pump_test tests/test_ws_pump.cpp)
+        target_link_libraries(altair_ws_pump_test PRIVATE altair_flags Boost::headers Threads::Threads)
+        target_include_directories(altair_ws_pump_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        if(WIN32)
+            target_link_libraries(altair_ws_pump_test PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME ws_pump COMMAND altair_ws_pump_test)
+        set_tests_properties(ws_pump PROPERTIES LABELS concurrency)
+    endif()
+
     add_executable(altair_kite_historical_test tests/test_kite_historical.cpp)
     target_link_libraries(altair_kite_historical_test
         PRIVATE altair_broker altair_flags)

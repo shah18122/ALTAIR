@@ -42,6 +42,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace altair::live {
@@ -367,10 +368,13 @@ inline constexpr const char* kLiveUniverseHeader = "token,fyers,symbol,underlyin
               << ',' << day_text(i.expiry_day) << ',' << strike << ',' << i.lot << ',' << tick << ',' << i.group
               << ',' << (i.depth ? 1 : 0) << '\n';
         }
+        f.flush();
         if (!f) return false;
     }
-    std::remove(path.c_str());
-    return std::rename(tmp.c_str(), path.c_str()) == 0;
+    // One step, never delete-then-rename: a reader sees the old file or the new.
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    return !ec;
 }
 
 [[nodiscard]] inline std::vector<LiveInstrument> read_universe(const std::string& path) {

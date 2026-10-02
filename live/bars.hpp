@@ -8,11 +8,16 @@
 //
 // A minute with no trade has no bar. Gaps are not filled with the previous
 // close: a bar that never traded is not a measurement of anything.
+//
+// A minute, once closed, stays closed: a late print stamped before the clock's
+// minute (or inside a bar already closed) is refused, so history is never
+// reopened or rewritten. feed() says whether the print was kept.
 
 #pragma once
 
 #include <algorithm>
 #include <cmath>
+#include <climits>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -48,18 +53,22 @@ struct LiveBar {
 class LiveBarBuilder {
 public:
     /// A trade at `price` (rupees), stamped `ns`, with the day's cumulative
-    /// volume when the instrument has one (-1 when it does not).
+    /// volume when the instrument has one (-1 when it does not). False when
+    /// the print was refused (no price, or late for a minute already closed).
     template <class OnClosed>
-    void feed(std::uint32_t token, double price, std::int64_t ns, std::int64_t cum_volume, OnClosed&& closed) {
-        if (!(price > 0.0)) return;
+    bool feed(std::uint32_t token, double price, std::int64_t ns, std::int64_t cum_volume, OnClosed&& closed) {
+        if (!(price > 0.0)) return false;
         const std::int64_t m = live_ist_minute_index(ns);
+        if (m < clock_minute_) return false;   // the clock has closed that minute
         auto& s = slots_[token];
         if (s.open && m > s.bar.minute) {
             closed(token, s.bar);
             today_[token].push_back(s.bar);
+            s.closed_through = s.bar.minute;
             s.open = false;
         }
-        if (s.open && m < s.bar.minute) return;   // a late print for a closed minute: kept out, not rewritten
+        if (s.open && m < s.bar.minute) return false;   // a late print for a closed minute: kept out, not rewritten
+        if (!s.open && s.closed_through >= m) return false;
         if (!s.open) {
             s.bar = LiveBar{m, price, price, price, price, 0, 0};
             s.open = true;
@@ -73,16 +82,19 @@ public:
             if (s.last_volume >= 0 && cum_volume >= s.last_volume) b.volume += cum_volume - s.last_volume;
             s.last_volume = cum_volume;
         }
+        return true;
     }
 
     /// The clock reached `ns`: close every open bar of an earlier minute.
     template <class OnClosed>
     void advance(std::int64_t ns, OnClosed&& closed) {
         const std::int64_t m = live_ist_minute_index(ns);
+        clock_minute_ = std::max(clock_minute_, m);
         for (auto& [tok, s] : slots_) {
             if (s.open && m > s.bar.minute) {
                 closed(tok, s.bar);
                 today_[tok].push_back(s.bar);
+                s.closed_through = s.bar.minute;
                 s.open = false;
             }
         }
@@ -106,7 +118,9 @@ private:
         LiveBar bar{};
         bool open = false;
         std::int64_t last_volume = -1;
+        std::int64_t closed_through = INT64_MIN;   ///< minute index of the last closed bar
     };
+    std::int64_t clock_minute_ = INT64_MIN;   ///< advance()'s minute: earlier minutes are closed
     std::unordered_map<std::uint32_t, Slot> slots_;
     std::unordered_map<std::uint32_t, std::vector<LiveBar>> today_;
 };

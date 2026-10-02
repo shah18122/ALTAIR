@@ -70,6 +70,8 @@
 #include <QKeySequence>
 #include <QShortcut>
 #include <QLabel>
+#include <QLockFile>
+#include <QDir>
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -85,6 +87,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <memory>
 
 #if ALTAIR_HAVE_CHARGES_TOML
 #include <app/demo_costs.hpp>
@@ -677,11 +680,32 @@ public:
     void set_autostart_feed(bool on) { live_->set_autostart(on); }
 
     /// Place a paper order as the order window would (tests, square-off).
+    /// Refused while another Altair holds the paper book, or the book could
+    /// not be written: an order the file never saw is an order a restart loses.
     std::expected<int, QString> place_paper(PaperOrder o) {
+        if (const QString why = paper_writer(); !why.isEmpty()) {
+            toast(why, false);
+            return std::unexpected(why);
+        }
         const PaperQuote q = paper_ui::quote_of(client_, o.inst.token);
         const auto r = oms_.place(std::move(o), q, now_ns());
         books_dirty();
         return r;
+    }
+    /// Empty when this window may write the paper book; else why not.
+    [[nodiscard]] QString paper_writer() {
+        if (!paper_write_error_.isEmpty()) return paper_write_error_;
+        const QString lock_path = paper_dir_ + QStringLiteral("/manual.lock");
+        if (!paper_lock_ || paper_lock_path_ != lock_path) {
+            QDir().mkpath(paper_dir_);
+            paper_lock_ = std::make_unique<QLockFile>(lock_path);
+            paper_lock_->setStaleLockTime(0);   // stale only when its owner is gone, never by age
+            paper_lock_path_ = lock_path;
+            paper_locked_ = paper_lock_->tryLock(0);
+        }
+        return paper_locked_ ? QString()
+                             : QStringLiteral("Another Altair window holds the paper book (%1); orders are placed in that one.")
+                                   .arg(lock_path);
     }
     /// The paper instrument for a watch row.
     [[nodiscard]] static PaperInstrument paper_instrument(const LiveRow& r) { return paper_instrument_of(r); }
@@ -846,10 +870,12 @@ private:
             oms_.restore(std::move(orders), std::move(trades));
         }
         oms_.on_trade = [this](const PaperTrade& t) {
-            (void)paper_store::append_trade(paper_dir_ + QStringLiteral("/manual_trades.csv"), t);
+            const QString path = paper_dir_ + QStringLiteral("/manual_trades.csv");
+            if (!paper_store::append_trade(path, t)) paper_write_failed(path);
         };
         oms_.on_order = [this](const PaperOrder& o) {
-            (void)paper_store::append_order(paper_dir_ + QStringLiteral("/manual_orders.csv"), o);
+            const QString path = paper_dir_ + QStringLiteral("/manual_orders.csv");
+            if (!paper_store::append_order(path, o)) paper_write_failed(path);
         };
 #if ALTAIR_HAVE_CHARGES_TOML
         if (const auto rep = load_charges_file(ALTAIR_CHARGES_TOML, schedules_); rep) charges_verified_ = rep->verified;
@@ -875,7 +901,7 @@ private:
 #endif
         });
         connect(client_, &PriceClient::priceUpdated, this, [this](unsigned tok) {
-            oms_.on_quote(tok, paper_ui::quote_of(client_, tok));
+            oms_.on_quote(tok, paper_ui::quote_of(client_, tok), now_ns());
             if (oms_.open_orders() > 0 || net_window_->isVisible()) books_dirty();
         });
         books_timer_.setInterval(300);
@@ -973,7 +999,7 @@ private:
         }
         PaperOrderWindow w(o->side, o->inst, client_, this, o);
         if (w.exec() != QDialog::Accepted) return;
-        if (!oms_.modify(id, w.qty(), w.limit_paise(), paper_ui::quote_of(client_, o->inst.token)))
+        if (!oms_.modify(id, w.qty(), w.limit_paise(), paper_ui::quote_of(client_, o->inst.token), now_ns()))
             toast(QStringLiteral("Modify refused: quantity must be whole lots and a limit needs a price"), false);
         books_dirty();
     }
@@ -1111,8 +1137,18 @@ private:
     QDialog* message_log_ = nullptr;
     QPlainTextEdit* log_text_ = nullptr;
     MarketPictureWindow* picture_ = nullptr;
+    void paper_write_failed(const QString& path) {
+        if (paper_write_error_.isEmpty())
+            log_text_->appendPlainText(QStringLiteral("PAPER BOOK NOT WRITTEN: %1. New orders are refused until Altair restarts.").arg(path));
+        paper_write_error_ = QStringLiteral("The paper book could not be written (%1); new orders are refused.").arg(path);
+        toast(paper_write_error_, false);
+    }
+
     PaperOms oms_;
     QString paper_dir_;
+    std::unique_ptr<QLockFile> paper_lock_;
+    QString paper_lock_path_, paper_write_error_;
+    bool paper_locked_ = false;
     QTimer books_timer_, toast_timer_;
 #if ALTAIR_HAVE_CHARGES_TOML
     std::vector<ChargeSchedule> schedules_;

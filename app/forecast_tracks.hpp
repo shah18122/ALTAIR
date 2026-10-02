@@ -655,6 +655,10 @@ struct SessionInputs {
     /// by TrackInfo::partial_last. Off, as for every backtest: an unfinished
     /// day has no outcome to score.
     bool partial_last_day = false;
+    /// The outcome: the close of the 5-minute bar ending at this minute (930 =
+    /// the session's 15:30 close). The live engine squares off at 15:20, so
+    /// its model trains on 920: the horizon it is scored on is the one it trades.
+    int exit_minute = 930;
 };
 
 /// From a moment in the session to its close, one decision a day: long
@@ -667,7 +671,9 @@ struct SessionInputs {
     tr.instrument = in.instrument;
     char hm[16];
     std::snprintf(hm, sizeof hm, "%02d:%02d", in.decide_minute / 60, in.decide_minute % 60);
-    tr.horizon = std::string{hm} + " to the close";
+    char hx[16];
+    std::snprintf(hx, sizeof hx, "%02d:%02d", in.exit_minute / 60, in.exit_minute % 60);
+    tr.horizon = std::string{hm} + (in.exit_minute == 930 ? std::string(" to the close") : " to " + std::string{hx});
     tr.tradable = true;
     tr.feature_names = {"ret since open", "gap", "ret last hour", "vol since open", "range since open",
                         "close in range", "prev day ret", "prev day range", "ret 5d", "weekday",
@@ -680,6 +686,7 @@ struct SessionInputs {
     const detail::PairLookup vix(in.vix, false);
     constexpr std::size_t per_day = 75;
     const std::size_t k_dec = static_cast<std::size_t>((in.decide_minute - 555) / 5) - 1;   // the bar that closes then
+    const std::size_t k_exit = static_cast<std::size_t>((std::clamp(in.exit_minute, 560, 930) - 555) / 5) - 1;
 
     const auto& bars = *in.own;
     struct DaySpan { std::int64_t day; std::size_t b, e; };
@@ -727,7 +734,7 @@ struct SessionInputs {
         const bool partial = in.partial_last_day && q + 1 == days.size() && !full(sp) && prefix(sp)
                           && sp.e - sp.b > k_dec;
         if (!full(sp) && !partial) { ++info.short_days; continue; }
-        if (q < 6 || k_dec + 1 >= per_day) { ++info.warmup; continue; }
+        if (q < 6 || k_dec + 1 >= per_day || k_dec >= k_exit) { ++info.warmup; continue; }
         const DaySpan& p1 = days[q - 1];
         const double pc = bars[p1.e - 1].c, ppc = bars[days[q - 2].e - 1].c, pc5 = bars[days[q - 6].e - 1].c;
         double p_hi = 0.0, p_lo = 0.0;
@@ -765,10 +772,10 @@ struct SessionInputs {
         row[c++] = std::log(v);
         row[c++] = std::log(v / v_pc);
         row[c++] = std::log(v / v_open);
-        const da::AuditBar& last = bars[sp.e - 1];
         if (partial) { info.partial_last = true; }
+        const double outcome = partial ? d.c : bars[sp.b + k_exit].c;   // a full day has every bar
         detail::push_row(tr, row, sp.day * kDaySec + static_cast<std::int64_t>(in.decide_minute) * 60,
-                         sp.day * kDaySec + kCloseSec, ++day_ordinal, d.c, partial ? d.c : last.c,
+                         sp.day * kDaySec + static_cast<std::int64_t>(in.exit_minute) * 60, ++day_ordinal, d.c, outcome,
                          futures_cost_bp(sp.day, in.other_cost_bp),
                          static_cast<std::uint16_t>(da::audit_weekday(sp.day)), pv);
     }

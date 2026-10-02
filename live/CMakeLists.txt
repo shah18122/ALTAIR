@@ -19,4 +19,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_live_engine_test tests/test_engine.cpp)
     target_link_libraries(altair_live_engine_test PRIVATE altair_live)
     add_test(NAME live_engine COMMAND altair_live_engine_test)
+
+    add_executable(altair_live_execution_test tests/test_execution.cpp)
+    target_link_libraries(altair_live_execution_test PRIVATE altair_live)
+    add_test(NAME live_execution COMMAND altair_live_execution_test)
 endif()

@@ -246,9 +246,10 @@ private:
         QString model, symbol, why;
         quint32 token = 0;
         int side = 0;
-        qint64 qty = 0;
+        qint64 qty = 0, want = 0;
         double entry = 0, entry_expenses = std::numeric_limits<double>::quiet_NaN();
         bool carry = false;
+        QString state, exit_reason;   ///< opening / open / closing, and why it is closing
     };
 
     void read_state() {
@@ -268,9 +269,17 @@ private:
         const qint64 eng = static_cast<qint64>(o.value(QStringLiteral("engine_ns")).toDouble());
         const QString tag = sim ? QStringLiteral("<span style='color:#F4C95D'>● SIM — paper trades on a simulated market</span>")
                                 : QStringLiteral("<span style='color:#7FD17F'>● LIVE market data — paper trades only</span>");
+        // Why entries are refused right now, from the engine's one risk check.
+        const QString halt = o.value(QStringLiteral("halt")).toString();
+        const QString paused = o.value(QStringLiteral("paused")).toString();
+        QString gate;
+        if (!halt.isEmpty()) gate += QStringLiteral(" · <b style='color:#F07A6A'>HALTED: %1</b>").arg(halt.toHtmlEscaped());
+        if (!paused.isEmpty()) gate += QStringLiteral(" · <b style='color:#F4C95D'>%1</b>").arg(paused.toHtmlEscaped());
+        const int working = o.value(QStringLiteral("working_orders")).toInt();
+        if (working > 0) gate += QStringLiteral(" · %1 order(s) working").arg(working);
         status_->setText(QStringLiteral("%1 &nbsp;<span style='color:%2'>engine %3 IST%4%5 · %6</span>")
                              .arg(tag, muted, live_detail::ist(eng, false))
-                             .arg(stale ? QStringLiteral(" · <b style='color:#F07A6A'>FEED STALE: no new entries</b>") : QString())
+                             .arg((stale ? QStringLiteral(" · <b style='color:#F07A6A'>FEED STALE: no new entries</b>") : QString()) + gate)
                              .arg(age > 5 ? QStringLiteral(" · state %1 s old (engine stopped?)").arg(age) : QString())
                              .arg(o.value(QStringLiteral("note")).toString().toHtmlEscaped()));
         const QJsonArray ms = o.value(QStringLiteral("models")).toArray();
@@ -308,6 +317,9 @@ private:
             if (!p.value(QStringLiteral("entry_expenses")).isNull()) q.entry_expenses = p.value(QStringLiteral("entry_expenses")).toDouble();
             q.carry = p.value(QStringLiteral("carry")).toBool();
             q.why = p.value(QStringLiteral("why_in")).toString();
+            q.want = static_cast<qint64>(p.value(QStringLiteral("want")).toDouble());
+            q.state = p.value(QStringLiteral("state")).toString();
+            q.exit_reason = p.value(QStringLiteral("exit_reason")).toString();
             positions_cache_.push_back(q);
         }
         engine_day_ = eng > 0 ? QDate(1970, 1, 1).addDays((eng / 1'000'000'000LL + 19800) / 86400).toString(Qt::ISODate) : QString();
@@ -362,26 +374,32 @@ private:
         for (int i = 0; i < n; ++i) {
             const Pos& p = positions_cache_[static_cast<std::size_t>(i)];
             const LivePrice* lp = client_ != nullptr ? client_->price(p.token) : nullptr;
+            // Marked where closing would deal -- a long at the bid, a short at
+            // the ask -- from a quote no older than 10 s on the feed's clock.
+            // Never at the last trade: an unquoted position is unmarked.
             qint64 px = 0;
-            if (lp != nullptr) {
-                const bool top = lp->has_quote && lp->quote.has(kQuoteHasTop);
-                px = p.side > 0 ? (top && lp->quote.bid > 0 ? lp->quote.bid : lp->last_paise)
-                                : (top && lp->quote.ask > 0 ? lp->quote.ask : lp->last_paise);
-            }
+            if (lp != nullptr && lp->has_quote && lp->quote.has(kQuoteHasTop)
+                && lp->quote_ns > 0 && lp->last_ns - lp->quote_ns <= 10'000'000'000LL)
+                px = p.side > 0 ? lp->quote.bid : lp->quote.ask;
             const double mark_px = static_cast<double>(px) / 100.0;
-            const double u = px > 0 ? static_cast<double>(p.side) * (mark_px - p.entry) * static_cast<double>(p.qty)
+            const double u = p.qty == 0 ? 0.0
+                           : px > 0 ? static_cast<double>(p.side) * (mark_px - p.entry) * static_cast<double>(p.qty)
                                     : std::numeric_limits<double>::quiet_NaN();
             if (std::isfinite(u)) { open_pnl[p.model] += u; open_total += u; } else { open_complete = false; }
             live_set(positions_, i, 0, p.model);
             live_set(positions_, i, 1, p.symbol);
             live_set(positions_, i, 2, p.side > 0 ? QStringLiteral("long") : QStringLiteral("short"),
                      p.side > 0 ? QColor(0x7F, 0xB8, 0xF0) : QColor(0xF0, 0xA0, 0x7F));
-            live_set(positions_, i, 3, QString::number(p.qty));
+            live_set(positions_, i, 3, p.want > p.qty && p.state == QLatin1String("opening")
+                                           ? QStringLiteral("%1/%2").arg(p.qty).arg(p.want) : QString::number(p.qty));
             live_set(positions_, i, 4, QString::number(p.entry, 'f', 2));
-            live_set(positions_, i, 5, px > 0 ? QString::number(mark_px, 'f', 2) : QStringLiteral("no price"));
+            live_set(positions_, i, 5, px > 0 ? QString::number(mark_px, 'f', 2) : QStringLiteral("no fresh quote"));
             live_set(positions_, i, 6, live_models_detail::rupees(u), live_models_detail::pnl_color(u));
             live_set(positions_, i, 7, live_models_detail::rupees(p.entry_expenses));
-            live_set(positions_, i, 8, p.carry ? QStringLiteral("carried") : QStringLiteral("intraday"));
+            live_set(positions_, i, 8, (p.carry ? QStringLiteral("carried") : QStringLiteral("intraday"))
+                                           + (p.state == QLatin1String("opening") ? QStringLiteral(" · entry working")
+                                              : p.state == QLatin1String("closing") ? QStringLiteral(" · exit working: ") + p.exit_reason
+                                                                                    : QString()));
             live_set(positions_, i, 9, p.why);
             for (int c : {0, 1, 9}) if (auto* it = positions_->item(i, c)) it->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         }
@@ -427,7 +445,7 @@ private:
                              .arg(any_unpriced ? QStringLiteral("—") : live_models_detail::rupees(net_today))
                              .arg(live_models_detail::pnl_color(open_total).name())
                              .arg(live_models_detail::rupees(open_total))
-                             .arg(open_complete ? QString() : QStringLiteral(" <span style='color:%1'>(some positions have no price yet)</span>").arg(muted)));
+                             .arg(open_complete ? QString() : QStringLiteral(" <span style='color:%1'>(some positions have no fresh quote and are left out of this total)</span>").arg(muted)));
     }
 
     void start_engine() {

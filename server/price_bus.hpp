@@ -39,6 +39,17 @@
 // the true one and an old one has no value. Dropping partial bytes would
 // desynchronise the stream, so the outbox holds complete frames and an offset
 // into the head, never a byte count.
+//
+// A LATE JOINER GETS A BASELINE, AND ONLY IT DOES. poll() reports the clients
+// it accepted (take_joined()); the caller sends that client the board with
+// publish_snapshot_to(), as Snapshot frames stamped with the topic's CURRENT
+// sequence number, so the joiner's next Delta is exactly seq + 1. Nobody else
+// sees them: a baseline republished to every subscriber whenever anyone
+// connected used to land in running clients' streams as fresh trades.
+//
+// ONE THREAD. The bus is not thread-safe and does not pretend to be: the
+// price service gives it an owner thread (app/live_feed_sources.hpp) that is
+// the only caller.
 
 #pragma once
 
@@ -152,7 +163,8 @@ public:
     }
 
     /// Accept anything waiting and push whatever each outbox will take.
-    /// Non-blocking throughout; call it often.
+    /// Non-blocking throughout; call it often. New clients are reported by
+    /// take_joined().
     void poll() {
         namespace ip = boost::asio::ip;
         for (;;) {
@@ -179,9 +191,36 @@ public:
             // can pin.
             s.set_option(boost::asio::socket_base::send_buffer_size(
                              static_cast<int>(kSendBufferBytes)), ec);
-            clients_.push_back(std::make_unique<Client>(std::move(s)));
+            clients_.push_back(std::make_unique<Client>(std::move(s), ++next_id_));
+            joined_.push_back(next_id_);
         }
         flush();
+    }
+
+    /// The clients poll() accepted since the last call, by id.
+    [[nodiscard]] std::vector<std::uint64_t> take_joined() {
+        std::vector<std::uint64_t> v;
+        v.swap(joined_);
+        return v;
+    }
+
+    /// One baseline frame to ONE client: kind Snapshot, the topic's current
+    /// sequence number (it advances nothing). False when that client is gone
+    /// or the frame was refused.
+    bool publish_snapshot_to(std::uint64_t client, std::uint32_t topic, const PricePayload& p,
+                             const PriceLevel* bids, const PriceLevel* asks, std::int64_t engine_ns) {
+        std::vector<std::uint8_t> frame(kFrameHeaderBytes
+                                        + price_frame_bytes(p.has(kPriceHasBook) ? p.depth_levels : 0));
+        const auto body = encode_price(p, bids, asks, frame.data() + kFrameHeaderBytes,
+                                       frame.size() - kFrameHeaderBytes);
+        if (!body) { ++refused_; return false; }
+        return enqueue(topic, std::move(frame), *body, engine_ns, FrameKind::Snapshot, client);
+    }
+    bool publish_quote_snapshot_to(std::uint64_t client, const QuotePayload& q, std::int64_t engine_ns) {
+        std::vector<std::uint8_t> frame(kFrameHeaderBytes + kQuotePayloadBytes);
+        const auto body = encode_quote(q, frame.data() + kFrameHeaderBytes, frame.size() - kFrameHeaderBytes);
+        if (!body) { ++refused_; return false; }
+        return enqueue(kTopicQuote, std::move(frame), *body, engine_ns, FrameKind::Snapshot, client);
     }
 
     /// Encode one update and queue it for every subscriber.
@@ -200,7 +239,7 @@ public:
                                        frame.data() + kFrameHeaderBytes,
                                        frame.size() - kFrameHeaderBytes);
         if (!body) { ++refused_; return; }
-        enqueue(topic, std::move(frame), *body, engine_ns);
+        (void)enqueue(topic, std::move(frame), *body, engine_ns, FrameKind::Delta, 0);
     }
 
     /// The market-watch fields that do not change on every trade
@@ -210,24 +249,31 @@ public:
         const auto body = encode_quote(q, frame.data() + kFrameHeaderBytes,
                                        frame.size() - kFrameHeaderBytes);
         if (!body) { ++refused_; return; }
-        enqueue(kTopicQuote, std::move(frame), *body, engine_ns);
+        (void)enqueue(kTopicQuote, std::move(frame), *body, engine_ns, FrameKind::Delta, 0);
     }
 
 private:
-    void enqueue(std::uint32_t topic, std::vector<std::uint8_t> frame,
-                 std::size_t body, std::int64_t engine_ns) {
+    /// `to` 0: every client, a Delta that advances the topic's sequence.
+    /// Otherwise that one client, a Snapshot at the current sequence.
+    bool enqueue(std::uint32_t topic, std::vector<std::uint8_t> frame,
+                 std::size_t body, std::int64_t engine_ns, FrameKind kind, std::uint64_t to) {
         if (topic == 0 || topic > kTopicQuote) {
             // RULE 11: refuse. seq_ has one slot per known topic; an unknown
             // topic would write past it (it did, before the quote topic was
             // given its slot).
             ++refused_;
-            return;
+            return false;
+        }
+        Client* target = nullptr;
+        if (to != 0) {
+            for (auto& c : clients_) if (c->id == to) target = c.get();
+            if (target == nullptr) return false;   // gone before its baseline
         }
         FrameHeader h;
-        h.kind = FrameKind::Delta;
+        h.kind = kind;
         h.channel = Channel::State;
         h.topic = topic;
-        h.seq = ++seq_[topic];
+        h.seq = to == 0 ? ++seq_[topic] : seq_[topic];
         h.payload_len = static_cast<std::uint32_t>(body);
         h.engine_time_ns = engine_ns;
         h.server_time_ns =
@@ -235,27 +281,31 @@ private:
                 std::chrono::system_clock::now().time_since_epoch()).count();
         if (!encode_header(h, frame.data(), kFrameHeaderBytes)) {
             ++refused_;
-            return;
+            return false;
         }
         frame.resize(kFrameHeaderBytes + body);
 
-        for (auto& c : clients_) {
-            c->out.push_back(frame);
-            c->bytes += frame.size();
+        const auto put = [&](Client& c) {
+            c.out.push_back(frame);
+            c.bytes += frame.size();
             // Whole unsent frames, oldest first. Preserve a partially written
             // head: its prefix is already visible on the TCP stream, so
             // dropping it would corrupt the reader even though no bytes are
             // being trimmed from an individual frame.
             dropped_ += price_bus_detail::drop_oldest_unsent_until_bounded(
-                c->out, c->head, c->bytes, kOutboxBytesCap);
-        }
+                c.out, c.head, c.bytes, kOutboxBytesCap);
+        };
+        if (target != nullptr) put(*target);
+        else for (auto& c : clients_) put(*c);
         flush();
+        return true;
     }
 
     struct Client {
-        explicit Client(boost::asio::ip::tcp::socket s)
-            : sock(std::move(s)) {}
+        Client(boost::asio::ip::tcp::socket s, std::uint64_t id_)
+            : sock(std::move(s)), id(id_) {}
         boost::asio::ip::tcp::socket sock;
+        std::uint64_t id = 0;
         std::deque<std::vector<std::uint8_t>> out;
         std::size_t head = 0;     ///< bytes of out.front() already written
         std::size_t bytes = 0;
@@ -296,6 +346,8 @@ private:
 
     boost::asio::ip::tcp::acceptor acceptor_;
     std::vector<std::unique_ptr<Client>> clients_;
+    std::vector<std::uint64_t> joined_;
+    std::uint64_t next_id_ = 0;
     std::uint64_t seq_[kTopicQuote + 1]{};   ///< per topic; index 0 unused
     std::uint64_t sent_ = 0;
     std::uint64_t dropped_ = 0;

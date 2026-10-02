@@ -10,9 +10,27 @@
 // so a slot is self-describing: a producer that wins the CAS but is descheduled
 // before writing cannot be mistaken for a completed push.
 //
-// MEMORY ORDERING WARNING — see spsc_ring.hpp. x86 is TSO and no TSAN runs
-// here, so a wrong ordering below is invisible on this hardware. The orderings
-// are specified by the card, not discovered by testing.
+// MEMORY ORDERING WARNING — see spsc_ring.hpp. x86 is TSO, so a wrong
+// ordering below is invisible on this hardware; the TSan CI job runs the
+// `concurrency` label. The orderings are specified by the card, not
+// discovered by testing.
+//
+// TWO PROPERTIES OF THIS SCHEME THAT A CALLER MUST KNOW.
+//
+// 1. A PUSH IS BOUNDED. Under contention a producer retries its CAS; the old
+//    loop retried forever, so a producer could spin for as long as others kept
+//    winning. push() gives up after `max_attempts` and says Contended, which
+//    is a different answer from Full: the caller decides whether to retry,
+//    back off or count a drop, and nothing spins unboundedly inside the ring.
+//
+// 2. HEAD-OF-LINE: the consumer takes slots IN ORDER. A producer that has
+//    claimed a slot (won the CAS) but not yet written it holds up every later
+//    slot, even ones already published -- that is what keeps the ring FIFO.
+//    The claim-to-publish window is one copy of T, so it is short unless the
+//    producer is preempted inside it. pop() tells the two cases apart: Empty
+//    (nothing claimed) versus Pending (the head is claimed, not yet
+//    published), so a consumer can see a stalled producer rather than mistake
+//    it for an idle ring. claim()/publish() expose the two phases.
 
 #include <lockfree/spsc_ring.hpp>   // for kCacheLine
 #include <types/units.hpp>
@@ -54,16 +72,29 @@ public:
     MpscRing(MpscRing&&) = delete;
     MpscRing& operator=(MpscRing&&) = delete;
 
-    /// Enqueue one element. SAFE FROM ANY NUMBER OF PRODUCER THREADS.
-    /// UNIT: none. Returns false iff the ring is full. Never blocks, never
-    /// allocates. Lock-free but not wait-free: contention retries the CAS.
-    /// PRECONDITION: none.
-    [[nodiscard]] ALTAIR_HOT bool try_push(const T& v) noexcept {
-        Slot* slot = nullptr;
-        std::uint64_t pos = tail_.load(std::memory_order_relaxed);
+    /// Why a push did not happen.
+    enum class Push : std::uint8_t { Ok, Full, Contended };
+    /// What the consumer found at the head.
+    enum class Pop : std::uint8_t { Ok, Empty, Pending };
 
-        for (;;) {
-            slot = &slots_[pos & kMask];
+    /// CAS attempts a push makes before it reports Contended.
+    static constexpr unsigned kDefaultAttempts = 256;
+
+    /// A claimed slot, to be written and published by the producer that holds it.
+    struct Claim {
+        void* slot = nullptr;
+        std::uint64_t pos = 0;
+        [[nodiscard]] explicit operator bool() const noexcept { return slot != nullptr; }
+    };
+
+    /// Phase one: claim the next slot. SAFE FROM ANY NUMBER OF PRODUCER
+    /// THREADS. An empty Claim with `why` Full or Contended when there is none.
+    /// A claim MUST be published, promptly: until it is, the consumer waits
+    /// at it (head-of-line).
+    [[nodiscard]] ALTAIR_HOT Claim claim(Push* why = nullptr, unsigned max_attempts = kDefaultAttempts) noexcept {
+        std::uint64_t pos = tail_.load(std::memory_order_relaxed);
+        for (unsigned attempt = 0; attempt < max_attempts; ++attempt) {
+            Slot* slot = &slots_[pos & kMask];
             const std::uint64_t seq = slot->seq.load(std::memory_order_acquire);
             // SIGNED difference. Comparing the unsigned values directly
             // mis-orders across the 64-bit wrap.
@@ -73,25 +104,47 @@ public:
             if (dif == 0) {
                 if (tail_.compare_exchange_weak(pos, pos + 1,
                                                 std::memory_order_relaxed)) {
-                    break;                 // slot claimed
+                    if (why) *why = Push::Ok;
+                    return Claim{slot, pos};     // slot claimed
                 }
             } else if (dif < 0) {
-                return false;              // full
+                if (why) *why = Push::Full;
+                return {};
             } else {
                 pos = tail_.load(std::memory_order_relaxed);   // lost the race
             }
         }
-
-        slot->data = v;
-        // Release publishes the data write above.
-        slot->seq.store(pos + 1, std::memory_order_release);
-        return true;
+        if (why) *why = Push::Contended;
+        return {};
     }
 
-    /// Dequeue one element into `out`. CONSUMER THREAD ONLY.
-    /// UNIT: none. Returns false iff the ring is empty; `out` is untouched then.
-    /// PRECONDITION: called from exactly one thread, for the life of the ring.
-    [[nodiscard]] ALTAIR_HOT bool try_pop(T& out) noexcept {
+    /// Phase two: write the claimed slot and hand it to the consumer.
+    ALTAIR_HOT void publish(Claim c, const T& v) noexcept {
+        Slot* slot = static_cast<Slot*>(c.slot);
+        slot->data = v;
+        // Release publishes the data write above.
+        slot->seq.store(c.pos + 1, std::memory_order_release);
+    }
+
+    /// Enqueue one element: claim, write, publish. SAFE FROM ANY NUMBER OF
+    /// PRODUCER THREADS. Never blocks, never allocates, and gives up after
+    /// `max_attempts` lost CASes (Contended), so it is bounded.
+    [[nodiscard]] ALTAIR_HOT Push push(const T& v, unsigned max_attempts = kDefaultAttempts) noexcept {
+        Push why = Push::Ok;
+        const Claim c = claim(&why, max_attempts);
+        if (!c) return why;
+        publish(c, v);
+        return Push::Ok;
+    }
+
+    /// push() == Ok. False when full OR contended past the default bound.
+    [[nodiscard]] ALTAIR_HOT bool try_push(const T& v) noexcept { return push(v) == Push::Ok; }
+
+    /// Dequeue one element into `out`. CONSUMER THREAD ONLY. Empty when
+    /// nothing is claimed; Pending when the head slot is claimed but its
+    /// producer has not published it yet (later slots wait behind it).
+    /// `out` is untouched unless Ok.
+    [[nodiscard]] ALTAIR_HOT Pop pop(T& out) noexcept {
         const std::uint64_t pos = head_.load(std::memory_order_relaxed);
         Slot* slot = &slots_[pos & kMask];
         const std::uint64_t seq = slot->seq.load(std::memory_order_acquire);
@@ -99,15 +152,19 @@ public:
             static_cast<std::int64_t>(seq) - static_cast<std::int64_t>(pos + 1);
 
         if (dif != 0) {
-            return false;                  // empty (dif > 0 cannot happen here)
+            // Not published. Claimed (tail moved past it) or never claimed?
+            return tail_.load(std::memory_order_relaxed) > pos ? Pop::Pending : Pop::Empty;
         }
 
         head_.store(pos + 1, std::memory_order_relaxed);
         out = slot->data;
         // Re-arm the slot for the next lap around the ring.
         slot->seq.store(pos + Capacity, std::memory_order_release);
-        return true;
+        return Pop::Ok;
     }
+
+    /// pop() == Ok. CONSUMER THREAD ONLY.
+    [[nodiscard]] ALTAIR_HOT bool try_pop(T& out) noexcept { return pop(out) == Pop::Ok; }
 
     /// Slots in the ring. UNIT: elements.
     [[nodiscard]] static constexpr std::size_t capacity() noexcept { return Capacity; }

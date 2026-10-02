@@ -71,7 +71,7 @@ int main() {
     seeds.nifty = 24000; seeds.banknifty = 54000; seeds.vix = 13;
     const std::int64_t open_ns = (today * 86400 + 9 * 3600 + 15 * 60 - 19800) * 1'000'000'000LL;
     LiveSim sim(u, seeds, 7, open_ns);
-    sim.board([&](const LiveInstrument&, const LiveSimEvent& ev) { e.on_quote(ev.quote); });
+    sim.board([&](const LiveInstrument&, const LiveSimEvent& ev) { e.on_quote(ev.quote, open_ns); });
 
     // A positional holding in a future that expires today: rolled at 15:15.
     bool roll_opened = false, sq_seen = false, strangle_seen = false, pairs_seen = false;
@@ -79,9 +79,10 @@ int main() {
     std::string why_strangle;
     for (int step = 0; step < 6 * 3600 + 15 * 60; ++step) {   // one-second steps to 15:30
         sim.step(1'000'000'000, [&](const LiveInstrument&, const LiveSimEvent& ev) {
-            e.on_quote(ev.quote);
+            e.on_quote(ev.quote, sim.now_ns());
             if (ev.trade) e.on_trade(ev.price, ev.price.exchange_ts_ns);
         });
+        e.advance(sim.now_ns());   // the clock moves with the session even when nothing traded
         const int mod = live_minute_of_day(live_ist_minute_index(e.clock_ns()));
         if (!roll_opened && mod >= 9 * 60 + 30) {
             roll_opened = e.book().open("roll test", u[3], 1, 1, e.clock_ns(), "test", true);
@@ -140,16 +141,17 @@ int main() {
 
     // The stop: a strangle leg bought back at the first 5-minute close where it doubled.
     {
-        LiveEngine s(u, nullptr);
+        LiveEngine s(u, nullptr, LiveExecPolicy{0, 10'000'000'000LL, 60'000'000'000LL});   // no latency: fills at decision
         LiveVolInputs v{"NIFTY", 0.008, 0.75, 24000.0};
         s.add_model(std::make_unique<LiveStrangleModel>(v, 2.0));
         const auto put_q = [&](std::uint32_t tok, std::int64_t bid, std::int64_t ask, std::int64_t ns) {
-            QuotePayload q; q.token = tok; q.flags = kQuoteHasTop; q.bid = bid; q.ask = ask; s.on_quote(q);
+            QuotePayload q; q.token = tok; q.flags = kQuoteHasTop; q.bid = bid; q.ask = ask; q.bid_qty = 650; q.ask_qty = 650;
+            s.on_quote(q, ns);
             PricePayload p; p.token = tok; p.last_paise = (bid + ask) / 2; s.on_trade(p, ns);
         };
         const std::int64_t t0 = (today * 86400 + 9 * 3600 + 15 * 60 - 19800) * 1'000'000'000LL;
         put_q(kLiveNiftyToken, 2400000, 2400000, t0);
-        for (const auto& i : u) if (i.kind == LiveKind::Call || i.kind == LiveKind::Put) put_q(i.token, 5000, 5100, t0 + 1);
+        for (const auto& i : u) if (i.kind == LiveKind::Call || i.kind == LiveKind::Put) put_q(i.token, 5000, 5100, t0 + 299'000'000'000LL);
         put_q(kLiveNiftyToken, 2400000, 2400000, t0 + 300'000'000'000LL);   // 09:20: sells
         std::size_t legs = s.book().positions().size();
         check(legs == 2, "stop test: the strangle opened");
@@ -159,13 +161,17 @@ int main() {
         if (c != nullptr) {
             const std::uint32_t ct = c->inst.token;
             put_q(ct, 10500, 10600, t0 + 301'000'000'000LL);                       // the call's premium has doubled
+            for (const auto& p : s.book().positions())
+                if (p.inst.token != ct) put_q(p.inst.token, 5000, 5100, t0 + 599'000'000'000LL);
+            put_q(ct, 10500, 10600, t0 + 599'000'000'000LL);
             put_q(kLiveNiftyToken, 2400000, 2400000, t0 + 600'000'000'000LL);      // 09:25 close
             check(s.book().position("Strangle 80% NIFTY stop2x", ct) == nullptr, "a doubled leg is bought back at the 5-minute close");
             check(s.book().positions().size() == 1, "and the other leg stays sold");
             const auto& tr = s.book().trades();
             check(!tr.empty() && tr.back().exit == 106.0 && tr.back().why_out.find("stop") != std::string::npos,
                   "bought back at the ask, and the reason says stop");
-            check(!tr.empty() && !std::isfinite(tr.back().expenses), "with no cost function, expenses are unpriced (NaN), not zero");
+            check(!tr.empty() && !std::isfinite(tr.back().expenses) && !std::isfinite(tr.back().net),
+                  "with no cost function, expenses are unpriced (NaN) and so is net -- never zero");
         }
     }
 

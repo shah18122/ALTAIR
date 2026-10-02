@@ -76,6 +76,7 @@
 #endif
 
 #include <broker/https_client.hpp>   // detail::load_platform_roots
+#include <broker/ws_pump.hpp>
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/io_context.hpp>
@@ -236,7 +237,10 @@ struct TickerStats {
 };
 
 /// Connect, subscribe, and pump frames into `on_frame` until `should_stop`
-/// says otherwise or the deadline passes.
+/// says otherwise, `run_for` has passed, the server closes, or nothing at all
+/// (not even a heartbeat) has arrived for `idle_limit`. None of these waits
+/// for a frame to arrive first (broker/ws_pump.hpp): a stop is seen within a
+/// fraction of a second.
 ///
 /// `on_frame(const unsigned char* data, std::size_t len)` is called for every
 /// BINARY frame that is not a heartbeat. It is not called for text frames:
@@ -253,7 +257,8 @@ kite_ticker_run(std::string_view api_key, std::string_view access_token,
                 const std::function<void(const unsigned char*, std::size_t)>&
                     on_frame,
                 const std::function<bool()>& should_stop,
-                std::chrono::seconds read_timeout = std::chrono::seconds{60})
+                std::chrono::seconds run_for = std::chrono::seconds{60},
+                std::chrono::seconds idle_limit = std::chrono::seconds{30})
 {
     namespace beast = boost::beast;
     namespace websocket = beast::websocket;
@@ -322,49 +327,36 @@ kite_ticker_run(std::string_view api_key, std::string_view access_token,
         ws.text(false);
 
         TickerStats st{};
-        beast::flat_buffer buf;
-        const auto deadline = std::chrono::steady_clock::now() + read_timeout;
-
-        while (!should_stop()) {
-            buf.clear();
-            ws.read(buf, ec);
-            if (ec == websocket::error::closed) { break; }
-            if (ec) {
-                // A timeout with frames already delivered is a normal end to
-                // a bounded run; with none it is a feed that never spoke.
-                if (st.binary_frames == 0 && st.heartbeats == 0) {
-                    return std::unexpected(TickerError::Idle);
+        const auto end = ws_pump::run(
+            ioc, ws, std::chrono::steady_clock::now() + run_for,
+            std::chrono::duration_cast<std::chrono::milliseconds>(idle_limit), should_stop,
+            [&](const unsigned char* p, std::size_t n, bool binary) {
+                st.bytes += n;
+                if (!binary) {
+                    // Order updates and error JSON. Not ticks, and deliberately
+                    // not handed to the binary decoder.
+                    ++st.text_frames;
+                    return;
                 }
-                break;
-            }
-
-            const auto* p =
-                static_cast<const unsigned char*>(buf.data().data());
-            const std::size_t n = buf.size();
-            st.bytes += n;
-
-            if (!ws.got_binary()) {
-                // Order updates and error JSON. Not ticks, and deliberately
-                // not handed to the binary decoder.
-                ++st.text_frames;
-                continue;
-            }
-            // KITE'S HEARTBEAT IS A ONE-BYTE BINARY FRAME. The decoder would
-            // read its first two bytes as a packet count and run off the end
-            // of a one-byte buffer -- it returns ShortFrame rather than
-            // crashing, but counting a heartbeat as a failed decode makes a
-            // healthy idle feed look broken.
-            if (n <= 1) {
-                ++st.heartbeats;
-                continue;
-            }
-            ++st.binary_frames;
-            on_frame(p, n);
-
-            if (std::chrono::steady_clock::now() >= deadline) { break; }
+                // KITE'S HEARTBEAT IS A ONE-BYTE BINARY FRAME. The decoder would
+                // read its first two bytes as a packet count and run off the end
+                // of a one-byte buffer -- it returns ShortFrame rather than
+                // crashing, but counting a heartbeat as a failed decode makes a
+                // healthy idle feed look broken.
+                if (n <= 1) {
+                    ++st.heartbeats;
+                    return;
+                }
+                ++st.binary_frames;
+                on_frame(p, n);
+            });
+        // An end with frames already delivered is a normal end to a bounded
+        // run (the caller reconnects if it still wants more); with none, the
+        // feed never spoke.
+        if (st.binary_frames == 0 && st.heartbeats == 0) {
+            if (end == ws_pump::End::Idle) return std::unexpected(TickerError::Idle);
+            if (end == ws_pump::End::Error || end == ws_pump::End::Closed) return std::unexpected(TickerError::TransportFailed);
         }
-
-        ws.close(websocket::close_code::normal, ec);
         return st;
     } catch (const boost::system::system_error&) {
         return std::unexpected(TickerError::TransportFailed);

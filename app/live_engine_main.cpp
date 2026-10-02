@@ -1,6 +1,8 @@
 // app/live_engine_main.cpp -- altair_live_engine: the models, live, paper-trading.
 //
 //     altair_live_engine [--port 7421] [--until HH:MM] [--seconds N] [--root DIR] [--unverified-costs]
+//                        [--latency-ms 250] [--quote-age-s 10] [--entry-timeout-s 60]
+//                        [--max-positions 80] [--max-gross 1e8] [--max-daily-loss 2e5]
 //
 // Subscribes to altair_price_service (FYERS live, or --sim), builds bars from
 // the ticks, runs every live model on them and paper-trades their signals:
@@ -14,10 +16,23 @@
 // WHAT IT WRITES (data/live/, git-ignored):
 //   engine_state.json          every second: each model's state, signal and reason,
 //                              and the open positions -- the desktop's Live Models page
+//   paper/journal.csv          THE RECORD: every fill, appended and flushed; a restart
+//                              rebuilds the book from it
 //   paper/trades.csv           every round trip: model, instrument, side, quantity,
 //                              entry and exit, gross, expenses, net, why in, why out
 //   paper/fills.csv            every fill, at the bid or ask it dealt at
-//   paper/open_positions.csv   what is held, so the next run resumes carried positions
+//   paper/open_positions.csv   what is held, for people (replaced in one step)
+//   paper/engine.lock          held while running: one engine per ledger
+//
+// ORDERS FILL LIKE ORDERS (live/paper.hpp): after --latency-ms, against a quote
+// no older than --quote-age-s, at the touch, for the size shown; an entry not
+// filled in --entry-timeout-s is cancelled (and its other legs unwound); an
+// exit works until it fills. Every entry passes one risk check (live/engine.hpp):
+// the limits above, a stale feed, a trade gap, a ledger that cannot be written,
+// and data/kill_request.json (the desktop's Kill Switch) all refuse new entries.
+//
+// A WRITE IS DONE WHEN THE FILE SAYS SO. Rows that fail to append are kept and
+// retried, and until they land the engine is halted: no new entries.
 //
 // EXPENSES come from config/charges.toml through risk/cost.hpp (app/demo_costs.hpp),
 // on every fill -- refused while that file is unverified, like every research
@@ -32,7 +47,10 @@
 #include <app/forecast_tracks.hpp>
 #include <app/live_direction.hpp>
 #include <analytics/har_rv.hpp>
+#include <app/live_feed_reader.hpp>
 #include <live/engine.hpp>
+#include <live/feed_consumer.hpp>
+#include <live/file_lock.hpp>
 #include <live/models.hpp>
 #include <live/universe.hpp>
 #include <risk/charges_toml.hpp>
@@ -52,6 +70,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -213,24 +232,30 @@ struct DayRv { std::int64_t day = 0; double rv = 0.0, gap2 = 0.0, close = 0.0; }
     return in;
 }
 
-/// Append rows to a CSV, writing the header when the file is new.
-void append_csv(const fs::path& path, const char* header, const std::vector<std::string>& rows) {
-    if (rows.empty()) return;
-    const bool fresh = !fs::exists(path);
-    std::ofstream f(path, std::ios::app | std::ios::binary);
-    if (fresh) f << header << '\n';
-    for (const auto& r : rows) f << r << '\n';
-}
+/// Rows waiting to reach one CSV: appended, flushed and checked; on failure
+/// they stay queued for the next attempt.
+struct PendingCsv {
+    fs::path path;
+    const char* header = "";
+    std::vector<std::string> rows;
+    bool flush() {
+        if (rows.empty()) return true;
+        if (!lv::live_append_rows(path.string(), header, rows)) return false;
+        rows.clear();
+        return true;
+    }
+};
 
-void write_atomic(const fs::path& path, const std::string& body) {
+bool write_atomic(const fs::path& path, const std::string& body) {
     const fs::path tmp = path.string() + ".tmp";
     {
-        std::ofstream f(tmp, std::ios::binary);
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return false;
         f << body;
+        f.flush();
+        if (!f) return false;
     }
-    std::error_code ec;
-    fs::rename(tmp, path, ec);
-    if (ec) { fs::remove(path, ec); fs::rename(tmp, path, ec); }
+    return lv::live_replace_file(tmp.string(), path.string());
 }
 
 void usage(const char* exe) {
@@ -244,9 +269,16 @@ void usage(const char* exe) {
         "    --unverified-costs  price expenses from config/charges.toml although it is UNVERIFIED;\n"
         "               every expense and net figure is then marked UNVERIFIED\n"
         "    --date     the day being traded, for a simulated past day (--sim --date): history\n"
-        "               stops the day before it\n\n"
+        "               stops the day before it\n"
+        "    --latency-ms N       decision to order at the market (default 250)\n"
+        "    --quote-age-s N      a quote older than this is not executable (default 10)\n"
+        "    --entry-timeout-s N  an entry not filled by then is cancelled (default 60)\n"
+        "    --max-positions N    held or working, all models (default 80)\n"
+        "    --max-gross RUPEES   gross notional of everything held or working (default 1e8)\n"
+        "    --max-daily-loss RUPEES  no new entries past this loss today (default 2e5)\n\n"
         "  Start the feed first: altair_price_service --live --go (FYERS, else Kite) or --sim.\n"
-        "  Writes data/live/engine_state.json and data/live/paper/*.csv. Places no orders.\n",
+        "  Writes data/live/engine_state.json and data/live/paper/*.csv. Places no orders.\n"
+        "  New entries stop while data/kill_request.json exists (the desktop's Kill Switch).\n",
         exe);
 }
 
@@ -257,6 +289,8 @@ int main(int argc, char** argv) {
     int until = 15 * 60 + 35, seconds = 0;
     bool unverified_costs = false;
     std::string date;   // a simulated past day (altair_price_service --sim --date)
+    lv::LiveExecPolicy policy;
+    lv::LiveRiskLimits limits;
     fs::path root = ALTAIR_SOURCE_DIR;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -268,11 +302,22 @@ int main(int argc, char** argv) {
         if (a == "--root" && has) { root = argv[++i]; continue; }
         if (a == "--unverified-costs") { unverified_costs = true; continue; }
         if (a == "--date" && has) { date = argv[++i]; continue; }
+        if (a == "--latency-ms" && has) { policy.latency_ns = std::atoll(argv[++i]) * 1'000'000LL; continue; }
+        if (a == "--quote-age-s" && has) { policy.max_quote_age_ns = static_cast<std::int64_t>(std::atof(argv[++i]) * 1e9); continue; }
+        if (a == "--entry-timeout-s" && has) { policy.entry_timeout_ns = static_cast<std::int64_t>(std::atof(argv[++i]) * 1e9); continue; }
+        if (a == "--max-positions" && has) { limits.max_positions = static_cast<std::size_t>(std::atoll(argv[++i])); continue; }
+        if (a == "--max-gross" && has) { limits.max_gross_notional = std::atof(argv[++i]); continue; }
+        if (a == "--max-daily-loss" && has) { limits.max_daily_loss = std::atof(argv[++i]); continue; }
         std::printf("unknown argument %s\n", a.c_str());
         usage(argv[0]);
         return 2;
     }
     if (until < 0) { std::printf("--until must be HH:MM\n"); return 2; }
+    if (policy.latency_ns < 0 || policy.max_quote_age_ns <= 0 || policy.entry_timeout_ns <= 0 || limits.max_positions == 0
+        || !(limits.max_gross_notional > 0.0) || !(limits.max_daily_loss > 0.0)) {
+        std::printf("--latency-ms must be >= 0; the ages, timeout and limits must be > 0\n");
+        return 2;
+    }
     if (!date.empty() && lv::parse_day(date) == 0) { std::printf("--date must be YYYY-MM-DD\n"); return 2; }
     // History stops the day before the session being traded: today, or the
     // simulated day.
@@ -280,6 +325,12 @@ int main(int argc, char** argv) {
     const fs::path live_dir = root / "data/live", paper_dir = live_dir / "paper";
     std::error_code ec;
     fs::create_directories(paper_dir, ec);
+    // One engine per ledger: a second one would interleave the journal.
+    const lv::LiveFileLock lock((paper_dir / "engine.lock").string());
+    if (!lock.held()) {
+        std::printf("refused: %s -- is another altair_live_engine running on this tree?\n", lock.why().c_str());
+        return 3;
+    }
 
     // ---- the universe the feed streams -----------------------------------
     const auto universe = lv::read_universe((live_dir / "universe.csv").string());
@@ -370,7 +421,8 @@ int main(int argc, char** argv) {
     }
 
     // ---- the engine --------------------------------------------------------
-    lv::LiveEngine engine(universe, cost);
+    lv::LiveEngine engine(universe, cost, policy);
+    engine.set_limits(limits);
     engine.add_model(std::make_unique<lv::LiveVolBandModel>(std::vector<lv::LiveVolInputs>{nv, bv}, rmean, rsd));
     engine.add_model(std::make_unique<lv::LiveStrangleModel>(nv, 0.0));
     engine.add_model(std::make_unique<lv::LiveStrangleModel>(nv, 2.0));
@@ -382,10 +434,19 @@ int main(int argc, char** argv) {
     engine.add_model(std::make_unique<lv::LivePairsModel>(pf));
     engine.add_model(std::make_unique<lv::LiveStatArbModel>(std::move(sa)));
 
-    // Carried positions from the last run. An intraday one from an earlier day
-    // was left open by an engine that stopped before 15:20: reported, not resumed.
+    // Carried positions from the last run, rebuilt from the journal (the
+    // record); a tree from before the journal falls back to the snapshot. An
+    // intraday one from an earlier day was left open by an engine that stopped
+    // before 15:20: reported, not resumed.
     std::vector<std::string> orphans;
-    for (const auto& p : lv::live_read_positions((paper_dir / "open_positions.csv").string(), universe, orphans)) {
+    const fs::path journal = paper_dir / "journal.csv";
+    std::size_t journal_rows = 0;
+    const bool have_journal = fs::exists(journal);
+    const auto resumed = have_journal ? lv::live_replay_journal(journal.string(), universe, orphans, &journal_rows)
+                                      : lv::live_read_positions((paper_dir / "open_positions.csv").string(), universe, orphans);
+    std::printf("resuming from %s: %zu position(s)%s\n", have_journal ? "paper/journal.csv" : "paper/open_positions.csv",
+                resumed.size(), have_journal ? (" (" + std::to_string(journal_rows) + " fills)").c_str() : "");
+    for (const auto& p : resumed) {
         const std::int64_t d = lv::live_day_of(lv::live_ist_minute_index(p.entry_ns));
         if (!p.carry && d != today) { orphans.push_back(p.model + " " + p.inst.symbol + " (intraday, " + lv::day_text(d) + ")"); continue; }
         engine.book().restore(p);
@@ -404,25 +465,50 @@ int main(int argc, char** argv) {
         const std::int64_t c = engine.clock_ns();
         return c > 0 && c >= (engine.today() * 86400 + static_cast<std::int64_t>(until) * 60 - 19800) * 1'000'000'000LL;
     };
-    boost::asio::io_context io;
-    boost::asio::ip::tcp::socket sock(io);
+    // The socket is drained on its own thread (app/live_feed_reader.hpp): a
+    // slow minute here never makes the bus drop frames for this reader.
+    altair::live_feed::FeedReader reader(port);
     bool connected = false;
     std::vector<std::uint8_t> buf;
     buf.reserve(1 << 20);
-    std::uint8_t chunk[65536];
-    auto last_connect = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     auto last_frame = std::chrono::steady_clock::now();
     auto last_write = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     std::uint64_t frames = 0;
+    lv::LiveFeedConsumer consumer(engine);
     const char* kTradesHeader = "date,model,symbol,token,side,qty,entry_time,entry,exit_time,exit,gross,expenses,net,why_in,why_out,source,costs";
     const char* kFillsHeader = "time,model,symbol,token,side,qty,price,expenses,at_quote,reason,source,costs";
     std::printf("engine on 127.0.0.1:%u until %s IST -- %zu models, %zu instruments\n", static_cast<unsigned>(port),
                 lv::live_fmt::hhmm(until).c_str(), engine.models().size(), universe.size());
     std::fflush(stdout);
 
+    PendingCsv journal_out{journal, lv::kLiveJournalHeader, {}};
+    PendingCsv trades_out{paper_dir / "trades.csv", kTradesHeader, {}};
+    PendingCsv fills_out{paper_dir / "fills.csv", kFillsHeader, {}};
+    if (!have_journal) {
+        // The first run with a journal: the snapshot's positions become its
+        // opening rows, so the next restart has them on the record.
+        for (const auto& p : engine.book().held()) {
+            lv::LivePaperFill f;
+            f.model = p.model; f.token = p.inst.token; f.symbol = p.inst.symbol; f.side = p.side; f.qty = p.qty;
+            f.price = p.entry; f.expenses = p.entry_expenses; f.ns = p.entry_ns; f.submit_ns = p.decided_ns;
+            f.reason = p.why_in; f.role = lv::LiveFillRole::Open; f.carry = p.carry;
+            journal_out.rows.push_back(lv::live_journal_row(f));
+        }
+    }
+    std::deque<std::string> events;   // the last few cancellations, for the page
+    const fs::path kill_file = root / "data/kill_request.json";
+    bool positions_dirty = true;
+
     const auto flush_outputs = [&] {
         const std::string src = engine.simulated() ? "SIM" : "LIVE";
-        std::vector<std::string> rows;
+        for (const auto& f : engine.take_new_fills()) {
+            journal_out.rows.push_back(lv::live_journal_row(f));
+            fills_out.rows.push_back(ist_stamp(f.ns) + ",\"" + f.model + "\"," + f.symbol + "," + std::to_string(f.token) + ","
+                           + (f.side > 0 ? "buy" : "sell") + "," + std::to_string(f.qty) + "," + lv::live_fmt::num(f.price) + ","
+                           + (std::isfinite(f.expenses) ? lv::live_fmt::num(f.expenses) : "") + "," + (f.at_quote ? "1" : "0")
+                           + ",\"" + f.reason + "\"," + src + "," + costs_label);
+        }
+        auto& rows = trades_out.rows;
         for (const auto& t : engine.take_new_trades()) {
             const auto q = [](const std::string& s) { return "\"" + s + "\""; };
             rows.push_back(lv::day_text(lv::live_day_of(lv::live_ist_minute_index(t.exit_ns))) + "," + q(t.model) + "," + t.symbol
@@ -433,81 +519,106 @@ int main(int argc, char** argv) {
                            + (std::isfinite(t.net) ? lv::live_fmt::num(t.net) : "") + "," + q(t.why_in) + "," + q(t.why_out)
                            + "," + src + "," + costs_label);
         }
-        append_csv(paper_dir / "trades.csv", kTradesHeader, rows);
-        rows.clear();
-        for (const auto& f : engine.take_new_fills()) {
-            rows.push_back(ist_stamp(f.ns) + ",\"" + f.model + "\"," + f.symbol + "," + std::to_string(f.token) + ","
-                           + (f.side > 0 ? "buy" : "sell") + "," + std::to_string(f.qty) + "," + lv::live_fmt::num(f.price) + ","
-                           + (std::isfinite(f.expenses) ? lv::live_fmt::num(f.expenses) : "") + "," + (f.at_quote ? "1" : "0")
-                           + ",\"" + f.reason + "\"," + src + "," + costs_label);
+        for (auto& c : engine.book().take_cancelled()) {
+            std::printf("  %s\n", c.c_str());
+            events.push_back(std::move(c));
+            if (events.size() > 5) events.pop_front();
         }
-        append_csv(paper_dir / "fills.csv", kFillsHeader, rows);
-        if (engine.take_positions_changed())
-            (void)lv::live_write_positions((paper_dir / "open_positions.csv").string(), engine.book().positions());
-        write_atomic(live_dir / "engine_state.json", engine.state_json(note + (connected ? "" : " Not connected to the price service.")));
+        // The journal first: it is the record. Then the views of it.
+        std::string failed;
+        if (!journal_out.flush()) failed = journal_out.path.string();
+        if (!trades_out.flush() && failed.empty()) failed = trades_out.path.string();
+        if (!fills_out.flush() && failed.empty()) failed = fills_out.path.string();
+        positions_dirty = engine.take_positions_changed() || positions_dirty;
+        if (positions_dirty) {
+            if (lv::live_write_positions((paper_dir / "open_positions.csv").string(), engine.book().held())) positions_dirty = false;
+            else if (failed.empty()) failed = (paper_dir / "open_positions.csv").string();
+        }
+        if (!failed.empty()) {
+            if (engine.halt().empty()) std::printf("HALTED: cannot write %s; rows kept, retrying every second\n", failed.c_str());
+            engine.set_halt("cannot write " + failed + " (rows kept; retrying)");
+        } else if (!engine.halt().empty()) {
+            std::printf("ledger writes resumed\n");
+            engine.set_halt({});
+        }
+        std::error_code kec;
+        engine.set_kill(fs::exists(kill_file, kec));
+        std::string page = note;
+        for (const auto& e : events) page += " " + e + ".";
+        if (!connected) page += " Not connected to the price service.";
+        (void)write_atomic(live_dir / "engine_state.json", engine.state_json(page));
+        std::fflush(stdout);
     };
 
+    bool resync = false;   // the stream lost its framing: skip to the next connection
     while (!g_stop.load() && unix_now() < deadline && !past_until()) {
-        const auto now = std::chrono::steady_clock::now();
-        if (!connected && now - last_connect > std::chrono::seconds(2)) {
-            last_connect = now;
-            boost::system::error_code e2;
-            sock = boost::asio::ip::tcp::socket(io);
-            sock.connect({boost::asio::ip::make_address("127.0.0.1"), port}, e2);
-            if (!e2) {
-                sock.non_blocking(true, e2);
+        bool got = false;
+        for (auto& ev : reader.take(std::chrono::milliseconds(5))) {
+            if (ev.kind == altair::live_feed::FeedEvent::Connected) {
+                resync = false;
                 connected = true;
                 buf.clear();
-                last_frame = now;
+                consumer.on_reconnect();
+                last_frame = std::chrono::steady_clock::now();
                 std::printf("connected to the price service\n");
                 std::fflush(stdout);
+                continue;
             }
-        }
-        bool got = false;
-        if (connected) {
-            boost::system::error_code e2;
-            const std::size_t n = sock.read_some(boost::asio::buffer(chunk), e2);
-            if (e2 == boost::asio::error::would_block || e2 == boost::asio::error::try_again) {
-                // nothing yet
-            } else if (e2) {
+            if (ev.kind == altair::live_feed::FeedEvent::Disconnected) {
                 connected = false;
-                std::printf("price service went away: %s\n", e2.message().c_str());
+                buf.clear();
+                std::printf("price service went away: %s\n", ev.note.c_str());
                 std::fflush(stdout);
-            } else {
-                got = n > 0;
-                buf.insert(buf.end(), chunk, chunk + n);
+                continue;
             }
+            if (resync) continue;
+            got = got || !ev.bytes.empty();
+            buf.insert(buf.end(), ev.bytes.begin(), ev.bytes.end());
         }
+        const auto now = std::chrono::steady_clock::now();
         std::size_t at = 0;
         while (buf.size() - at >= altair::kFrameHeaderBytes) {
             const auto h = altair::decode_header(buf.data() + at, buf.size() - at);
-            if (!h) { connected = false; buf.clear(); at = 0; sock.close(); std::printf("stream misaligned; reconnecting\n"); break; }
+            if (!h) {
+                // Not frame-aligned and not recoverable by guessing: drop what is buffered and
+                // treat it as a gap (the consumer's next frame is checked against the last seen).
+                buf.clear(); at = 0; resync = true;
+                reader.reconnect();
+                std::printf("stream misaligned; reconnecting\n");
+                break;
+            }
             const std::size_t need = altair::kFrameHeaderBytes + h->payload_len;
             if (buf.size() - at < need) break;
-            const std::uint8_t* body = buf.data() + at + altair::kFrameHeaderBytes;
-            if (h->topic == altair::kTopicQuote) {
-                if (const auto q = altair::decode_quote(body, h->payload_len)) engine.on_quote(*q);
-            } else if (h->topic == altair::kTopicTrades) {
-                if (const auto p = altair::decode_price(body, h->payload_len))
-                    engine.on_trade(p->payload, p->payload.exchange_ts_ns > 0 ? p->payload.exchange_ts_ns : h->engine_time_ns);
-            }
+            (void)consumer.on_frame(*h, buf.data() + at + altair::kFrameHeaderBytes);
             ++frames;
             at += need;
         }
         if (at > 0) buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(at));
         if (got) last_frame = now;
         engine.set_stale(!connected || now - last_frame > std::chrono::seconds(30));
+        // The feed's clock stops with the feed; the exits it owes do not wait for it.
+        engine.watchdog(unix_now() * 1'000'000'000LL);
         if (now - last_write >= std::chrono::seconds(1)) {
             last_write = now;
             flush_outputs();
         }
-        if (!got) std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     flush_outputs();
-    double net = 0.0, gross = 0.0, exp = 0.0;
-    for (const auto& t : engine.book().trades()) { gross += t.gross; exp += std::isfinite(t.expenses) ? t.expenses : 0.0; net = gross - exp; }
-    std::printf("stopped: %llu frames, %zu round trips (gross %.0f, expenses %.0f, net %.0f), %zu open\n",
-                static_cast<unsigned long long>(frames), engine.book().trades().size(), gross, exp, net,
-                engine.book().positions().size());
+    double gross = 0.0, exp = 0.0;
+    std::size_t unpriced = 0;
+    for (const auto& t : engine.book().trades()) {
+        gross += t.gross;
+        if (std::isfinite(t.expenses)) exp += t.expenses; else ++unpriced;
+    }
+    // An unpriced expense is not zero: with one, there is no net to report.
+    char net_text[96];
+    if (unpriced == 0) std::snprintf(net_text, sizeof net_text, "net %.0f", gross - exp);
+    else std::snprintf(net_text, sizeof net_text, "net unavailable: %zu round trip(s) unpriced", unpriced);
+    std::printf("stopped: %llu frames (%llu trade frames missed), %zu round trips (gross %.0f, expenses %s, %s), %zu open, "
+                "%zu working order(s)\n",
+                static_cast<unsigned long long>(frames), static_cast<unsigned long long>(consumer.missed(altair::kTopicTrades)),
+                engine.book().trades().size(), gross, unpriced == 0 ? lv::live_fmt::num(exp, 0).c_str() : "incomplete",
+                net_text, engine.book().positions().size(), engine.book().working_orders());
+    if (!engine.halt().empty()) { std::printf("UNWRITTEN ROWS REMAIN: %s\n", engine.halt().c_str()); return 4; }
     return 0;
 }

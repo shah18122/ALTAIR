@@ -81,6 +81,30 @@ void test_mpsc_fill_and_drain()
     check(!r.try_pop(v), "empty after full drain");
 }
 
+void test_mpsc_head_of_line_and_bounds()
+{
+    using R = MpscRing<int, 8>;
+    R r;
+    int v = 0;
+    check(r.pop(v) == R::Pop::Empty, "an untouched ring is Empty");
+    R::Push why = R::Push::Full;
+    const R::Claim a = r.claim(&why);
+    check(static_cast<bool>(a) && why == R::Push::Ok, "producer A claims the head slot");
+    check(r.push(2) == R::Push::Ok, "producer B pushes behind it");
+    check(r.pop(v) == R::Pop::Pending && v == 0,
+          "the consumer sees Pending, not Empty: the head is claimed, unpublished");
+    check(r.pop(v) == R::Pop::Pending, "and does not skip ahead to B: FIFO holds");
+    r.publish(a, 1);
+    check(r.pop(v) == R::Pop::Ok && v == 1, "A's value, once published");
+    check(r.pop(v) == R::Pop::Ok && v == 2, "then B's");
+    check(r.pop(v) == R::Pop::Empty, "then Empty");
+
+    check(r.push(9, 0) == R::Push::Contended,
+          "a push with no attempts left returns Contended instead of spinning");
+    for (int k = 0; k < 8; ++k) (void)r.push(k);
+    check(r.push(99) == R::Push::Full, "a full ring says Full, which is not Contended");
+}
+
 void test_mpsc_multi_producer_stress()
 {
     constexpr int kProducers = 4;
@@ -181,6 +205,7 @@ int main()
     test_mpsc_layout_and_traits();
     test_mpsc_single_thread_fifo();
     test_mpsc_fill_and_drain();
+    test_mpsc_head_of_line_and_bounds();
     test_mpsc_multi_producer_stress();
 
     report_throughput();

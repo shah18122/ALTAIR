@@ -47,6 +47,8 @@ altair_price_service --live --go       # live, FYERS else Kite, until 15:35 IST 
 altair_price_service --fyers --go      # FYERS only        (--kite --go: Kite only)
 altair_price_service --sim --date 2026-09-24 --from 10:00 --speed 30   # that day, simulated, 30x
 altair_live_engine [--unverified-costs] [--date 2026-09-24]   # stops when the feed's clock passes 15:35
+altair_live_engine --latency-ms 250 --quote-age-s 10 --entry-timeout-s 60 \
+                   --max-positions 80 --max-gross 1e8 --max-daily-loss 2e5   # the defaults, spelt out
 ```
 
 Credentials:
@@ -95,20 +97,34 @@ Credentials:
 
 ### Paper orders
 
-- **MKT** fills at once: a buy at the ask, a sell at the bid. With no quote yet,
-  it waits for one. An index is refused.
-- **LMT** rests until the book crosses it, then fills at that ask or bid. It
-  never fills at a price the book did not show.
+- **Fills follow the market, not the last trade.** An order meets the market
+  250 ms after it is placed, on the feed's clock, and fills only against a
+  **fresh** quote: one stamped within 10 s of the feed's clock, from a feed that
+  is still updating. It is never filled at the last trade.
+- **MKT** takes the ask (buy) or the bid (sell). It walks the five-level book
+  when that is fresh, and fills no more than the size shown. The rest keeps
+  working, and the order book shows filled/qty and the average price. With no
+  fresh bid or ask, a market order is **rejected**, and the reason gives the
+  quote's age. An index is refused.
+- **LMT** rests until the book crosses it, then takes only the levels inside
+  the limit. It never fills at a price the book did not show.
 - Quantity is whole lots and a limit is on the tick; anything else is refused,
   and the refusal is in the order book.
 - **Positions** net per scrip and product. Realised P&L is taken on what
-  closes, and the open part is marked tick by tick: a long at the bid, a short
-  at the ask. **Square off** sends a paper market order for the net quantity.
+  closes. The open part is marked at a fresh bid (long) or ask (short). With
+  no fresh quote it is **unmarked**, and its net is shown as unavailable.
+  **Square off** sends a paper market order for the net quantity.
 - **Expenses** are charged per fill through `risk/cost.hpp` (brokerage as in
-  the demos). Unpriced is shown as unpriced, not zero.
+  the demos). Unpriced is shown as unpriced, not zero. A net that would need an
+  unpriced expense is shown as **unavailable**, not as gross P&L.
 - **Persistence:** `data/live/paper/manual_orders.csv` (an event log) and
-  `manual_trades.csv`. A restart rebuilds the book. A day order left open from
-  an earlier day shows as expired.
+  `manual_trades.csv`, appended and flushed.
+  - A restart rebuilds the book.
+  - A day order left open from an earlier day shows as expired.
+  - Only one Altair window writes the book (`manual.lock`). A second window
+    refuses orders and says why.
+  - If a write fails, new orders are refused and the message log says which
+    file.
 
 ## What streams
 
@@ -131,8 +147,23 @@ That is about 320 symbols, well under FYERS' 5,000 per socket.
 - **ATM:** fixed when the feed starts, from a FYERS quote (falling back to the last
   close in `dataset/`). ±20 strikes leaves room for a 2-3 % day. Beyond that,
   restart the feed.
-- **Late joiners:** a terminal that connects mid-session gets the whole board
-  replayed at once, so no illiquid strike sits blank until it next trades.
+- **Late joiners:** a terminal that connects mid-session gets the whole board at
+  once, so no illiquid strike sits blank until it next trades.
+  - The board is sent as **Snapshot** frames to that terminal alone, stamped
+    with the stream's current sequence number.
+  - Terminals already connected never see them. To a running terminal, a
+    replayed trade would look like a fresh print.
+- **One thread owns the bus.** Sources (FYERS, Kite, SIM) push each update
+  into a ring. The bus's thread publishes, accepts subscribers and flushes;
+  there is no lock on the path.
+  - A full ring makes the source wait. It never drops.
+  - A slow *subscriber* is coalesced by the bus (oldest frames first) and sees
+    a sequence gap.
+- **Kite reads never block a stop.** The ticker reads asynchronously in short
+  slices (`broker/ws_pump.hpp`).
+  - A stop, the session's end, or 30 s with no frame at all (not even a
+    heartbeat) ends a read at once.
+  - The feed reconnects if the session isn't over. It used to stop after 60 s.
 
 Each instrument carries three frame types:
 - trade: LTP, last quantity, volume and OI;
@@ -173,7 +204,7 @@ says so.
 | Vol band (HAR) | HAR forecast of today's σ, realised so far, the 80 % close band and the BANKNIFTY/NIFTY ratio z, recomputed every minute | trades nothing |
 | Strangle 80% NIFTY / BANKNIFTY | at 09:20, sell the 80 % band's two edges (nearest streamed expiry, one lot each, at the bid) | intraday, out at 15:20 |
 | … stop2x | the same, buying a leg back at the first 5-minute close where its premium doubled | intraday |
-| Direction 10:15 AR(2), ARMA(1,1), Logistic, Ridge, GBDT, Vote | at 10:15, forecast 10:15-to-close; trade one NIFTY future lot only if (2q−1)·E\|r\| beats the round-trip cost | intraday |
+| Direction 10:15 AR(2), ARMA(1,1), Logistic, Ridge, GBDT, Vote | at 10:15, forecast 10:15 to the 15:20 square-off; trade one NIFTY future lot only if (2q−1)·E\|r\| beats the round-trip cost | intraday |
 | Pairs BANKNIFTY/NIFTY | 250-day spread; at 15:15, in at \|z\| ≥ 2, out at ≤ 0.5, stop at 4 | carried, rolled on expiry |
 | Stat-arb NIFTY 50 | Avellaneda-Lee s-scores with today's return as the last day; at 15:15, open at ±1.25; one lot of each stock future | carried, rolled, out after 60 sessions |
 
@@ -183,24 +214,75 @@ model came close. The 10:15-to-close track is the one the research shortlisted.
 - q is not the model's own stated probability. It comes from a walk-forward
   calibration of the model's past calls (three years of 5-minute history,
   re-walked at every start).
-- E|r| is the history's sd of 10:15-to-close returns, scaled by today's HAR
+- E|r| is the history's sd of 10:15-to-15:20 returns, scaled by today's HAR
   volatility, times √(2/π).
 - When the gate stays shut, the row says by how many basis points.
 
-**Paper fills.**
-- A buy fills at the ask and a sell at the bid, from the quote in force. With no
-  quote it fills at the last trade, and the fill says so.
-- Every fill is charged through `risk/cost.hpp`.
-- Every round trip records the model, gross, expenses, net, why it was opened and
-  why it was closed.
-- Open positions are marked tick by tick: a long at the bid, a short at the ask.
+**Paper fills** (`live/paper.hpp`). A decision becomes a working order.
+- It meets the market `--latency-ms` (250) after the decision.
+- It fills only against a quote no older than `--quote-age-s` (10), at the
+  touch: a buy at the ask, a sell at the bid. It walks the five-level book when
+  that is fresh.
+- It fills no more than the size shown. The rest keeps working, as a partial
+  fill.
+- It is **never filled at the last trade**. With no executable quote, an
+  entry is refused or keeps working.
+- **Entries time out.** An entry not filled within `--entry-timeout-s` (60) is
+  cancelled. If it was one leg of a decision (a strangle or a pair), the legs
+  that did fill are unwound, so no leg is left on alone.
+- **Exits never expire.** An exit works until it fills, however long the
+  market stays unquoted. The page shows the position as *closing*, since when
+  and why.
+- Every fill is charged through `risk/cost.hpp`. A round trip with an unpriced
+  fill has **no net**: the trade row leaves it blank, and the summary says
+  "net unavailable".
+- Open positions are marked at a fresh bid (long) or ask (short). With no fresh
+  quote they are not marked.
+
+**One risk check before every entry.** An entry is refused when any of these
+holds:
+- the feed is stale;
+- decisions are paused after a trade gap;
+- the ledger can't be written;
+- `data/kill_request.json` exists (the desktop's Kill Switch);
+- it is an intraday entry after 15:20;
+- the position count (`--max-positions`, also 60 per model) would be exceeded;
+- the gross notional (`--max-gross`) would be exceeded;
+- today's loss is past `--max-daily-loss`.
+
+**Exits are never refused.**
 
 **Clock and schedule.**
-- Everything runs on the feed's own time stamps, never the wall clock. That is why a
-  simulated session at 30× decides exactly as a live one would.
-- 15:15 rolls carried positions whose contract expires that day; 15:20 squares off
-  intraday ones.
-- No new position opens while the feed is stale (30 s without a frame).
+- **The feed's clock.** Everything runs on the feed's own time stamps, never
+  the wall clock. That is why a simulated session at 30× decides exactly as a
+  live one would.
+- **Roll and square-off.** 15:15 rolls carried positions whose contract expires
+  that day; 15:20 squares off intraday ones.
+  - These are **obligations**, not moments. They run on the first minute at or
+    after their time, so a feed that jumps from 14:40 to 15:25 still rolls and
+    squares off (the reason says "overdue").
+  - The square-off is re-checked every minute after 15:20.
+  - If the feed stops, its clock stops too. A **watchdog** on the machine's
+    clock (live feeds only) submits the overdue exits, and they fill as soon as
+    quotes return.
+- **The clock moves before a tick is used.** The clock advances to a trade's
+  time first: the previous minute closes and its models decide, and a new
+  session resets. Only then does the trade enter its bar.
+  - A late print for a minute already closed is refused and counted. It is
+    never written into history.
+- **Trade gaps pause decisions.** A lost trade frame means today's bars are
+  incomplete: a sequence jump, or trades that went by while the engine was
+  reconnecting.
+  - No model decides until one whole clean minute has passed. Obligations still
+    run.
+  - Snapshot frames (a late joiner's baseline) set prices but never enter a bar.
+- **The engine's socket is read on its own thread** (`app/live_feed_reader.hpp`),
+  so a slow minute in a model never makes the bus drop frames for it.
+- **Staleness.** No new position opens while the feed is stale (30 s without a
+  frame).
+- **Direction models trade the horizon they were trained on.** They are trained
+  and calibrated on 10:15 to the **15:20** close (`SessionInputs::exit_minute`),
+  the square-off they are held to, not 15:30.
 
 ## Files (`data/live/`, git-ignored)
 
@@ -213,9 +295,20 @@ model came close. The 10:15-to-close track is the one the research shortlisted.
 | `paper/manual_orders.csv` | Terminal | every paper order and each change of state (+ / − orders) |
 | `paper/manual_trades.csv` | Terminal | every paper fill, at the bid or ask it dealt at, with expenses |
 | `engine_state.json` | engine, every second | each model's state, signal and reason, and the open positions |
-| `paper/trades.csv` | engine | every round trip: date, model, symbol, side, qty, entry and exit, gross, expenses, net, why in, why out, LIVE/SIM, VERIFIED/UNVERIFIED/UNPRICED |
+| `paper/journal.csv` | engine | **the record**: every fill (open or close, quantity, price, expenses, decision time), appended and flushed. A restart rebuilds the book from it. A tree from before the journal resumes once from `open_positions.csv`, and those positions become the journal's first rows |
+| `paper/trades.csv` | engine | every round trip: date, model, symbol, side, qty, entry and exit, gross, expenses, net (blank when unpriced), why in, why out, LIVE/SIM, VERIFIED/UNVERIFIED/UNPRICED |
 | `paper/fills.csv` | engine | every fill, at the bid or ask it dealt at |
-| `paper/open_positions.csv` | engine | what is held; carried positions resume on the next run |
+| `paper/open_positions.csv` | engine | what is held, for people; replaced in one step, never deleted first |
+| `paper/engine.lock` | engine | held while it runs: a second engine on the same tree refuses to start |
+| `paper/manual.lock` | Terminal | held by the window that writes the paper book |
+
+**Writes are acknowledged.** A row counts as written when the file took it
+(appended and flushed). If a write fails:
+- the rows are kept and retried every second;
+- the engine is **halted** (no new entries) until they land;
+- at exit, unwritten rows make the engine exit with status 4.
+
+Files are replaced with one rename. The old file is never deleted first.
 
 ## Limits, stated
 
@@ -233,5 +326,6 @@ model came close. The 10:15-to-close track is the one the research shortlisted.
 - **A past SIM day uses today's contracts.** The instrument master lists live
   contracts only, so the chain on a simulated past day is today's expiries,
   valued at the simulated clock.
-- **Paper fills take the touch.** A paper order never queues behind other size
-  and never moves the market; a real order of size would.
+- **Paper fills take what is shown.** A paper order takes the displayed size at
+  the touch (or the five levels). It never queues behind other size, and never
+  moves the market. A real order of size would do both.

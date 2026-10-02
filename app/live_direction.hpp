@@ -4,7 +4,9 @@
 // measured break-even accuracy per horizon: at one and five minutes a futures
 // round trip costs more than the typical move, so a call has to be right
 // 80-99 % of the time to pay -- no model came close. The horizon that moves
-// several times its cost is the session: decide at 10:15, hold to the close.
+// several times its cost is the session: decide at 10:15, hold to the close
+// -- here, to the 15:20 square-off, which is the horizon it is trained and
+// calibrated on (SessionInputs::exit_minute = 920), not 15:30.
 // That is the track the research shortlisted (AR/ARMA at 10:15), so that is
 // the one run live. The faster tracks are not run: running them would only
 // demonstrate a gate that never opens.
@@ -19,7 +21,7 @@
 //      calibration of the model's own past calls on that history
 //      (models/magnitude.hpp, WalkForwardCalibrator), not from the model's
 //      opinion of itself;
-//   4. E|r| is the history's sd of 10:15-to-close returns, scaled by today's
+//   4. E|r| is the history's sd of 10:15-to-15:20 returns, scaled by today's
 //      HAR volatility against its usual level, times sqrt(2/pi);
 //   5. the call is taken only when (2q - 1) x E|r| beats the round-trip cost:
 //      one lot of the near NIFTY future, bought back at the 15:20 square-off.
@@ -90,7 +92,9 @@ struct DirectionShared {
 /// `min_train_days` days are left out -- three-day fits are not what runs live.
 inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
     ft::TrackInfo info;
-    const auto tr = ft::build_session({"NIFTY 10:15", "NIFTY", kDecideMinute, &s.nifty5, &s.vix5, s.other_cost_bp, nullptr, ""}, info);
+    ft::SessionInputs hist{"NIFTY 10:15", "NIFTY", kDecideMinute, &s.nifty5, &s.vix5, s.other_cost_bp, nullptr, ""};
+    hist.exit_minute = live::kLiveSquareOffMinute;   // trained on the horizon it trades: 10:15 to the 15:20 square-off
+    const auto tr = ft::build_session(hist, info);
     if (tr.rows() < 200) { s.why = "only " + std::to_string(tr.rows()) + " finished days of 5-minute history"; return; }
     auto models = direction_models();
     CurriculumOptions opt;
@@ -166,6 +170,7 @@ inline void decide_today(DirectionShared& s, const live::LiveEngine& e) {
     vb.insert(vb.end(), vix.begin(), vix.end());
     ft::SessionInputs in{"NIFTY 10:15", "NIFTY", kDecideMinute, &nb, &vb, s.other_cost_bp, nullptr, ""};
     in.partial_last_day = true;
+    in.exit_minute = live::kLiveSquareOffMinute;
     ft::TrackInfo info;
     const auto tr = ft::build_session(in, info);
     if (!info.partial_last || tr.rows() < 2) { s.today_note = "Today's 10:15 row could not be built (no VIX bar at a stamp?)."; return; }
@@ -222,9 +227,9 @@ public:
         const double q = s_->cal[i_].calibrated(qraw);
         const double eabs_bp = 1e4 * expected_abs_move(s_->today_sigma);
         const double value = call_value_bp(q, eabs_bp, s_->today_cost_bp);
-        signal_ = std::string(dir > 0 ? "UP" : "DOWN") + " to the close";
+        signal_ = std::string(dir > 0 ? "UP" : "DOWN") + " to 15:20";
         fields_ = {{"calibrated q", live::live_fmt::pct(q, 1)},
-                   {"E|r| to close", live::live_fmt::num(eabs_bp, 1) + " bp"},
+                   {"E|r| to 15:20", live::live_fmt::num(eabs_bp, 1) + " bp"},
                    {"round-trip cost", live::live_fmt::num(s_->today_cost_bp, 1) + " bp"},
                    {"value (2q-1)E|r| - cost", live::live_fmt::num(value, 1) + " bp"}};
         if (!(value > 0.0)) {
@@ -236,7 +241,7 @@ public:
         std::string why;
         const std::string reason = signal_ + ": q " + live::live_fmt::pct(q, 1) + ", value " + live::live_fmt::num(value, 1) + " bp";
         if (e.book().open(name(), *fut, dir, 1, e.clock_ns(), reason, false, &why)) note_ = "Gate open: " + reason + ".";
-        else note_ = "Gate open, but the order could not fill: " + why;
+        else note_ = "Gate open, but the entry was refused: " + why;
     }
 
     [[nodiscard]] live::LiveModelView view(const live::LiveEngine& e) const override {
@@ -246,7 +251,7 @@ public:
         v.state = !s_->ok ? "abstaining" : (!e.book().flat(name()) ? "in position" : (done_ ? "done today" : "waiting for 10:15"));
         v.signal = signal_;
         v.reason = !s_->ok ? "No history: " + s_->why
-                           : (note_.empty() ? "At 10:15: forecast 10:15-to-close, trade one NIFTY future lot only if (2q-1)E|r| beats the cost." : note_);
+                           : (note_.empty() ? "At 10:15: forecast 10:15 to the 15:20 square-off, trade one NIFTY future lot only if (2q-1)E|r| beats the cost." : note_);
         v.fields = fields_;
         if (s_->ok && i_ < s_->accuracy.size())
             v.fields.push_back({"walk-forward hit rate", live::live_fmt::pct(s_->accuracy[i_], 1) + " of "
