@@ -61,6 +61,9 @@ int main(int argc, char** argv) {
     // 2026-10-01 11:00 IST
     write(root.path() + QStringLiteral("/data/live/engine_state.json"), R"json({
   "engine_ns": 1790832600000000000, "source": "SIM", "stale": false,
+  "margin": {"estimate": 412345, "peak_today": 692828, "limit": 10000000, "basis": "estimate, not SPAN (live/margin.hpp)"},
+  "latency": {"frame_us": {"n": 10, "p50": 30.0, "p99": 587.3, "p999": 2000.0, "max": 3000.0, "mean": 40.0},
+              "decision_us": {"n": 3, "p50": 100.0, "p99": 1146.9, "p999": 1146.9, "max": 1146.9, "mean": 120.0}},
   "note": "Expenses priced from an UNVERIFIED config/charges.toml (--unverified-costs).",
   "models": [
     {"name": "Strangle 80% NIFTY", "family": "option selling", "state": "in position", "signal": "short A + B",
@@ -144,6 +147,9 @@ int main(int argc, char** argv) {
           "P&L by model: all days net (1,240 - 4,034) and today's net");
     check(panel.status_text().contains(QStringLiteral("SIM")) && panel.status_text().contains(QStringLiteral("11:00:00")),
           "the status says SIM and the engine's clock");
+    check(panel.status_text().contains(QStringLiteral("margin est. 4,12,345 of 1,00,00,000 (peak today 6,92,828; not SPAN)")),
+          "and the margin estimate against its limit, labelled not SPAN");
+    check(panel.status_text().contains(QStringLiteral("p99 frame 587 µs, decision 1147 µs")), "and the engine's p99 latencies");
 
     std::printf("%s\n", failures == 0 ? "all live models checks passed" : "live models checks did not pass");
     return failures == 0 ? 0 : 1;
