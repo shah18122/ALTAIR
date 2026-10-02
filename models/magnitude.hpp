@@ -36,6 +36,8 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <string>
 #include <span>
 
 namespace altair {
@@ -103,6 +105,18 @@ public:
         const std::size_t b = bin(q);
         n_[b] += 1.0;
         right_[b] += right ? 1.0 : 0.0;
+    }
+
+    /// The learned state, for a model bundle: per bin "right/n", then overall.
+    [[nodiscard]] std::string state() const {
+        std::string o;
+        char b[48];
+        for (std::size_t i = 0; i < kBins; ++i) {
+            std::snprintf(b, sizeof b, "%s%.0f/%.0f", i ? " " : "", right_[i], n_[i]);
+            o += b;
+        }
+        std::snprintf(b, sizeof b, " | all %.0f/%.0f", all_right_, all_n_);
+        return o + b;
     }
 
 private:

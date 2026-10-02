@@ -23,9 +23,11 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace altair::live {
@@ -40,6 +42,7 @@ enum class TapeKind : std::uint8_t {
     Kill = 5,          ///< bytes: "1" a kill request in force, "0" cleared
     Halt = 6,          ///< bytes: the halt reason; empty clears it
     Watchdog = 7,      ///< the watchdog acted at wall_ns
+    Start = 8,         ///< the first record: what the session started from (tape_sections)
 };
 
 struct TapeRecord {
@@ -48,6 +51,41 @@ struct TapeRecord {
     std::vector<std::uint8_t> bytes;
     [[nodiscard]] std::string text() const { return std::string(bytes.begin(), bytes.end()); }
 };
+
+/// The Start record's payload: named sections ("name\nlength\n" then the
+/// bytes), in order -- the small files and options a session started from.
+using TapeSections = std::vector<std::pair<std::string, std::string>>;
+
+[[nodiscard]] inline std::string tape_pack(const TapeSections& sections) {
+    std::string o;
+    for (const auto& [name, body] : sections) o += name + "\n" + std::to_string(body.size()) + "\n" + body;
+    return o;
+}
+
+/// False when the payload is not a well-formed list of sections.
+[[nodiscard]] inline bool tape_unpack(const std::string& packed, TapeSections& out) {
+    out.clear();
+    std::size_t at = 0;
+    while (at < packed.size()) {
+        const std::size_t nl = packed.find('\n', at);
+        if (nl == std::string::npos) return false;
+        const std::size_t nl2 = packed.find('\n', nl + 1);
+        if (nl2 == std::string::npos) return false;
+        const std::string name = packed.substr(at, nl - at);
+        char* end = nullptr;
+        const std::string len_text = packed.substr(nl + 1, nl2 - nl - 1);
+        const unsigned long long len = std::strtoull(len_text.c_str(), &end, 10);
+        if (len_text.empty() || end == nullptr || *end != '\0' || nl2 + 1 + len > packed.size()) return false;
+        out.emplace_back(name, packed.substr(nl2 + 1, static_cast<std::size_t>(len)));
+        at = nl2 + 1 + static_cast<std::size_t>(len);
+    }
+    return true;
+}
+
+[[nodiscard]] inline const std::string* tape_section(const TapeSections& s, const std::string& name) {
+    for (const auto& [n, body] : s) if (n == name) return &body;
+    return nullptr;
+}
 
 class TapeWriter {
 public:
@@ -108,7 +146,7 @@ public:
         for (int k = 0; k < 8; ++k) w |= static_cast<std::uint64_t>(head[1 + k]) << (8 * k);
         std::uint32_t len = 0;
         for (int k = 0; k < 4; ++k) len |= static_cast<std::uint32_t>(head[9 + k]) << (8 * k);
-        if (head[0] < 1 || head[0] > 7) { ok_ = false; return false; }   // not a record: stop rather than guess
+        if (head[0] < 1 || head[0] > 8) { ok_ = false; return false; }   // not a record: stop rather than guess
         r.kind = static_cast<TapeKind>(head[0]);
         r.wall_ns = static_cast<std::int64_t>(w);
         r.bytes.resize(len);

@@ -43,6 +43,7 @@
 
 #include <app/forecast_tracks.hpp>
 #include <live/engine.hpp>
+#include <live/fingerprint.hpp>
 #include <models/curriculum.hpp>
 #include <models/magnitude.hpp>
 
@@ -94,9 +95,27 @@ struct DirectionShared {
     std::vector<std::size_t> scored;
     double gate_z = 1.0;                      ///< standard errors the value must clear
 
+    /// Every out-of-sample walk-forward call the calibration learned from:
+    /// what the model said, what the calibration made of it then, what happened.
+    struct OosCall {
+        std::int64_t t = 0;        ///< the decision's stamp (track time)
+        std::size_t model = 0;     ///< index into names; names.size() is the vote
+        int dir = 0;
+        double p_up = std::numeric_limits<double>::quiet_NaN();
+        double q_cal = std::numeric_limits<double>::quiet_NaN();   ///< calibrated, before this outcome was known
+        double ret = 0.0;          ///< the realised log return to 15:20
+        bool right = false;
+    };
+    std::vector<OosCall> oos;
+
     // Fitted before the session, on every finished day.
     std::vector<std::unique_ptr<CurriculumModel>> fitted;   ///< per base model; null where the fit abstained
     std::vector<std::string> fit_note;        ///< why a model abstained, or what its fit chose
+    std::vector<std::string> fit_params;      ///< the fitted parameters, where they print
+    std::vector<std::string> fit_fingerprint; ///< a digest of every training-row call: pins the fitted function
+    std::vector<std::string> feature_names;
+    std::vector<double> scaler_mean, scaler_sd;
+    std::string track_fingerprint;            ///< a digest of the training rows (features and outcomes)
     std::size_t fitted_rows = 0;              ///< finished days the fit used
     std::int32_t fitted_last_day = 0;         ///< the track's day ordinal of the last of them
     double fit_seconds = 0.0;
@@ -156,6 +175,7 @@ inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
             if (!c.made || c.dir == 0) continue;
             (c.dir > 0 ? up : down) += 1;
             const bool ok = c.dir == out;
+            s.oos.push_back({tr.t[r], m, c.dir, c.p_up, s.cal[m].calibrated(stated_q(c)), tr.ret(r), ok});
             s.cal[m].add(stated_q(c), ok);
             s.payoff[m].add(ok, z_abs);
             ++s.scored[m];
@@ -163,6 +183,8 @@ inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
         }
         if (up != down) {
             const bool ok = (up > down ? 1 : -1) == out;
+            s.oos.push_back({tr.t[r], nb, up > down ? 1 : -1, std::numeric_limits<double>::quiet_NaN(),
+                             s.cal[nb].calibrated(std::numeric_limits<double>::quiet_NaN()), tr.ret(r), ok});
             s.cal[nb].add(std::numeric_limits<double>::quiet_NaN(), ok);
             s.payoff[nb].add(ok, z_abs);
             ++s.scored[nb];
@@ -179,12 +201,31 @@ inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
     if (!d) { s.why = "the fit design was refused"; return; }
     s.fitted.clear();
     s.fit_note.assign(nb, std::string());
+    s.fit_params.assign(nb, std::string());
+    s.fit_fingerprint.assign(nb, std::string());
     auto fresh = direction_models();
     for (std::size_t m = 0; m < nb; ++m) {
         const std::string why = fresh[m]->fit(*d);
         s.fit_note[m] = why.empty() ? fresh[m]->tuned() : "abstains: " + why;
+        if (why.empty()) {
+            s.fit_params[m] = fresh[m]->params();
+            // The fitted function, pinned: its call on every training row.
+            live::Fingerprint fp;
+            for (std::size_t i = 0; i < tr.rows(); ++i) {
+                const CurriculumCall c = fresh[m]->predict(*d, i);
+                fp.i64(c.made ? c.dir : 99).f64(c.p_up).f64(c.mu).f64(c.sigma);
+            }
+            s.fit_fingerprint[m] = fp.hex();
+        }
         s.fitted.push_back(why.empty() ? std::move(fresh[m]) : nullptr);
     }
+    s.feature_names = tr.feature_names;
+    s.scaler_mean.assign(d->scaler_mean().begin(), d->scaler_mean().end());
+    s.scaler_sd.assign(d->scaler_sd().begin(), d->scaler_sd().end());
+    live::Fingerprint tfp;
+    for (const double x : tr.x) tfp.f64(x);
+    for (std::size_t i = 0; i < tr.rows(); ++i) tfp.i64(tr.t[i]).f64(tr.anchor[i]).f64(tr.actual[i]).f64(tr.cost_bp[i]);
+    s.track_fingerprint = tfp.hex();
     s.fitted_rows = tr.rows();
     s.fitted_last_day = tr.day.back();
     s.fit_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

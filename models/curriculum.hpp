@@ -297,6 +297,9 @@ private:
         Matrix m{d.z_.data(), d.rows_, d.p_};
         Scaler scaler;
         if (auto ok = scaler.fit(m, 0, d.train_); !ok) { return std::unexpected(ok.error()); }
+        d.scale_mean_.resize(d.p_);
+        d.scale_sd_.resize(d.p_);
+        for (std::size_t j = 0; j < d.p_; ++j) { d.scale_mean_[j] = scaler.mean(j); d.scale_sd_[j] = scaler.sd(j); }
         if (auto ok = scaler.transform(m, 0, d.train_, false); !ok) { return std::unexpected(ok.error()); }
         if (d.rows_ > d.train_) {
             if (auto ok = scaler.transform(m, d.train_, d.rows_, true); !ok) { return std::unexpected(ok.error()); }
@@ -339,6 +342,9 @@ public:
     [[nodiscard]] std::size_t now() const noexcept { return now_; }
     [[nodiscard]] std::size_t degenerate_features() const noexcept { return degenerate_; }
     [[nodiscard]] std::size_t refusals() const noexcept { return refusals_; }
+    /// The standardisation the training rows set: mean and sd per feature.
+    [[nodiscard]] std::span<const double> scaler_mean() const noexcept { return scale_mean_; }
+    [[nodiscard]] std::span<const double> scaler_sd() const noexcept { return scale_sd_; }
 
     /// The engine moves the clock. Models only ever get a const design.
     void set_now(std::size_t i) noexcept { now_ = i; }
@@ -437,6 +443,7 @@ public:
 private:
     const CurriculumTrack* tr_ = nullptr;
     std::vector<double> z_;
+    std::vector<double> scale_mean_, scale_sd_;
     std::vector<double> ret_;
     std::size_t p_ = 0, train_ = 0, rows_ = 0, now_ = 0, degenerate_ = 0;
     std::size_t ups_ = 0, downs_ = 0;
@@ -499,6 +506,9 @@ public:
     [[nodiscard]] virtual CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const = 0;
     /// What this stage's fit chose, if anything ("k=15").
     [[nodiscard]] virtual std::string tuned() const { return {}; }
+    /// The fitted parameters, in words, for a model bundle ("" where they do
+    /// not fit on a line: trees and nets are pinned by their fingerprint instead).
+    [[nodiscard]] virtual std::string params() const { return {}; }
 };
 
 namespace curriculum_detail {
@@ -564,6 +574,13 @@ inline double sign_accuracy(const std::vector<double>& p, const CurriculumDesign
 inline std::string trim_double(double v) {
     char buf[32];
     std::snprintf(buf, sizeof buf, "%g", v);
+    return buf;
+}
+
+/// Round-trips exactly: 17 significant digits.
+inline std::string exact_double(double v) {
+    char buf[40];
+    std::snprintf(buf, sizeof buf, "%.17g", v);
     return buf;
 }
 
@@ -663,6 +680,11 @@ public:
         return curriculum_detail::from_probability(p, p * mu_up_ + (1.0 - p) * mu_down_);
     }
     std::string tuned() const override { return "l2=" + curriculum_detail::trim_double(l2_); }
+    std::string params() const override {
+        std::string o = "bias " + curriculum_detail::exact_double(model_.bias()) + "; w";
+        for (const double w : model_.weights()) { o += " " + curriculum_detail::exact_double(w); }
+        return o;
+    }
 
 private:
     static std::expected<LogisticRegression, ClassicalError>
@@ -1292,6 +1314,14 @@ public:
         sigma_ = std::sqrt(std::max(0.0, model_.residual_variance));
         return {};
     }
+    std::string params() const override {
+        std::string o = "intercept " + curriculum_detail::exact_double(model_.intercept);
+        for (std::size_t k = 0; k < model_.ar.size(); ++k)
+            o += "; ar[" + std::to_string(model_.ar_lags[k]) + "] " + curriculum_detail::exact_double(model_.ar[k]);
+        for (std::size_t k = 0; k < model_.ma.size(); ++k)
+            o += "; ma[" + std::to_string(model_.ma_lags[k]) + "] " + curriculum_detail::exact_double(model_.ma[k]);
+        return o + "; sigma " + curriculum_detail::exact_double(sigma_);
+    }
     CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
         const auto h = d.history(i);
         std::size_t lag = 0;
@@ -1569,6 +1599,11 @@ public:
         return curriculum_detail::from_return(curriculum_detail::dot_row(w_, f), sigma_);
     }
     std::string tuned() const override { return "lambda=" + curriculum_detail::trim_double(lambda_) + " x n"; }
+    std::string params() const override {
+        std::string o = "w (intercept last)";
+        for (const double w : w_) { o += " " + curriculum_detail::exact_double(w); }
+        return o;
+    }
 
 private:
     std::vector<double> w_;

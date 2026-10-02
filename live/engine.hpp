@@ -230,6 +230,7 @@ public:
     void set_halt(std::string why) { halt_ = std::move(why); }
     [[nodiscard]] const std::string& halt() const noexcept { return halt_; }
     void set_kill(bool on) noexcept { kill_ = on; }
+    [[nodiscard]] bool kill() const noexcept { return kill_; }
     void set_limits(const LiveRiskLimits& l) { limits_ = l; }
     [[nodiscard]] const LiveRiskLimits& limits() const noexcept { return limits_; }
     /// True while a trade gap holds decisions back.

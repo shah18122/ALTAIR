@@ -46,6 +46,9 @@ public:
         for (std::size_t i = 0; i < kBuckets; ++i) {
             seen += counts_[i];
             if (static_cast<double>(seen) >= want && counts_[i] > 0) {
+                // RULE 11: the bucket's upper edge overstates a sample by at most one
+                // sub-bucket (~3 %); the largest sample is exact, so the edge is cut
+                // to it -- the true quantile is never above the max, only the edge was.
                 const std::uint64_t hi = upper(i);
                 return hi < max_ ? hi : max_;
             }

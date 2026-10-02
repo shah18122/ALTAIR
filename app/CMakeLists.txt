@@ -323,11 +323,29 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
         altair_live altair_models altair_strategies altair_analytics altair_charges_toml altair_flags Boost::headers Threads::Threads)
     target_include_directories(altair_live_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_live_engine PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    # The commit at configure time, written beside each model bundle (not part of its id).
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+        execute_process(COMMAND ${GIT_EXECUTABLE} describe --always --dirty --abbrev=12
+                        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} OUTPUT_VARIABLE altair_git_rev
+                        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(altair_git_rev)
+            target_compile_definitions(altair_live_engine PRIVATE ALTAIR_GIT_REV="${altair_git_rev}")
+        endif()
+    endif()
     if(WIN32)
         target_link_libraries(altair_live_engine PRIVATE ws2_32 mswsock)
     endif()
     if(ALTAIR_BUILD_TESTS)
         add_test(NAME live_engine_help COMMAND altair_live_engine --help)
+        # A simulated morning recorded, then replayed: the same journal and
+        # decisions byte for byte (needs dataset/ and a shell).
+        if(NOT WIN32 AND TARGET altair_price_service)
+            add_test(NAME live_replay
+                     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/live_replay.sh $<TARGET_FILE:altair_price_service>
+                             $<TARGET_FILE:altair_live_engine> ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/live_replay_work)
+            set_tests_properties(live_replay PROPERTIES LABELS "dataset;e2e" TIMEOUT 1100 RUN_SERIAL TRUE)
+        endif()
     endif()
 endif()
 
