@@ -53,6 +53,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -81,6 +82,14 @@ struct LiveRiskLimits {
     std::size_t max_per_model = 60;
     double max_gross_notional = 1.0e8;     ///< rupees: |qty x price| of everything held or working, plus the new order
     double max_daily_loss = 2.0e5;         ///< rupees: today's realised (gross where unpriced) plus open marks
+};
+
+/// One decision, in words, at the feed time it was taken: what the CLI
+/// appends to decisions.csv -- the record a replay is compared against.
+struct LiveDecisionNote {
+    std::int64_t ns = 0;
+    std::string model;
+    std::string text;
 };
 
 /// What a model shows on the Live Models page.
@@ -226,6 +235,18 @@ public:
     /// True while a trade gap holds decisions back.
     [[nodiscard]] bool paused() const noexcept { return live_ist_minute_index(clock_ns_) < pause_until_minute_; }
     [[nodiscard]] std::uint64_t late_prints() const noexcept { return late_prints_; }
+    /// Minute boundaries at which the models ran: a frame that moves this
+    /// carried a decision (the CLI times those separately).
+    [[nodiscard]] std::uint64_t decision_minutes() const noexcept { return decision_minutes_; }
+    /// A JSON object the CLI keeps current (latency percentiles); shown under "latency".
+    void set_metrics(std::string json_object) { metrics_ = std::move(json_object); }
+
+    /// Record a decision (models call this when they decide, or decide not to).
+    void note_decision(const std::string& model, std::string text) {
+        notes_.push_back(LiveDecisionNote{clock_ns_, model, std::move(text)});
+    }
+    /// Decisions since the last call.
+    [[nodiscard]] std::vector<LiveDecisionNote> take_decisions() { return std::exchange(notes_, {}); }
     [[nodiscard]] std::uint64_t trade_gaps() const noexcept { return gaps_; }
 
     // ---- what models read -------------------------------------------------
@@ -335,6 +356,7 @@ public:
         o += "  \"working_orders\": " + std::to_string(book_.working_orders()) + ",\n";
         o += "  \"late_prints\": " + std::to_string(late_prints_) + ",\n";
         o += "  \"trade_gaps\": " + std::to_string(gaps_) + ",\n";
+        if (!metrics_.empty()) o += "  \"latency\": " + metrics_ + ",\n";
         o += "  \"note\": \"" + json_escape(note) + "\",\n";
         o += "  \"models\": [";
         for (std::size_t m = 0; m < models_.size(); ++m) {
@@ -401,8 +423,10 @@ public:
             const int close = live_minute_of_day(m);
             if (close < kLiveOpenMinute) continue;
             obligations(close, ns, false);
-            if (close <= kLiveCloseMinute && m >= pause_until_minute_)
+            if (close <= kLiveCloseMinute && m >= pause_until_minute_) {
                 for (auto& mdl : models_) mdl->on_minute(*this, close);
+                ++decision_minutes_;
+            }
             if (close >= kLiveSquareOffMinute) square_off(ns, close > kLiveSquareOffMinute && sq_day_ != day_, false);
         }
         last_minute_ = minute;
@@ -412,15 +436,18 @@ public:
     /// The feed has stopped and the machine's clock (`wall_ns`) has moved on:
     /// submit the roll and the square-off that are now overdue, so they fill
     /// the moment quotes return. Live feeds only -- a simulated session's
-    /// clock is not the machine's.
-    void watchdog(std::int64_t wall_ns) {
-        if (simulated_ || replay_ || day_ == 0 || wall_ns <= clock_ns_ + 60'000'000'000LL) return;
+    /// clock is not the machine's. True when it changed anything (the CLI
+    /// records those calls on the tape so a replay makes them too).
+    bool watchdog(std::int64_t wall_ns) {
+        if (simulated_ || replay_ || day_ == 0 || wall_ns <= clock_ns_ + 60'000'000'000LL) return false;
         const std::int64_t m = live_ist_minute_index(wall_ns);
-        if (live_day_of(m) != day_) return;
+        if (live_day_of(m) != day_) return false;
         const int close = live_minute_of_day(m);
-        if (close < kLiveOpenMinute) return;
+        if (close < kLiveOpenMinute) return false;
+        const auto before = std::make_tuple(book_.version(), roll_day_, sq_day_);
         obligations(close, wall_ns, true);
         if (close >= kLiveSquareOffMinute) square_off(wall_ns, true, true);
+        return before != std::make_tuple(book_.version(), roll_day_, sq_day_);
     }
 
 private:
@@ -429,18 +456,25 @@ private:
         if (close >= kLiveRollMinute && roll_day_ != day_) {
             roll_day_ = day_;
             const std::int64_t today = day_;
+            const std::uint64_t v = book_.version();
+            const std::string why = watchdog ? "expiry roll (feed stopped; watchdog)" : close > kLiveRollMinute
+                                                   ? "expiry roll (overdue: the clock reached " + live_fmt::hhmm(close) + ")"
+                                                   : "expiry roll";
             book_.close_if([today](const LivePosition& p) { return p.carry && p.inst.expiry_day != 0 && p.inst.expiry_day <= today; },
-                           ns, watchdog ? "expiry roll (feed stopped; watchdog)" : close > kLiveRollMinute
-                                              ? "expiry roll (overdue: the clock reached " + live_fmt::hhmm(close) + ")"
-                                              : "expiry roll");
+                           ns, why);
+            note_decision("engine", why + (book_.version() != v ? ": exits submitted" : ": nothing expiring"));
         }
     }
     /// Every intraday position out. Idempotent: an exit already working is left alone.
     void square_off(std::int64_t ns, bool overdue, bool watchdog) {
+        const bool first = sq_day_ != day_;
         sq_day_ = day_;
-        book_.close_if([](const LivePosition& p) { return !p.carry; }, ns,
-                       watchdog ? "15:20 square-off (feed stopped; watchdog)"
-                                : overdue ? "15:20 square-off (overdue)" : "15:20 square-off");
+        const std::uint64_t v = book_.version();
+        const char* why = watchdog ? "15:20 square-off (feed stopped; watchdog)"
+                                   : overdue ? "15:20 square-off (overdue)" : "15:20 square-off";
+        book_.close_if([](const LivePosition& p) { return !p.carry; }, ns, why);
+        if (first || book_.version() != v)
+            note_decision("engine", std::string(why) + (book_.version() != v ? ": exits submitted" : ": nothing intraday held"));
     }
 
     /// The one pre-trade check every entry passes.
@@ -487,10 +521,27 @@ private:
     std::int64_t clock_ns_ = 0, day_ = 0, last_minute_ = 0;
     std::int64_t roll_day_ = 0, sq_day_ = 0, pause_until_minute_ = 0;
     std::size_t trades_out_ = 0, fills_out_ = 0, positions_seen_ = 0;
-    std::uint64_t late_prints_ = 0, gaps_ = 0, missed_trades_ = 0;
-    std::string pause_note_, halt_;
+    std::uint64_t late_prints_ = 0, gaps_ = 0, missed_trades_ = 0, decision_minutes_ = 0;
+    std::string pause_note_, halt_, metrics_;
+    std::vector<LiveDecisionNote> notes_;
     LiveRiskLimits limits_;
     bool stale_ = false, simulated_ = false, replay_ = false, kill_ = false;
+};
+
+/// Records a model's decision when the deciding scope ends, however it ends
+/// (decisions return early on every reason not to act): `text()` is read then.
+template <class Text>
+class LiveDecisionScope {
+public:
+    LiveDecisionScope(LiveEngine& e, std::string model, Text text) : e_(e), model_(std::move(model)), text_(std::move(text)) {}
+    ~LiveDecisionScope() { e_.note_decision(model_, text_()); }
+    LiveDecisionScope(const LiveDecisionScope&) = delete;
+    LiveDecisionScope& operator=(const LiveDecisionScope&) = delete;
+
+private:
+    LiveEngine& e_;
+    std::string model_;
+    Text text_;
 };
 
 } // namespace altair::live

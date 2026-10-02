@@ -5,13 +5,17 @@
 // tracks:
 //   * magnitude-aware scoring: accuracy against magnitude-weighted accuracy,
 //     |move| on right calls against wrong ones, gross edge in bp;
-//   * the value gate: take a call only when (2q - 1) x E|r| beats the cost,
-//     with q the model's own probability calibrated walk-forward and E|r| from
-//     a HAR forecast of that day's variance (5-minute realised variance for
-//     the same window: close-to-close for daily tracks, the decision to the
-//     close for 09:20 / 10:15 tracks). Nothing in either is known late: the
-//     calibration learns an outcome only after it has happened, and HAR is
-//     fitted on days before the call.
+//   * the value gate: take a call only when q x gain - (1 - q) x loss - cost
+//     clears zero by --gate-z standard errors (models/magnitude.hpp,
+//     gate_value), with q the model's own probability calibrated walk-forward,
+//     and gain and loss what its right and wrong calls actually moved, learned
+//     walk-forward as multiples of a HAR forecast of that day's sigma
+//     (5-minute realised variance for the same window: close-to-close for
+//     daily tracks, the decision to the close for 09:20 / 10:15 tracks).
+//     The symmetric (2q - 1) x E|r| gate is reported beside it, for
+//     comparison. Nothing is known late: the calibration and the payoff
+//     learn an outcome only after it has happened, and HAR is fitted on days
+//     before the call.
 //
 // Run altair_forecast_curriculum first (it writes forecast_log/). Writes
 // <out>/magnitude/summary.csv; prints each track's best gated models and the
@@ -41,9 +45,10 @@ namespace da = altair::data_audit;
 void usage(const char* exe) {
     std::printf(
         "  Direction is half a forecast: score the magnitude, and gate calls on what they earn.\n\n"
-        "    %s [--logs DIR] [--dataset DIR] [--out DIR] [--cost-bp C] [--with-feeds]\n\n"
+        "    %s [--logs DIR] [--dataset DIR] [--out DIR] [--cost-bp C] [--gate-z Z] [--with-feeds]\n\n"
         "    --logs DIR      the curriculum's forecast_log/ (default data/verified/forecast_log)\n"
         "    --cost-bp C     round-trip cost a call must beat (default 6.3: today's STT and charges)\n"
+        "    --gate-z Z      standard errors the value must clear (default 1, as live; 0: point estimate)\n"
         "    --with-feeds    also the second-pass tracks (+ vol / cross / models / all)\n", exe);
 }
 
@@ -101,7 +106,7 @@ struct Row {
 
 int main(int argc, char** argv) {
     fs::path logs = "data/verified/forecast_log", root = "dataset", out = "data/verified";
-    double cost = 6.3;
+    double cost = 6.3, gate_z = 1.0;
     bool with_feeds = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
@@ -111,6 +116,7 @@ int main(int argc, char** argv) {
         if (a == "--dataset" && has) { root = argv[++i]; continue; }
         if (a == "--out" && has) { out = argv[++i]; continue; }
         if (a == "--cost-bp" && has) { cost = std::atof(argv[++i]); if (!(cost >= 0) || cost > 200) { usage(argv[0]); return 2; } continue; }
+        if (a == "--gate-z" && has) { gate_z = std::atof(argv[++i]); if (!(gate_z >= 0) || gate_z > 10) { usage(argv[0]); return 2; } continue; }
         if (a == "--with-feeds") { with_feeds = true; continue; }
         usage(argv[0]);
         return 2;
@@ -142,11 +148,11 @@ int main(int argc, char** argv) {
     fs::create_directories(dir, ec);
     std::ofstream f(dir / "summary.csv", std::ios::trunc);
     f << "track,model,calls,accuracy,weighted_accuracy,abs_move_right_bp,abs_move_wrong_bp,payoff_ratio,gross_bp,net_bp_all,"
-         "gated_calls,gated_share,gated_accuracy,gated_net_bp,gated_t\n";
+         "gated_calls,gated_share,gated_accuracy,gated_net_bp,gated_t,sym_gated_calls,sym_gated_net_bp,learned_gain_sigmas,learned_loss_sigmas\n";
     std::size_t tests = 0;
     struct Best { std::string track, model; double net, t; std::size_t n; double acc; };
     std::vector<Best> best;
-    std::printf("Magnitude: cost %.1f bp a round trip\n", cost);
+    std::printf("Magnitude: cost %.1f bp a round trip; the gate clears zero by %.1f se\n", cost, gate_z);
 
     for (const Track& tr : tracks) {
         const fs::path file = logs / (tr.file + ".csv");
@@ -200,25 +206,33 @@ int main(int argc, char** argv) {
         for (const auto& [model, rows] : by_model) {
             std::vector<altair::MagCall> all;
             altair::WalkForwardCalibrator cal;
-            std::size_t gn = 0, gright = 0, gdecided = 0;
-            double gsum = 0, gss = 0, net_all = 0;
+            altair::WalkForwardPayoff pay;
+            std::size_t gn = 0, gright = 0, gdecided = 0, sym_n = 0;
+            double gsum = 0, gss = 0, net_all = 0, sym_sum = 0;
             std::size_t calls = 0;
             for (const Row& r : rows) {
                 if (r.dir == 0) { continue; }
                 ++calls;
                 all.push_back({r.dir, r.r});
-                net_all += static_cast<double>(r.dir) * r.r * 1e4 - cost;
+                const double net = static_cast<double>(r.dir) * r.r * 1e4 - cost;
+                net_all += net;
                 const double q = std::isfinite(r.p_up) ? (r.dir > 0 ? r.p_up : 1.0 - r.p_up) : std::nan("");
                 const double qc = cal.calibrated(q);
                 const double e = eabs(r.day);
-                if (std::isfinite(e) && altair::call_value_bp(qc, e, cost) > 0.0) {
-                    const double net = static_cast<double>(r.dir) * r.r * 1e4 - cost;
+                const double sigma_bp = e / altair::WalkForwardPayoff::kNormalAbs;
+                if (std::isfinite(e) && altair::call_value_bp(qc, e, cost) > 0.0) { ++sym_n; sym_sum += net; }
+                if (std::isfinite(e) && altair::gate_value(qc, cal.calibrated_se(q), pay.estimate(), sigma_bp, cost, gate_z).open()) {
                     ++gn;
                     gsum += net;
                     gss += net * net;
                     if (r.r != 0.0) { ++gdecided; gright += (r.r > 0.0) == (r.dir > 0) ? 1 : 0; }
                 }
-                if (r.r != 0.0) { cal.add(q, (r.r > 0.0) == (r.dir > 0)); }   // known only after the outcome
+                // Known only after the outcome.
+                if (r.r != 0.0) {
+                    const bool right = (r.r > 0.0) == (r.dir > 0);
+                    cal.add(q, right);
+                    if (std::isfinite(e) && sigma_bp > 0.0) { pay.add(right, std::fabs(r.r) * 1e4 / sigma_bp); }
+                }
             }
             const auto s = altair::magnitude_stats(all);
             const double gmean = gn > 0 ? gsum / static_cast<double>(gn) : std::nan("");
@@ -233,7 +247,9 @@ int main(int argc, char** argv) {
               << fixed(s.mean_abs_right_bp, 2) << ',' << fixed(s.mean_abs_wrong_bp, 2) << ',' << fixed(s.payoff_ratio, 3) << ','
               << fixed(s.gross_bp, 2) << ',' << fixed(calls > 0 ? net_all / static_cast<double>(calls) : std::nan(""), 2) << ',' << gn
               << ',' << fixed(calls > 0 ? static_cast<double>(gn) / static_cast<double>(calls) : std::nan(""), 4) << ','
-              << fixed(gacc, 4) << ',' << fixed(gmean, 2) << ',' << fixed(gt, 2) << '\n';
+              << fixed(gacc, 4) << ',' << fixed(gmean, 2) << ',' << fixed(gt, 2) << ',' << sym_n << ','
+              << fixed(sym_n > 0 ? sym_sum / static_cast<double>(sym_n) : std::nan(""), 2) << ','
+              << fixed(pay.estimate().gain, 3) << ',' << fixed(pay.estimate().loss, 3) << '\n';
         }
     }
     if (best.empty()) {

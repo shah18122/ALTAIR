@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -403,6 +404,64 @@ void test_large_windows() {
     check(called > 1000 && acc > 0.62, "the random-feature SVM learns the persistence up to its ceiling");
 }
 
+void test_inner_fold() {
+    // The noise column jumps by 10 in the training window's last quarter: the
+    // rows a tuning search is scored on. Their scaling must come from the
+    // first three quarters only.
+    auto tr = ar_track(400, 0.3);
+    const std::size_t n = 300, v = curriculum_detail::inner_split(n);
+    for (std::size_t i = v; i < tr.rows(); ++i) { tr.x[i * tr.p + 1] += 10.0; }
+    CurriculumStage st;
+    st.train_rows = n;
+    st.test_begin = n;
+    st.test_end = 360;
+    auto d = CurriculumDesign::make(tr, st);
+    check(d.has_value(), "outer design builds");
+    if (!d) { return; }
+    const CurriculumDesign* di = d->inner(v);
+    check(di != nullptr && di->train_rows() == v && di->rows() == n, "the tuning fold holds the outer training rows, trains on [0, v)");
+    if (di == nullptr) { return; }
+    const auto mean_sd = [](const CurriculumDesign& x, std::size_t from, std::size_t to) {
+        std::vector<double> col;
+        for (std::size_t j = from; j < to; ++j) {
+            const auto f = x.features(j);
+            if (f.size() > 1) { col.push_back(f[1]); }
+        }
+        double m = 0.0, ss = 0.0;
+        for (const double c : col) { m += c; }
+        m /= static_cast<double>(col.size());
+        for (const double c : col) { ss += (c - m) * (c - m); }
+        return std::pair{m, std::sqrt(ss / static_cast<double>(col.size() - 1))};
+    };
+    const auto [mi, si] = mean_sd(*di, 0, v);
+    check(std::fabs(mi) < 1e-9 && std::fabs(si - 1.0) < 1e-9, "inner rows [0, v) are standardised on themselves alone");
+    const auto [mt, st_] = mean_sd(*di, v, n);
+    (void)st_;
+    check(mt > 2.0, "the validation tail keeps its shift: it shaped none of the scaling it is scored with");
+    d->set_now(n);
+    const auto [mo, so] = mean_sd(*d, 0, n);
+    (void)so;
+    check(std::fabs(mo) < 1e-9, "while the outer design (the final fit) standardises over the whole window");
+    check(!std::isfinite(di->target(v)) && std::isfinite(d->target(v)),
+          "validation targets are not readable from the fold: they are scored from the outer design");
+    check(d->inner(v) == di, "the fold is built once and shared by every model that tunes on it");
+
+    // Every tuned model still fits and forecasts through the fold.
+    std::vector<std::unique_ptr<CurriculumModel>> tuned;
+    tuned.push_back(std::make_unique<CurriculumLogistic>());
+    tuned.push_back(std::make_unique<CurriculumKnn>());
+    tuned.push_back(std::make_unique<CurriculumForest>(5));
+    tuned.push_back(std::make_unique<CurriculumRidge>());
+    bool all = true;
+    for (auto& m : tuned) {
+        d->set_now(n);
+        all = all && m->fit(*d).empty() && !m->tuned().empty();
+        d->set_now(n);
+        all = all && m->predict(*d, n).made;
+    }
+    check(all, "logistic, kNN, forest and ridge tune on the fold and forecast");
+}
+
 int main() {
     std::printf("Forecast curriculum\n");
     test_schedule();
@@ -412,6 +471,7 @@ int main() {
     test_pairs();
     test_learning_and_no_leak();
     test_large_windows();
+    test_inner_fold();
     std::printf("Forecast curriculum: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

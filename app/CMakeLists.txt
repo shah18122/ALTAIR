@@ -357,6 +357,13 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_forecast_tracks_test PRIVATE altair_models altair_flags)
     target_include_directories(altair_forecast_tracks_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME forecast_tracks COMMAND altair_forecast_tracks_test)
+    # The live 10:15 direction models: fitted before the session, they call
+    # exactly what a fit at 10:15 would; the conditional gate's inputs.
+    add_executable(altair_live_direction_test tests/test_live_direction.cpp)
+    target_link_libraries(altair_live_direction_test PRIVATE
+        altair_live altair_models altair_strategies altair_analytics altair_flags)
+    target_include_directories(altair_live_direction_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME live_direction COMMAND altair_live_direction_test)
     # NSE F&O bhavcopy, both formats, from fixtures written to a temp dir.
     add_executable(altair_bhavcopy_test tests/test_bhavcopy.cpp)
     target_link_libraries(altair_bhavcopy_test PRIVATE altair_flags)

@@ -10,6 +10,7 @@
 #include <live/engine.hpp>
 #include <live/feed_consumer.hpp>
 #include <live/file_lock.hpp>
+#include <live/latency.hpp>
 #include <live/paper.hpp>
 
 #include <chrono>
@@ -343,6 +344,21 @@ int main() {
         check(first.held() && !second.held() && second.why().find("another process") != std::string::npos,
               "one engine per ledger: a second lock is refused");
         fs::remove_all(dir, ec);
+    }
+
+    // ---- latency percentiles ----------------------------------------------------
+    {
+        LatencyHistogram h;
+        for (std::int64_t v = 1; v <= 1'000'000; ++v) h.record(v * 1000);   // 1 us .. 1 s, uniform
+        const auto near = [](std::uint64_t got, double want) { return std::fabs(static_cast<double>(got) / want - 1.0) < 0.04; };
+        check(h.count() == 1'000'000 && h.max() == 1'000'000'000ull, "every sample counted, and the max is exact");
+        check(near(h.quantile(0.5), 5e8) && near(h.quantile(0.99), 9.9e8) && near(h.quantile(0.999), 9.99e8),
+              "p50, p99 and p99.9 within the buckets' 3 % of the truth");
+        check(h.quantile(0.5) >= 500'000'000ull, "a quantile is its bucket's upper edge: never optimistic");
+        LatencyHistogram small;
+        for (int v = 0; v < 32; ++v) small.record(v);
+        check(small.quantile(0.5) == 15 || small.quantile(0.5) == 16, "below 32 ns every value is its own bucket");
+        check(h.json(1e3).find("\"p999\"") != std::string::npos, "and it reads out as JSON for the state file");
     }
 
     std::printf("%s\n", failures == 0 ? "all live execution checks passed" : "live execution checks did not pass");

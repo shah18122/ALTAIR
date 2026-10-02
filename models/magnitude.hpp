@@ -11,21 +11,28 @@
 //   * mean |r| on right calls against wrong ones, and the payoff ratio;
 //   * gross edge: mean(direction x r), in bp -- what accuracy is worth.
 //
-// THE GATE. A call with probability q of being right, on a move of expected
-// size E|r|, earns (2q - 1) E|r| - cost before anything else. So take it only
-// when that is positive. The Tradability sheet applies this once, with the
-// HISTORY's average E|r|; here both halves are forecast PER CALL, from data
-// known when the call is made:
+// THE GATE. A call right with probability q earns, before costs,
+//     q x E[gain | right]  -  (1 - q) x E[loss | wrong].
+// The older form, (2q - 1) E|r|, assumed a right call gains exactly what a
+// wrong one loses. That is the assumption a model that is right on the small
+// days and wrong on the big ones breaks -- the very failure this file exists
+// to catch. So the two magnitudes are measured separately, PER MODEL, from
+// its own walk-forward calls, in units of the volatility forecast made with
+// each call (`WalkForwardPayoff`), and scaled by today's forecast:
 //   * q from a walk-forward calibration of the model's own probabilities
 //     (`WalkForwardCalibrator`: binned, shrunk toward 1/2, updated only with
 //     outcomes already known);
-//   * E|r| from a volatility forecast (HAR, analytics/har_rv.hpp) as
-//     sigma x sqrt(2/pi), the mean absolute value of a normal move.
-// On a quiet day the gate demands near-certainty; on a volatile one, a modest
-// edge is enough -- which is how a desk sizes a directional view.
+//   * E[gain | right] and E[loss | wrong] as multiples of sigma, shrunk toward
+//     sqrt(2/pi) -- the mean absolute value of a normal move, which is what
+//     the old gate assumed for both -- by the same pseudo-count.
+// AND IT KNOWS HOW SURE IT IS. Each estimate carries a standard error (q's
+// from its bin's count, the magnitudes' from their spread); `gate_value`
+// combines them by the delta method and the gate opens only when the value
+// is positive by `z` standard errors. A thin history keeps the gate shut.
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -83,6 +90,12 @@ public:
         const std::size_t b = bin(q);
         return shrink(right_[b], n_[b]);
     }
+    /// Standard error of calibrated(q): its bin's binomial error at the shrunk count.
+    [[nodiscard]] double calibrated_se(double q) const noexcept {
+        const double p = calibrated(q);
+        const double n = (valid(q) ? n_[bin(q)] : all_n_) + prior_;
+        return std::sqrt(p * (1.0 - p) / n);
+    }
     void add(double q, bool right) noexcept {
         all_n_ += 1.0;
         all_right_ += right ? 1.0 : 0.0;
@@ -115,9 +128,91 @@ private:
     return sigma * std::sqrt(2.0 / 3.14159265358979323846);
 }
 
-/// What a call is worth before it is taken: (2q - 1) x E|r| - cost, all in bp.
+/// The symmetric value (2q - 1) x E|r| - cost, in bp: what a call is worth
+/// IF right and wrong calls move alike. Kept for comparison; the gate is
+/// `gate_value`, which does not assume it.
 [[nodiscard]] inline double call_value_bp(double q, double expected_abs_bp, double cost_bp) noexcept {
     return (2.0 * q - 1.0) * expected_abs_bp - cost_bp;
+}
+
+/// What a model's right calls gained and its wrong calls lost, as multiples
+/// of the volatility forecast made with each call, learned only from outcomes
+/// already known. Each mean is shrunk toward sqrt(2/pi) -- E|z| for a normal
+/// move -- by `prior` pseudo-calls, with that prior's variance (1 - 2/pi), so
+/// a model with ten calls reads as "a normal move, roughly" rather than as
+/// whatever its ten days happened to be.
+class WalkForwardPayoff {
+public:
+    static constexpr double kNormalAbs = 0.79788456080286535588;   ///< sqrt(2/pi)
+    static constexpr double kNormalAbsVar = 0.36338022763241865693;   ///< 1 - 2/pi
+
+    explicit WalkForwardPayoff(double prior = 20.0) noexcept : prior_(prior) {}
+
+    /// One resolved call: right or wrong, and |r| / sigma (the forecast at the call).
+    void add(bool right, double abs_move_in_sigmas) noexcept {
+        if (!std::isfinite(abs_move_in_sigmas) || abs_move_in_sigmas < 0.0) { return; }
+        Side& s = right ? right_ : wrong_;
+        s.n += 1.0;
+        s.sum += abs_move_in_sigmas;
+        s.ss += abs_move_in_sigmas * abs_move_in_sigmas;
+    }
+
+    struct Estimate {
+        double gain = 0.0, loss = 0.0;         ///< in sigmas: E[|r|/sigma | right], E[|r|/sigma | wrong]
+        double gain_se = 0.0, loss_se = 0.0;   ///< their standard errors
+        double n_right = 0.0, n_wrong = 0.0;   ///< resolved calls behind them
+    };
+    [[nodiscard]] Estimate estimate() const noexcept {
+        Estimate e;
+        shrunk(right_, e.gain, e.gain_se);
+        shrunk(wrong_, e.loss, e.loss_se);
+        e.n_right = right_.n;
+        e.n_wrong = wrong_.n;
+        return e;
+    }
+
+private:
+    struct Side { double n = 0.0, sum = 0.0, ss = 0.0; };
+    void shrunk(const Side& s, double& mean, double& se) const noexcept {
+        const double n = s.n + prior_;
+        mean = (s.sum + prior_ * kNormalAbs) / n;
+        // Pooled second moment, prior included: E[x^2] of |z| is 1.
+        const double m2 = (s.ss + prior_ * 1.0) / n;
+        const double var = std::max(m2 - mean * mean, 0.0);
+        se = std::sqrt(var / n);
+    }
+    double prior_;
+    Side right_{}, wrong_{};
+};
+
+/// What the gate saw, in bp.
+struct GateValue {
+    double q = 0.5, q_se = 0.0;
+    double gain_bp = 0.0, loss_bp = 0.0;   ///< expected gain if right, loss if wrong, at today's sigma
+    double cost_bp = 0.0;
+    double value_bp = 0.0;                 ///< q x gain - (1 - q) x loss - cost
+    double se_bp = 0.0;                    ///< its standard error (delta method)
+    double lower_bp = 0.0;                 ///< value - z x se: the gate opens only when this is > 0
+    [[nodiscard]] bool open() const noexcept { return lower_bp > 0.0; }
+};
+
+/// The conditional value of a call and its lower bound at `z` standard errors.
+/// `sigma_bp` is today's volatility forecast for the horizon, in bp.
+[[nodiscard]] inline GateValue gate_value(double q, double q_se, const WalkForwardPayoff::Estimate& pay,
+                                          double sigma_bp, double cost_bp, double z = 1.0) noexcept {
+    GateValue g;
+    g.q = q;
+    g.q_se = q_se;
+    g.gain_bp = pay.gain * sigma_bp;
+    g.loss_bp = pay.loss * sigma_bp;
+    g.cost_bp = cost_bp;
+    g.value_bp = q * g.gain_bp - (1.0 - q) * g.loss_bp - cost_bp;
+    const double dq = g.gain_bp + g.loss_bp;   // d value / d q
+    const double var = dq * dq * q_se * q_se + q * q * pay.gain_se * pay.gain_se * sigma_bp * sigma_bp
+                     + (1.0 - q) * (1.0 - q) * pay.loss_se * pay.loss_se * sigma_bp * sigma_bp;
+    g.se_bp = std::sqrt(var);
+    g.lower_bp = g.value_bp - z * g.se_bp;
+    return g;
 }
 
 } // namespace altair

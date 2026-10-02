@@ -2,14 +2,14 @@
 //
 //     altair_live_engine [--port 7421] [--until HH:MM] [--seconds N] [--root DIR] [--unverified-costs]
 //                        [--latency-ms 250] [--quote-age-s 10] [--entry-timeout-s 60]
-//                        [--max-positions 80] [--max-gross 1e8] [--max-daily-loss 2e5]
+//                        [--max-positions 80] [--max-gross 1e8] [--max-daily-loss 2e5] [--gate-z 1]
 //
 // Subscribes to altair_price_service (FYERS live, or --sim), builds bars from
 // the ticks, runs every live model on them and paper-trades their signals:
 //   Vol band (HAR)                 the range, recomputed every minute; trades nothing
 //   Strangle 80% NIFTY/BANKNIFTY   sell the band's edges at 09:20 (and a stop2x variant)
 //   Direction 10:15 <model>        ARMA, logistic, ridge, GBDT and their vote, behind the
-//                                  magnitude gate: (2q-1)E|r| must beat the cost
+//                                  magnitude gate: q·gain − (1−q)·loss − cost, clear of zero by --gate-z se
 //   Pairs BANKNIFTY/NIFTY          the 250-day spread at 15:15, carried
 //   Stat-arb NIFTY 50              Avellaneda-Lee s-scores at 15:15, carried
 //
@@ -51,6 +51,7 @@
 #include <live/engine.hpp>
 #include <live/feed_consumer.hpp>
 #include <live/file_lock.hpp>
+#include <live/latency.hpp>
 #include <live/models.hpp>
 #include <live/universe.hpp>
 #include <risk/charges_toml.hpp>
@@ -145,8 +146,7 @@ struct DayRv { std::int64_t day = 0; double rv = 0.0, gap2 = 0.0, close = 0.0; }
 
 /// HAR's one-day-ahead sigma, the session's share of daily variance, and the
 /// last close, from 5-minute history.
-[[nodiscard]] lv::LiveVolInputs vol_inputs(const std::string& under, const std::vector<DayRv>& rv, std::string& note,
-                                           double* median_sigma = nullptr) {
+[[nodiscard]] lv::LiveVolInputs vol_inputs(const std::string& under, const std::vector<DayRv>& rv, std::string& note) {
     lv::LiveVolInputs v;
     v.under = under;
     if (rv.size() < 60) { note += under + ": too little 5-minute history for HAR. "; return v; }
@@ -156,18 +156,12 @@ struct DayRv { std::int64_t day = 0; double rv = 0.0, gap2 = 0.0, close = 0.0; }
     if (!f) { note += under + ": HAR refused (" + std::string(altair::har_error_text(f.error())) + "). "; return v; }
     v.sigma_day = std::sqrt(f->variance);
     double intra = 0.0, total = 0.0;
-    std::vector<double> sig;
     for (std::size_t i = rv.size() > 250 ? rv.size() - 250 : 0; i < rv.size(); ++i) {
         intra += rv[i].rv - rv[i].gap2;
         total += rv[i].rv;
-        sig.push_back(std::sqrt(rv[i].rv));
     }
     v.intraday_share = total > 0.0 ? intra / total : 0.75;
     v.prev_close = rv.back().close;
-    if (median_sigma != nullptr && !sig.empty()) {
-        std::nth_element(sig.begin(), sig.begin() + static_cast<std::ptrdiff_t>(sig.size() / 2), sig.end());
-        *median_sigma = sig[sig.size() / 2];
-    }
     return v;
 }
 
@@ -275,7 +269,9 @@ void usage(const char* exe) {
         "    --entry-timeout-s N  an entry not filled by then is cancelled (default 60)\n"
         "    --max-positions N    held or working, all models (default 80)\n"
         "    --max-gross RUPEES   gross notional of everything held or working (default 1e8)\n"
-        "    --max-daily-loss RUPEES  no new entries past this loss today (default 2e5)\n\n"
+        "    --max-daily-loss RUPEES  no new entries past this loss today (default 2e5)\n"
+        "    --gate-z Z           a direction call trades only when its value clears zero by Z\n"
+        "                         standard errors (default 1; 0 is the point estimate)\n\n"
         "  Start the feed first: altair_price_service --live --go (FYERS, else Kite) or --sim.\n"
         "  Writes data/live/engine_state.json and data/live/paper/*.csv. Places no orders.\n"
         "  New entries stop while data/kill_request.json exists (the desktop's Kill Switch).\n",
@@ -291,6 +287,7 @@ int main(int argc, char** argv) {
     std::string date;   // a simulated past day (altair_price_service --sim --date)
     lv::LiveExecPolicy policy;
     lv::LiveRiskLimits limits;
+    double gate_z = 1.0;   // standard errors a direction call's value must clear
     fs::path root = ALTAIR_SOURCE_DIR;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -308,13 +305,14 @@ int main(int argc, char** argv) {
         if (a == "--max-positions" && has) { limits.max_positions = static_cast<std::size_t>(std::atoll(argv[++i])); continue; }
         if (a == "--max-gross" && has) { limits.max_gross_notional = std::atof(argv[++i]); continue; }
         if (a == "--max-daily-loss" && has) { limits.max_daily_loss = std::atof(argv[++i]); continue; }
+        if (a == "--gate-z" && has) { gate_z = std::atof(argv[++i]); continue; }
         std::printf("unknown argument %s\n", a.c_str());
         usage(argv[0]);
         return 2;
     }
     if (until < 0) { std::printf("--until must be HH:MM\n"); return 2; }
     if (policy.latency_ns < 0 || policy.max_quote_age_ns <= 0 || policy.entry_timeout_ns <= 0 || limits.max_positions == 0
-        || !(limits.max_gross_notional > 0.0) || !(limits.max_daily_loss > 0.0)) {
+        || !(limits.max_gross_notional > 0.0) || !(limits.max_daily_loss > 0.0) || !(gate_z >= 0.0)) {
         std::printf("--latency-ms must be >= 0; the ages, timeout and limits must be > 0\n");
         return 2;
     }
@@ -377,9 +375,8 @@ int main(int argc, char** argv) {
     const auto nifty5 = history_5m(root / "dataset/spot/nifty/5m", today);
     const auto bnf5 = history_5m(root / "dataset/spot/banknifty/5m", today);
     const auto vix5 = history_5m(root / "dataset/spot/indiavix/5m", today);
-    double median_sigma = 0.0;
     const auto nrv = daily_rv(nifty5), brv = daily_rv(bnf5);
-    const auto nv = vol_inputs("NIFTY", nrv, note, &median_sigma);
+    const auto nv = vol_inputs("NIFTY", nrv, note);
     const auto bv = vol_inputs("BANKNIFTY", brv, note);
     std::printf("  HAR sigma today: NIFTY %.3f %%, BANKNIFTY %.3f %%; session share %.2f / %.2f\n", 100 * nv.sigma_day,
                 100 * bv.sigma_day, nv.intraday_share, bv.intraday_share);
@@ -413,11 +410,12 @@ int main(int argc, char** argv) {
         const std::int64_t from = today - 3 * 365;
         for (const auto& x : nifty5) if (da::audit_day(x.t) >= from) dir->nifty5.push_back(x);
         for (const auto& x : vix5) if (da::audit_day(x.t) >= from) dir->vix5.push_back(x);
-        dir->vol_ratio = median_sigma > 0.0 && nv.sigma_day > 0.0 ? nv.sigma_day / median_sigma : 1.0;
+        dir->gate_z = gate_z;
         const auto t0 = std::chrono::steady_clock::now();
         altair::live_direction::calibrate(*dir);
-        std::printf("  direction: %s (%.1f s)\n", dir->ok ? (std::to_string(dir->history_days) + " days walked forward").c_str() : dir->why.c_str(),
-                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+        std::printf("  direction: %s (%.1f s; today's fit %.2f s, before the session)\n",
+                    dir->ok ? (std::to_string(dir->history_days) + " days walked forward").c_str() : dir->why.c_str(),
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), dir->fit_seconds);
     }
 
     // ---- the engine --------------------------------------------------------
@@ -471,6 +469,15 @@ int main(int argc, char** argv) {
     bool connected = false;
     std::vector<std::uint8_t> buf;
     buf.reserve(1 << 20);
+    // Where each received chunk ends in `buf`, and when it came off the
+    // socket: a frame's receipt time is that of the chunk holding its last byte.
+    std::deque<std::pair<std::size_t, std::int64_t>> marks;
+    lv::LatencyHistogram lat_frame;     // receipt -> processed, every frame (queueing included)
+    lv::LatencyHistogram lat_decision;  // receipt -> processed, frames that ran the models
+    lv::LatencyHistogram lat_fill;      // decision -> fill, on the feed's clock (the paper latency plus the wait for a quote)
+    const auto steady_ns = [] {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
     auto last_frame = std::chrono::steady_clock::now();
     auto last_write = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     std::uint64_t frames = 0;
@@ -502,6 +509,7 @@ int main(int argc, char** argv) {
     const auto flush_outputs = [&] {
         const std::string src = engine.simulated() ? "SIM" : "LIVE";
         for (const auto& f : engine.take_new_fills()) {
+            lat_fill.record(f.ns - f.submit_ns);
             journal_out.rows.push_back(lv::live_journal_row(f));
             fills_out.rows.push_back(ist_stamp(f.ns) + ",\"" + f.model + "\"," + f.symbol + "," + std::to_string(f.token) + ","
                            + (f.side > 0 ? "buy" : "sell") + "," + std::to_string(f.qty) + "," + lv::live_fmt::num(f.price) + ","
@@ -543,6 +551,8 @@ int main(int argc, char** argv) {
         }
         std::error_code kec;
         engine.set_kill(fs::exists(kill_file, kec));
+        engine.set_metrics("{\"frame_us\": " + lat_frame.json(1e3) + ", \"decision_us\": " + lat_decision.json(1e3)
+                           + ", \"fill_ms_feed\": " + lat_fill.json(1e6) + "}");
         std::string page = note;
         for (const auto& e : events) page += " " + e + ".";
         if (!connected) page += " Not connected to the price service.";
@@ -558,6 +568,7 @@ int main(int argc, char** argv) {
                 resync = false;
                 connected = true;
                 buf.clear();
+                marks.clear();
                 consumer.on_reconnect();
                 last_frame = std::chrono::steady_clock::now();
                 std::printf("connected to the price service\n");
@@ -567,6 +578,7 @@ int main(int argc, char** argv) {
             if (ev.kind == altair::live_feed::FeedEvent::Disconnected) {
                 connected = false;
                 buf.clear();
+                marks.clear();
                 std::printf("price service went away: %s\n", ev.note.c_str());
                 std::fflush(stdout);
                 continue;
@@ -574,6 +586,7 @@ int main(int argc, char** argv) {
             if (resync) continue;
             got = got || !ev.bytes.empty();
             buf.insert(buf.end(), ev.bytes.begin(), ev.bytes.end());
+            marks.emplace_back(buf.size(), ev.recv_ns);
         }
         const auto now = std::chrono::steady_clock::now();
         std::size_t at = 0;
@@ -582,18 +595,28 @@ int main(int argc, char** argv) {
             if (!h) {
                 // Not frame-aligned and not recoverable by guessing: drop what is buffered and
                 // treat it as a gap (the consumer's next frame is checked against the last seen).
-                buf.clear(); at = 0; resync = true;
+                buf.clear(); marks.clear(); at = 0; resync = true;
                 reader.reconnect();
                 std::printf("stream misaligned; reconnecting\n");
                 break;
             }
             const std::size_t need = altair::kFrameHeaderBytes + h->payload_len;
             if (buf.size() - at < need) break;
+            const std::uint64_t decisions_before = engine.decision_minutes();
             (void)consumer.on_frame(*h, buf.data() + at + altair::kFrameHeaderBytes);
             ++frames;
             at += need;
+            while (!marks.empty() && marks.front().first < at) marks.pop_front();
+            if (!marks.empty()) {
+                const std::int64_t took = steady_ns() - marks.front().second;
+                lat_frame.record(took);
+                if (engine.decision_minutes() != decisions_before) lat_decision.record(took);
+            }
         }
-        if (at > 0) buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(at));
+        if (at > 0) {
+            buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(at));
+            for (auto& m : marks) m.first -= at;
+        }
         if (got) last_frame = now;
         engine.set_stale(!connected || now - last_frame > std::chrono::seconds(30));
         // The feed's clock stops with the feed; the exits it owes do not wait for it.
@@ -619,6 +642,9 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(frames), static_cast<unsigned long long>(consumer.missed(altair::kTopicTrades)),
                 engine.book().trades().size(), gross, unpriced == 0 ? lv::live_fmt::num(exp, 0).c_str() : "incomplete",
                 net_text, engine.book().positions().size(), engine.book().working_orders());
+    std::printf("latency, frame received -> processed:  %s\n", lat_frame.text(1e3, "us").c_str());
+    std::printf("latency, frames that ran the models:  %s\n", lat_decision.text(1e3, "us").c_str());
+    std::printf("latency, decision -> fill (feed clock): %s\n", lat_fill.text(1e6, "ms").c_str());
     if (!engine.halt().empty()) { std::printf("UNWRITTEN ROWS REMAIN: %s\n", engine.halt().c_str()); return 4; }
     return 0;
 }

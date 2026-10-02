@@ -41,6 +41,7 @@ struct FeedEvent {
     Kind kind = Data;
     std::vector<std::uint8_t> bytes;   ///< Data only
     std::string note;                  ///< Disconnected: why
+    std::int64_t recv_ns = 0;          ///< steady-clock ns when the reader took it off the socket
 };
 
 class FeedReader {
@@ -81,6 +82,8 @@ public:
 
 private:
     void push(FeedEvent e) {
+        e.recv_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
         {
             std::lock_guard lk(m_);
             queued_ += e.bytes.size();

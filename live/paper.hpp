@@ -189,6 +189,7 @@ public:
         p.entry_expenses = 0.0; p.why_in = reason; p.carry = carry; p.state = LivePosState::Opening;
         p.want_qty = qty; p.decided_ns = ns;
         positions_.emplace(key, p);
+        ++version_;
         Order o;
         o.id = next_id_++; o.key = key; o.side = side; o.remaining = qty; o.submit_ns = ns;
         o.due_ns = ns + pol_.latency_ns; o.expire_ns = ns + pol_.entry_timeout_ns; o.reason = reason; o.exit = false;
@@ -204,6 +205,7 @@ public:
         if (it == positions_.end()) return false;
         LivePosition& p = it->second;
         if (p.state == LivePosState::Closing) return true;   // already working
+        ++version_;
         if (p.state == LivePosState::Opening) {
             drop_order_for(it->first, false);
             if (!p.filled()) {
@@ -256,7 +258,12 @@ public:
         q.state = LivePosState::Open;
         q.want_qty = q.qty;
         positions_.emplace(std::make_pair(q.model, q.inst.token), q);
+        ++version_;
     }
+
+    /// Changes with every accepted order, cancel, fill, expiry and restore:
+    /// the CLI asks it to learn whether a call changed the book.
+    [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
 
     [[nodiscard]] const LivePosition* position(const std::string& model, std::uint32_t token) const {
         const auto it = positions_.find(std::make_pair(model, token));
@@ -375,6 +382,7 @@ private:
         o.expenses += f.expenses;   // NaN sticks
         f.partial = o.remaining > 0;
         fills_.push_back(f);
+        ++version_;
         if (!o.exit) {
             if (!p.filled()) p.entry_ns = now;
             p.qty = o.filled;
@@ -401,6 +409,7 @@ private:
         if (oit == orders_.end()) return;
         const Order o = oit->second;
         orders_.erase(oit);
+        ++version_;
         const auto pit = positions_.find(o.key);
         if (pit == positions_.end()) return;
         LivePosition& p = pit->second;
@@ -434,6 +443,7 @@ private:
     std::vector<LivePaperFill> fills_;
     std::vector<std::string> cancelled_;
     int next_id_ = 1;
+    std::uint64_t version_ = 0;
 };
 
 // ---- durable files ----------------------------------------------------------

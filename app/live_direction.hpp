@@ -21,11 +21,23 @@
 //      calibration of the model's own past calls on that history
 //      (models/magnitude.hpp, WalkForwardCalibrator), not from the model's
 //      opinion of itself;
-//   4. E|r| is the history's sd of 10:15-to-15:20 returns, scaled by today's
-//      HAR volatility against its usual level, times sqrt(2/pi);
-//   5. the call is taken only when (2q - 1) x E|r| beats the round-trip cost:
-//      one lot of the near NIFTY future, bought back at the 15:20 square-off.
+//   4. what a RIGHT call gains and a WRONG one loses are measured separately,
+//      per model, from its walk-forward calls, as multiples of the volatility
+//      forecast made with each call (models/magnitude.hpp, WalkForwardPayoff)
+//      -- not assumed equal -- and scaled by today's forecast: the RMS of the
+//      last 60 sessions' 10:15-to-15:20 returns, the same estimator for the
+//      history and for today;
+//   5. the call is taken only when q x gain - (1 - q) x loss - cost is
+//      positive by `gate_z` standard errors (q's, gain's and loss's, by the
+//      delta method): one lot of the near NIFTY future, bought back at the
+//      15:20 square-off.
 // Every model trades under its own name; "Vote" is the majority of the five.
+//
+// NOTHING IS FITTED INSIDE THE MARKET-DATA PATH. The five models are fitted
+// before the session on every finished day (CurriculumDesign::make_fit_only);
+// at 10:15 today's row is built from today's bars and the fitted models only
+// predict it -- the same calls a fit at 10:15 would make, because the
+// training rows and their scaling are the same (tests/test_live_direction).
 
 #pragma once
 
@@ -34,6 +46,7 @@
 #include <models/curriculum.hpp>
 #include <models/magnitude.hpp>
 
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -73,19 +86,40 @@ struct DirectionShared {
     std::string why;
     std::vector<da::AuditBar> nifty5, vix5;   ///< cleaned history, through yesterday
     double other_cost_bp = 1.3;
-    double vol_ratio = 1.0;                   ///< today's HAR sigma over its 250-day median
     std::size_t history_days = 0;
     std::vector<std::string> names;           ///< base model names, in direction_models() order
     std::vector<WalkForwardCalibrator> cal;   ///< per base model, then one for the vote
+    std::vector<WalkForwardPayoff> payoff;    ///< gain if right / loss if wrong, in sigmas; same order
     std::vector<double> accuracy;             ///< walk-forward hit rate, per base model, then the vote
     std::vector<std::size_t> scored;
+    double gate_z = 1.0;                      ///< standard errors the value must clear
+
+    // Fitted before the session, on every finished day.
+    std::vector<std::unique_ptr<CurriculumModel>> fitted;   ///< per base model; null where the fit abstained
+    std::vector<std::string> fit_note;        ///< why a model abstained, or what its fit chose
+    std::size_t fitted_rows = 0;              ///< finished days the fit used
+    std::int32_t fitted_last_day = 0;         ///< the track's day ordinal of the last of them
+    double fit_seconds = 0.0;
 
     // Today's decision, computed once by the first model that needs it.
     std::int64_t decided_day = 0;
     std::string today_note;
     std::vector<CurriculumCall> today_call;   ///< per base model
-    double today_sigma = 0.0, today_cost_bp = 0.0;
+    double today_sigma_bp = 0.0, today_cost_bp = 0.0;
+    double decide_ms = 0.0;                   ///< how long today's 10:15 decision took
 };
+
+/// The volatility forecast a call is made with: the RMS of the `n` returns
+/// before row `i` (all known at row i's decision), in log-return units.
+/// NaN with fewer than 20 of them. The same estimator scores the history
+/// and sizes today.
+[[nodiscard]] inline double trailing_sigma(const CurriculumTrack& tr, std::size_t i, std::size_t n = 60) {
+    const std::size_t from = i > n ? i - n : 0;
+    if (i - from < 20) return std::numeric_limits<double>::quiet_NaN();
+    double ss = 0.0;
+    for (std::size_t k = from; k < i; ++k) { const double r = tr.ret(k); ss += r * r; }
+    return std::sqrt(ss / static_cast<double>(i - from));
+}
 
 /// Walk the history forward once: every base model's out-of-sample calls,
 /// into a calibrator each. Calls from stages trained on fewer than
@@ -105,6 +139,7 @@ inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
     s.names.clear();
     for (const auto& m : models) s.names.push_back(m->name());
     s.cal.assign(nb + 1, WalkForwardCalibrator{});
+    s.payoff.assign(nb + 1, WalkForwardPayoff{});
     s.accuracy.assign(nb + 1, std::numeric_limits<double>::quiet_NaN());
     s.scored.assign(nb + 1, 0);
     std::vector<std::size_t> right(nb + 1, 0);
@@ -113,6 +148,8 @@ inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
         if (run->stages[st].train_days < min_train_days) continue;
         const int out = curriculum_detail::outcome(tr, r);
         if (out == 0) continue;
+        const double sig = trailing_sigma(tr, r);
+        const double z_abs = std::isfinite(sig) && sig > 0.0 ? std::fabs(tr.ret(r)) / sig : std::numeric_limits<double>::quiet_NaN();
         int up = 0, down = 0;
         for (std::size_t m = 0; m < nb; ++m) {
             const CurriculumCall c = run->calls[m][r - run->first_row];
@@ -120,12 +157,14 @@ inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
             (c.dir > 0 ? up : down) += 1;
             const bool ok = c.dir == out;
             s.cal[m].add(stated_q(c), ok);
+            s.payoff[m].add(ok, z_abs);
             ++s.scored[m];
             right[m] += ok ? 1 : 0;
         }
         if (up != down) {
             const bool ok = (up > down ? 1 : -1) == out;
             s.cal[nb].add(std::numeric_limits<double>::quiet_NaN(), ok);
+            s.payoff[nb].add(ok, z_abs);
             ++s.scored[nb];
             right[nb] += ok ? 1 : 0;
         }
@@ -133,6 +172,22 @@ inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
     for (std::size_t m = 0; m <= nb; ++m)
         if (s.scored[m] > 0) s.accuracy[m] = static_cast<double>(right[m]) / static_cast<double>(s.scored[m]);
     s.history_days = tr.rows();
+
+    // The fit today's decision will use: every finished day, now, not at 10:15.
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto d = CurriculumDesign::make_fit_only(tr, tr.rows());
+    if (!d) { s.why = "the fit design was refused"; return; }
+    s.fitted.clear();
+    s.fit_note.assign(nb, std::string());
+    auto fresh = direction_models();
+    for (std::size_t m = 0; m < nb; ++m) {
+        const std::string why = fresh[m]->fit(*d);
+        s.fit_note[m] = why.empty() ? fresh[m]->tuned() : "abstains: " + why;
+        s.fitted.push_back(why.empty() ? std::move(fresh[m]) : nullptr);
+    }
+    s.fitted_rows = tr.rows();
+    s.fitted_last_day = tr.day.back();
+    s.fit_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     s.ok = true;
 }
 
@@ -151,16 +206,17 @@ inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
     return out;
 }
 
-/// Today's 10:15 call from every base model; run once per day.
-inline void decide_today(DirectionShared& s, const live::LiveEngine& e) {
-    if (s.decided_day == e.today()) return;
-    s.decided_day = e.today();
+/// Today's 10:15 calls from today's 5-minute bars so far (NIFTY and VIX):
+/// the fitted models predict today's row; nothing is fitted here.
+inline void decide_from_bars(DirectionShared& s, const std::vector<da::AuditBar>& own, const std::vector<da::AuditBar>& vix) {
+    const auto t0 = std::chrono::steady_clock::now();
+    struct Timer {
+        DirectionShared& s;
+        std::chrono::steady_clock::time_point t0;
+        ~Timer() { s.decide_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+    } timer{s, t0};
     s.today_call.assign(s.names.size(), CurriculumCall{});
     s.today_note.clear();
-    const auto* n = e.index_of("NIFTY");
-    const auto* v = e.index_of("INDIAVIX");
-    auto own = n ? today_bars(e, n->token) : std::vector<da::AuditBar>{};
-    auto vix = v ? today_bars(e, v->token) : std::vector<da::AuditBar>{};
     if (own.size() < 12 || vix.size() < 12) {
         s.today_note = "Today's 5-minute bars do not run unbroken from 09:15 to 10:15 (did the feed start late?).";
         return;
@@ -175,6 +231,14 @@ inline void decide_today(DirectionShared& s, const live::LiveEngine& e) {
     const auto tr = ft::build_session(in, info);
     if (!info.partial_last || tr.rows() < 2) { s.today_note = "Today's 10:15 row could not be built (no VIX bar at a stamp?)."; return; }
     const std::size_t i = tr.rows() - 1;
+    // The models were fitted before the session on exactly the rows before
+    // today's. If the history rows differ (the dataset changed under a
+    // running engine), the fit is not today's fit: say so, do not trade.
+    if (i != s.fitted_rows || (i > 0 && tr.day[i - 1] != s.fitted_last_day)) {
+        s.today_note = "Today's track does not line up with the fit made before the session ("
+                     + std::to_string(i) + " rows against " + std::to_string(s.fitted_rows) + "); restart the engine.";
+        return;
+    }
     CurriculumStage st;
     st.train_rows = i;
     st.test_begin = i;
@@ -183,16 +247,25 @@ inline void decide_today(DirectionShared& s, const live::LiveEngine& e) {
     st.test_days = 1;
     const auto d = CurriculumDesign::make(tr, st);
     if (!d) { s.today_note = "The design was refused."; return; }
-    auto models = direction_models();
-    for (std::size_t m = 0; m < models.size() && m < s.today_call.size(); ++m) {
-        const std::string why = models[m]->fit(*d);
-        if (!why.empty()) continue;
-        CurriculumCall c = models[m]->predict(*d, i);
+    for (std::size_t m = 0; m < s.fitted.size() && m < s.today_call.size(); ++m) {
+        if (!s.fitted[m]) continue;
+        CurriculumCall c = s.fitted[m]->predict(*d, i);
         curriculum_detail::finish(c, *d);
         s.today_call[m] = c;
     }
-    s.today_sigma = d->sd() * s.vol_ratio;
+    const double sig = trailing_sigma(tr, i);
+    s.today_sigma_bp = std::isfinite(sig) ? 1e4 * sig : 0.0;
     s.today_cost_bp = tr.cost_bp.empty() ? 0.0 : tr.cost_bp[i];
+}
+
+/// Today's 10:15 call from every base model; run once per day.
+inline void decide_today(DirectionShared& s, const live::LiveEngine& e) {
+    if (s.decided_day == e.today()) return;
+    s.decided_day = e.today();
+    const auto* n = e.index_of("NIFTY");
+    const auto* v = e.index_of("INDIAVIX");
+    decide_from_bars(s, n ? today_bars(e, n->token) : std::vector<da::AuditBar>{},
+                     v ? today_bars(e, v->token) : std::vector<da::AuditBar>{});
 }
 
 class LiveDirectionModel final : public live::LiveModel {
@@ -209,6 +282,12 @@ public:
     void on_minute(live::LiveEngine& e, int m) override {
         if (m != kDecideMinute || done_ || !s_->ok) return;
         done_ = true;
+        // The gate's inputs go on the record with the outcome.
+        live::LiveDecisionScope log(e, name(), [this] {
+            std::string t = note_;
+            for (const auto& [k, v] : fields_) t += " | " + k + " " + v;
+            return t;
+        });
         decide_today(*s_, e);
         if (!s_->today_note.empty()) { note_ = s_->today_note; return; }
         int dir = 0;
@@ -224,18 +303,23 @@ public:
             if (up == down) { note_ = "The five models split evenly; no call."; return; }
             dir = up > down ? 1 : -1;
         }
+        if (!(s_->today_sigma_bp > 0.0)) { note_ = "No volatility forecast for today (fewer than 20 sessions of history)."; return; }
         const double q = s_->cal[i_].calibrated(qraw);
-        const double eabs_bp = 1e4 * expected_abs_move(s_->today_sigma);
-        const double value = call_value_bp(q, eabs_bp, s_->today_cost_bp);
+        const GateValue g = gate_value(q, s_->cal[i_].calibrated_se(qraw), s_->payoff[i_].estimate(), s_->today_sigma_bp,
+                                       s_->today_cost_bp, s_->gate_z);
         signal_ = std::string(dir > 0 ? "UP" : "DOWN") + " to 15:20";
-        fields_ = {{"calibrated q", live::live_fmt::pct(q, 1)},
-                   {"E|r| to 15:20", live::live_fmt::num(eabs_bp, 1) + " bp"},
-                   {"round-trip cost", live::live_fmt::num(s_->today_cost_bp, 1) + " bp"},
-                   {"value (2q-1)E|r| - cost", live::live_fmt::num(value, 1) + " bp"}};
-        if (!(value > 0.0)) {
-            note_ = "Gate shut: the call is worth " + live::live_fmt::num(value, 1) + " bp after costs.";
+        fields_ = {{"calibrated q", live::live_fmt::pct(q, 1) + " ± " + live::live_fmt::pct(g.q_se, 1)},
+                   {"gain if right", live::live_fmt::num(g.gain_bp, 1) + " bp"},
+                   {"loss if wrong", live::live_fmt::num(g.loss_bp, 1) + " bp"},
+                   {"round-trip cost", live::live_fmt::num(g.cost_bp, 1) + " bp"},
+                   {"value q·gain − (1−q)·loss − cost", live::live_fmt::num(g.value_bp, 1) + " ± " + live::live_fmt::num(g.se_bp, 1) + " bp"},
+                   {"gate bound (value − " + live::live_fmt::num(s_->gate_z, 1) + " se)", live::live_fmt::num(g.lower_bp, 1) + " bp"}};
+        if (!g.open()) {
+            note_ = "Gate shut: worth " + live::live_fmt::num(g.value_bp, 1) + " ± " + live::live_fmt::num(g.se_bp, 1)
+                  + " bp after costs; it must clear zero by " + live::live_fmt::num(s_->gate_z, 1) + " standard error(s).";
             return;
         }
+        const double value = g.value_bp;
         const auto* fut = e.near_future("NIFTY");
         if (fut == nullptr || e.stale()) { note_ = "Gate open, but no NIFTY future or a stale feed."; return; }
         std::string why;
@@ -251,7 +335,7 @@ public:
         v.state = !s_->ok ? "abstaining" : (!e.book().flat(name()) ? "in position" : (done_ ? "done today" : "waiting for 10:15"));
         v.signal = signal_;
         v.reason = !s_->ok ? "No history: " + s_->why
-                           : (note_.empty() ? "At 10:15: forecast 10:15 to the 15:20 square-off, trade one NIFTY future lot only if (2q-1)E|r| beats the cost." : note_);
+                           : (note_.empty() ? "At 10:15: forecast 10:15 to the 15:20 square-off; trade one NIFTY future lot only if q·gain − (1−q)·loss − cost clears zero by the gate's margin." : note_);
         v.fields = fields_;
         if (s_->ok && i_ < s_->accuracy.size())
             v.fields.push_back({"walk-forward hit rate", live::live_fmt::pct(s_->accuracy[i_], 1) + " of "
