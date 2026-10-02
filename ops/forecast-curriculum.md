@@ -28,8 +28,10 @@ scored.
 build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
 ```
 
-All 21 tracks take about an hour on four cores; the 1-minute tracks are most
-of it (`--only daily`: about 2 minutes).
+The first pass runs 20 tracks; the second pass runs 42 more, each a first-pass
+track with other models' forecasts as inputs (see "Other models as inputs").
+That takes about 90 minutes on four cores, most of it the 1-minute tracks.
+`--only daily` takes about 2 minutes.
 
 Options:
 - `--first-days N` (default 3).
@@ -38,12 +40,13 @@ Options:
 - `--other-cost-bp X`.
 - `--only TEXT`: run only tracks whose name contains it, e.g. `--only 5m`.
 - `--no-bands`, `--no-log`.
+- `--no-feeds`: skip the second pass.
 
 ## Output (`data/verified/`, git-ignored)
 
 | File | What |
 |---|---|
-| `forecast_curriculum.xlsx` | **Summary**: direction, every model on every track (accuracy, 95 % interval, p against a coin and against the best constant call, both Bonferroni-corrected, coverage, Brier, price skill against the random walk, trades that clear cost, verdict). **Bands**: every band model on every track (hit rate, width, interval score, skill against the constant band). **Frontier**: accuracy of each model's most confident 0.1 % … 100 % of calls, and the largest slice still at or above 80 %. **Atlas coverage**: every Model Atlas row, and what the run did with it. **Data** · **Method** · one **sheet per track** with its learning curves. |
+| `forecast_curriculum.xlsx` | **Tradability**: each track's mean move, cost, the accuracy a call needs to pay that cost (at the history's cost and at today's), and the best models against it. **Feeds**: every second-pass model against its first pass over the same period. **Summary**: direction, every model on every track (accuracy, 95 % interval, p against a coin and against the best constant call, both Bonferroni-corrected, coverage, Brier, price skill against the random walk, trades that clear cost, verdict). **Bands**: every band model on every track (hit rate, width, interval score, skill against the constant band). **Frontier**: accuracy of each model's most confident 0.1 % … 100 % of calls, and the largest slice still at or above 80 %. **Atlas coverage**: every Model Atlas row, and what the run did with it. **Data** · **Method** · one **sheet per track** with its learning curves. |
 | `forecast_curriculum.txt` | The summary as text. |
 | `forecast_log/<track>.csv` | Every forecast on the daily and hourly tracks: time, stage, days learned, model, last price, next price, forecast price, P(up), call, what moved, RIGHT/WRONG/FLAT, net bp if traded. The 1–15-minute logs would run to gigabytes and are not written. |
 
@@ -52,7 +55,8 @@ Options:
 | Track | Decision | Outcome |
 |---|---|---|
 | NIFTY, BANKNIFTY, NIFTY FUT, INDIA VIX daily | 15:30, from that day's bar | next trading day's close |
-| … + VIX fc (daily and hourly index tracks) | the same, plus the INDIA VIX model's own forecast as a feature | the same |
+| NIFTY, BANKNIFTY 0920-close and 1015-close (horizons) | 09:20 or 10:15, the close of that 5-minute bar | the same day's 15:30 close |
+| … + vol / cross / models / all (second pass) | the first-pass track's decision, plus other models' forecasts made by then | the same |
 | NIFTY, BANKNIFTY, INDIA VIX hourly | close of each of a full day's first six hourly bars (10:15 … 15:15) | the next hourly close (no overnight hour) |
 | NIFTY, BANKNIFTY, INDIA VIX 15m, 5m, 1m | close of every bar of a full 09:15–15:30 session but the last | the next bar's close (no overnight bar) |
 
@@ -128,6 +132,61 @@ without a same-time INDIA VIX bar dropped; history before INDIA VIX begins
 next-month contract for July–August 2026) with outcomes that cross an expiry
 excluded. The expiry calendar is checked on every run: the basis should be ~0
 on expiry and jump the next day (Data sheet).
+
+## Other models as inputs (second pass)
+
+`models/curriculum_feeds.hpp`. A finished run holds every model's
+out-of-sample forecast for every row from its first test block on. Each
+forecast is made at the row's decision, from models fitted on finished stages
+only. A second pass appends some of them to another track's features:
+
+| Group | Inputs |
+|---|---|
+| **vol** | The track's own 80 % band widths (GJR-GARCH, seasonal, GBDT on \|r\|, vol ensemble), the HMM's forecast scale and drift, and the Kalman drift. |
+| **cross** | Hedge's forecast on the next faster and next slower timeframe and on the daily track, the other index's forecast and band, and INDIA VIX's forecast. |
+| **models** | All 32 first-pass models' signed confidence: +1 sure up, −1 sure down, 0 abstained. The coin flip is left out. |
+| **all** | Everything above, about 45 more inputs. |
+
+How the groups run:
+- **Daily and horizon tracks:** every group, an ablation that shows which input helps.
+- **5m, 15m and hourly:** "all" only.
+- **1m:** none. No accuracy pays a 1-minute trade's costs.
+
+**The join is as-of.** A row reads, from each feed, the latest value made at
+or before its decision. An intraday source counts only on its own day; a daily
+one counts for up to a week. A feed that cannot supply a value reads 0 ("no
+opinion"), except the band and self feeds, whose rows are dropped instead.
+`models/tests/test_curriculum_feeds.cpp` runs both passes, changes one
+outcome, and checks that none of the 8,190 second-pass calls made before it
+moves.
+
+## Tradability
+
+A direction call that is right a share p of the time, on moves of mean size
+E|r|, nets (2p − 1)·E|r| − cost a trade. Break-even is therefore
+p* = ½ + cost / (2·E|r|), assuming being right does not depend on the size of
+the move.
+
+The **Tradability** sheet gives p* at two costs:
+- the history's average cost (mostly 2 bp STT);
+- today's cost (5 bp STT since 2026-04-01, plus 1.3 bp).
+
+It then sets the best models against p*. Measured on the 2026-10-01 run, at
+today's cost (6.3 bp a round trip):
+
+| Horizon | Mean move NIFTY / BANKNIFTY | Break-even NIFTY / BANKNIFTY | Best model accuracy |
+|---|---|---|---|
+| 1m | 2.4 / 3.4 bp | 180 % / 142 %: impossible | 51–54 % |
+| 5m | 5.5 / 7.5 bp | 108 % / 92 % | 52–57 % |
+| 15m | 9.2 / 12.6 bp | 84 % / 75 % | 52–53 % |
+| hourly | 17 / 23 bp | 68 % / 64 % | 51–55 % |
+| 09:20→close | 55 / 74 bp | 55.8 % / 54.2 % | 53–55 % |
+| 10:15→close | 48 / 64 bp | 56.6 % / 54.9 % | 53–56 % |
+| daily | 69 / 91 bp | 54.5 % / 53.5 % | 53–55.5 % |
+
+Only the daily and horizon tracks have break-evens a model reaches, and
+only on the confident slices: Consensus 75 % is right 55.5 % of the time on
+24 % of NIFTY days and 54.0 % on 35 % of BANKNIFTY days.
 
 ## No look-ahead
 
@@ -294,9 +353,78 @@ the time of day. That is what an option seller needs.
   - FUT: 55.3 → 54.8 %.
   - None of these moves is significant.
 
+### Other models as inputs (second pass, 2026-10-01)
+
+The full two-pass run took 100 minutes on 4 jobs and refused nothing for
+look-ahead. It covered 21 first-pass tracks, 4 horizon tracks and 34
+second-pass tracks: 1,428 model comparisons on the same rows, and 2,268
+model-track tests in all.
+
+- **Feeding models each other's forecasts does not reliably help.**
+  - The mean change in accuracy across a track's models is −1.4 to +1.1
+    points, mostly within ±0.5.
+  - McNemar on the same rows: 60 models nominally better, 32 nominally worse,
+    of 934 with a difference.
+  - Bonferroni-corrected, one change is significant, and it is for the
+    worse (DQN on NIFTY daily + models).
+- **The most consistent small gain is NIFTY daily + all:** 31 models better
+  and 8 worse, a mean of +0.7 points. None is significant on its own.
+- **The best net result at today's cost** is NIFTY 09:20→close + vol,
+  ARMA(1,1): +11.4 bp a trade, t = 2.45 over 546 trades. With 2,268 tests,
+  significance needs t ≈ 4, so it is a candidate for a forward test, not a
+  finding.
+- **Bands:** the best 80 % band (Heston variance drift) hits 79.1 % at 196 bp,
+  a 20 % better score than the constant band. The bands stay the forecast
+  that works.
+
+How a calibrated band does, and does not, turn into option P&L is
+measured in [ops/demo-trading.md](demo-trading.md). Selling the touch of a
+band edge loses. Selling both edges at 09:20 earns only on the variance
+clock, and mostly from the volatility premium.
+
+### Magnitude: right on the days that matter?
+
+Accuracy counts a 5 bp day and a 300 bp day alike. The Summary sheet now also
+gives each model two magnitude measures:
+- **magnitude-weighted accuracy:** the share of the market's movement the
+  model was on the right side of;
+- **gross edge, bp a call:** the mean of direction × move.
+
+`altair_magnitude` reads the per-forecast logs. It adds the |move| on right
+calls against wrong ones, and a **value gate** (`models/magnitude.hpp`): take
+a call only when (2q − 1) × E|r| beats the cost.
+- q is the model's own probability, calibrated walk-forward.
+- E|r| is σ√(2/π), with σ from a HAR forecast of that window's 5-minute
+  realised variance.
+- Both use only what was known when the call was made.
+
+On the 2026-10-01 run, at 6.3 bp:
+
+| Track | Median accuracy | Median magnitude-weighted | Models better on big moves | Median net bp / call | Gated share | Median gated net |
+|---|---|---|---|---|---|---|
+| NIFTY daily | 52.1 % | 51.1 % | 14 / 42 | −4.8 | 10 % | −4.7 |
+| BANKNIFTY daily | 51.4 % | 50.7 % | 11 / 42 | −5.1 | 11 % | −7.4 |
+| NIFTY FUT daily | 51.5 % | 50.9 % | 11 / 41 | −5.1 | 7 % | −12.9 |
+| NIFTY 09:20→close | 51.2 % | 52.4 % | 37 / 42 | −3.6 | 6 % | −0.3 |
+| BANKNIFTY 09:20→close | 50.5 % | 49.9 % | 19 / 42 | −6.5 | 6 % | −8.2 |
+| NIFTY 10:15→close | 52.3 % | 53.0 % | 35 / 42 | −3.4 | 7 % | −2.3 |
+| BANKNIFTY 10:15→close | 51.3 % | 51.0 % | 22 / 42 | −5.0 | 6 % | −3.1 |
+
+- **On the daily tracks, accuracy flatters the models.** Most are slightly
+  *less* right on big days than small ones.
+- **On the NIFTY session tracks it is the reverse.** 35–37 of 42 models are
+  more right on the big moves.
+- **The gate lifts the best models' edge per trade** to +20 to +43 bp, mostly
+  AR and ARMA on 10:15→close, with t ≈ 2.5–3.2.
+- **None survives the 1,136 gated tests,** which need t > 4.09. They are
+  candidates for a forward test, not findings.
+
 ### What would improve it next
 - **Broker-verified data:** run `ops\broker_audit.ps1`, then repeat the run.
 - **Inputs beyond price:** option-chain OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close.
 - **Order-book data:** the Atlas's microstructure rows (order-book imbalance, microprice, VPIN, Kyle's lambda) need recorded depth and trades, and they are the Atlas's likeliest source of short-horizon direction edge.
 - **A forward test** of the daily Consensus 75 % filter from October 2026, on data this run has never seen.
-- **Use the bands where they bite:** strike selection and position sizing for option selling, where a calibrated 80 % range is directly the product.
+- **Sell volatility the way a desk does:** set a realised-volatility
+  forecast against the option's implied vol and hedge the delta
+  (`strategies/vol_premium.hpp`), on real option prices rather than VIX-priced
+  ones.

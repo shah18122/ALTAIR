@@ -39,6 +39,12 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_price_payload_test PRIVATE altair_server)
     add_test(NAME price_payload COMMAND altair_price_payload_test)
 
+    # The market-watch quote frame (topic 3): OHLC, previous close, top of
+    # book, average price, totals, circuits, last-trade time.
+    add_executable(altair_quote_payload_test tests/test_quote_payload.cpp)
+    target_link_libraries(altair_quote_payload_test PRIVATE altair_server)
+    add_test(NAME quote_payload COMMAND altair_quote_payload_test)
+
     # P37-02. The bus, over a real loopback socket.
     #
     # BOOST IS ASKED FOR BY NAME HERE, and that is a correction rather than a
@@ -60,6 +66,15 @@ if(ALTAIR_BUILD_TESTS)
             target_link_libraries(altair_price_bus_test PRIVATE ws2_32 mswsock)
         endif()
         add_test(NAME price_bus COMMAND altair_price_bus_test)
+
+        # All three topics interleaved; each keeps its own sequence.
+        add_executable(altair_price_bus_topics_test tests/test_price_bus_topics.cpp)
+        target_link_libraries(altair_price_bus_topics_test
+            PRIVATE altair_server Boost::headers)
+        if(WIN32)
+            target_link_libraries(altair_price_bus_topics_test PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME price_bus_topics COMMAND altair_price_bus_topics_test)
         # Runs threads: the TSan CI job runs exactly the `concurrency` label.
         set_tests_properties(price_bus PROPERTIES LABELS concurrency)
         message(STATUS "altair: price bus ENABLED (Boost ${Boost_VERSION})")

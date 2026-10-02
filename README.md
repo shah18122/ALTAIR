@@ -112,6 +112,17 @@ information. It runs `altair_fyers_account` and `altair_fyers_quotes` (both
 read-only). Put the Kite instrument master at `data/instruments.csv` so monthly
 expiries and lot sizes resolve.
 
+**Headless hosts** (a cloud session, a scheduled job) have no browser for the
+login. `altair_fyers_history` and `altair_fyers_ticker` also accept the day's
+session from two environment variables. The file wins when both exist, and
+neither value is ever printed:
+- `ALTAIR_FYERS_CLIENT_ID`
+- `ALTAIR_FYERS_ACCESS_TOKEN`
+
+A FYERS token lasts one trading day, so the variable has to be refreshed with
+it. The host's network must also allow `api-t1.fyers.in`, `public.fyers.in`
+and `socket.fyers.in`. These CLIs contain no order endpoint.
+
 For ticks, open **Live Feed**, choose **FYERS (primary)** and press **Listen**.
 The live socket implements FYERS' HSM protocol natively in C++.
 `feed/tests/test_fyers_hsm.cpp` checks it byte for byte against vectors
@@ -141,9 +152,12 @@ GJR, EGARCH, EWMA, Heston, seasonal, jump diffusion …), with ensembles and
 confidence filters, on a doubling schedule: learn 3 days, forecast the
 next 3, record every call right or wrong, refit on 6, 12, 24 … days. Tracks:
 NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d, plus NIFTY futures
-daily, with INDIA VIX as a feature. The daily and hourly index tracks run
-again with the VIX model's own forecast as an input. Two targets per track:
-next-bar direction, and an 80 % range band (scored on how narrow it can be).
+daily, with INDIA VIX as a feature, and NIFTY / BANKNIFTY from 09:20 and
+10:15 to the close. A second pass feeds the first pass's out-of-sample
+forecasts back in as inputs: band widths, regimes, other timeframes, the
+other index, INDIA VIX and every model. Two targets per track: next-bar
+direction, and an 80 % range band (scored on how narrow it can be). A
+Tradability sheet gives the accuracy each track needs to pay its costs.
 
 ```powershell
 build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
@@ -154,6 +168,73 @@ bands, accuracy-vs-coverage frontier, learning curve per track, data
 cleaning) and a per-forecast log for the hourly and daily tracks. See
 [ops/forecast-curriculum.md](ops/forecast-curriculum.md) for the method and
 the results.
+
+## Live terminal: streaming prices and live models
+
+**Terminal → Watch** is a GETS-style market watch fed by `altair_price_service`.
+
+- **Sources:** FYERS live (`--fyers --go`), or `--sim` when the market is shut.
+  SIM is always marked SIM.
+- **Streams:** indices, near futures, both option chains (ATM ± 20), the NIFTY 50
+  and their futures.
+  - The watch has LTP, change, bid/ask with sizes, volume, OI, OHLC and LTT, and
+    moved prices flash.
+  - Five-level depth, and time & sales listing every trade.
+  - A live chain with IV and Δ inverted from market prices.
+
+**Terminal → Models** runs `altair_live_engine` on the same stream and paper-trades
+each model's signals: fills at bid/ask, expenses on every fill, and net P&L by
+model. The models:
+- the HAR vol band;
+- the 09:20 band-edge strangles;
+- the 10:15-to-close direction models behind the magnitude gate;
+- BANKNIFTY/NIFTY pairs;
+- NIFTY 50 stat-arb.
+
+Every model says what it is doing and why. No orders, ever. See
+[ops/live-terminal.md](ops/live-terminal.md).
+
+## Demo trading: band-fade short options and futures pairs
+
+Paper trades only, never sent to a broker; the desktop's **Strategies →
+Demo Trading** page runs both and shows trades, per-model totals and equity.
+
+- `altair_band_option_demo`: each band model's 09:20 forecast sells options
+  under six rules, one lot, bought back by 15:20. The rules: wait for a touch;
+  a strangle at the band edges; with a 2× stop; delta hedged; expiry day.
+  Premiums are synthetic (Black-76 at INDIA VIX).
+  - Touch-fading loses under every assumption: a touch is a breakout more
+    often than a reversal.
+  - The 09:20 strangle earns only on the variance clock (+₹98 NIFTY, +₹283
+    BANKNIFTY a trade with the stop; t = 3.4 and 7.1). It does so only since
+    2021, and mostly from the volatility premium rather than the forecast.
+  - It needs real intraday option prices before it means anything.
+- `altair_vol_premium`: the options-desk trade. Sell the at-the-money monthly
+  straddle when implied vol beats a HAR realised-vol forecast, delta hedged
+  with futures.
+  - On VIX-priced (synthetic) options it earns in every year to 2025 (t ≈ 5),
+    but the forecast adds nothing over selling every month.
+  - Real prices come from NSE bhavcopy (`ops/fetch_bhavcopy.ps1`,
+    `--source bhavcopy`).
+- `altair_resid_reversion`: the quant-fund version of pairs. Each NIFTY 50
+  stock's residual against the market and its sector peers is traded on an
+  OU s-score (Avellaneda-Lee) with many small hedged positions.
+  - The stock data comes from FYERS (`ops/fetch_universe.ps1`).
+  - The universe is today's members, so results carry survivorship bias.
+- `altair_depth_study`: the HFT question asked honestly. It tests whether
+  order flow imbalance, imbalance and microprice in recorded FYERS depth
+  (`ops/record_depth.ps1`, `altair_fyers_ticker --stamp`) predict the next
+  mid move out of sample, and by more than half the spread.
+- `altair_pairs_futures`: walk-forward Engle-Granger pairs, long one future
+  and short the other in whole lots, over `config/pairs.csv` (NIFTY-BANKNIFTY,
+  CIPLA-SUNPHARMA, HDFCBANK-ICICIBANK and more). Stock legs come from FYERS via
+  `ops/fetch_pairs.ps1`. The BANKNIFTY/NIFTY ratio passed 2.6 on 91 days in
+  2019-20 (max 2.661).
+
+Expenses are refused while `config/charges.toml` is unverified. Pass
+`--unverified-costs` to price them with an UNVERIFIED stamp. See
+[ops/demo-trading.md](ops/demo-trading.md). The papers behind both are
+feature cards in [research/papers/index.md](research/papers/index.md).
 
 ## CI
 

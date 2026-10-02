@@ -85,10 +85,10 @@ void shell_laptop_geometry(altair::ui::MainWindow& window, altair::ui::Workspace
     }
     nav->set_mode(altair::ui::NavigationMode::Expanded);
     window.resize(1280, 720);
-    for (int page = 0; page < 35; ++page) {
+    for (int page = 0; page < 36; ++page) {
         window.show_page(page);
         QApplication::processEvents();
-        check(window.size() == QSize(1280, 720), "all35 page layouts stay within laptop viewport");
+        check(window.size() == QSize(1280, 720), "all 36 page layouts stay within laptop viewport");
     }
     window.show_page(2);
     QApplication::processEvents();
@@ -139,13 +139,13 @@ int main(int argc, char** argv) {
         auto* toolbar = window.findChild<QToolBar*>(QStringLiteral("workspaceToolbar"));
         check(nav && stack && toolbar, "real shell owns navigation, pages and permanent toolbar");
         if (!nav || !stack || !toolbar) return 1;
-        check(stack->count() == 35 && stack->currentIndex() == 2, "fresh workspace opens existing Terminal");
-        for (int i = 0; i < 35; ++i) {
+        check(stack->count() == 36 && stack->currentIndex() == 2, "fresh workspace opens existing Terminal");
+        for (int i = 0; i < 36; ++i) {
             const int destination = altair::ui::nav_destination(i);
             check(window.show_page(altair::ui::nav_page_id(i)) && stack->currentIndex() == destination &&
                   nav->current_page() == destination, "legacy routes resolve to canonical page stack destinations");
         }
-        check(!window.show_page(QStringLiteral("invalid.page")) && stack->currentIndex() == 34,
+        check(!window.show_page(QStringLiteral("invalid.page")) && stack->currentIndex() == 35,
               "invalid route does not select another page");
         QAction* toggle = nullptr;
         QAction* halt = nullptr;

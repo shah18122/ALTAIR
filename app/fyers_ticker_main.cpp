@@ -2,7 +2,7 @@
 //
 //     altair_fyers_ticker [--symbols NSE:NIFTY50-INDEX,NSE:SBIN-EQ]
 //                         [--depth] [--lite] [--seconds 30] [--channel 11]
-//                         [--out PATH] [--jsonl PATH] [--store PATH]
+//                         [--out PATH] [--jsonl PATH] [--stamp] [--store PATH]
 //                         [--source NAME] [--reconnect 3] --go
 //
 // The pipeline, and every stage of it is also what the official SDK does:
@@ -17,6 +17,7 @@
 //
 // Read-only: no order endpoint is reachable from this binary. Without --go it
 // prints what it would do and exits, like every other fetcher in app/.
+#include <app/fyers_env_session.hpp>
 #include <broker/fyers_api.hpp>
 #include <broker/fyers_data_socket.hpp>
 #include <broker/https_client.hpp>
@@ -131,7 +132,7 @@ void usage(const char* self) {
     std::printf(
         "\n  The LIVE FYERS data feed (official HSM socket protocol).\n\n"
         "    %s [--symbols A,B] [--depth] [--lite] [--seconds N]\n"
-        "        [--channel N] [--out PATH] [--jsonl PATH] [--store PATH]\n"
+        "        [--channel N] [--out PATH] [--jsonl PATH] [--stamp] [--store PATH]\n"
         "        [--source NAME] [--reconnect N] --go\n\n"
         "    --symbols    FYERS symbols (default NSE:NIFTY50-INDEX,\n"
         "                 NSE:NIFTYBANK-INDEX,NSE:SBIN-EQ)\n"
@@ -141,6 +142,8 @@ void usage(const char* self) {
         "    --channel    socket channel 1..30 (default 11, as the SDK)\n"
         "    --out        status JSON for the UI (default data/fyers_ticks.json)\n"
         "    --jsonl      append every update as the SDK's on_message JSON\n"
+        "    --stamp      prefix each --jsonl line with \"recv_ms\" (receive time, epoch ms):\n"
+        "                 depth updates carry no time of their own (altair_depth_study needs it)\n"
         "    --store      binary tick store to append (default none)\n"
         "    --source     client name sent at auth (default %.*s)\n"
         "    --reconnect  reconnect attempts after a drop (default 3)\n"
@@ -166,6 +169,7 @@ int main(int argc, char** argv) {
     const char* source_s = arg_value(argc, argv, "--source");
     const char* reconnect_s = arg_value(argc, argv, "--reconnect");
     const bool depth = has_flag(argc, argv, "--depth");
+    const bool stamp = has_flag(argc, argv, "--stamp");
     const bool lite = has_flag(argc, argv, "--lite");
     const bool go = has_flag(argc, argv, "--go");
 
@@ -206,9 +210,13 @@ int main(int argc, char** argv) {
     }
 
     // ---- credential -> hsm_key ---------------------------------------------
-    const auto session = read_session(source_path("data/fyers_session.json"));
+    auto session = read_session(source_path("data/fyers_session.json"));
+    if (!session) {   // a headless host: the day's session from the environment (app/fyers_env_session.hpp)
+        if (auto env = altair::fyers_env::from_environment()) { session = Session{std::move(env->client), std::move(env->access)}; }
+    }
     if (!session) {
-        std::printf("\n  no valid FYERS session; run altair_fyers_login first.\n");
+        std::printf("\n  no valid FYERS session; run altair_fyers_login first, or set\n"
+                    "  ALTAIR_FYERS_CLIENT_ID and ALTAIR_FYERS_ACCESS_TOKEN.\n");
         return 2;
     }
     const auto now_unix = static_cast<std::int64_t>(
@@ -331,6 +339,9 @@ int main(int argc, char** argv) {
         // JSON is only produced for the recording; the feed path is typed.
         if (jsonl) {
             hsm::render_sdk_json(u, lite, json_line);
+            if (stamp) {   // opt-in: the SDK's own JSON has no receive time
+                json_line.insert(1, "\"recv_ms\":" + std::to_string(recv.ns_since_epoch() / 1'000'000) + ",");
+            }
             jsonl << json_line << '\n';
         }
         if (u.cookie != hsm::kNoCookie

@@ -29,8 +29,9 @@ void registry_contract() {
         "Execution", "Volatility", "Risk — VaR", "Portfolio", "ML — Trees", "Regimes",
         "Forecast", "Strategies", "Overnight Gap", "Options", "Basis", "Flagging",
         "Microstructure", "Sizing & Limits", "Cointegration", "Memory", "Link Kite",
-        "Neural", "Features", "Arbitrage", "Model Atlas", "FYERS Primary", "Brokers"};
-    check(nav_page_names() == expected, "all legacy labels plus FYERS and Brokers are registered");
+        "Neural", "Features", "Arbitrage", "Model Atlas", "FYERS Primary", "Brokers",
+        "Demo Trading"};
+    check(nav_page_names() == expected, "all legacy labels plus FYERS, Brokers and Demo Trading are registered");
     QSet<QString> ids;
     QSet<int> order;
     for (int i = 0; i < expected.size(); ++i) {
@@ -39,8 +40,8 @@ void registry_contract() {
               "label and stable ID resolve to the same legacy page");
     }
     for (const int i : kNavigationOrder) order.insert(i);
-    check(ids.size() == 35 && order.size() == 30 && !ids.contains(QString{}),
-          "35 legacy identities and 30 visible destinations");
+    check(ids.size() == 36 && order.size() == 31 && !ids.contains(QString{}),
+          "36 legacy identities and 31 visible destinations");
     for (const int hidden : {0, 1, 5, 28, 33})
         check(!order.contains(hidden) && !nav_visible(hidden), "removed routes never appear in traversal");
     check(nav_page_index(QStringLiteral("  MODEL   ATLAS ")) == 32 &&
@@ -49,8 +50,9 @@ void registry_contract() {
           nav_page_index(QStringLiteral("Ratio Spread")) == 8 &&
           nav_page_index(QStringLiteral("accounts.fyers")) == 33 &&
           nav_page_index(QStringLiteral("accounts.brokers")) == 34 &&
+          nav_page_index(QStringLiteral("strategies.demo-trading")) == 35 &&
           nav_page_index(QStringLiteral("not a page")) == -1 &&
-          nav_page_id(-1).isEmpty() && nav_page_id(35).isEmpty(), "lookup boundary behavior");
+          nav_page_id(-1).isEmpty() && nav_page_id(36).isEmpty(), "lookup boundary behavior");
 }
 void tree_and_menu() {
     WorkspaceNavigation nav;
@@ -80,7 +82,7 @@ void tree_and_menu() {
     nav.populate_menu(&menu);
     QList<QAction*> actions;
     routes(&menu, actions);
-    check(actions.size() == 30 + nav.recent_pages().size(), "seven native submenus and recent routes expose visible pages");
+    check(actions.size() == 31 + nav.recent_pages().size(), "seven native submenus and recent routes expose visible pages");
     int checked = 0;
     for (auto* action : actions) checked += action->isChecked() ? 1 : 0;
     check(checked >= 1, "workspace menus visibly mark the current route");
@@ -103,7 +105,7 @@ void tree_and_menu() {
             check(invoked == entry->data().toInt(), "compact popup retains page mapping");
         }
     }
-    check(compact_routes == 30, "all visible pages reachable in compact mode");
+    check(compact_routes == 31, "all visible pages reachable in compact mode");
     int compact_checked = 0;
     for (auto* button : buttons)
         for (auto* entry : button->menu()->actions())
@@ -184,7 +186,7 @@ void search_keyboard() {
     search.show();
     auto* query = search.findChild<QLineEdit*>();
     auto* results = search.findChild<QListWidget*>();
-    check(results->count() == 30, "search exposes only canonical visible destinations");
+    check(results->count() == 31, "search exposes only canonical visible destinations");
     for (const auto& alias : {QStringLiteral("Kite"), QStringLiteral("FYERS"), QStringLiteral("Link Kite")}) {
         query->setText(alias);
         check(results->count() == 1 && results->item(0)->data(Qt::UserRole).toInt() == 34,
@@ -255,18 +257,18 @@ void schema_migration_and_layout() {
 }
 void recent_route_order() {
     WorkspaceNavigation nav;
-    for (int i = 0; i < 35; ++i) nav.select_page(i);
+    for (int i = 0; i < 36; ++i) nav.select_page(i);
     nav.select_page(2);
     nav.select_page(32);
     const auto recent = nav.recent_pages();
-    check(recent.size() == 30 && recent[0] == "models.atlas" && recent[1] == "market.terminal",
-          "recent history contains 30 canonical identities without duplicates");
+    check(recent.size() == 31 && recent[0] == "models.atlas" && recent[1] == "market.terminal",
+          "recent history contains 31 canonical identities without duplicates");
     QMenu menu;
     nav.populate_menu(&menu);
     QMenu* recent_menu = nullptr;
     for (auto* action : menu.actions())
         if (action->text() == "Recent pages") recent_menu = action->menu();
-    check(recent_menu && recent_menu->actions().size() == 30, "recent submenu contains full bounded visible history");
+    check(recent_menu && recent_menu->actions().size() == 31, "recent submenu contains full bounded visible history");
     int activated = -1;
     nav.activate = [&](int index) { activated = index; };
     if (recent_menu) for (auto* action : recent_menu->actions()) {

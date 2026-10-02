@@ -46,7 +46,7 @@ struct NavigationState {
     bool valid = schema_ok && (schema == 1 || schema == 2) && mode_ok && mode >= 0 && mode <= 2 &&
                  last_ok && last >= 0 && last <= 1 && nav_known_id(page) &&
                  raw_expanded.canConvert<QStringList>() && raw_favourites.canConvert<QStringList>() &&
-                 expanded.size() <= 7 && favourites.size() <= 35;
+                 expanded.size() <= 7 && favourites.size() <= 36;
     for (const auto& id : expanded) valid = valid && nav_known_group(id);
     for (const auto& id : favourites) valid = valid && nav_known_id(id);
     if (schema == 2) {
@@ -55,7 +55,7 @@ struct NavigationState {
         const auto raw_recent = settings.value(QStringLiteral("recent"));
         state.recent = raw_recent.toStringList();
         valid = valid && width_ok && state.expanded_width >= 220 && state.expanded_width <= 360 &&
-                raw_recent.canConvert<QStringList>() && !state.recent.isEmpty() && state.recent.size() <= 35;
+                raw_recent.canConvert<QStringList>() && !state.recent.isEmpty() && state.recent.size() <= 36;
         for (const auto& id : state.recent) valid = valid && nav_known_id(id);
         state.recent.removeDuplicates();
         valid = valid && !state.recent.isEmpty() && state.recent.first() == page;

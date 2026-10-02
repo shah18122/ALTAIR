@@ -228,6 +228,68 @@ void test_intraday() {
           "ret last hour at the first bar runs from yesterday's close");
 }
 
+void test_session() {
+    // Nine days of 5-minute bars; day 7 is short.
+    const std::int64_t d0 = da::audit_days_from_civil(2025, 3, 3);
+    std::vector<da::AuditBar> own, vix;
+    for (int day = 0; day < 9; ++day) {
+        const int bars = day == 7 ? 40 : 75;
+        for (int k = 0; k < bars; ++k) {
+            const std::int64_t t = (d0 + day) * 86'400 + (555 + 5 * k) * 60;
+            const double c = 100.0 + day + 0.01 * k + (k % 2 == 0 ? 0.03 : -0.02);
+            own.push_back(bar(t, c - 0.01, c + 0.05, c - 0.05, c));
+            vix.push_back(bar(t, 15.0, 15.1, 14.9, 15.0 + 0.001 * k));
+        }
+    }
+    ft::TrackInfo info;
+    const auto tr = ft::build_session({"T 10:15", "T", 615, &own, &vix, 1.3, nullptr, ""}, info);
+    check(altair::curriculum_check_track(tr).has_value(), "the horizon track passes the curriculum's checks");
+    check(tr.rows() == 2 && info.short_days == 1 && info.warmup == 6,
+          "one decision a full day, after six days of history; the short day is skipped");
+    const std::size_t day6 = 6 * 75;
+    check(tr.t[0] == (d0 + 6) * 86'400 + 615 * 60 && tr.t_out[0] == (d0 + 6) * 86'400 + ft::kCloseSec,
+          "decided at 10:15; the outcome is the 15:30 close, before the next day's decision");
+    check(tr.anchor[0] == own[day6 + 11].c && tr.actual[0] == own[day6 + 74].c,
+          "from the close of the bar that ends at 10:15 to the session's last close");
+    check(std::fabs(tr.x[0] - std::log(own[day6 + 11].c / own[day6].o)) < 1e-12
+              && std::fabs(tr.x[1] - std::log(own[day6].o / own[day6 - 1].c)) < 1e-12,
+          "return since the open and the overnight gap, both known at 10:15");
+    check(tr.cost_bp.size() == tr.rows() && tr.horizon == "10:15 to the close", "costed like a futures trade");
+
+    // Live: today, unfinished, up to 10:30 -- 16 bars from 09:15.
+    std::vector<da::AuditBar> own2 = own, vix2 = vix;
+    for (int k = 0; k < 16; ++k) {
+        const std::int64_t t = (d0 + 9) * 86'400 + (555 + 5 * k) * 60;
+        const double c = 110.0 + 0.01 * k;
+        own2.push_back(bar(t, c - 0.01, c + 0.05, c - 0.05, c));
+        vix2.push_back(bar(t, 15.0, 15.1, 14.9, 15.0));
+    }
+    ft::TrackInfo i2;
+    const auto off = ft::build_session({"T 10:15", "T", 615, &own2, &vix2, 1.3, nullptr, ""}, i2);
+    check(off.rows() == 2 && !i2.partial_last, "without the live flag an unfinished day gets no row");
+    ft::SessionInputs live{"T 10:15", "T", 615, &own2, &vix2, 1.3, nullptr, ""};
+    live.partial_last_day = true;
+    ft::TrackInfo i3;
+    const auto on = ft::build_session(live, i3);
+    check(on.rows() == 3 && i3.partial_last && altair::curriculum_check_track(on).has_value(),
+          "with it, today's 10:15 row is built and the track still passes the checks");
+    check(on.anchor[2] == own2[own.size() + 11].c && on.actual[2] == on.anchor[2]
+              && on.t[2] == (d0 + 9) * 86'400 + 615 * 60,
+          "today's row: decided at 10:15, its outcome a placeholder until the close");
+    check(std::fabs(on.x[2 * on.p] - std::log(own2[own.size() + 11].c / own2[own.size()].o)) < 1e-12,
+          "and its features are the same arithmetic as a finished day's");
+    std::vector<da::AuditBar> early = own, vearly = vix;
+    for (int k = 0; k < 8; ++k) {   // only to 09:55: the decision bar has not closed
+        const std::int64_t t = (d0 + 9) * 86'400 + (555 + 5 * k) * 60;
+        early.push_back(bar(t, 109.99, 110.05, 109.95, 110.0));
+        vearly.push_back(bar(t, 15.0, 15.1, 14.9, 15.0));
+    }
+    ft::SessionInputs before{"T 10:15", "T", 615, &early, &vearly, 1.3, nullptr, ""};
+    before.partial_last_day = true;
+    ft::TrackInfo i4;
+    check(ft::build_session(before, i4).rows() == 2 && !i4.partial_last, "before 10:15 today has no row");
+}
+
 } // namespace
 
 int main() {
@@ -240,6 +302,7 @@ int main() {
     test_after_one_bar_session();
     test_vix_forecast_feature();
     test_intraday();
+    test_session();
     std::printf("Forecast tracks: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

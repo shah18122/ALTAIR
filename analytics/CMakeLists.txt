@@ -85,6 +85,12 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
     add_test(NAME analytics_garch COMMAND altair_garch_test)
 
+    # HAR realised-variance forecast: beats a constant on persistent variance,
+    # and never reads past the forecast day.
+    add_executable(altair_har_rv_test tests/test_har_rv.cpp)
+    target_link_libraries(altair_har_rv_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME analytics_har_rv COMMAND altair_har_rv_test)
+
     # P14-04/05. Kalman filter, Joseph form, validated on the NIFTY
     # spot-versus-futures pair where the hedge ratio is known to be 1.
     add_executable(altair_kalman_test tests/test_kalman.cpp)

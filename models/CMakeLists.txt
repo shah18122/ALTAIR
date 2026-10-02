@@ -68,6 +68,14 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_band_curriculum_test PRIVATE altair_models altair_flags)
     add_test(NAME models_band_curriculum COMMAND altair_band_curriculum_test)
 
+    add_executable(altair_curriculum_feeds_test tests/test_curriculum_feeds.cpp)
+    target_link_libraries(altair_curriculum_feeds_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_curriculum_feeds COMMAND altair_curriculum_feeds_test)
+
+    add_executable(altair_magnitude_test tests/test_magnitude.cpp)
+    target_link_libraries(altair_magnitude_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_magnitude COMMAND altair_magnitude_test)
+
     add_executable(altair_stream_forecast_test tests/test_stream_forecast.cpp)
     target_link_libraries(altair_stream_forecast_test PRIVATE altair_models altair_flags)
     add_test(NAME models_stream_forecast COMMAND altair_stream_forecast_test)

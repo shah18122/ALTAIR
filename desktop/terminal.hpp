@@ -55,6 +55,8 @@
 #include "panels.hpp"
 #include "funds_summary.hpp"
 #include "gets_workspace.hpp"
+#include "live_market.hpp"
+#include "live_models.hpp"
 #include "position_table.hpp"
 #include "price_client.hpp"
 #include "data/series_io.hpp"
@@ -298,7 +300,15 @@ public:
             "with --replay nifty 1m to test without a Kite token, or --go for "
             "live."));
         h->addWidget(stream_btn_);
-        positions_btn_ = new QPushButton(QStringLiteral("Positions & Greeks"), strip);
+        watch_btn_ = new QPushButton(QStringLiteral("Watch"), strip);
+        watch_btn_->setToolTip(QStringLiteral(
+            "Live market watch: every tick, quotes, depth, time and sales, and the live option chain"));
+        h->addWidget(watch_btn_);
+        models_btn_ = new QPushButton(QStringLiteral("Models"), strip);
+        models_btn_->setToolTip(QStringLiteral(
+            "Live models: what each is doing and why, paper positions marked tick by tick, paper trades with expenses and net P&L"));
+        h->addWidget(models_btn_);
+        positions_btn_ = new QPushButton(QStringLiteral("Positions"), strip);
         positions_btn_->setToolTip(QStringLiteral(
             "GETS-style workspace: positions and funds, Greek watch, portfolio Greeks, simulation, "
             "expenses, trade history, RMS, top movers and indices"));
@@ -306,14 +316,10 @@ public:
         operations_btn_ = new QPushButton(QStringLiteral("Operations"), strip);
         operations_btn_->setToolTip(QStringLiteral("Legacy order, queue and emergency controls"));
         h->addWidget(operations_btn_);
-        auto* keys = new QLabel(QStringLiteral(
-            "<span style='color:#8A93A2'>"
-            "<b style='color:#7FD17F'>F1</b> buy &nbsp;"
-            "<b style='color:#F07A6A'>F2</b> sell &nbsp;"
-            "<b>F3</b> book &nbsp;<b>F4</b> chain &nbsp;<b>F5</b> watch "
-            "&nbsp;<b>Esc</b> back</span>"), strip);
-        keys->setTextFormat(Qt::RichText);
-        h->addWidget(keys);
+        // The key legend lives in the title's tooltip: on the strip it pushed
+        // the index tiles and the buttons into clipped text on a laptop.
+        title->setToolTip(QStringLiteral(
+            "F1 buy · F2 sell · F3 book · F4 chain · F5 watch · Esc back (Operations view)"));
         v->addWidget(strip);
 
         // ---- ACCOUNT-FIRST SURFACE -------------------------------------
@@ -321,6 +327,15 @@ public:
         // controls remain reachable under Operations while their workflows
         // are migrated, but they no longer dominate the default view.
         surface_ = new QStackedWidget(this);
+        // THE STREAM (P37) is created first: the market watch below reads it.
+        client_ = new PriceClient(this);
+        // Sized for the live universe: ~220 instruments ticking, plus the
+        // board replay a new subscriber receives (~700 frames).
+        client_->set_read_buffer(1024 * 1024);
+        live_ = new LiveMarketWatch(client_, {}, surface_);
+        surface_->addWidget(live_);
+        models_ = new LiveModelsPanel(client_, {}, surface_);
+        surface_->addWidget(models_);
         account_surface_ = new QWidget(surface_);
         account_surface_->setObjectName(QStringLiteral("accountSurface"));
         auto* account_layout = new QVBoxLayout(account_surface_);
@@ -444,8 +459,13 @@ public:
         split_->setStretchFactor(1, 50);
         split_->setStretchFactor(2, 26);
         surface_->addWidget(split_);
-        surface_->setCurrentWidget(gets_);
+        // A TERMINAL OPENS ON THE MARKET. The account tabs are one click away.
+        surface_->setCurrentWidget(live_);
         v->addWidget(surface_, 1);
+        connect(watch_btn_, &QPushButton::clicked, this,
+                [this] { surface_->setCurrentWidget(live_); });
+        connect(models_btn_, &QPushButton::clicked, this,
+                [this] { surface_->setCurrentWidget(models_); });
         connect(positions_btn_, &QPushButton::clicked, this,
                 [this] { surface_->setCurrentWidget(gets_); });
         connect(operations_btn_, &QPushButton::clicked, this,
@@ -468,16 +488,29 @@ public:
                 });
 
         // ---- THE STREAM (P37) -------------------------------------------
-        client_ = new PriceClient(this);
-        client_->set_read_buffer(256 * 1024);
         connect(stream_btn_, &QPushButton::clicked, this, [this] {
             if (client_->connected()) {
+                auto_connect_ = false;   // the operator said stop; stop retrying
                 client_->stop();
             } else {
+                auto_connect_ = true;
                 client_->start(QStringLiteral("127.0.0.1"), 7421);
                 stream_state_->setText(QStringLiteral(
                     "<span style='color:#F4C95D'>● CONNECTING</span>"));
             }
+        });
+        // CONNECT BY ITSELF. A terminal that waits for a button before it
+        // shows a price is not live; this retries every 3 s until the price
+        // service answers, and again whenever it goes away.
+        reconnect_.setInterval(3000);
+        connect(&reconnect_, &QTimer::timeout, this, [this] {
+            if (auto_connect_ && !client_->connected()
+                && client_->state() != QAbstractSocket::ConnectingState)
+                client_->start(QStringLiteral("127.0.0.1"), 7421);
+        });
+        reconnect_.start();
+        QTimer::singleShot(0, this, [this] {
+            if (auto_connect_ && !client_->connected()) client_->start(QStringLiteral("127.0.0.1"), 7421);
         });
         connect(client_, &PriceClient::statusChanged, this,
                 [this] { refresh_stream(); });
@@ -528,6 +561,17 @@ public:
     [[nodiscard]] PendingIntents* queue() const noexcept { return pending_; }
     [[nodiscard]] LiveFeedPanel* feed() const noexcept { return feed_; }
     [[nodiscard]] OptionChainPanel* chain() const noexcept { return chain_; }
+    [[nodiscard]] LiveMarketWatch* market_watch() const noexcept { return live_; }
+    [[nodiscard]] LiveModelsPanel* live_models() const noexcept { return models_; }
+    /// Show a view by name: watch, chain, models, positions, operations.
+    bool show_view(const QString& v) {
+        if (v == QLatin1String("watch")) { surface_->setCurrentWidget(live_); return true; }
+        if (v == QLatin1String("chain")) { surface_->setCurrentWidget(live_); live_->show_chain(); return true; }
+        if (v == QLatin1String("models")) { surface_->setCurrentWidget(models_); return true; }
+        if (v == QLatin1String("positions")) { surface_->setCurrentWidget(gets_); return true; }
+        if (v == QLatin1String("operations")) { surface_->setCurrentWidget(split_); return true; }
+        return false;
+    }
     [[nodiscard]] PriceClient* stream() const noexcept { return client_; }
     [[nodiscard]] FundsSummaryModel* funds_model() const noexcept { return funds_model_; }
     [[nodiscard]] PositionTableModel* positions_model() const noexcept { return positions_model_; }
@@ -631,23 +675,23 @@ public:
     /// here and a test feeds it directly, so the WIRING -- which flag goes to
     /// which widget -- is under test, not just each end of it.
     void apply_price(unsigned tok, qint64 paise, bool replay,
-                     std::int64_t tick_ns) {
+                     std::int64_t tick_ns, bool simulated = false) {
         if (paise <= 0) { return; }
         const double px = static_cast<double>(paise) / 100.0;
         // A frame with no exchange stamp is placed on today; only a LIVE one
         // can be missing it, and live is today.
         const std::int64_t ts = tick_ns > 0
             ? tick_ns : QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
-        const TileTag tag = replay ? TileTag::Replay : TileTag::Live;
+        const TileTag tag = simulated ? TileTag::Sim : replay ? TileTag::Replay : TileTag::Live;
         if (tok == 256265u) { move_tile(nifty_, px, ts, tag); }
         else if (tok == 260105u) { move_tile(bnf_, px, ts, tag); }
         else if (tok == 264969u) { move_tile(vix_, px, ts, tag); }
-        chain_->set_spot(tok, paise, replay, tick_ns);
+        chain_->set_spot(tok, paise, replay || simulated, tick_ns);
         refresh_stream();
     }
 
 private:
-    enum class TileTag : std::uint8_t { Close, Live, Replay };
+    enum class TileTag : std::uint8_t { Close, Live, Replay, Sim };
 
     struct Tile {
         QLabel* label = nullptr;
@@ -699,6 +743,8 @@ private:
                 ? QStringLiteral(" <span style='color:#6B7380'>close</span>")
             : tag == TileTag::Replay
                 ? QStringLiteral(" <span style='color:#F4C95D'>replay</span>")
+            : tag == TileTag::Sim
+                ? QStringLiteral(" <span style='color:#F4C95D'>SIM</span>")
                 : QString();
         t.label->setText(QStringLiteral(
             "<span style='color:#8A93A2'>%1</span> "
@@ -738,7 +784,7 @@ private:
     void on_price(unsigned tok) {
         const LivePrice* p = client_->price(tok);
         if (p == nullptr) { return; }
-        apply_price(tok, p->last_paise, p->replay, p->exchange_ts_ns);
+        apply_price(tok, p->last_paise, p->replay, p->exchange_ts_ns, p->simulated);
     }
 
     void refresh_stream() {
@@ -753,11 +799,12 @@ private:
         // mistake this screen must not make.
         const LivePrice* n = client_->price(256265u);
         const bool replay = n != nullptr && n->replay;
+        const bool sim = n != nullptr && n->simulated;
         stream_state_->setText(QStringLiteral(
             "<span style='color:%1'>● %2</span> "
             "<span style='color:#8A93A2'>%3 frames · %4 gaps</span>")
-            .arg(replay ? QStringLiteral("#F4C95D") : QStringLiteral("#7FD17F"))
-            .arg(replay ? QStringLiteral("REPLAY") : QStringLiteral("LIVE"))
+            .arg(replay || sim ? QStringLiteral("#F4C95D") : QStringLiteral("#7FD17F"))
+            .arg(sim ? QStringLiteral("SIM") : replay ? QStringLiteral("REPLAY") : QStringLiteral("LIVE"))
             .arg(client_->frames())
             .arg(client_->gaps()));
         stream_btn_->setText(QStringLiteral("Disconnect"));
@@ -785,6 +832,12 @@ private:
     PendingIntents* pending_ = nullptr;
     LiveFeedPanel* feed_ = nullptr;
     PriceClient* client_ = nullptr;
+    LiveMarketWatch* live_ = nullptr;
+    LiveModelsPanel* models_ = nullptr;
+    QPushButton* watch_btn_ = nullptr;
+    QPushButton* models_btn_ = nullptr;
+    QTimer reconnect_;
+    bool auto_connect_ = true;
     QLabel* stream_state_ = nullptr;
     QPushButton* stream_btn_ = nullptr;
     Tile nifty_, bnf_, vix_;

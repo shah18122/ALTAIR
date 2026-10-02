@@ -75,6 +75,7 @@ qt_add_executable(altair_desktop
     broker_activity.hpp
     fyers_link.hpp
     broker_page.hpp
+    demo_trading_page.hpp
     arbitrage_workspace.hpp
     model_status.hpp
     watchlist.hpp
@@ -753,6 +754,59 @@ if(ALTAIR_BUILD_TESTS)
                 PRIVATE ws2_32 mswsock)
         endif()
         add_test(NAME desktop_price_client COMMAND altair_price_client_test)
+
+        # The live market watch over the real bus and client: watch rows,
+        # depth, time and sales, the live chain's market IV, SIM labelling.
+        qt_add_executable(altair_live_market_test
+            tests/test_live_market.cpp
+            live_market.hpp
+            price_client.hpp
+            theme.hpp)
+        target_link_libraries(altair_live_market_test PRIVATE
+            altair_types altair_time altair_server altair_analytics altair_flags Boost::headers
+            Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+        target_include_directories(altair_live_market_test
+            PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        set_target_properties(altair_live_market_test
+            PROPERTIES WIN32_EXECUTABLE OFF)
+        if(WIN32)
+            target_link_libraries(altair_live_market_test
+                PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME desktop_live_market COMMAND altair_live_market_test)
+
+        # The live models panel: engine state and paper trades from files,
+        # positions marked tick by tick from the real bus and client.
+        qt_add_executable(altair_live_models_test
+            tests/test_live_models.cpp
+            live_models.hpp
+            live_market.hpp
+            price_client.hpp
+            theme.hpp)
+        target_link_libraries(altair_live_models_test PRIVATE
+            altair_types altair_time altair_server altair_analytics altair_flags Boost::headers
+            Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+        target_include_directories(altair_live_models_test
+            PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        set_target_properties(altair_live_models_test
+            PROPERTIES WIN32_EXECUTABLE OFF)
+        if(WIN32)
+            target_link_libraries(altair_live_models_test
+                PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME desktop_live_models COMMAND altair_live_models_test)
+        set_tests_properties(desktop_live_models PROPERTIES TIMEOUT 60 ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+        if(WIN32)
+            set_tests_properties(desktop_live_models PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        endif()
+        set_tests_properties(desktop_live_market PROPERTIES TIMEOUT 60 ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+        if(WIN32)
+            set_tests_properties(desktop_live_market PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        endif()
     endif()
 
     qt_add_executable(altair_atlas_test
@@ -838,6 +892,26 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_gets COMMAND altair_gets_test)
     if(WIN32)
         set_tests_properties(desktop_gets PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
+    # The Demo Trading page reads the band-fade and pairs CSVs: fixtures only,
+    # no CLI is run.
+    qt_add_executable(altair_demo_trading_test
+        tests/test_demo_trading.cpp
+        demo_trading_page.hpp
+        helper_process.hpp
+        theme.hpp)
+    target_link_libraries(altair_demo_trading_test PRIVATE
+        altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_demo_trading_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_demo_trading_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_demo_trading COMMAND altair_demo_trading_test)
+    set_tests_properties(desktop_demo_trading PROPERTIES TIMEOUT 60 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+    if(WIN32)
+        set_tests_properties(desktop_demo_trading PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 

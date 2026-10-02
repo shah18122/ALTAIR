@@ -165,9 +165,10 @@ if(ALTAIR_HAVE_NET)
         add_executable(altair_price_service price_service_main.cpp)
         target_link_libraries(altair_price_service PRIVATE
             altair_server altair_broker_net altair_feed altair_instruments
-            altair_flags Boost::headers)
+            altair_live altair_flags Boost::headers)
         target_compile_definitions(altair_price_service PRIVATE
-            ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
+            ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
+            ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
         if(WIN32)
             target_link_libraries(altair_price_service PRIVATE ws2_32 mswsock)
         endif()
@@ -298,11 +299,69 @@ endif()
 add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
 target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
 target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+# Magnitude-aware scoring and the per-call value gate over the curriculum's logs.
+add_executable(altair_magnitude magnitude_main.cpp)
+target_link_libraries(altair_magnitude PRIVATE altair_models altair_analytics altair_flags)
+target_include_directories(altair_magnitude PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+# Order-book study over recorded FYERS depth (book/depth_study.hpp).
+add_executable(altair_depth_study depth_study_main.cpp)
+target_link_libraries(altair_depth_study PRIVATE altair_flags)
+target_include_directories(altair_depth_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+# The band-fade short-option demo: the range band's forecast, one lot, priced
+# synthetically, costed through risk/cost.hpp (refused while unverified).
+# The live models, paper-trading on altair_price_service's stream: bars from
+# ticks, the strangle, direction-gate, pairs and stat-arb models, a paper book
+# that fills at the bid and ask and charges every fill. Reads a loopback
+# socket and writes data/live/; no broker, no OMS, no orders.
+find_package(Boost CONFIG QUIET COMPONENTS headers)
+if(TARGET altair_charges_toml AND Boost_FOUND)
+    add_executable(altair_live_engine live_engine_main.cpp)
+    target_link_libraries(altair_live_engine PRIVATE
+        altair_live altair_models altair_strategies altair_analytics altair_charges_toml altair_flags Boost::headers)
+    target_include_directories(altair_live_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_live_engine PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        target_link_libraries(altair_live_engine PRIVATE ws2_32 mswsock)
+    endif()
+    if(ALTAIR_BUILD_TESTS)
+        add_test(NAME live_engine_help COMMAND altair_live_engine --help)
+    endif()
+endif()
+
+if(TARGET altair_charges_toml)
+    add_executable(altair_band_option_demo band_option_demo_main.cpp)
+    target_link_libraries(altair_band_option_demo PRIVATE altair_models altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_band_option_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+    # Pairs hedged with futures, walked forward over config/pairs.csv.
+    add_executable(altair_pairs_futures pairs_futures_main.cpp)
+    target_link_libraries(altair_pairs_futures PRIVATE altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_pairs_futures PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+    # The variance premium, sold delta hedged: HAR forecast against implied
+    # vol, on VIX-priced options or NSE bhavcopy closes.
+    add_executable(altair_vol_premium vol_premium_main.cpp)
+    target_link_libraries(altair_vol_premium PRIVATE altair_analytics altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_vol_premium PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+    # Cross-sectional residual reversion over config/universe_nifty50.csv.
+    add_executable(altair_resid_reversion resid_reversion_main.cpp)
+    target_link_libraries(altair_resid_reversion PRIVATE altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_resid_reversion PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+endif()
 if(ALTAIR_BUILD_TESTS)
     add_executable(altair_forecast_tracks_test tests/test_forecast_tracks.cpp)
     target_link_libraries(altair_forecast_tracks_test PRIVATE altair_models altair_flags)
     target_include_directories(altair_forecast_tracks_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME forecast_tracks COMMAND altair_forecast_tracks_test)
+    # NSE F&O bhavcopy, both formats, from fixtures written to a temp dir.
+    add_executable(altair_bhavcopy_test tests/test_bhavcopy.cpp)
+    target_link_libraries(altair_bhavcopy_test PRIVATE altair_flags)
+    target_include_directories(altair_bhavcopy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME bhavcopy COMMAND altair_bhavcopy_test)
     # End to end on the real dataset/: one daily track (INDIA VIX), every
     # direction and band model, zero look-ahead refusals or the exit code says
     # so. ~30 s optimised, several minutes under the Debug ASan build. Writes
@@ -318,4 +377,15 @@ if(ALTAIR_BUILD_TESTS)
         --dataset ${CMAKE_SOURCE_DIR}/dataset --out ${CMAKE_CURRENT_BINARY_DIR}/forecast_daily_out
         --only daily --no-log)
     set_tests_properties(forecast_curriculum_daily PROPERTIES LABELS "dataset;experiment" TIMEOUT 3600)
+endif()
+
+# The live terminal's FYERS source: one FYERS socket update into the price
+# bus's trade, quote and book frames. Offline; no socket.
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_fyers_price_frames_test tests/test_fyers_price_frames.cpp)
+    target_link_libraries(altair_fyers_price_frames_test PRIVATE
+        altair_server altair_feed altair_instruments altair_flags)
+    target_include_directories(altair_fyers_price_frames_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME fyers_price_frames COMMAND altair_fyers_price_frames_test)
 endif()

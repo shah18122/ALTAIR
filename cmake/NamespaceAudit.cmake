@@ -44,7 +44,7 @@
 
 function(altair_audit_namespace)
     set(_dirs core instruments broker feed book analytics risk oms features
-              strategies backtest models flagging server)
+              strategies backtest models flagging server live)
     set(_all_names "")
 
     foreach(_dir IN LISTS _dirs)

@@ -62,6 +62,7 @@
 #include "feed_status.hpp"
 #include "fyers_link.hpp"
 #include "broker_page.hpp"
+#include "demo_trading_page.hpp"
 #include "arbitrage_workspace.hpp"
 #include "panels.hpp"
 #include "filter.hpp"
@@ -288,6 +289,13 @@ public:
         if (terminal_ != nullptr && terminal_->stream() != nullptr) {
             terminal_->stream()->start(QStringLiteral("127.0.0.1"), 7421);
         }
+    }
+
+    /// Open one of the Terminal's views (watch, chain, models, positions,
+    /// operations), for --terminal-view: the same reason as --stream.
+    /// False when there is no such view.
+    bool show_terminal_view(const QString& view) {
+        return terminal_ != nullptr && terminal_->show_view(view);
     }
 
     /// Start replay after the first paint so startup remains responsive.
@@ -1497,6 +1505,11 @@ private:
             if (broker_page_ != nullptr) broker_page_->refresh();
         });
         pages_->addWidget(broker_page_);
+
+        // Paper trades from the band-fade option demo and the futures pairs.
+        // It runs the two research CLIs and reads what they wrote; it never
+        // reaches a broker.
+        pages_->addWidget(new DemoTradingPage);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

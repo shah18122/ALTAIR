@@ -1,0 +1,27 @@
+# config/pairs.csv -- the pairs altair_pairs_futures trades, and where their
+# daily closes live.
+#
+# NIFTY-BANKNIFTY reads dataset/ (tracked). Every stock pair reads data/pairs/
+# (git-ignored: broker data, not ours to publish), which ops/fetch_pairs.ps1
+# fills from FYERS on a machine with a session -- a pair whose data is absent
+# is reported as such, not skipped silently.
+#
+# Each leg names its F&O symbol in data/instruments.csv (for the lot size,
+# never a literal), its FYERS symbol (for the fetch) and its data directory.
+# ratio_cap is a hypothesis to test, not a trading rule: the report counts the
+# days leg_b / leg_a closed above it.
+#
+# pair,leg_a,a_fyers,a_dir,leg_b,b_fyers,b_dir,ratio_cap
+NIFTY-BANKNIFTY,NIFTY,NSE:NIFTY50-INDEX,dataset/spot/nifty/1d,BANKNIFTY,NSE:NIFTYBANK-INDEX,dataset/spot/banknifty/1d,2.6
+CIPLA-SUNPHARMA,CIPLA,NSE:CIPLA-EQ,data/pairs/cipla/1d,SUNPHARMA,NSE:SUNPHARMA-EQ,data/pairs/sunpharma/1d,
+DRREDDY-LUPIN,DRREDDY,NSE:DRREDDY-EQ,data/pairs/drreddy/1d,LUPIN,NSE:LUPIN-EQ,data/pairs/lupin/1d,
+HDFCBANK-ICICIBANK,HDFCBANK,NSE:HDFCBANK-EQ,data/pairs/hdfcbank/1d,ICICIBANK,NSE:ICICIBANK-EQ,data/pairs/icicibank/1d,
+AXISBANK-KOTAKBANK,AXISBANK,NSE:AXISBANK-EQ,data/pairs/axisbank/1d,KOTAKBANK,NSE:KOTAKBANK-EQ,data/pairs/kotakbank/1d,
+SBIN-BANKBARODA,SBIN,NSE:SBIN-EQ,data/pairs/sbin/1d,BANKBARODA,NSE:BANKBARODA-EQ,data/pairs/bankbaroda/1d,
+TCS-INFY,TCS,NSE:TCS-EQ,data/pairs/tcs/1d,INFY,NSE:INFY-EQ,data/pairs/infy/1d,
+HCLTECH-WIPRO,HCLTECH,NSE:HCLTECH-EQ,data/pairs/hcltech/1d,WIPRO,NSE:WIPRO-EQ,data/pairs/wipro/1d,
+TATASTEEL-JSWSTEEL,TATASTEEL,NSE:TATASTEEL-EQ,data/pairs/tatasteel/1d,JSWSTEEL,NSE:JSWSTEEL-EQ,data/pairs/jswsteel/1d,
+HINDALCO-VEDL,HINDALCO,NSE:HINDALCO-EQ,data/pairs/hindalco/1d,VEDL,NSE:VEDL-EQ,data/pairs/vedl/1d,
+BAJFINANCE-BAJAJFINSV,BAJFINANCE,NSE:BAJFINANCE-EQ,data/pairs/bajfinance/1d,BAJAJFINSV,NSE:BAJAJFINSV-EQ,data/pairs/bajajfinsv/1d,
+ULTRACEMCO-GRASIM,ULTRACEMCO,NSE:ULTRACEMCO-EQ,data/pairs/ultracemco/1d,GRASIM,NSE:GRASIM-EQ,data/pairs/grasim/1d,
+MARUTI-M&M,MARUTI,NSE:MARUTI-EQ,data/pairs/maruti/1d,M&M,NSE:M&M-EQ,data/pairs/mm/1d,

@@ -226,6 +226,7 @@ add_subdirectory(backtest)          # Phase 6 — replayer, walk-forward, Monte 
 add_subdirectory(models)            # Phase 8 — labels, training, the model zoo
 add_subdirectory(flagging)          # Phase 9 — scorecards, drift, auto-correction
 add_subdirectory(server)            # Phase 11 — BACKEND ONLY, renders nothing
+add_subdirectory(live)              # live terminal: universe, bars, live models, paper book
 add_subdirectory(desktop)           # Phase 11Q — the Qt UI, in-process
 
 # client/ is RETIRED and deliberately not built — see client/README.md

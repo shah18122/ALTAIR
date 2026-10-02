@@ -106,7 +106,7 @@ public:
         tabs_ = new QTabWidget(this);
         tabs_->setObjectName(QStringLiteral("getsTabs"));
         tabs_->setDocumentMode(true);
-        if (account_page != nullptr) tabs_->addTab(account_page, QStringLiteral("Positions & Funds"));
+        if (account_page != nullptr) tabs_->addTab(account_page, QStringLiteral("Positions && Funds"));
         v->addWidget(tabs_, 1);
 
         build_watch_tab();
@@ -434,7 +434,7 @@ private:
         v->addWidget(split, 1);
         expense_note_ = note(page, QString());
         v->addWidget(expense_note_);
-        tabs_->addTab(page, QStringLiteral("Expense & Margin"));
+        tabs_->addTab(page, QStringLiteral("Expense && Margin"));
     }
 
     void build_trades_tab() {
