@@ -53,6 +53,7 @@
 #include <live/feed_consumer.hpp>
 #include <live/file_lock.hpp>
 #include <live/latency.hpp>
+#include <live/ledger.hpp>
 #include <live/models.hpp>
 #include <live/tape.hpp>
 #include <live/universe.hpp>
@@ -109,16 +110,6 @@ extern "C" void on_stop(int) { g_stop.store(true); }
     if (s.size() != 5 || s[2] != ':') return -1;
     const int h = std::atoi(s.substr(0, 2).c_str()), m = std::atoi(s.substr(3, 2).c_str());
     return h >= 0 && h < 24 && m >= 0 && m < 60 ? h * 60 + m : -1;
-}
-
-[[nodiscard]] std::string ist_stamp(std::int64_t ns) {
-    if (ns <= 0) return "";
-    const std::int64_t s = ns / 1'000'000'000LL + 19800;
-    const std::int64_t day = s / 86400, sec = s % 86400;
-    char b[48];
-    std::snprintf(b, sizeof b, "%s %02lld:%02lld:%02lld", lv::day_text(day).c_str(), static_cast<long long>(sec / 3600),
-                  static_cast<long long>(sec / 60 % 60), static_cast<long long>(sec % 60));
-    return b;
 }
 
 /// 5-minute bars of a dataset partition, cleaned, before `today` (IST days).
@@ -236,20 +227,6 @@ struct DayRv { std::int64_t day = 0; double rv = 0.0, gap2 = 0.0, close = 0.0; }
     return in;
 }
 
-/// Rows waiting to reach one CSV: appended, flushed and checked; on failure
-/// they stay queued for the next attempt.
-struct PendingCsv {
-    fs::path path;
-    const char* header = "";
-    std::vector<std::string> rows;
-    bool flush() {
-        if (rows.empty()) return true;
-        if (!lv::live_append_rows(path.string(), header, rows)) return false;
-        rows.clear();
-        return true;
-    }
-};
-
 bool write_atomic(const fs::path& path, const std::string& body) {
     const fs::path tmp = path.string() + ".tmp";
     {
@@ -280,6 +257,8 @@ void usage(const char* exe) {
         "    --max-positions N    held or working, all models (default 80)\n"
         "    --max-gross RUPEES   gross notional of everything held or working (default 1e8)\n"
         "    --max-daily-loss RUPEES  no new entries past this loss today (default 2e5)\n"
+        "    --max-margin RUPEES  estimated margin of everything held or working (default 1e7; a\n"
+        "                         conservative estimate, not SPAN: live/margin.hpp)\n"
         "    --gate-z Z           a direction call trades only when its value clears zero by Z\n"
         "                         standard errors (default 1; 0 is the point estimate)\n"
         "    --record             also write the session tape to data/live/tapes/: every byte off the\n"
@@ -324,6 +303,7 @@ int main(int argc, char** argv) {
         if (a == "--max-positions" && has) { limits.max_positions = static_cast<std::size_t>(std::atoll(argv[++i])); continue; }
         if (a == "--max-gross" && has) { limits.max_gross_notional = std::atof(argv[++i]); continue; }
         if (a == "--max-daily-loss" && has) { limits.max_daily_loss = std::atof(argv[++i]); continue; }
+        if (a == "--max-margin" && has) { limits.max_margin = std::atof(argv[++i]); continue; }
         if (a == "--gate-z" && has) { gate_z = std::atof(argv[++i]); continue; }
         if (a == "--record") { record = true; continue; }
         if (a == "--replay" && has) { replay_path = argv[++i]; continue; }
@@ -361,6 +341,7 @@ int main(int argc, char** argv) {
             else if (k == "max_per_model") limits.max_per_model = static_cast<std::size_t>(std::atoll(v.c_str()));
             else if (k == "max_gross_notional") limits.max_gross_notional = std::strtod(v.c_str(), nullptr);
             else if (k == "max_daily_loss") limits.max_daily_loss = std::strtod(v.c_str(), nullptr);
+            else if (k == "max_margin") limits.max_margin = std::strtod(v.c_str(), nullptr);
             else if (k == "gate_z") gate_z = std::strtod(v.c_str(), nullptr);
             else if (k == "unverified_costs") unverified_costs = v == "1";
         }
@@ -368,7 +349,7 @@ int main(int argc, char** argv) {
     }
     if (until < 0) { std::printf("--until must be HH:MM\n"); return 2; }
     if (policy.latency_ns < 0 || policy.max_quote_age_ns <= 0 || policy.entry_timeout_ns <= 0 || limits.max_positions == 0
-        || !(limits.max_gross_notional > 0.0) || !(limits.max_daily_loss > 0.0) || !(gate_z >= 0.0)) {
+        || !(limits.max_gross_notional > 0.0) || !(limits.max_daily_loss > 0.0) || !(limits.max_margin > 0.0) || !(gate_z >= 0.0)) {
         std::printf("--latency-ms must be >= 0; the ages, timeout and limits must be > 0\n");
         return 2;
     }
@@ -564,13 +545,13 @@ int main(int argc, char** argv) {
     const std::string positions_text = have_journal ? std::string() : lb::file_text(paper_dir / "open_positions.csv");
     std::string args_text;
     {
-        char text[512];
+        char text[1024];
         std::snprintf(text, sizeof text,
                       "date=%s\nuntil=%d\nlatency_ns=%lld\nmax_quote_age_ns=%lld\nentry_timeout_ns=%lld\nmax_positions=%zu\n"
-                      "max_per_model=%zu\nmax_gross_notional=%.17g\nmax_daily_loss=%.17g\ngate_z=%.17g\nunverified_costs=%d\n",
+                      "max_per_model=%zu\nmax_gross_notional=%.17g\nmax_daily_loss=%.17g\nmax_margin=%.17g\ngate_z=%.17g\nunverified_costs=%d\n",
                       date.c_str(), until, static_cast<long long>(policy.latency_ns), static_cast<long long>(policy.max_quote_age_ns),
                       static_cast<long long>(policy.entry_timeout_ns), limits.max_positions, limits.max_per_model,
-                      limits.max_gross_notional, limits.max_daily_loss, gate_z, unverified_costs ? 1 : 0);
+                      limits.max_gross_notional, limits.max_daily_loss, limits.max_margin, gate_z, unverified_costs ? 1 : 0);
         args_text = text;
     }
     const auto vol_json = [](const lv::LiveVolInputs& v) {
@@ -682,8 +663,6 @@ int main(int argc, char** argv) {
     auto last_write = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     std::uint64_t frames = 0;
     lv::LiveFeedConsumer consumer(engine);
-    const char* kTradesHeader = "date,model,symbol,token,side,qty,entry_time,entry,exit_time,exit,gross,expenses,net,why_in,why_out,source,costs";
-    const char* kFillsHeader = "time,model,symbol,token,side,qty,price,expenses,at_quote,reason,source,costs";
     if (replaying)
         std::printf("engine replaying the tape -- %zu models, %zu instruments\n", engine.models().size(), universe.size());
     else
@@ -691,10 +670,7 @@ int main(int argc, char** argv) {
                     lv::live_fmt::hhmm(until).c_str(), engine.models().size(), universe.size());
     std::fflush(stdout);
 
-    PendingCsv journal_out{journal, lv::kLiveJournalHeader, {}};
-    PendingCsv trades_out{paper_dir / "trades.csv", kTradesHeader, {}};
-    PendingCsv fills_out{paper_dir / "fills.csv", kFillsHeader, {}};
-    PendingCsv decisions_out{paper_dir / "decisions.csv", "time,ns,model,decision", {}};
+    lv::LivePaperLedger ledger(paper_dir, costs_label);
     if (!have_journal) {
         // The first run with a journal: the snapshot's positions become its
         // opening rows, so the next restart has them on the record.
@@ -703,12 +679,11 @@ int main(int argc, char** argv) {
             f.model = p.model; f.token = p.inst.token; f.symbol = p.inst.symbol; f.side = p.side; f.qty = p.qty;
             f.price = p.entry; f.expenses = p.entry_expenses; f.ns = p.entry_ns; f.submit_ns = p.decided_ns;
             f.reason = p.why_in; f.role = lv::LiveFillRole::Open; f.carry = p.carry;
-            journal_out.rows.push_back(lv::live_journal_row(f));
+            ledger.journal.add(lv::live_journal_row(f));
         }
     }
     std::deque<std::string> events;   // the last few cancellations, for the page
     const fs::path kill_file = root / "data/kill_request.json";
-    bool positions_dirty = true;
 
     // The tape. A write that fails stops the recording, not the session: the
     // paper ledger is the record that matters; the tape is evidence about it.
@@ -732,61 +707,20 @@ int main(int argc, char** argv) {
     // replay takes them from the tape and only reports its own write failures.
     std::string replay_unwritten;
     const auto flush_outputs = [&] {
-        const std::string src = engine.simulated() ? "SIM" : "LIVE";
-        for (const auto& f : engine.take_new_fills()) {
-            lat_fill.record(f.ns - f.submit_ns);
-            journal_out.rows.push_back(lv::live_journal_row(f));
-            fills_out.rows.push_back(ist_stamp(f.ns) + ",\"" + f.model + "\"," + f.symbol + "," + std::to_string(f.token) + ","
-                           + (f.side > 0 ? "buy" : "sell") + "," + std::to_string(f.qty) + "," + lv::live_fmt::num(f.price) + ","
-                           + (std::isfinite(f.expenses) ? lv::live_fmt::num(f.expenses) : "") + "," + (f.at_quote ? "1" : "0")
-                           + ",\"" + f.reason + "\"," + src + "," + costs_label);
-        }
-        auto& rows = trades_out.rows;
-        for (const auto& t : engine.take_new_trades()) {
-            const auto q = [](const std::string& s) { return "\"" + s + "\""; };
-            rows.push_back(lv::day_text(lv::live_day_of(lv::live_ist_minute_index(t.exit_ns))) + "," + q(t.model) + "," + t.symbol
-                           + "," + std::to_string(t.token) + "," + (t.side > 0 ? "long" : "short") + "," + std::to_string(t.qty)
-                           + "," + ist_stamp(t.entry_ns) + "," + lv::live_fmt::num(t.entry) + "," + ist_stamp(t.exit_ns) + ","
-                           + lv::live_fmt::num(t.exit) + "," + lv::live_fmt::num(t.gross) + ","
-                           + (std::isfinite(t.expenses) ? lv::live_fmt::num(t.expenses) : "") + ","
-                           + (std::isfinite(t.net) ? lv::live_fmt::num(t.net) : "") + "," + q(t.why_in) + "," + q(t.why_out)
-                           + "," + src + "," + costs_label);
-        }
-        for (const auto& d : engine.take_decisions()) {
-            const auto q = [](const std::string& s) {
-                std::string o = "\"";
-                for (const char c : s) {
-                    if (c == '"') o += "\"\"";
-                    else if (c == '\n' || c == '\r') o += ' ';
-                    else o += c;
-                }
-                return o + "\"";
-            };
-            decisions_out.rows.push_back((d.ns > 0 ? ist_stamp(d.ns) : std::string()) + "," + std::to_string(d.ns) + "," + q(d.model)
-                                         + "," + q(d.text));
-        }
+        for (const auto& f : ledger.collect(engine)) lat_fill.record(f.ns - f.submit_ns);
         for (auto& c : engine.book().take_cancelled()) {
             std::printf("  %s\n", c.c_str());
             events.push_back(std::move(c));
             if (events.size() > 5) events.pop_front();
         }
         // The journal first: it is the record. Then the views of it.
-        std::string failed;
-        if (!journal_out.flush()) failed = journal_out.path.string();
-        if (!trades_out.flush() && failed.empty()) failed = trades_out.path.string();
-        if (!fills_out.flush() && failed.empty()) failed = fills_out.path.string();
-        if (!decisions_out.flush() && failed.empty()) failed = decisions_out.path.string();
-        positions_dirty = engine.take_positions_changed() || positions_dirty;
-        if (positions_dirty) {
-            if (lv::live_write_positions((paper_dir / "open_positions.csv").string(), engine.book().held())) positions_dirty = false;
-            else if (failed.empty()) failed = (paper_dir / "open_positions.csv").string();
-        }
+        const std::string failed = ledger.flush(engine);
         if (replaying) {
             if (!failed.empty() && replay_unwritten.empty())
                 std::printf("cannot write %s: this replay's files are incomplete (rows kept; retrying)\n", failed.c_str());
             replay_unwritten = failed;
         } else {
-            const std::string halt = failed.empty() ? std::string() : "cannot write " + failed + " (rows kept; retrying)";
+            const std::string halt = lv::LivePaperLedger::halt_text(failed);
             if (halt != engine.halt()) {
                 if (engine.halt().empty()) std::printf("HALTED: cannot write %s; rows kept, retrying every second\n", failed.c_str());
                 else if (halt.empty()) std::printf("ledger writes resumed\n");

@@ -4,9 +4,10 @@
 #   live_replay.sh <altair_price_service> <altair_live_engine> <source dir> <work dir>
 #
 # A simulated morning (09:15 to 09:25, the 09:20 strangles included) runs
-# through the engine with --record. The tape is then replayed into a fresh
-# directory, twice; the journal, the fills, the decisions and the open
-# positions must come out identical to the recorded session's. A tape whose
+# through the engine with --record, as two sessions: the engine stops at 09:21
+# and restarts from its journal. Each tape is replayed into a fresh directory,
+# twice; together the replays must make the journal, fills, decisions, margin
+# samples and open positions the two sessions made, byte for byte. A tape whose
 # bundle no longer matches the inputs must be refused (exit 5) unless
 # --force-replay. Needs dataset/ (the SIM day's minute bars and the history).
 set -euo pipefail
@@ -41,54 +42,81 @@ feed=(--sim --date "$day" --from 09:15 --strikes 10 --depth-strikes 1 --no-stock
 [ -s "$work/feed/universe.csv" ] || { echo "the price service wrote no universe"; cat "$work/universe.log"; exit 1; }
 cp "$work/feed/universe.csv" "$work/root/data/live/universe.csv"
 
-# The engine first, so it is listening for the whole morning; then the feed.
-"$engine" --root "$work/root" --port "$port" --date "$day" --unverified-costs --record --until 09:25 --seconds 240 \
-    > "$work/record.log" 2>&1 &
+# Session A listens before the feed starts and stops at 09:21; session B is a
+# restart mid-morning -- it resumes A's positions from the journal -- and runs
+# on to 09:25 while the feed carries on.
+record() {   # record <log> <until>
+    "$engine" --root "$work/root" --port "$port" --date "$day" --unverified-costs --record --until "$2" --seconds 240 > "$1" 2>&1
+}
+record "$work/recordA.log" 09:21 &
 engine_pid=$!
 for _ in $(seq 1 600); do
-    grep -q "^engine on" "$work/record.log" && break
-    kill -0 "$engine_pid" 2>/dev/null || { echo "the engine stopped before the session"; cat "$work/record.log"; exit 1; }
+    grep -q "^engine on" "$work/recordA.log" && break
+    kill -0 "$engine_pid" 2>/dev/null || { echo "the engine stopped before the session"; cat "$work/recordA.log"; exit 1; }
     sleep 0.1
 done
 "$ps_bin" "${feed[@]}" --speed 10 --seconds 200 > "$work/feed.log" 2>&1 &
 ps_pid=$!
-wait "$engine_pid" || { echo "the recorded session failed"; cat "$work/record.log"; exit 1; }
+wait "$engine_pid" || { echo "session A failed"; cat "$work/recordA.log"; exit 1; }
 engine_pid=
+record "$work/recordB.log" 09:25 || { echo "session B (the restart) failed"; cat "$work/recordB.log"; exit 1; }
 kill "$ps_pid" 2>/dev/null || true
 wait "$ps_pid" 2>/dev/null || true
 ps_pid=
-tail -5 "$work/record.log"
+tail -3 "$work/recordA.log"
+grep "^resuming" "$work/recordB.log"
+tail -3 "$work/recordB.log"
 
-tape=$(ls "$work"/root/data/live/tapes/*.tape)
+tapes=("$work"/root/data/live/tapes/*.tape)
+[ "${#tapes[@]}" -eq 2 ] || { echo "expected two tapes, found ${#tapes[@]}"; exit 1; }
 paper="$work/root/data/live/paper"
 grep -q '"Strangle 80% NIFTY"' "$paper/decisions.csv" || { echo "no 09:20 decision was recorded"; cat "$paper/decisions.csv"; exit 1; }
 fills=0
 [ -f "$paper/journal.csv" ] && fills=$(($(wc -l < "$paper/journal.csv") - 1))
 echo "recorded: $(($(wc -l < "$paper/decisions.csv") - 1)) decision(s), $fills fill(s)"
 # With every trade frame seen (a build fast enough for a 10x morning), the
-# 09:20 strangle sells -- so the replay is checked on fills too. A slow build
-# (sanitizers) can fall behind and pause on a gap: still a session to replay.
-if grep -q "(0 trade frames missed)" "$work/record.log" && [ "$fills" -lt 2 ]; then
+# 09:20 strangle sells -- so the replay is checked on fills, and the restart
+# on resuming them. A slow build (sanitizers) can fall behind and pause on a
+# gap: still two sessions to replay.
+if grep -q "(0 trade frames missed)" "$work/recordA.log" && [ "$fills" -lt 2 ]; then
     echo "every frame seen, yet no strangle filled"; cat "$paper/decisions.csv"; exit 1
 fi
+if [ "$fills" -ge 2 ] && ! grep -q "^resuming from paper/journal.csv: [1-9]" "$work/recordB.log"; then
+    echo "the restart did not resume the morning's positions"; cat "$work/recordB.log"; exit 1
+fi
 
-same() {
-    local out=$1 f
-    for f in journal.csv fills.csv trades.csv decisions.csv open_positions.csv; do
-        if [ -e "$paper/$f" ] || [ -e "$out/paper/$f" ]; then
-            cmp "$paper/$f" "$out/paper/$f" || { echo "REPLAY DIFFERS: $f"; diff "$paper/$f" "$out/paper/$f" | head -20; exit 1; }
-        fi
+# The two replays together must make exactly the files the two sessions made:
+# B's start holds A's journal, so the journal and the positions are B's
+# replay's; every other view is A's rows followed by B's.
+same() {   # same <replay A dir> <replay B dir>
+    local f
+    for f in journal.csv open_positions.csv; do
+        cmp "$paper/$f" "$2/paper/$f" || { echo "REPLAY DIFFERS: $f"; diff "$paper/$f" "$2/paper/$f" | head -20; exit 1; }
+    done
+    for f in fills.csv trades.csv decisions.csv margin.csv; do
+        [ -e "$paper/$f" ] || [ -e "$1/paper/$f" ] || [ -e "$2/paper/$f" ] || continue
+        {
+            if [ -e "$1/paper/$f" ]; then cat "$1/paper/$f"; fi
+            if [ -e "$2/paper/$f" ]; then
+                if [ -e "$1/paper/$f" ]; then tail -n +2 "$2/paper/$f"; else cat "$2/paper/$f"; fi
+            fi
+        } > "$work/combined.csv"
+        cmp "$paper/$f" "$work/combined.csv" || { echo "REPLAY DIFFERS: $f"; diff "$paper/$f" "$work/combined.csv" | head -20; exit 1; }
     done
 }
 
-# Replayed twice into the same directory: the second clears the first.
+# Replayed twice into the same directories: the second clears the first.
 for round in 1 2; do
-    "$engine" --root "$work/root" --replay "$tape" --replay-out "$work/replay" > "$work/replay$round.log" 2>&1 \
-        || { echo "replay $round failed"; cat "$work/replay$round.log"; exit 1; }
-    grep -q "the inputs are the recorded session's" "$work/replay$round.log" || { echo "replay $round: bundle"; cat "$work/replay$round.log"; exit 1; }
-    same "$work/replay"
+    for k in 0 1; do
+        "$engine" --root "$work/root" --replay "${tapes[$k]}" --replay-out "$work/replay$k" > "$work/replay$k-$round.log" 2>&1 \
+            || { echo "replay $k ($round) failed"; cat "$work/replay$k-$round.log"; exit 1; }
+        grep -q "the inputs are the recorded session's" "$work/replay$k-$round.log" \
+            || { echo "replay $k ($round): bundle"; cat "$work/replay$k-$round.log"; exit 1; }
+    done
+    same "$work/replay0" "$work/replay1"
 done
-echo "replayed twice: journal, fills, decisions and positions identical"
+echo "both sessions replayed twice, restart included: journal, fills, decisions, margin and positions identical"
+tape=${tapes[0]}
 
 # A directory that is not a replay's is never cleared.
 mkdir -p "$work/keep" && echo keep > "$work/keep/file.txt"

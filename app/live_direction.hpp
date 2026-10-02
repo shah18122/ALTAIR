@@ -321,6 +321,16 @@ public:
     void on_new_day(live::LiveEngine&) override { done_ = false; note_.clear(); signal_.clear(); fields_.clear(); }
 
     void on_minute(live::LiveEngine& e, int m) override {
+        if (m > kDecideMinute && !done_ && s_->ok) {
+            // The engine started (or restarted) after 10:15: today's call was
+            // never made here. A position resumed from the journal is held to
+            // the square-off as before.
+            done_ = true;
+            note_ = e.book().flat(name()) ? "Missed today: the models first ran at " + live::live_fmt::hhmm(m) + ", after 10:15 (a late start, or decisions paused on a feed gap)."
+                                          : "Resumed at " + live::live_fmt::hhmm(m) + ": holding the position taken at 10:15 to the square-off.";
+            e.note_decision(name(), note_);
+            return;
+        }
         if (m != kDecideMinute || done_ || !s_->ok) return;
         done_ = true;
         // The gate's inputs go on the record with the outcome.

@@ -143,9 +143,25 @@ public:
             decide(e);
         }
         if (m > kDecideMinute && !traded_today_) {
-            // The engine joined after 09:20: today's decision was never taken.
             traded_today_ = true;
-            note_ = "Missed today: the engine's first bar closed at " + live_fmt::hhmm(m) + ", after 09:20.";
+            // A restart: the legs this model sold before it are in the book
+            // (resumed from the journal). Take them up again -- the stop
+            // watches them and the page shows them -- rather than call the
+            // day missed.
+            for (const auto& p : e.book().positions()) {
+                if (p.model != name()) continue;
+                const LiveInstrument* in = e.instrument(p.inst.token);
+                if (in == nullptr) continue;
+                if (in->kind == LiveKind::Call) call_ = in;
+                if (in->kind == LiveKind::Put) put_ = in;
+            }
+            if (call_ != nullptr || put_ != nullptr) {
+                note_ = "Resumed at " + live_fmt::hhmm(m) + ": holding " + (call_ ? call_->symbol : std::string()) + (call_ && put_ ? " and " : "")
+                      + (put_ ? put_->symbol : std::string()) + " sold earlier today" + (stop_ > 0.0 ? "; the stop watches them." : ".");
+            } else {
+                // The engine joined after 09:20: today's decision was never taken.
+                note_ = "Missed today: the models first ran at " + live_fmt::hhmm(m) + ", after 09:20 (a late start, or decisions paused on a feed gap).";
+            }
             e.note_decision(name(), note_);
         }
         if (stop_ > 0.0 && m % 5 == 0 && m > kDecideMinute && m < kLiveSquareOffMinute) {

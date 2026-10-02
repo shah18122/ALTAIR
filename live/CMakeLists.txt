@@ -27,4 +27,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_live_tape_test tests/test_tape.cpp)
     target_link_libraries(altair_live_tape_test PRIVATE altair_live)
     add_test(NAME live_tape COMMAND altair_live_tape_test)
+
+    add_executable(altair_live_ledger_test tests/test_ledger.cpp)
+    target_link_libraries(altair_live_ledger_test PRIVATE altair_live)
+    add_test(NAME live_ledger COMMAND altair_live_ledger_test)
 endif()

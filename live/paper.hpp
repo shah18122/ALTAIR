@@ -363,6 +363,10 @@ private:
         if (oit == orders_.end()) return;
         Order& o = oit->second;
         if (now < o.due_ns) return;
+        // An entry lives for its timeout and not an instant longer, however
+        // the news of its expiry arrives: a quote can reach here before any
+        // trade has moved the clock past the deadline, and must not fill it.
+        if (!o.exit && o.expire_ns > 0 && now >= o.expire_ns) { expire_entry(id, now); return; }
         const auto pit = positions_.find(o.key);
         if (pit == positions_.end()) { orders_.erase(oit); return; }
         LivePosition& p = pit->second;
