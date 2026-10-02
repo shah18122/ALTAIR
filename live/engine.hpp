@@ -14,7 +14,26 @@
 //     ("expiry roll") before the models decide, so a model that still wants
 //     the position reopens it in the next contract;
 //   * 15:20: every intraday position is squared off.
-// A model may not open a position while the feed is stale.
+// THE ROLL AND THE SQUARE-OFF ARE OBLIGATIONS, NOT MOMENTS. They run on the
+// first minute at or after their time, however the clock got there -- a feed
+// that jumps from 14:40 to 15:25 still rolls and still squares off -- and an
+// exit, once submitted, works until it fills (live/paper.hpp). With the feed
+// stopped, the clock stops too; watchdog() submits the overdue exits on the
+// machine's clock (live feeds only) so they fill the moment quotes return.
+//
+// A TICK IS CONSUMED AFTER THE CLOCK MOVES. The clock advances to a trade's
+// time first -- closing the previous minute, running its decisions, starting a
+// new session -- and only then does the trade enter its bar. A late print for
+// a minute already closed is refused, never written into history.
+//
+// GAPS PAUSE DECISIONS. A lost trade frame (a sequence gap) means the bars
+// are incomplete: no model decides until one whole clean minute has passed.
+// Obligations still run. Snapshot frames (a late joiner's bootstrap) update
+// prices but are not trades and never enter a bar.
+//
+// ONE RISK CHECK BEFORE EVERY ENTRY (LiveRiskLimits): the feed is fresh, no
+// halt or kill request, the position count, gross notional and the day's loss
+// are inside their limits. Exits are never refused.
 //
 // NOTHING HERE CAN TRADE. The paper book is arithmetic; live/ links no broker
 // and no OMS.
@@ -33,6 +52,7 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -47,7 +67,20 @@ inline constexpr int kLiveSquareOffMinute = 15 * 60 + 20;  ///< 15:20
 struct LiveState {
     std::int64_t ltp = 0, last_ns = 0, volume = -1, oi = -1;
     std::int64_t bid = 0, ask = 0, prev_close = 0, open = 0;
+    std::int64_t bid_qty = 0, ask_qty = 0;
+    std::int64_t quote_ns = 0;     ///< feed time of the last bid/ask
+    std::int64_t book_ns = 0;      ///< feed time of the last five-level book
+    std::uint16_t levels = 0;
+    LiveLevel bids[kLiveDepth]{}, asks[kLiveDepth]{};
     bool simulated = false, replay = false;
+};
+
+/// The pre-trade risk limits every entry passes (exits are never refused).
+struct LiveRiskLimits {
+    std::size_t max_positions = 80;        ///< held or working, all models
+    std::size_t max_per_model = 60;
+    double max_gross_notional = 1.0e8;     ///< rupees: |qty x price| of everything held or working, plus the new order
+    double max_daily_loss = 2.0e5;         ///< rupees: today's realised (gross where unpriced) plus open marks
 };
 
 /// What a model shows on the Live Models page.
@@ -104,10 +137,11 @@ namespace live_fmt {
 
 class LiveEngine {
 public:
-    LiveEngine(std::vector<LiveInstrument> universe, LiveCostFn cost)
+    LiveEngine(std::vector<LiveInstrument> universe, LiveCostFn cost, LiveExecPolicy policy = {})
         : u_(std::move(universe)),
-          book_([this](std::uint32_t tok) { return top(tok); }, std::move(cost)) {
+          book_([this](std::uint32_t tok) { return top(tok); }, std::move(cost), policy) {
         for (std::size_t i = 0; i < u_.size(); ++i) index_[u_[i].token] = i;
+        book_.set_risk([this](const LiveRiskRequest& r) { return risk_check(r); });
     }
 
     void add_model(std::unique_ptr<LiveModel> m) { models_.push_back(std::move(m)); }
@@ -115,7 +149,11 @@ public:
 
     // ---- the feed --------------------------------------------------------
 
+    /// A trade, stamped `ns` (the exchange's time where it has one).
     void on_trade(const PricePayload& p, std::int64_t ns) {
+        // The clock first: the previous minute closes and decides on what was
+        // known then; a new session resets before its first tick is kept.
+        advance(ns);
         LiveState& s = state_[p.token];
         s.ltp = p.last_paise;
         s.last_ns = ns;
@@ -124,19 +162,71 @@ public:
         s.simulated = p.has(kPriceSimulated);
         s.replay = p.has(kPriceReplay);
         simulated_ = simulated_ || s.simulated;
-        bars_.feed(p.token, static_cast<double>(p.last_paise) / 100.0, ns, s.volume, [](std::uint32_t, const LiveBar&) {});
-        advance(ns);
+        replay_ = replay_ || s.replay;
+        if (!bars_.feed(p.token, static_cast<double>(p.last_paise) / 100.0, ns, s.volume, [](std::uint32_t, const LiveBar&) {}))
+            ++late_prints_;
+        book_.on_market(p.token, std::max(ns, clock_ns_));
     }
-    void on_quote(const QuotePayload& q) {
+    /// A late joiner's bootstrap: the last trade as it stands, not a trade now.
+    /// Updates the price; never enters a bar or moves the clock.
+    void on_trade_snapshot(const PricePayload& p) {
+        LiveState& s = state_[p.token];
+        if (p.last_paise > 0) s.ltp = p.last_paise;
+        if (p.has(kPriceHasVolume)) s.volume = p.volume;
+        if (p.has(kPriceHasOi)) s.oi = p.oi;
+        s.simulated = p.has(kPriceSimulated);
+        s.replay = p.has(kPriceReplay);
+        simulated_ = simulated_ || s.simulated;
+    }
+    /// A quote, received at feed time `ns`.
+    void on_quote(const QuotePayload& q, std::int64_t ns) {
         LiveState& s = state_[q.token];
-        if (q.has(kQuoteHasTop)) { s.bid = q.bid; s.ask = q.ask; }
+        if (q.has(kQuoteHasTop)) {
+            s.bid = q.bid; s.ask = q.ask; s.bid_qty = q.bid_qty; s.ask_qty = q.ask_qty;
+            s.quote_ns = ns;
+        }
         if (q.has(kQuoteHasPrevClose)) s.prev_close = q.prev_close;
         if (q.has(kQuoteHasOhlc)) s.open = q.open;
         s.simulated = s.simulated || q.has(kQuoteSimulated);
+        simulated_ = simulated_ || s.simulated;
+        if (q.has(kQuoteHasTop)) book_.on_market(q.token, std::max(ns, clock_ns_));
+    }
+    /// Five levels a side, at feed time `ns`.
+    void on_book(std::uint32_t token, std::uint16_t levels, const LiveLevel* bids, const LiveLevel* asks, std::int64_t ns) {
+        LiveState& s = state_[token];
+        s.levels = static_cast<std::uint16_t>(std::min<std::size_t>(levels, kLiveDepth));
+        for (std::size_t k = 0; k < kLiveDepth; ++k) {
+            s.bids[k] = k < s.levels ? bids[k] : LiveLevel{};
+            s.asks[k] = k < s.levels ? asks[k] : LiveLevel{};
+        }
+        s.book_ns = ns;
+        book_.on_market(token, std::max(ns, clock_ns_));
+    }
+    /// Trade frames were lost (a sequence gap): today's bars are incomplete,
+    /// so no model decides until a whole clean minute has passed.
+    void on_trade_gap(std::int64_t ns, std::uint64_t missed) {
+        const std::int64_t at = std::max(ns, clock_ns_);
+        pause_until_minute_ = std::max(pause_until_minute_, live_ist_minute_index(at) + 2);
+        gaps_ += 1;
+        missed_trades_ += missed;
+        pause_note_ = (missed > 0 ? std::to_string(missed) + " trade frame(s) lost at "
+                                  : std::string("the trade stream restarted at "))
+                    + live_fmt::hhmm(live_minute_of_day(live_ist_minute_index(at)));
     }
     /// The feed went quiet (or came back). No new positions while stale.
     void set_stale(bool stale) noexcept { stale_ = stale; }
     [[nodiscard]] bool stale() const noexcept { return stale_; }
+    /// A halt the engine did not choose (the ledger cannot be written, or a
+    /// kill request): no new entries until it clears. Empty clears it.
+    void set_halt(std::string why) { halt_ = std::move(why); }
+    [[nodiscard]] const std::string& halt() const noexcept { return halt_; }
+    void set_kill(bool on) noexcept { kill_ = on; }
+    void set_limits(const LiveRiskLimits& l) { limits_ = l; }
+    [[nodiscard]] const LiveRiskLimits& limits() const noexcept { return limits_; }
+    /// True while a trade gap holds decisions back.
+    [[nodiscard]] bool paused() const noexcept { return live_ist_minute_index(clock_ns_) < pause_until_minute_; }
+    [[nodiscard]] std::uint64_t late_prints() const noexcept { return late_prints_; }
+    [[nodiscard]] std::uint64_t trade_gaps() const noexcept { return gaps_; }
 
     // ---- what models read -------------------------------------------------
 
@@ -157,7 +247,12 @@ public:
     }
     [[nodiscard]] LiveTop top(std::uint32_t token) const {
         const LiveState* s = state(token);
-        return s == nullptr ? LiveTop{} : LiveTop{s->ltp, s->bid, s->ask};
+        LiveTop t;
+        if (s == nullptr) return t;
+        t.ltp = s->ltp; t.bid = s->bid; t.ask = s->ask; t.bid_qty = s->bid_qty; t.ask_qty = s->ask_qty;
+        t.quote_ns = s->quote_ns; t.book_ns = s->book_ns; t.levels = s->levels;
+        for (std::size_t k = 0; k < kLiveDepth; ++k) { t.bids[k] = s->bids[k]; t.asks[k] = s->asks[k]; }
+        return t;
     }
     /// Last price in rupees; 0 when none.
     [[nodiscard]] double ltp(std::uint32_t token) const {
@@ -235,6 +330,11 @@ public:
         o += "  \"engine_ns\": " + std::to_string(clock_ns_) + ",\n";
         o += "  \"source\": \"" + std::string(simulated_ ? "SIM" : "LIVE") + "\",\n";
         o += "  \"stale\": " + std::string(stale_ ? "true" : "false") + ",\n";
+        o += "  \"paused\": \"" + json_escape(paused() ? "decisions paused: " + pause_note_ : std::string()) + "\",\n";
+        o += "  \"halt\": \"" + json_escape(kill_ ? std::string("kill request in force") : halt_) + "\",\n";
+        o += "  \"working_orders\": " + std::to_string(book_.working_orders()) + ",\n";
+        o += "  \"late_prints\": " + std::to_string(late_prints_) + ",\n";
+        o += "  \"trade_gaps\": " + std::to_string(gaps_) + ",\n";
         o += "  \"note\": \"" + json_escape(note) + "\",\n";
         o += "  \"models\": [";
         for (std::size_t m = 0; m < models_.size(); ++m) {
@@ -257,7 +357,9 @@ public:
                + ", \"qty\": " + std::to_string(p.qty) + ", \"lot\": " + std::to_string(p.inst.lot) + ", \"entry\": "
                + num(p.entry) + ", \"entry_ns\": " + std::to_string(p.entry_ns) + ", \"entry_expenses\": "
                + (std::isfinite(p.entry_expenses) ? num(p.entry_expenses) : std::string("null")) + ", \"carry\": "
-               + (p.carry ? "true" : "false") + ", \"why_in\": \"" + json_escape(p.why_in) + "\"}";
+               + (p.carry ? "true" : "false") + ", \"why_in\": \"" + json_escape(p.why_in) + "\", \"state\": \""
+               + live_state_text(p.state) + "\", \"want\": " + std::to_string(p.want_qty) + ", \"exit_since_ns\": "
+               + std::to_string(p.exit_since_ns) + ", \"exit_reason\": \"" + json_escape(p.exit_reason) + "\"}";
         }
         o += "\n  ]\n}\n";
         return o;
@@ -266,7 +368,7 @@ public:
     // ---- the clock -------------------------------------------------------
 
     /// Advance the engine clock to `ns`: close bars, run the models for every
-    /// minute boundary crossed, roll and square off on schedule.
+    /// minute boundary crossed, roll and square off as obligations.
     void advance(std::int64_t ns) {
         if (ns <= clock_ns_) return;
         clock_ns_ = ns;
@@ -274,36 +376,108 @@ public:
         const std::int64_t day = live_day_of(minute);
         if (day != day_) {
             if (day_ != 0) {
-                // A new session: intraday positions should already be flat.
+                // A new session: intraday positions should already be flat, and
+                // a carried contract that has expired should have been rolled.
                 book_.close_if([](const LivePosition& p) { return !p.carry; }, ns, "new session (left open)");
+                book_.close_if([day](const LivePosition& p) { return p.carry && p.inst.expiry_day != 0 && p.inst.expiry_day < day; },
+                               ns, "expired contract (the roll was missed)");
             }
             day_ = day;
             bars_.new_day();
+            bars_.advance(ns, [](std::uint32_t, const LiveBar&) {});
             for (auto& m : models_) m->on_new_day(*this);
             last_minute_ = minute;
+            book_.on_clock(ns);
             return;
         }
-        if (minute <= last_minute_) return;
-        // A jump of many minutes (a late start, a gap in the feed) runs only the
-        // latest boundary: replaying thirty stale decisions would be worse than none.
+        if (minute <= last_minute_) { book_.on_clock(ns); return; }
+        // A jump of many minutes (a late start, a gap in the feed) runs the
+        // models only at the latest boundary: replaying thirty stale decisions
+        // would be worse than none. The obligations below are not skipped:
+        // they test "at or after", not "exactly at".
         const std::int64_t from = minute - last_minute_ > 30 ? minute : last_minute_ + 1;
         for (std::int64_t m = from; m <= minute; ++m) {
             bars_.advance(m * 60'000'000'000LL - 19800'000'000'000LL, [](std::uint32_t, const LiveBar&) {});
             const int close = live_minute_of_day(m);
-            if (close < kLiveOpenMinute || close > kLiveCloseMinute) continue;
-            if (close == kLiveRollMinute) {
-                book_.close_if([this](const LivePosition& p) { return p.carry && p.inst.expiry_day != 0 && p.inst.expiry_day <= day_; },
-                               ns, "expiry roll");
-            }
-            for (auto& mdl : models_) mdl->on_minute(*this, close);
-            if (close == kLiveSquareOffMinute) {
-                book_.close_if([](const LivePosition& p) { return !p.carry; }, ns, "15:20 square-off");
-            }
+            if (close < kLiveOpenMinute) continue;
+            obligations(close, ns, false);
+            if (close <= kLiveCloseMinute && m >= pause_until_minute_)
+                for (auto& mdl : models_) mdl->on_minute(*this, close);
+            if (close >= kLiveSquareOffMinute) square_off(ns, close > kLiveSquareOffMinute && sq_day_ != day_, false);
         }
         last_minute_ = minute;
+        book_.on_clock(ns);
+    }
+
+    /// The feed has stopped and the machine's clock (`wall_ns`) has moved on:
+    /// submit the roll and the square-off that are now overdue, so they fill
+    /// the moment quotes return. Live feeds only -- a simulated session's
+    /// clock is not the machine's.
+    void watchdog(std::int64_t wall_ns) {
+        if (simulated_ || replay_ || day_ == 0 || wall_ns <= clock_ns_ + 60'000'000'000LL) return;
+        const std::int64_t m = live_ist_minute_index(wall_ns);
+        if (live_day_of(m) != day_) return;
+        const int close = live_minute_of_day(m);
+        if (close < kLiveOpenMinute) return;
+        obligations(close, wall_ns, true);
+        if (close >= kLiveSquareOffMinute) square_off(wall_ns, true, true);
     }
 
 private:
+    /// The 15:15 expiry roll, on the first minute at or after it.
+    void obligations(int close, std::int64_t ns, bool watchdog) {
+        if (close >= kLiveRollMinute && roll_day_ != day_) {
+            roll_day_ = day_;
+            const std::int64_t today = day_;
+            book_.close_if([today](const LivePosition& p) { return p.carry && p.inst.expiry_day != 0 && p.inst.expiry_day <= today; },
+                           ns, watchdog ? "expiry roll (feed stopped; watchdog)" : close > kLiveRollMinute
+                                              ? "expiry roll (overdue: the clock reached " + live_fmt::hhmm(close) + ")"
+                                              : "expiry roll");
+        }
+    }
+    /// Every intraday position out. Idempotent: an exit already working is left alone.
+    void square_off(std::int64_t ns, bool overdue, bool watchdog) {
+        sq_day_ = day_;
+        book_.close_if([](const LivePosition& p) { return !p.carry; }, ns,
+                       watchdog ? "15:20 square-off (feed stopped; watchdog)"
+                                : overdue ? "15:20 square-off (overdue)" : "15:20 square-off");
+    }
+
+    /// The one pre-trade check every entry passes.
+    [[nodiscard]] std::optional<std::string> risk_check(const LiveRiskRequest& r) const {
+        if (kill_) return std::string("kill request in force");
+        if (!halt_.empty()) return "halted: " + halt_;
+        if (stale_) return std::string("feed stale");
+        if (paused()) return "decisions paused: " + pause_note_;
+        if (!r.carry && live_minute_of_day(live_ist_minute_index(r.ns)) >= kLiveSquareOffMinute)
+            return std::string("intraday entry after the 15:20 square-off");
+        const auto ps = book_.positions();
+        if (ps.size() + 1 > limits_.max_positions)
+            return "position limit (" + std::to_string(limits_.max_positions) + ")";
+        std::size_t mine = 0;
+        double gross = r.price * static_cast<double>(r.qty);
+        for (const auto& p : ps) {
+            mine += p.model == r.model ? 1u : 0u;
+            const LiveTop t = top(p.inst.token);
+            const double px = p.filled() ? p.entry : static_cast<double>(p.side > 0 ? t.ask : t.bid) / 100.0;
+            gross += std::fabs(px) * static_cast<double>(p.filled() ? p.qty : p.want_qty);
+        }
+        if (mine + 1 > limits_.max_per_model)
+            return "per-model position limit (" + std::to_string(limits_.max_per_model) + ")";
+        if (gross > limits_.max_gross_notional)
+            return "gross notional " + live_fmt::num(gross, 0) + " over " + live_fmt::num(limits_.max_gross_notional, 0);
+        double day_pnl = 0.0;
+        for (const auto& t : book_.trades())
+            if (live_day_of(live_ist_minute_index(t.exit_ns)) == day_) day_pnl += std::isfinite(t.net) ? t.net : t.gross;
+        for (const auto& p : ps) {
+            const double u = book_.unrealised(p, clock_ns_);
+            if (std::isfinite(u)) day_pnl += u;
+        }
+        if (-day_pnl > limits_.max_daily_loss)
+            return "daily loss " + live_fmt::num(-day_pnl, 0) + " over " + live_fmt::num(limits_.max_daily_loss, 0);
+        return std::nullopt;
+    }
+
     std::vector<LiveInstrument> u_;
     std::unordered_map<std::uint32_t, std::size_t> index_;
     std::unordered_map<std::uint32_t, LiveState> state_;
@@ -311,8 +485,12 @@ private:
     LivePaperBook book_;
     std::vector<std::unique_ptr<LiveModel>> models_;
     std::int64_t clock_ns_ = 0, day_ = 0, last_minute_ = 0;
+    std::int64_t roll_day_ = 0, sq_day_ = 0, pause_until_minute_ = 0;
     std::size_t trades_out_ = 0, fills_out_ = 0, positions_seen_ = 0;
-    bool stale_ = false, simulated_ = false;
+    std::uint64_t late_prints_ = 0, gaps_ = 0, missed_trades_ = 0;
+    std::string pause_note_, halt_;
+    LiveRiskLimits limits_;
+    bool stale_ = false, simulated_ = false, replay_ = false, kill_ = false;
 };
 
 } // namespace altair::live

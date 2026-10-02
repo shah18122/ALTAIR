@@ -37,10 +37,18 @@ PaperInstrument fut() {
     return i;
 }
 
-PaperQuote quote(qint64 bid, qint64 ask, std::int64_t ns = 1'790'000'000'000'000'000LL) {
+PaperQuote quote(qint64 bid, qint64 ask, std::int64_t ns = 1'790'000'000'000'000'000LL, qint64 size = 1500) {
     PaperQuote q;
-    q.bid = bid; q.ask = ask; q.ltp = (bid + ask) / 2; q.ns = ns;
+    q.bid = bid; q.ask = ask; q.ltp = (bid + ask) / 2; q.ns = ns; q.quote_ns = ns;
+    q.bid_qty = size; q.ask_qty = size;
     return q;
+}
+
+/// No latency: an order meets the quote it was placed against (sections 1-4).
+PaperOms instant() {
+    PaperOms oms;
+    oms.set_policy(PaperExecPolicy{0, 10'000'000'000LL});
+    return oms;
 }
 
 PaperOrder order(PaperSide side, PaperType type, qint64 qty, qint64 limit = 0) {
@@ -61,7 +69,7 @@ int main(int argc, char** argv) {
 
     std::printf("\n[1] market and limit fills\n");
     {
-        PaperOms oms;
+        PaperOms oms = instant();
         oms.set_expenses([](const PaperTrade& t) -> std::optional<double> { return 0.0001 * static_cast<double>(t.qty * t.price_paise) / 100.0; });
         const auto buy = oms.place(order(PaperSide::Buy, PaperType::Market, 75), quote(2'510'000, 2'510'100), 1);
         check(buy && oms.trades().size() == 1 && oms.trades()[0].price_paise == 2'510'100
@@ -73,9 +81,9 @@ int main(int argc, char** argv) {
         const auto lmt = oms.place(order(PaperSide::Buy, PaperType::Limit, 150, 2'500'000), quote(2'510'000, 2'510'100), 3);
         check(lmt && oms.order(*lmt)->status == PaperStatus::Open && oms.trades().size() == 2,
               "a limit buy below the ask rests");
-        oms.on_quote(12468226, quote(2'499'800, 2'500'100));
+        oms.on_quote(12468226, quote(2'499'800, 2'500'100), 4);
         check(oms.order(*lmt)->status == PaperStatus::Open, "and keeps resting while the ask is above it");
-        oms.on_quote(12468226, quote(2'499'800, 2'499'900));
+        oms.on_quote(12468226, quote(2'499'800, 2'499'900), 5);
         check(oms.order(*lmt)->status == PaperStatus::Filled && oms.trades().back().price_paise == 2'499'900,
               "it fills when the ask crosses, at that ask (better than the limit)");
         check(!std::isnan(oms.trades().back().expenses), "expenses are charged on the fill");
@@ -83,7 +91,7 @@ int main(int argc, char** argv) {
 
     std::printf("\n[2] refusals, modify, cancel\n");
     {
-        PaperOms oms;
+        PaperOms oms = instant();
         auto idx = order(PaperSide::Buy, PaperType::Market, 1);
         idx.inst.tradable = false;
         idx.inst.symbol = QStringLiteral("NIFTY 50");
@@ -99,10 +107,13 @@ int main(int argc, char** argv) {
               "a resting order modifies");
         check(oms.cancel(*id, 3) && oms.order(*id)->status == PaperStatus::Cancelled && !oms.cancel(*id, 4),
               "and cancels, once");
-        const auto none = oms.place(order(PaperSide::Buy, PaperType::Market, 75), PaperQuote{}, 5);
-        check(none && oms.order(*none)->status == PaperStatus::Open, "a market order with no price yet waits for one");
-        oms.on_quote(12468226, quote(2'510'000, 2'510'100));
-        check(oms.order(*none)->status == PaperStatus::Filled, "and fills on the first quote");
+        PaperQuote last_only;
+        last_only.ltp = 2'510'050;
+        last_only.ns = 1'790'000'000'000'000'000LL;
+        const auto none = oms.place(order(PaperSide::Buy, PaperType::Market, 75), last_only, 5);
+        check(!none && oms.orders().back().status == PaperStatus::Rejected
+                  && oms.orders().back().note.contains(QStringLiteral("not filled at the last trade")),
+              "a market order with only a last trade is rejected, never filled at it");
         (void)oms.place(order(PaperSide::Buy, PaperType::Limit, 75, 2'000'000), quote(2'510'000, 2'510'100), 6);
         (void)oms.place(order(PaperSide::Buy, PaperType::Limit, 75, 2'000'000), quote(2'510'000, 2'510'100), 7);
         check(oms.cancel_all(8) == 2 && oms.open_orders() == 0, "cancel all clears every pending order");
@@ -110,13 +121,13 @@ int main(int argc, char** argv) {
 
     std::printf("\n[3] positions\n");
     {
-        PaperOms oms;
+        PaperOms oms = instant();
         (void)oms.place(order(PaperSide::Buy, PaperType::Market, 150), quote(2'500'000, 2'500'100), 1);
         (void)oms.place(order(PaperSide::Sell, PaperType::Market, 75), quote(2'510'000, 2'510'100), 2);
         auto pos = oms.positions();
         check(pos.size() == 1 && pos[0].net == 75 && std::fabs(pos[0].realised - 75.0 * 99.0) < 1e-6,
               "a partial close realises against the average: 75 x 99.00");
-        oms.on_quote(12468226, quote(2'520'000, 2'520'100));
+        oms.on_quote(12468226, quote(2'520'000, 2'520'100), 3);
         pos = oms.positions();
         check(pos[0].mark_paise == 2'520'000 && std::fabs(pos[0].unrealised - 75.0 * 199.0) < 1e-6,
               "the open long is marked at the bid");
@@ -126,6 +137,7 @@ int main(int argc, char** argv) {
               "selling through flat opens a short at that price");
         check(std::isnan(oms.trades()[0].expenses) && pos[0].expenses_unpriced,
               "with no expense function the fills say unpriced, not zero");
+        check(std::isnan(pos[0].net_pnl()), "and the net is unavailable, not gross presented as net");
     }
 
     std::printf("\n[4] the book survives a restart\n");
@@ -135,7 +147,7 @@ int main(int argc, char** argv) {
         const QString trades = dir.filePath(QStringLiteral("manual_trades.csv"));
         const std::int64_t today = 1'790'000'000'000'000'000LL;
         {
-            PaperOms oms;
+            PaperOms oms = instant();
             oms.on_order = [&](const PaperOrder& o) { paper_store::append_order(orders, o); };
             oms.on_trade = [&](const PaperTrade& t) { paper_store::append_trade(trades, t); };
             (void)oms.place(order(PaperSide::Buy, PaperType::Market, 75), quote(2'500'000, 2'500'100, today), today);
@@ -146,7 +158,7 @@ int main(int argc, char** argv) {
         paper_store::load(orders, trades, today, o, t);
         check(t.size() == 1 && t[0].price_paise == 2'500'100 && t[0].inst.lot == 75, "the trade is read back");
         check(o.size() == 2 && o[1].status == PaperStatus::Open, "today's resting order is read back resting");
-        PaperOms again;
+        PaperOms again = instant();
         again.restore(o, t);
         const auto id = again.place(order(PaperSide::Sell, PaperType::Market, 75), quote(2'500'000, 2'500'100, today), today);
         check(id && *id == 3 && again.positions()[0].net == 0, "numbering continues and the position nets out");
@@ -154,6 +166,75 @@ int main(int argc, char** argv) {
         std::vector<PaperTrade> t2;
         paper_store::load(orders, trades, today + 86'400'000'000'000LL, o2, t2);
         check(o2.size() == 1 && o2[0].status == PaperStatus::Cancelled, "the next day, yesterday's resting order shows expired");
+    }
+
+    std::printf("\n[4b] a book written before partial fills still reads\n");
+    {
+        QTemporaryDir dir;
+        const QString orders = dir.filePath(QStringLiteral("manual_orders.csv"));
+        QFile f(orders);
+        (void)f.open(QIODevice::WriteOnly | QIODevice::Text);
+        QTextStream out(&f);
+        out << "id,ns,token,symbol,exchange,lot,tick,product,side,type,qty,limit,status,fill,done_ns,sim,note\n"
+            << "7,1790000000000000000,12468226,NIFTY26OCTFUT,NFO,75,10,NRML,B,MKT,75,0,EXECUTED,2500100,1790000000000000000,0,an old note\n";
+        f.close();
+        std::vector<PaperOrder> o;
+        std::vector<PaperTrade> t;
+        paper_store::load(orders, dir.filePath(QStringLiteral("none.csv")), 1'790'000'000'000'000'000LL, o, t);
+        check(o.size() == 1 && o[0].filled == 75 && o[0].note == QStringLiteral("an old note"),
+              "an old EXECUTED row is read as filled whole, its note intact");
+    }
+
+    std::printf("\n[7] executable fills: latency, freshness, size, the book\n");
+    {
+        const std::int64_t t0 = 1'790'000'000'000'000'000LL;
+        PaperOms oms;   // the default policy: 250 ms latency, 10 s quote age
+        const auto id = oms.place(order(PaperSide::Buy, PaperType::Market, 150), quote(2'510'000, 2'510'100, t0, 75), t0);
+        check(id && oms.order(*id)->status == PaperStatus::Open && oms.trades().empty(),
+              "an order does not fill before the latency has passed on the feed's clock");
+        oms.on_quote(12468226, quote(2'510'000, 2'510'100, t0 + 300'000'000, 75), t0 + 300'000'000);
+        check(oms.trades().size() == 1 && oms.trades()[0].qty == 75 && oms.order(*id)->filled == 75
+                  && oms.order(*id)->status == PaperStatus::Open && oms.trades()[0].basis.contains(QStringLiteral("part 75/150")),
+              "after it, only the 75 shown at the ask fill; the rest keeps working");
+        oms.on_quote(12468226, quote(2'510'100, 2'510'300, t0 + 400'000'000, 75), t0 + 400'000'000);
+        check(oms.order(*id)->status == PaperStatus::Filled && oms.order(*id)->fill_paise == 2'510'200,
+              "the rest fills on the next quote; the order shows the average");
+
+        // Stale: a quote 30 s behind the feed's clock is not a price.
+        PaperQuote other = quote(100, 200, t0 + 30'000'000'000LL);
+        other.ltp = 150;
+        oms.on_quote(1, other, t0 + 30'000'000'000LL);
+        const auto stale = oms.place(order(PaperSide::Sell, PaperType::Market, 75), quote(2'510'000, 2'510'100, t0, 75), t0 + 30'000'000'000LL);
+        check(!stale && oms.orders().back().note.contains(QStringLiteral("30.0 s old")),
+              "a 30-second-old quote is refused, and the reason gives its age");
+        // A stopped feed: no update for 20 s of wall time keeps nothing executable.
+        PaperOms quiet;
+        quiet.set_policy(PaperExecPolicy{0, 10'000'000'000LL});
+        quiet.on_quote(12468226, quote(2'510'000, 2'510'100, t0), t0);
+        check(!quiet.place(order(PaperSide::Buy, PaperType::Market, 75), quote(2'510'000, 2'510'100, t0), t0 + 20'000'000'000LL),
+              "a feed that stopped 20 s ago does not leave its last quote dealable");
+
+        // Five levels, walked when fresh; a limit takes only what is inside it.
+        PaperOms deep;
+        deep.set_policy(PaperExecPolicy{0, 10'000'000'000LL});
+        PaperQuote b = quote(2'510'000, 2'510'100, t0, 75);
+        b.levels = 3; b.book_ns = t0;
+        b.asks[0] = {2'510'100, 75}; b.asks[1] = {2'510'200, 75}; b.asks[2] = {2'510'500, 150};
+        const auto lim = deep.place(order(PaperSide::Buy, PaperType::Limit, 225, 2'510'200), b, t0);
+        check(lim && deep.order(*lim)->filled == 150 && deep.order(*lim)->status == PaperStatus::Open
+                  && deep.order(*lim)->fill_paise == 2'510'150,
+              "a limit buy walks the asks inside its price (75 + 75), not the 25,105.00 level beyond");
+
+        // Unmarked: no fresh quote, no unrealised figure, and no net.
+        PaperOms mark;
+        mark.set_policy(PaperExecPolicy{0, 10'000'000'000LL});
+        mark.set_expenses([](const PaperTrade&) -> std::optional<double> { return 1.0; });
+        (void)mark.place(order(PaperSide::Buy, PaperType::Market, 75), quote(2'510'000, 2'510'100, t0), t0);
+        PaperQuote later = quote(100, 200, t0 + 60'000'000'000LL);
+        mark.on_quote(1, later, t0 + 60'000'000'000LL);   // the feed moves on; the future is not quoted again
+        const auto pos = mark.positions();
+        check(pos.size() == 1 && pos[0].mark_paise == 0 && std::isnan(pos[0].net_pnl()),
+              "a position whose quote went stale is unmarked, and its net is unavailable");
     }
 
     std::printf("\n[5] the order window\n");

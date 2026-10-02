@@ -165,7 +165,7 @@ if(ALTAIR_HAVE_NET)
         add_executable(altair_price_service price_service_main.cpp)
         target_link_libraries(altair_price_service PRIVATE
             altair_server altair_broker_net altair_feed altair_instruments
-            altair_live altair_credential_store altair_flags Boost::headers)
+            altair_live altair_lockfree altair_credential_store altair_flags Boost::headers)
         target_compile_definitions(altair_price_service PRIVATE
             ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
             ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -320,7 +320,7 @@ find_package(Boost CONFIG QUIET COMPONENTS headers)
 if(TARGET altair_charges_toml AND Boost_FOUND)
     add_executable(altair_live_engine live_engine_main.cpp)
     target_link_libraries(altair_live_engine PRIVATE
-        altair_live altair_models altair_strategies altair_analytics altair_charges_toml altair_flags Boost::headers)
+        altair_live altair_models altair_strategies altair_analytics altair_charges_toml altair_flags Boost::headers Threads::Threads)
     target_include_directories(altair_live_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_live_engine PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     if(WIN32)
@@ -394,4 +394,31 @@ if(ALTAIR_BUILD_TESTS)
     target_include_directories(altair_kite_price_frames_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME kite_price_frames COMMAND altair_kite_price_frames_test)
+
+    # The price service's bus: an owner thread, a ring from the sources, and
+    # snapshots for late joiners only. Runs threads: label `concurrency`.
+    find_package(Boost CONFIG QUIET COMPONENTS headers)
+    if(Boost_FOUND)
+        add_executable(altair_shared_bus_test tests/test_shared_bus.cpp)
+        target_link_libraries(altair_shared_bus_test PRIVATE
+            altair_server altair_live altair_lockfree altair_flags Boost::headers Threads::Threads)
+        target_include_directories(altair_shared_bus_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        if(WIN32)
+            target_link_libraries(altair_shared_bus_test PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME shared_bus COMMAND altair_shared_bus_test)
+        set_tests_properties(shared_bus PROPERTIES LABELS concurrency)
+
+        # The engine's socket drained on its own thread: a stall in the
+        # engine never makes the bus drop frames for it.
+        add_executable(altair_feed_reader_test tests/test_feed_reader.cpp)
+        target_link_libraries(altair_feed_reader_test PRIVATE
+            altair_server altair_live altair_lockfree altair_flags Boost::headers Threads::Threads)
+        target_include_directories(altair_feed_reader_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        if(WIN32)
+            target_link_libraries(altair_feed_reader_test PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME feed_reader COMMAND altair_feed_reader_test)
+        set_tests_properties(feed_reader PROPERTIES LABELS concurrency)
+    endif()
 endif()

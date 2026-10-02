@@ -44,15 +44,29 @@ namespace paper_ui {
 inline constexpr const char* kBuyColour = "#1F6FEB";
 inline constexpr const char* kSellColour = "#DA3633";
 
+/// The market for `token` as the stream last showed it, with the feed times
+/// the paper book judges freshness by. The touch comes from the quote topic;
+/// the five levels from the book topic, each with its own stamp.
 [[nodiscard]] inline PaperQuote quote_of(const PriceClient* client, quint32 token) {
     PaperQuote q;
     const LivePrice* p = client != nullptr ? client->price(token) : nullptr;
     if (p == nullptr) return q;
     q.ltp = p->last_paise;
-    q.ns = p->exchange_ts_ns;
+    q.ns = p->last_ns;
     q.sim = p->simulated;
-    if (p->has_quote && p->quote.has(kQuoteHasTop)) { q.bid = p->quote.bid; q.ask = p->quote.ask; }
-    else if (p->levels > 0) { q.bid = p->bids[0].price_paise; q.ask = p->asks[0].price_paise; }
+    if (p->has_quote && p->quote.has(kQuoteHasTop)) {
+        q.bid = p->quote.bid; q.ask = p->quote.ask;
+        q.bid_qty = p->quote.bid_qty; q.ask_qty = p->quote.ask_qty;
+        q.quote_ns = p->quote_ns;
+    }
+    if (p->levels > 0) {
+        q.levels = std::min<int>(p->levels, 5);
+        q.book_ns = p->book_ns;
+        for (int k = 0; k < q.levels; ++k) {
+            q.bids[k] = PaperLevel{p->bids[k].price_paise, p->bids[k].qty};
+            q.asks[k] = PaperLevel{p->asks[k].price_paise, p->asks[k].qty};
+        }
+    }
     return q;
 }
 
@@ -369,7 +383,8 @@ public:
             paper_ui::cell(table_, r, 3, buy ? QStringLiteral("BUY") : QStringLiteral("SELL"), false, side_fg);
             paper_ui::cell(table_, r, 4, o.product);
             paper_ui::cell(table_, r, 5, o.type == PaperType::Market ? QStringLiteral("MKT") : QStringLiteral("LMT"));
-            paper_ui::cell(table_, r, 6, QString::number(o.qty), true);
+            paper_ui::cell(table_, r, 6, o.filled > 0 && o.filled < o.qty ? QStringLiteral("%1/%2").arg(o.filled).arg(o.qty)
+                                                                          : QString::number(o.qty), true);
             paper_ui::cell(table_, r, 7, o.type == PaperType::Limit ? PaperOms::rupees(o.limit_paise) : QStringLiteral("MKT"), true);
             paper_ui::cell(table_, r, 8, paper_status_text(o.status), false,
                            o.status == PaperStatus::Open ? QColor(0xE3, 0xB3, 0x41)
@@ -494,7 +509,7 @@ public:
         rows_ = oms.positions();
         table_->setRowCount(static_cast<int>(rows_.size()));
         double realised = 0, unrealised = 0, expenses = 0;
-        bool unpriced = false;
+        bool unpriced = false, unmarked = false;
         const QColor up(0x7E, 0xE7, 0x87), down(0xFF, 0x7B, 0x72), flat(0xC9, 0xD1, 0xD9);
         const auto tint = [&](double x) { return x > 0 ? up : x < 0 ? down : flat; };
         for (int r = 0; r < table_->rowCount(); ++r) {
@@ -511,20 +526,28 @@ public:
             paper_ui::cell(table_, r, 9, p.net != 0 && p.mark_paise <= 0 ? QStringLiteral("no quote") : paper_ui::money(p.unrealised), true, tint(p.unrealised));
             paper_ui::cell(table_, r, 10, p.expenses_unpriced && p.expenses == 0.0 ? QStringLiteral("unpriced")
                                           : paper_ui::money(p.expenses) + (p.expenses_unpriced ? QStringLiteral(" + unpriced") : QString()), true);
-            paper_ui::cell(table_, r, 11, paper_ui::money(p.net_pnl()), true, tint(p.net_pnl()));
+            const double np = p.net_pnl();
+            paper_ui::cell(table_, r, 11, std::isfinite(np) ? paper_ui::money(np)
+                                          : p.expenses_unpriced ? QStringLiteral("unavailable: unpriced") : QStringLiteral("unavailable: no quote"),
+                           true, tint(std::isfinite(np) ? np : 0.0));
             realised += p.realised;
             unrealised += p.unrealised;
             expenses += p.expenses;
             unpriced = unpriced || p.expenses_unpriced;
+            unmarked = unmarked || (p.net != 0 && p.mark_paise <= 0);
         }
+        // An unpriced expense is not zero, and an unmarked position is not
+        // flat: with either, there is no net figure to show.
         const double net = realised + unrealised - expenses;
+        const bool net_known = !unpriced && !unmarked;
         totals_->setText(QStringLiteral(
             "<b>PAPER</b> &nbsp; realised <b>%1</b> &nbsp; unrealised <b>%2</b> &nbsp; expenses <b>%3</b>%4 &nbsp; "
             "<span style='color:%5'>net <b>%6</b></span> &nbsp; <span style='color:#8B949E'>%7 open order(s)</span>")
             .arg(paper_ui::money(realised), paper_ui::money(unrealised), paper_ui::money(expenses))
             .arg(unpriced ? QStringLiteral(" (some fills unpriced)") : QString())
-            .arg(net >= 0 ? QStringLiteral("#7EE787") : QStringLiteral("#FF7B72"))
-            .arg(paper_ui::money(net))
+            .arg(!net_known ? QStringLiteral("#8B949E") : net >= 0 ? QStringLiteral("#7EE787") : QStringLiteral("#FF7B72"))
+            .arg(net_known ? paper_ui::money(net)
+                           : unpriced ? QStringLiteral("unavailable (unpriced expenses)") : QStringLiteral("unavailable (a position has no fresh quote)"))
             .arg(oms.open_orders()));
     }
 

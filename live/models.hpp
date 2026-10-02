@@ -148,9 +148,11 @@ public:
             for (const LiveInstrument* leg : {call_, put_}) {
                 if (leg == nullptr) continue;
                 const LivePosition* p = e.book().position(name(), leg->token);
-                if (p == nullptr) continue;
+                // Only a sold leg, not already being bought back, against an ask that is live now.
+                if (p == nullptr || !p->filled() || p->state == LivePosState::Closing) continue;
                 const LiveTop t = e.top(leg->token);
-                const double ask = static_cast<double>(t.ask > 0 ? t.ask : t.ltp) / 100.0;
+                if (t.ask <= 0 || !e.book().fresh(t.quote_ns, e.clock_ns())) continue;
+                const double ask = static_cast<double>(t.ask) / 100.0;
                 if (ask >= stop_ * p->entry)
                     (void)e.book().close(name(), leg->token, e.clock_ns(), "premium doubled: stop at " + live_fmt::hhmm(m));
             }
@@ -174,8 +176,11 @@ public:
                 const LivePosition* p = e.book().position(name(), leg->token);
                 const LiveTop t = e.top(leg->token);
                 const double ask = static_cast<double>(t.ask > 0 ? t.ask : t.ltp) / 100.0;
-                if (p) { sold += p->entry; now += ask; } else { priced = false; }
-                v.fields.push_back({leg->symbol, p ? "sold " + live_fmt::num(p->entry) + ", ask " + live_fmt::num(ask) : "closed"});
+                if (p && p->filled()) { sold += p->entry; now += ask; } else { priced = false; }
+                v.fields.push_back({leg->symbol, p == nullptr ? std::string("closed")
+                                                 : !p->filled() ? "selling (" + std::string(live_state_text(p->state)) + ")"
+                                                 : "sold " + live_fmt::num(p->entry) + ", ask " + live_fmt::num(ask)
+                                                       + (p->state == LivePosState::Closing ? " (buying back)" : "")});
             }
             if (priced) v.fields.push_back({"premium left", live_fmt::num(now) + " of " + live_fmt::num(sold) + " sold"});
         }
@@ -295,7 +300,7 @@ public:
         if (m != kLiveRollMinute || !f_.ok || !std::isfinite(z_)) return;
         const LiveInstrument* a = e.carry_future("NIFTY");
         const LiveInstrument* b = e.carry_future("BANKNIFTY");
-        const bool in = !e.book().flat(name());
+        const bool in = e.book().engaged(name());
         if (in) {
             if (std::fabs(z_) <= r_.exit || std::fabs(z_) >= r_.stop) {
                 const std::string why = std::fabs(z_) <= r_.exit ? "spread back to mean (z " + live_fmt::num(z_) + ")"
@@ -406,7 +411,7 @@ public:
             const double s = scores_[i].s;
             // Close first.
             for (const auto& pos : e.book().positions()) {
-                if (pos.model != name() || pos.inst.underlying != in_.symbols[i]) continue;
+                if (pos.model != name() || pos.inst.underlying != in_.symbols[i] || pos.state == LivePosState::Closing) continue;
                 const bool done = std::isfinite(s) && ((pos.side > 0 && s > -pol_.exit_long) || (pos.side < 0 && s < pol_.exit_short));
                 const bool stale = e.clock_ns() - pos.entry_ns > static_cast<std::int64_t>(pol_.max_hold) * 86'400'000'000'000LL * 7 / 5;
                 if (done || stale) {
@@ -415,7 +420,8 @@ public:
             }
             if (!std::isfinite(s) || fut == nullptr || e.stale()) continue;
             bool held = false;
-            for (const auto& pos : e.book().positions()) held = held || (pos.model == name() && pos.inst.underlying == in_.symbols[i]);
+            for (const auto& pos : e.book().positions())
+                held = held || (pos.model == name() && pos.inst.underlying == in_.symbols[i] && pos.state != LivePosState::Closing);
             if (held) continue;
             const int side = s < -pol_.entry ? 1 : (s > pol_.entry ? -1 : 0);
             if (side == 0) continue;

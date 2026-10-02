@@ -256,6 +256,15 @@ void test_session() {
           "return since the open and the overnight gap, both known at 10:15");
     check(tr.cost_bp.size() == tr.rows() && tr.horizon == "10:15 to the close", "costed like a futures trade");
 
+    // The live engine squares off at 15:20: trained on that horizon, not 15:30.
+    ft::SessionInputs sq{"T 10:15", "T", 615, &own, &vix, 1.3, nullptr, ""};
+    sq.exit_minute = 920;
+    ft::TrackInfo i20;
+    const auto t20 = ft::build_session(sq, i20);
+    check(t20.rows() == 2 && t20.actual[0] == own[day6 + 72].c && t20.t_out[0] == (d0 + 6) * 86'400 + 920 * 60
+              && t20.anchor[0] == tr.anchor[0] && t20.horizon == "10:15 to 15:20",
+          "exit_minute 920: the outcome is the 15:20 close (the bar from 15:15), the horizon the engine trades");
+
     // Live: today, unfinished, up to 10:30 -- 16 bars from 09:15.
     std::vector<da::AuditBar> own2 = own, vix2 = vix;
     for (int k = 0; k < 16; ++k) {

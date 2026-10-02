@@ -11,14 +11,21 @@
 //                  frame, for building and showing the terminal when the
 //                  market is shut.
 //
-// A LATE SUBSCRIBER GETS THE WHOLE BOARD. The bus is a stream of changes; a
-// terminal that connects at 11:00 would otherwise show an illiquid strike as
-// blank until it next trades. So the last trade, quote and book of every
-// instrument is kept, and republished whenever a new subscriber connects.
+// A LATE SUBSCRIBER GETS THE WHOLE BOARD -- AND ONLY IT. The bus is a stream
+// of changes; a terminal that connects at 11:00 would otherwise show an
+// illiquid strike as blank until it next trades. So the last trade, quote and
+// book of every instrument is kept and sent to the NEW subscriber alone, as
+// Snapshot frames (server/price_bus.hpp). Subscribers already running never
+// see them: to them a replayed trade would be a fresh print.
 //
-// THE BUS IS NOT THREAD-SAFE and the FYERS socket loop blocks, so every bus
-// call goes through one mutex, and a second thread polls the bus (accepting
-// subscribers, flushing outboxes) while the socket is quiet.
+// ONE THREAD OWNS THE BUS. The bus is not thread-safe, and the source loops
+// (FYERS, Kite, the simulator) block on their sockets. A source does not lock
+// anything: it pushes each update into a single-producer ring, and the bus's
+// owner thread drains the ring, keeps the board, publishes, accepts
+// subscribers and flushes outboxes. Nothing is dropped between a source and
+// the bus: a full ring makes the source wait (and counts it), because a lost
+// trade would be a gap every subscriber then has to recover from. Slow
+// SUBSCRIBERS are the bus's business (its outbox caps), not the source's.
 
 #pragma once
 
@@ -26,12 +33,15 @@
 #include <live/universe.hpp>
 #include <server/price_bus.hpp>
 
+#include <lockfree/spsc_ring.hpp>
+
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
-#include <mutex>
+#include <memory>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -49,12 +59,17 @@ public:
         s.book = p; s.book_ns = ns; s.has_book = true;
         for (std::size_t i = 0; i < kMaxDepthLevels; ++i) { s.bids[i] = b[i]; s.asks[i] = a[i]; }
     }
-    /// Republish the board. Quotes first, so a row has its previous close
-    /// before its first price.
-    void replay(PriceBus& bus) const {
-        for (const auto& [tok, s] : slots_) if (s.has_quote) bus.publish_quote(s.quote, s.quote_ns);
-        for (const auto& [tok, s] : slots_) if (s.has_trade) bus.publish(kTopicTrades, s.trade, nullptr, nullptr, s.trade_ns);
-        for (const auto& [tok, s] : slots_) if (s.has_book) bus.publish(kTopicBook, s.book, s.bids, s.asks, s.book_ns);
+    /// The board, to one new client, as Snapshot frames. Quotes first, so a
+    /// row has its previous close before its first price; by token, so two
+    /// joiners see the same order.
+    void replay_to(PriceBus& bus, std::uint64_t client) const {
+        std::vector<std::uint32_t> toks;
+        toks.reserve(slots_.size());
+        for (const auto& [tok, s] : slots_) toks.push_back(tok);
+        std::sort(toks.begin(), toks.end());
+        for (const auto t : toks) { const Slot& s = slots_.at(t); if (s.has_quote) bus.publish_quote_snapshot_to(client, s.quote, s.quote_ns); }
+        for (const auto t : toks) { const Slot& s = slots_.at(t); if (s.has_trade) bus.publish_snapshot_to(client, kTopicTrades, s.trade, nullptr, nullptr, s.trade_ns); }
+        for (const auto t : toks) { const Slot& s = slots_.at(t); if (s.has_book) bus.publish_snapshot_to(client, kTopicBook, s.book, s.bids, s.asks, s.book_ns); }
     }
     [[nodiscard]] std::size_t size() const noexcept { return slots_.size(); }
 
@@ -70,65 +85,129 @@ private:
     std::unordered_map<std::uint32_t, Slot> slots_;
 };
 
-/// The bus, its cache and its lock: everything a source publishes through.
-class SharedBus {
-public:
-    explicit SharedBus(PriceBus& bus) : bus_(bus) {}
-
-    void trade(const PricePayload& p, std::int64_t ns) {
-        std::lock_guard lk(m_);
-        cache_.trade(p, ns);
-        bus_.publish(kTopicTrades, p, nullptr, nullptr, ns);
-        ++trades_;
-    }
-    void quote(const QuotePayload& q, std::int64_t ns) {
-        std::lock_guard lk(m_);
-        cache_.quote(q, ns);
-        bus_.publish_quote(q, ns);
-        ++quotes_;
-    }
-    void book(const PricePayload& p, const PriceLevel* b, const PriceLevel* a, std::int64_t ns) {
-        std::lock_guard lk(m_);
-        cache_.book(p, b, a, ns);
-        bus_.publish(kTopicBook, p, b, a, ns);
-        ++books_;
-    }
-    /// Accept and flush; replay the board to everyone when someone new joined.
-    void poll() {
-        std::lock_guard lk(m_);
-        bus_.poll();
-        const std::size_t n = bus_.clients();
-        if (n > clients_) cache_.replay(bus_);
-        clients_ = n;
-    }
-    [[nodiscard]] std::size_t clients() { std::lock_guard lk(m_); return bus_.clients(); }
-    [[nodiscard]] std::uint64_t trades() const noexcept { return trades_; }
-    [[nodiscard]] std::uint64_t quotes() const noexcept { return quotes_; }
-    [[nodiscard]] std::uint64_t books() const noexcept { return books_; }
-    [[nodiscard]] std::uint64_t coalesced() { std::lock_guard lk(m_); return bus_.coalesced(); }
-
-private:
-    PriceBus& bus_;
-    std::mutex m_;
-    BoardCache cache_;
-    std::size_t clients_ = 0;
-    std::atomic<std::uint64_t> trades_{0}, quotes_{0}, books_{0};
+/// One update from a source, as it crosses to the bus's owner thread.
+struct BusEvent {
+    enum Kind : std::uint8_t { Trade = 1, Quote = 2, Book = 3 };
+    std::uint8_t kind = 0;
+    std::int64_t ns = 0;
+    PricePayload price{};
+    QuotePayload quote{};
+    PriceLevel bids[kMaxDepthLevels]{}, asks[kMaxDepthLevels]{};
 };
 
-/// Keeps the bus polled from its own thread until stopped.
-class Poller {
+/// The bus, its board and its owner thread: everything a source publishes
+/// through. trade(), quote() and book() are called from ONE source thread at
+/// a time (the sources run one after another, never together); everything
+/// else is safe from any thread.
+class SharedBus {
 public:
-    explicit Poller(SharedBus& bus) : bus_(bus), th_([this] {
-        while (!stop_.load()) { bus_.poll(); std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
-    }) {}
-    ~Poller() { stop_.store(true); th_.join(); }
-    Poller(const Poller&) = delete;
-    Poller& operator=(const Poller&) = delete;
+    static constexpr std::size_t kRing = 4096;
+
+    explicit SharedBus(PriceBus& bus) : bus_(bus), ring_(std::make_unique<Ring>()), th_([this] { run(); }) {}
+    ~SharedBus() {
+        stop_.store(true, std::memory_order_release);
+        th_.join();
+    }
+    SharedBus(const SharedBus&) = delete;
+    SharedBus& operator=(const SharedBus&) = delete;
+
+    void trade(const PricePayload& p, std::int64_t ns) {
+        BusEvent e;
+        e.kind = BusEvent::Trade; e.ns = ns; e.price = p;
+        push(e);
+        trades_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void quote(const QuotePayload& q, std::int64_t ns) {
+        BusEvent e;
+        e.kind = BusEvent::Quote; e.ns = ns; e.quote = q;
+        push(e);
+        quotes_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void book(const PricePayload& p, const PriceLevel* b, const PriceLevel* a, std::int64_t ns) {
+        BusEvent e;
+        e.kind = BusEvent::Book; e.ns = ns; e.price = p;
+        for (std::size_t i = 0; i < kMaxDepthLevels; ++i) { e.bids[i] = b[i]; e.asks[i] = a[i]; }
+        push(e);
+        books_.fetch_add(1, std::memory_order_relaxed);
+    }
+    /// Block until everything pushed so far has been published (tests, shutdown).
+    void drain() {
+        const std::uint64_t want = ring_->pushed();
+        while (published_.load(std::memory_order_acquire) < want) std::this_thread::yield();
+    }
+
+    [[nodiscard]] std::size_t clients() const noexcept { return clients_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::uint64_t trades() const noexcept { return trades_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::uint64_t quotes() const noexcept { return quotes_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::uint64_t books() const noexcept { return books_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::uint64_t coalesced() const noexcept { return coalesced_.load(std::memory_order_relaxed); }
+    /// Times a source found the ring full and waited for the owner thread.
+    [[nodiscard]] std::uint64_t waits() const noexcept { return waits_.load(std::memory_order_relaxed); }
+    /// Baselines sent to late joiners.
+    [[nodiscard]] std::uint64_t snapshots_sent() const noexcept { return snapshots_.load(std::memory_order_relaxed); }
 
 private:
-    SharedBus& bus_;
+    using Ring = SpscRing<BusEvent, kRing>;
+
+    void push(const BusEvent& e) {
+        if (ring_->try_push(e)) return;
+        waits_.fetch_add(1, std::memory_order_relaxed);
+        // Backpressure, never loss: the owner thread does not block, so this
+        // wait is bounded by how long it takes to publish what is queued.
+        while (!ring_->try_push(e)) std::this_thread::yield();
+    }
+
+    void run() {
+        BusEvent e;
+        auto last_poll = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+        for (;;) {
+            const bool stopping = stop_.load(std::memory_order_acquire);
+            std::size_t n = 0;
+            while (n < 1024 && ring_->try_pop(e)) {
+                apply(e);
+                ++n;
+            }
+            published_.store(ring_->popped(), std::memory_order_release);
+            const auto now = std::chrono::steady_clock::now();
+            if (n == 0 || now - last_poll >= std::chrono::milliseconds(5)) {
+                last_poll = now;
+                bus_.poll();
+                for (const auto id : bus_.take_joined()) { cache_.replay_to(bus_, id); snapshots_.fetch_add(1, std::memory_order_relaxed); }
+                clients_.store(bus_.clients(), std::memory_order_relaxed);
+                coalesced_.store(bus_.coalesced(), std::memory_order_relaxed);
+            }
+            if (stopping && ring_->empty_approx()) break;
+            if (n == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        bus_.poll();   // a last flush of what will go
+    }
+
+    void apply(const BusEvent& e) {
+        switch (e.kind) {
+        case BusEvent::Trade:
+            cache_.trade(e.price, e.ns);
+            bus_.publish(kTopicTrades, e.price, nullptr, nullptr, e.ns);
+            break;
+        case BusEvent::Quote:
+            cache_.quote(e.quote, e.ns);
+            bus_.publish_quote(e.quote, e.ns);
+            break;
+        case BusEvent::Book:
+            cache_.book(e.price, e.bids, e.asks, e.ns);
+            bus_.publish(kTopicBook, e.price, e.bids, e.asks, e.ns);
+            break;
+        default: break;
+        }
+    }
+
+    PriceBus& bus_;                 ///< owner thread only
+    BoardCache cache_;              ///< owner thread only
+    std::unique_ptr<Ring> ring_;
     std::atomic<bool> stop_{false};
-    std::thread th_;
+    std::atomic<std::uint64_t> published_{0};
+    std::atomic<std::size_t> clients_{0};
+    std::atomic<std::uint64_t> trades_{0}, quotes_{0}, books_{0}, coalesced_{0}, waits_{0}, snapshots_{0};
+    std::thread th_;                ///< last: starts once everything above exists
 };
 
 /// A small JSON status file for the desktop: what the feed is doing and why
@@ -157,8 +236,9 @@ inline void write_status(const std::string& path, const FeedStatus& s) {
           << ",\n  \"trades\": " << s.trades << ",\n  \"quotes\": " << s.quotes << ",\n  \"books\": " << s.books
           << ",\n  \"reconnects\": " << s.reconnects << ",\n  \"engine_ns\": " << s.engine_ns << "\n}\n";
     }
-    std::remove(path.c_str());
-    (void)std::rename(tmp.c_str(), path.c_str());
+    // Replaces in one step (std::filesystem::rename overwrites on every
+    // platform): never deleted first, so a reader sees the old file or the new.
+    std::filesystem::rename(tmp, path, ec);
 }
 
 /// Seeds for the simulator: yesterday's closes from dataset/ and data/pairs/.
