@@ -1,6 +1,6 @@
 // app/live_feed_reader.hpp: the engine's socket drained on its own thread.
-//   * a burst published while the engine's thread is busy (a 400 ms stall)
-//     still arrives whole: no sequence gap, nothing coalesced by the bus;
+//   * a stream published while the engine's thread is busy (a 1.5 s stall,
+//     about 3 MB) still arrives whole: no sequence gap, nothing coalesced;
 //   * reconnect() drops the stream and makes a new one, in order;
 //   * the reader stops promptly.
 // Runs threads: label `concurrency`.
@@ -46,11 +46,14 @@ int main() {
         check(connected, "the reader connects on its own thread");
         while (shared.clients() != 1 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
-        // 40,000 trades (about 3.8 MB, several times the bus's 1 MiB outbox)
-        // at a busy feed's pace -- 400 every 5 ms, some 80,000 a second, far
-        // above a live session -- while this thread, the engine's, does not
-        // read at all.
-        constexpr std::uint64_t kN = 40000;
+        // 32,000 trades (about 3 MB) at 200 every 10 ms -- some 20,000 a
+        // second, several times a live session -- while this thread, the
+        // engine's, does not read for 1.5 s. A reader on this thread would
+        // have let about 2.9 MB pile up: far past the bus's 1 MiB outbox and
+        // the kernel's buffers, so the bus would have coalesced. The reader
+        // thread has half a second of slack per outbox-full, so a busy CI
+        // machine scheduling it late still loses nothing.
+        constexpr std::uint64_t kN = 32000;
         const auto t_burst = std::chrono::steady_clock::now();
         std::thread source([&] {
             auto next = std::chrono::steady_clock::now();
@@ -60,10 +63,10 @@ int main() {
                 p.last_paise = 100 + static_cast<std::int64_t>(k);
                 p.exchange_ts_ns = 1;
                 shared.trade(p, 1);
-                if ((k + 1) % 400 == 0) { next += std::chrono::milliseconds(5); std::this_thread::sleep_until(next); }
+                if ((k + 1) % 200 == 0) { next += std::chrono::milliseconds(10); std::this_thread::sleep_until(next); }
             }
         });
-        std::this_thread::sleep_until(t_burst + std::chrono::milliseconds(400));   // the engine is busy with a minute
+        std::this_thread::sleep_until(t_burst + std::chrono::milliseconds(1500));   // the engine is busy
 
         std::vector<std::uint8_t> buf;
         std::uint64_t frames = 0, last = 0, gaps = 0;
@@ -87,7 +90,7 @@ int main() {
             buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(at));
         }
         source.join();
-        check(frames == kN && gaps == 0 && last == kN, "a burst during a 400 ms stall arrives whole: every frame, in sequence");
+        check(frames == kN && gaps == 0 && last == kN, "a stream during a 1.5 s stall arrives whole: every frame, in sequence");
         check(shared.coalesced() == 0, "the bus coalesced nothing for this reader");
 
         reader.reconnect();

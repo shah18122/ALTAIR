@@ -419,6 +419,8 @@ if(ALTAIR_BUILD_TESTS)
             target_link_libraries(altair_feed_reader_test PRIVATE ws2_32 mswsock)
         endif()
         add_test(NAME feed_reader COMMAND altair_feed_reader_test)
-        set_tests_properties(feed_reader PROPERTIES LABELS concurrency)
+        # A throughput check: run alone, never beside the CPU-heavy model
+        # tests that `ctest -j` would otherwise schedule next to it.
+        set_tests_properties(feed_reader PROPERTIES LABELS concurrency RUN_SERIAL TRUE)
     endif()
 endif()
