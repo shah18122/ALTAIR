@@ -343,9 +343,53 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
         if(NOT WIN32 AND TARGET altair_price_service)
             add_test(NAME live_replay
                      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/live_replay.sh $<TARGET_FILE:altair_price_service>
-                             $<TARGET_FILE:altair_live_engine> ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/live_replay_work)
+                             $<TARGET_FILE:altair_live_engine> ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/live_replay_work
+                             $<TARGET_FILE:altair_exec_study> $<TARGET_FILE:altair_paper_report> $<TARGET_FILE:altair_readiness>)
             set_tests_properties(live_replay PROPERTIES LABELS "dataset;e2e" TIMEOUT 1100 RUN_SERIAL TRUE)
         endif()
+    endif()
+endif()
+
+# The paper book's daily mark-to-market report (live/report.hpp).
+add_executable(altair_paper_report paper_report_main.cpp)
+target_link_libraries(altair_paper_report PRIVATE altair_live altair_flags)
+target_include_directories(altair_paper_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_definitions(altair_paper_report PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+if(ALTAIR_BUILD_TESTS)
+    add_test(NAME paper_report_help COMMAND altair_paper_report --help)
+endif()
+
+# Execution labels for each paper fill, from the session tapes (live/exec_study.hpp).
+add_executable(altair_exec_study exec_study_main.cpp)
+target_link_libraries(altair_exec_study PRIVATE altair_live altair_flags)
+target_include_directories(altair_exec_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_definitions(altair_exec_study PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+if(ALTAIR_BUILD_TESTS)
+    add_test(NAME exec_study_help COMMAND altair_exec_study --help)
+endif()
+
+# The operational and economic gates before any money (live/readiness.hpp).
+add_executable(altair_readiness readiness_main.cpp)
+target_link_libraries(altair_readiness PRIVATE altair_live altair_flags)
+target_include_directories(altair_readiness PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_definitions(altair_readiness PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+if(ALTAIR_BUILD_TESTS)
+    add_test(NAME readiness_help COMMAND altair_readiness --help)
+endif()
+
+# The paper engine's expenses against a contract note (app/charges_check.hpp).
+if(TARGET altair_charges_toml)
+    add_executable(altair_charges_check charges_check_main.cpp)
+    target_link_libraries(altair_charges_check PRIVATE altair_types altair_risk altair_charges_toml altair_flags)
+    target_include_directories(altair_charges_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_charges_check PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    if(ALTAIR_BUILD_TESTS)
+        add_test(NAME charges_check_help COMMAND altair_charges_check --help)
+        add_executable(altair_charges_check_test tests/test_charges_check.cpp)
+        target_link_libraries(altair_charges_check_test PRIVATE altair_types altair_risk altair_charges_toml altair_flags)
+        target_include_directories(altair_charges_check_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        target_compile_definitions(altair_charges_check_test PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+        add_test(NAME charges_check COMMAND altair_charges_check_test)
     endif()
 endif()
 

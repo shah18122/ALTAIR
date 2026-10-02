@@ -2,6 +2,7 @@
 # app/tests/live_replay.sh -- a recorded session, replayed, decides byte for byte the same.
 #
 #   live_replay.sh <altair_price_service> <altair_live_engine> <source dir> <work dir>
+#                  [<altair_exec_study> <altair_paper_report> <altair_readiness>]
 #
 # A simulated morning (09:15 to 09:25, the 09:20 strangles included) runs
 # through the engine with --record, as two sessions: the engine stops at 09:21
@@ -9,13 +10,19 @@
 # twice; together the replays must make the journal, fills, decisions, margin
 # samples and open positions the two sessions made, byte for byte. A tape whose
 # bundle no longer matches the inputs must be refused (exit 5) unless
-# --force-replay. Needs dataset/ (the SIM day's minute bars and the history).
+# --force-replay. Each replay also checks itself against the recorded ledger
+# (data/live/replay_checks/). Given the three tools, the execution study, the
+# paper report and the readiness gates then run on what was recorded.
+# Needs dataset/ (the SIM day's minute bars and the history).
 set -euo pipefail
 
 ps_bin=$1
 engine=$2
 src=$3
 work=$4
+exec_study=${5:-}
+paper_report=${6:-}
+readiness=${7:-}
 day=2026-09-24
 port=$((20000 + $$ % 10000))
 
@@ -93,7 +100,7 @@ same() {   # same <replay A dir> <replay B dir>
     for f in journal.csv open_positions.csv; do
         cmp "$paper/$f" "$2/paper/$f" || { echo "REPLAY DIFFERS: $f"; diff "$paper/$f" "$2/paper/$f" | head -20; exit 1; }
     done
-    for f in fills.csv trades.csv decisions.csv margin.csv; do
+    for f in fills.csv trades.csv decisions.csv margin.csv marks.csv; do
         [ -e "$paper/$f" ] || [ -e "$1/paper/$f" ] || [ -e "$2/paper/$f" ] || continue
         {
             if [ -e "$1/paper/$f" ]; then cat "$1/paper/$f"; fi
@@ -116,6 +123,12 @@ for round in 1 2; do
     same "$work/replay0" "$work/replay1"
 done
 echo "both sessions replayed twice, restart included: journal, fills, decisions, margin and positions identical"
+for k in 0 1; do
+    grep -q "IDENTICAL to the recorded session" "$work/replay$k-2.log" || { echo "replay $k did not verify itself"; cat "$work/replay$k-2.log"; exit 1; }
+done
+checks=("$work"/root/data/live/replay_checks/*.json)
+[ "${#checks[@]}" -eq 2 ] && grep -q '"identical": true' "${checks[0]}" && grep -q '"identical": true' "${checks[1]}" \
+    || { echo "the replay verdicts are missing or not identical"; exit 1; }
 tape=${tapes[0]}
 
 # A directory that is not a replay's is never cleared.
@@ -153,5 +166,24 @@ PY
     "$engine" --root "$work/root" --replay "$work/bad.tape" --replay-out "$work/bad" --force-replay > "$work/bad.log" 2>&1 \
         || { echo "--force-replay failed"; cat "$work/bad.log"; exit 1; }
     echo "a mismatched bundle is refused, and runs with --force-replay"
+fi
+if [ -n "$exec_study" ]; then
+    "$exec_study" --root "$work/root" --tape "${tapes[0]}" --tape "${tapes[1]}" --out "$work/study" > "$work/study.log" 2>&1 \
+        || { echo "the execution study failed"; cat "$work/study.log"; exit 1; }
+    labelled=$(($(wc -l < "$work/study/exec_fills.csv") - 1))
+    [ "$labelled" -eq "$fills" ] || { echo "the study labelled $labelled of $fills fills"; cat "$work/study.log"; exit 1; }
+    echo "execution study: $labelled fill(s) labelled"
+    "$paper_report" --root "$work/root" --out "$work/report" > "$work/report.log" 2>&1 \
+        || { echo "the paper report failed"; cat "$work/report.log"; exit 1; }
+    [ -s "$work/report/summary.json" ] && [ -s "$work/report/daily.csv" ] || { echo "the report wrote nothing"; exit 1; }
+    echo "paper report: $(head -1 "$work/report.log")"
+    set +e
+    "$readiness" --root "$work/root" > "$work/readiness.log" 2>&1
+    rc=$?
+    set -e
+    # SIM sessions are not evidence: the verdict must be NOT READY, with no LIVE session counted.
+    [ "$rc" -eq 1 ] && grep -q "^NOT READY -- 0 LIVE session" "$work/readiness.log" \
+        || { echo "readiness counted SIM sessions or did not run"; cat "$work/readiness.log"; exit 1; }
+    echo "readiness: NOT READY on SIM sessions, as it must be"
 fi
 echo "PASS"

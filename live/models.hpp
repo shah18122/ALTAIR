@@ -174,9 +174,12 @@ public:
                 if (t.ask <= 0 || !e.book().fresh(t.quote_ns, e.clock_ns())) continue;
                 const double ask = static_cast<double>(t.ask) / 100.0;
                 if (ask >= stop_ * p->entry) {
+                    // Read before closing: with no latency the exit fills inside
+                    // close() and the position (and `p`) is gone.
+                    const double sold = p->entry;
                     (void)e.book().close(name(), leg->token, e.clock_ns(), "premium doubled: stop at " + live_fmt::hhmm(m));
                     e.note_decision(name(), "stop: " + leg->symbol + " ask " + live_fmt::num(ask) + " against "
-                                                + live_fmt::num(p->entry) + " sold; buying back");
+                                                + live_fmt::num(sold) + " sold; buying back");
                 }
             }
         }

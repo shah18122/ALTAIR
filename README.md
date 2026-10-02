@@ -206,8 +206,22 @@ model. The models:
 - BANKNIFTY/NIFTY pairs;
 - NIFTY 50 stat-arb.
 
-Every model says what it is doing and why. No orders, ever. See
-[ops/live-terminal.md](ops/live-terminal.md).
+Every model says what it is doing and why. No orders, ever.
+
+Every session is reproducible and measured:
+- **Reproducible.** It writes a model bundle: digests of its inputs, the fitted
+  models and the out-of-sample calls behind the calibration. With `--record` it
+  also writes a tape that `--replay` runs again into the same journal and
+  decisions, byte for byte.
+- **Measured.** `altair_paper_report` gives daily mark-to-market P&L with
+  block-bootstrap intervals and Romano-Wolf adjustment. `altair_exec_study`
+  gives shortfall, markouts and passive-fill labels per fill.
+  `altair_charges_check` reconciles the charges against a contract note head
+  by head.
+- **Judged.** `altair_readiness` lists the operational and economic gates
+  before any money. It enables nothing.
+
+See [ops/live-terminal.md](ops/live-terminal.md).
 
 ## Demo trading: band-fade short options and futures pairs
 

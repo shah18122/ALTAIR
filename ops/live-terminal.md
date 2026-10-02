@@ -46,9 +46,15 @@ altair_price_service --live            # dry run: says which broker it would use
 altair_price_service --live --go       # live, FYERS else Kite, until 15:35 IST (--until HH:MM)
 altair_price_service --fyers --go      # FYERS only        (--kite --go: Kite only)
 altair_price_service --sim --date 2026-09-24 --from 10:00 --speed 30   # that day, simulated, 30x
-altair_live_engine [--unverified-costs] [--date 2026-09-24]   # stops when the feed's clock passes 15:35
-altair_live_engine --latency-ms 250 --quote-age-s 10 --entry-timeout-s 60 \
-                   --max-positions 80 --max-gross 1e8 --max-daily-loss 2e5   # the defaults, spelt out
+altair_live_engine [--unverified-costs] [--date 2026-09-24]   # stops at 15:35 on the feed's clock, or a quiet minute after 15:30
+altair_live_engine --latency-ms 250 --quote-age-s 10 --entry-timeout-s 60 --max-positions 80 \
+                   --max-gross 1e8 --max-daily-loss 2e5 --max-margin 1e7 --gate-z 1   # the defaults, spelt out
+altair_live_engine --record                      # also write the session tape (data/live/tapes/; GBs a day)
+altair_live_engine --replay data/live/tapes/2026-09-24-091012.tape   # run it again; must come out identical
+altair_paper_report                              # daily mark-to-market, intervals, multiple testing
+altair_exec_study --tape data/live/tapes/2026-09-24-091012.tape   # shortfall, markouts, passive fills
+altair_charges_check --note note.csv             # config/charges.toml against a real contract note
+altair_readiness                                 # the gates before any money (enables nothing)
 ```
 
 Credentials:
@@ -204,7 +210,7 @@ says so.
 | Vol band (HAR) | HAR forecast of today's σ, realised so far, the 80 % close band and the BANKNIFTY/NIFTY ratio z, recomputed every minute | trades nothing |
 | Strangle 80% NIFTY / BANKNIFTY | at 09:20, sell the 80 % band's two edges (nearest streamed expiry, one lot each, at the bid) | intraday, out at 15:20 |
 | … stop2x | the same, buying a leg back at the first 5-minute close where its premium doubled | intraday |
-| Direction 10:15 AR(2), ARMA(1,1), Logistic, Ridge, GBDT, Vote | at 10:15, forecast 10:15 to the 15:20 square-off; trade one NIFTY future lot only if (2q−1)·E\|r\| beats the round-trip cost | intraday |
+| Direction 10:15 AR(2), ARMA(1,1), Logistic, Ridge, GBDT, Vote | at 10:15, forecast 10:15 to the 15:20 square-off; trade one NIFTY future lot only if q·gain − (1−q)·loss − cost clears zero by `--gate-z` (1) standard errors | intraday |
 | Pairs BANKNIFTY/NIFTY | 250-day spread; at 15:15, in at \|z\| ≥ 2, out at ≤ 0.5, stop at 4 | carried, rolled on expiry |
 | Stat-arb NIFTY 50 | Avellaneda-Lee s-scores with today's return as the last day; at 15:15, open at ±1.25; one lot of each stock future | carried, rolled, out after 60 sessions |
 
@@ -213,10 +219,20 @@ and five minutes the curriculum measured break-even accuracy at 80-99 %, and no
 model came close. The 10:15-to-close track is the one the research shortlisted.
 - q is not the model's own stated probability. It comes from a walk-forward
   calibration of the model's past calls (three years of 5-minute history,
-  re-walked at every start).
-- E|r| is the history's sd of 10:15-to-15:20 returns, scaled by today's HAR
-  volatility, times √(2/π).
-- When the gate stays shut, the row says by how many basis points.
+  re-walked at every start), with its standard error.
+- gain and loss are what the model's right and wrong calls actually moved,
+  in units of the day's volatility, learned from the same walk-forward
+  (shrunk toward a normal's √(2/π) while few), each with its standard error.
+  A model that is right on small moves and wrong on big ones is caught here;
+  the old (2q − 1)·E|r| could not see it.
+- The gate takes the call when value − z·se > 0, se by the delta method over
+  q, gain and loss. When it stays shut, the row and `decisions.csv` say by how
+  many basis points, with every input.
+- **Nothing is fitted at 10:15.** The models are fitted on the history before
+  the session starts (and fingerprinted into the bundle); at 10:15 they only
+  predict, in a few milliseconds.
+- Hyperparameters are tuned on an inner fold of the training rows, with the
+  scaler fitted on those rows only: the outer test rows never shape a choice.
 
 **Paper fills** (`live/paper.hpp`). A decision becomes a working order.
 - It meets the market `--latency-ms` (250) after the decision.
@@ -228,7 +244,9 @@ model came close. The 10:15-to-close track is the one the research shortlisted.
 - It is **never filled at the last trade**. With no executable quote, an
   entry is refused or keeps working.
 - **Entries time out.** An entry not filled within `--entry-timeout-s` (60) is
-  cancelled. If it was one leg of a decision (a strangle or a pair), the legs
+  cancelled — never filled late, even by a quote that arrives after the
+  deadline before any trade has moved the clock. An exit decided while an
+  entry is part-filled withdraws the rest and sells only what filled. If it was one leg of a decision (a strangle or a pair), the legs
   that did fill are unwound, so no leg is left on alone.
 - **Exits never expire.** An exit works until it fills, however long the
   market stays unquoted. The page shows the position as *closing*, since when
@@ -248,6 +266,10 @@ holds:
 - it is an intraday entry after 15:20;
 - the position count (`--max-positions`, also 60 per model) would be exceeded;
 - the gross notional (`--max-gross`) would be exceeded;
+- the **margin estimate** (`--max-margin`) would be exceeded, or a leg held or
+  new cannot be priced (`live/margin.hpp`: conservative, **not SPAN** — futures
+  at scan + exposure, short options NSE-shaped with no credit for premium or
+  hedges, long options at premium);
 - today's loss is past `--max-daily-loss`.
 
 **Exits are never refused.**
@@ -280,6 +302,12 @@ holds:
   so a slow minute in a model never makes the bus drop frames for it.
 - **Staleness.** No new position opens while the feed is stale (30 s without a
   frame).
+- **The day ends itself.** At `--until` (15:35) on the feed's clock, or — since
+  the market stops printing at the close and the feed's clock with it — after a
+  quiet minute past 15:30.
+- **A restart resumes.** The book is rebuilt from the journal; a strangle
+  restarted after 09:20 takes up the legs it sold (its stop still watches
+  them), and a late start is reported as such, never back-filled.
 - **Direction models trade the horizon they were trained on.** They are trained
   and calibrated on 10:15 to the **15:20** close (`SessionInputs::exit_minute`),
   the square-off they are held to, not 15:30.
@@ -299,16 +327,114 @@ holds:
 | `paper/trades.csv` | engine | every round trip: date, model, symbol, side, qty, entry and exit, gross, expenses, net (blank when unpriced), why in, why out, LIVE/SIM, VERIFIED/UNVERIFIED/UNPRICED |
 | `paper/fills.csv` | engine | every fill, at the bid or ask it dealt at |
 | `paper/open_positions.csv` | engine | what is held, for people; replaced in one step, never deleted first |
+| `paper/decisions.csv` | engine | every model decision and refusal, at the feed time it was taken, with the gate's numbers |
+| `paper/margin.csv` | engine | the margin estimate at every minute's close, for the book (`ALL`) and per model |
+| `paper/marks.csv` | engine | each held position's mark at 15:29 (the mid): what the paper report marks carried positions to |
+| `sessions.csv` | engine, at exit | one row per session: frames, trade frames lost, gaps, halts, latency p50/p99/p99.9, tape, bundle, exit code |
+| `bundles/<day>/bundle-<id>.json` | engine | what the session was built from (see below), and `oos-<id>.csv`: every walk-forward call behind the calibration |
+| `tapes/<day>-<time>.tape` | engine `--record` | the session tape (see below) |
+| `replay/<tape>/` | engine `--replay` | a replay's own files; never the live ones |
+| `replay_checks/<tape>.json` | engine `--replay` | did the replay reproduce the recorded session's rows? |
+| `report/` | `altair_paper_report`, `altair_exec_study`, `altair_readiness` | the report, the execution labels, the readiness verdict |
 | `paper/engine.lock` | engine | held while it runs: a second engine on the same tree refuses to start |
 | `paper/manual.lock` | Terminal | held by the window that writes the paper book |
 
-**Writes are acknowledged.** A row counts as written when the file took it
-(appended and flushed). If a write fails:
+**Writes are acknowledged** (`live/ledger.hpp`). A row counts as written when
+the file took it (appended and flushed). If a write fails:
 - the rows are kept and retried every second;
+- a write that failed part-way is cut back to the last whole row first, so the
+  retry writes each row exactly once;
+- the views (trades, fills, decisions, margin, marks) wait while the journal
+  cannot be written: none shows a fill the record lacks;
 - the engine is **halted** (no new entries) until they land;
 - at exit, unwritten rows make the engine exit with status 4.
 
 Files are replaced with one rename. The old file is never deleted first.
+
+## Reproducing a session: bundles, tapes and replay
+
+**The bundle.** Every session writes `bundles/<day>/bundle-<id>.json`:
+- a digest of every history series and file it read: the 5-minute and daily
+  bars, the stat-arb history, the universe, the charges, and the ledger it
+  resumed from;
+- the options it ran with;
+- for the direction models: the features, the scaler, what each fit chose,
+  its parameters where they print, a fingerprint of the fitted function (its
+  call on every training row), the calibration and the learned gain and loss.
+
+The id is the digest of all of it, so two sessions with one id were built from
+the same inputs and fitted the same models. `oos-<id>.csv` beside it keeps every
+out-of-sample walk-forward call.
+
+**The tape** (`--record`, `live/tape.hpp`). Every byte off the bus, in order,
+plus the controls the machine set, where they took effect: stale, kill
+request, halt, watchdog, connect and disconnect. It starts with the options,
+the universe, the charges, the starting ledger and the bundle. A live day is
+gigabytes, so recording is opt-in.
+
+**The replay** (`--replay TAPE`). The same engine, fed the tape, into
+`replay/<tape>/`:
+- it refuses when today's inputs no longer make the recorded bundle (exit 5;
+  `--force-replay` runs it anyway and names what changed);
+- the journal, fills, decisions, margin and marks come out **byte for byte**
+  as the session wrote them;
+- it checks this itself against the recorded ledger (`--verify-against`) and
+  writes the verdict to `replay_checks/`; a replay that differs exits 6.
+
+`app/tests/live_replay.sh` proves it in CI: a simulated morning, stopped and
+restarted mid-way, both sessions replayed twice.
+
+## Measuring it
+
+- **`altair_paper_report`** (`live/report.hpp`). Daily **mark-to-market** net
+  per model and for the book: cash moved plus the change in what is held,
+  valued at the 15:29 marks. A day whose holdings have no mark is reported
+  unmarked, and its P&L carried into the next marked day.
+  - Drawdown, turnover, capital (the peak margin estimate), and return on it.
+  - A split by India VIX regime (terciles of the previous close).
+  - 95 % intervals from a **moving-block bootstrap over days**, drawn jointly
+    for all models.
+  - p-values adjusted for having tested every model: **Romano-Wolf**
+    (step-down, from the same joint draws) and Holm.
+  - A **stress** case: expenses ×1.5 plus 2 bp of every rupee traded.
+- **`altair_exec_study`** (`live/exec_study.hpp`). For every fill, from the tape
+  that saw it:
+  - implementation shortfall against the decision's mid;
+  - the spread then;
+  - markouts at 1, 5, 30, 60 and 300 s;
+  - whether a passive order at the touch would have filled within 1, 5, 30 or
+    60 s. This counts the queue ahead and the prints at or through the price,
+    so it is a lower bound: cancellations ahead are not seen.
+
+  Horizons past the tape's end are unknown, never zero. These are the labels
+  for execution research.
+- **`altair_charges_check --note NOTE.csv`** (`app/charges_check.hpp`). A real
+  contract note, normalised to one CSV shape, priced order by order exactly as
+  the paper engine prices, and reconciled **head by head** (brokerage, STT,
+  exchange, SEBI, stamp, IPFT, GST; signed, engine minus note). The finding
+  goes to `data/verified/charges_check.json`.
+- **`altair_readiness`** (`live/readiness.hpp`). The gates before any money,
+  each with its evidence. Only LIVE sessions count: SIM proves the plumbing.
+  - **Operational:**
+    - enough sessions, with clean exits;
+    - feed loss negligible;
+    - worst-session p99 latency inside bounds;
+    - no recent halts;
+    - tapes recorded;
+    - recorded sessions replayed identically;
+    - every bundle on disk.
+  - **Economic, per model:**
+    - enough marked days, with every fill priced;
+    - an edge that survives Romano-Wolf;
+    - the edge still there under the stress case;
+    - a bounded drawdown.
+  - **And for everything:**
+    - a contract note that agrees with the charges;
+    - capital measured with **SPAN**. This build cannot do that, so the gate
+      stays shut.
+
+  It enables nothing. **Live order submission stays disabled whatever it
+  says.**
 
 ## Limits, stated
 
@@ -329,3 +455,12 @@ Files are replaced with one rename. The old file is never deleted first.
 - **Paper fills take what is shown.** A paper order takes the displayed size at
   the touch (or the five levels). It never queues behind other size, and never
   moves the market. A real order of size would do both.
+- **Capital is an estimate.** `live/margin.hpp` errs high on purpose (no hedge
+  or premium credit). The exchange's SPAN files are not loaded, so readiness
+  keeps its capital gate shut.
+- **Marks are mids at 15:29, not settlement prices.** A carried future's daily
+  P&L is against the 15:29 mid, not the exchange's settlement price (the last
+  half-hour VWAP).
+- **Contract-note history, historical lot sizes and bid/ask history** are not
+  in this tree. They need a broker's or the exchange's files: `altair_charges_check`
+  reads a note once one is copied in.

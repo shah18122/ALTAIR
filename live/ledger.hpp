@@ -2,7 +2,8 @@
 // once, in order, and never half-written.
 //
 // The journal (every fill: the record the book is rebuilt from) comes first,
-// then the views of it -- trades.csv, fills.csv, decisions.csv, margin.csv --
+// then the views of it -- trades.csv, fills.csv, decisions.csv, margin.csv,
+// marks.csv --
 // then the open-positions snapshot, replaced atomically. Each CSV is a
 // LiveCsvLog: rows queue in memory and are appended all-or-nothing. A write
 // that fails (a full disk, a directory gone, a file made read-only) keeps
@@ -103,7 +104,8 @@ inline constexpr const char* kLiveTradesHeader =
     "date,model,symbol,token,side,qty,entry_time,entry,exit_time,exit,gross,expenses,net,why_in,why_out,source,costs";
 inline constexpr const char* kLiveFillsHeader = "time,model,symbol,token,side,qty,price,expenses,at_quote,reason,source,costs";
 inline constexpr const char* kLiveDecisionsHeader = "time,ns,model,decision";
-inline constexpr const char* kLiveMarginHeader = "time,ns,margin_estimate,positions";
+inline constexpr const char* kLiveMarginHeader = "time,ns,model,margin_estimate,positions";
+inline constexpr const char* kLiveMarksHeader = "time,ns,model,token,symbol,side,qty,mark,carry";
 
 /// A CSV text field: quoted, quotes doubled, line breaks made spaces.
 [[nodiscard]] inline std::string live_csv_text(const std::string& s) {
@@ -125,10 +127,11 @@ public:
           fills(dir / "fills.csv", kLiveFillsHeader),
           decisions(dir / "decisions.csv", kLiveDecisionsHeader),
           margin(dir / "margin.csv", kLiveMarginHeader),
+          marks(dir / "marks.csv", kLiveMarksHeader),
           positions_path_(dir / "open_positions.csv"),
           costs_(std::move(costs_label)) {}
 
-    LiveCsvLog journal, trades, fills, decisions, margin;
+    LiveCsvLog journal, trades, fills, decisions, margin, marks;
 
     /// Queue what the engine produced since the last call. Returns the fills
     /// taken (the CLI times them).
@@ -154,9 +157,17 @@ public:
         }
         for (const auto& d : e.take_decisions())
             decisions.add(live_ist_stamp(d.ns) + "," + std::to_string(d.ns) + "," + live_csv_text(d.model) + "," + live_csv_text(d.text));
-        for (const auto& m : e.take_margin_samples())
-            margin.add(live_ist_stamp(m.ns) + "," + std::to_string(m.ns) + "," + (std::isfinite(m.margin) ? live_fmt::num(m.margin, 0) : "")
-                       + "," + std::to_string(m.positions));
+        const auto rupees = [](double v) { return std::isfinite(v) ? live_fmt::num(v, 0) : std::string(); };
+        for (const auto& m : e.take_margin_samples()) {
+            // One row for the whole book ("ALL"), then one per model holding or working something.
+            const std::string head = live_ist_stamp(m.ns) + "," + std::to_string(m.ns) + ",";
+            margin.add(head + "ALL," + rupees(m.margin) + "," + std::to_string(m.positions));
+            for (const auto& [model, v] : m.by_model) margin.add(head + live_csv_text(model) + "," + rupees(v) + ",");
+        }
+        for (const auto& k : e.take_marks())
+            marks.add(live_ist_stamp(k.ns) + "," + std::to_string(k.ns) + "," + live_csv_text(k.model) + "," + std::to_string(k.token) + ","
+                      + k.symbol + "," + std::to_string(k.side) + "," + std::to_string(k.qty) + ","
+                      + (k.mark > 0.0 ? live_fmt::num(k.mark, 4) : std::string()) + "," + (k.carry ? "1" : "0"));
         positions_dirty_ = e.take_positions_changed() || positions_dirty_;
         return new_fills;
     }
@@ -168,7 +179,7 @@ public:
     std::string flush(const LiveEngine& e) {
         if (!journal.flush()) return journal.path().string();
         std::string failed;
-        for (LiveCsvLog* view : {&trades, &fills, &decisions, &margin})
+        for (LiveCsvLog* view : {&trades, &fills, &decisions, &margin, &marks})
             if (!view->flush() && failed.empty()) failed = view->path().string();
         if (positions_dirty_) {
             if (live_write_positions(positions_path_.string(), e.book().held())) positions_dirty_ = false;
@@ -178,7 +189,7 @@ public:
     }
 
     [[nodiscard]] std::size_t pending() const noexcept {
-        return journal.pending() + trades.pending() + fills.pending() + decisions.pending() + margin.pending()
+        return journal.pending() + trades.pending() + fills.pending() + decisions.pending() + margin.pending() + marks.pending()
              + (positions_dirty_ ? 1u : 0u);
     }
 

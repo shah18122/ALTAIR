@@ -90,9 +90,25 @@ struct LiveRiskLimits {
 /// The estimated margin at one minute's close: what the CLI appends to margin.csv.
 struct LiveMarginSample {
     std::int64_t ns = 0;          ///< the minute's close, feed time
-    double margin = 0.0;          ///< rupees; NaN when a leg could not be priced
+    double margin = 0.0;          ///< rupees, all models; NaN when a leg could not be priced
     std::size_t positions = 0;
+    std::vector<std::pair<std::string, double>> by_model;   ///< the models holding or working something
 };
+
+/// A held position's mark near the close (the first minute at or after
+/// 15:29): what the CLI appends to marks.csv, and what the paper report marks
+/// carried positions to. The mid, else the last trade; not the exchange's
+/// settlement price.
+struct LiveMarkSample {
+    std::int64_t ns = 0;
+    std::string model, symbol;
+    std::uint32_t token = 0;
+    int side = 0;
+    std::int64_t qty = 0;
+    double mark = 0.0;            ///< rupees; 0 when nothing priced it
+    bool carry = false;
+};
+inline constexpr int kLiveMarkMinute = 15 * 60 + 29;
 
 /// One decision, in words, at the feed time it was taken: what the CLI
 /// appends to decisions.csv -- the record a replay is compared against.
@@ -349,6 +365,12 @@ public:
     /// any leg cannot be priced -- unknown, never zero.
     [[nodiscard]] double margin_estimate() const {
         double m = 0.0;
+        for (const auto& [model, v] : margin_by_model()) m += v;
+        return m;
+    }
+    /// The same, model by model (sorted by name).
+    [[nodiscard]] std::vector<std::pair<std::string, double>> margin_by_model() const {
+        std::vector<std::pair<std::string, double>> out;
         for (const auto& p : book_.positions()) {
             const bool working = p.state == LivePosState::Opening;
             const std::int64_t q = working ? std::max(p.qty, p.want_qty) : p.qty;
@@ -358,14 +380,20 @@ public:
                 const LiveTop t = top(p.inst.token);
                 px = static_cast<double>(p.side > 0 ? t.ask : t.bid) / 100.0;
             }
-            m += margin_of(p.inst, p.side, q, px, p.carry);
+            const double v = margin_of(p.inst, p.side, q, px, p.carry);
+            auto it = std::find_if(out.begin(), out.end(), [&](const auto& x) { return x.first == p.model; });
+            if (it == out.end()) out.emplace_back(p.model, v);
+            else it->second += v;
         }
-        return m;
+        std::sort(out.begin(), out.end());
+        return out;
     }
     /// The day's highest margin estimate at a minute's close (NaN if one was unpriceable).
     [[nodiscard]] double margin_peak_today() const noexcept { return margin_peak_; }
     /// Minute samples since the last call.
     [[nodiscard]] std::vector<LiveMarginSample> take_margin_samples() { return std::exchange(margin_samples_, {}); }
+    /// Close marks since the last call.
+    [[nodiscard]] std::vector<LiveMarkSample> take_marks() { return std::exchange(marks_, {}); }
 
     /// Calls or puts of the nearest streamed expiry of `under`, by strike.
     [[nodiscard]] std::vector<const LiveInstrument*> chain(const std::string& under, LiveKind kind) const {
@@ -496,8 +524,18 @@ public:
         }
         if (const int close = live_minute_of_day(minute); close >= kLiveOpenMinute && close <= kLiveCloseMinute) {
             // The book at this minute's close, after its decisions: the capital it ties up.
-            const double m = margin_estimate();
-            margin_samples_.push_back(LiveMarginSample{minute * 60'000'000'000LL - 19800'000'000'000LL, m, book_.positions().size()});
+            const std::int64_t at = minute * 60'000'000'000LL - 19800'000'000'000LL;
+            auto by = margin_by_model();
+            double m = 0.0;
+            for (const auto& [model, v] : by) m += v;
+            margin_samples_.push_back(LiveMarginSample{at, m, book_.positions().size(), std::move(by)});
+            if (close >= kLiveMarkMinute && mark_day_ != day_) {
+                mark_day_ = day_;
+                for (const auto& p : book_.held()) {
+                    const double px = mid(p.inst.token);
+                    marks_.push_back(LiveMarkSample{at, p.model, p.inst.symbol, p.inst.token, p.side, p.qty, px > 0.0 ? px : 0.0, p.carry});
+                }
+            }
             margin_peak_ = std::isfinite(m) && std::isfinite(margin_peak_) ? std::max(margin_peak_, m)
                                                                            : std::numeric_limits<double>::quiet_NaN();
         }
@@ -607,6 +645,8 @@ private:
     LiveRiskLimits limits_;
     LiveMarginRates rates_;
     std::vector<LiveMarginSample> margin_samples_;
+    std::vector<LiveMarkSample> marks_;
+    std::int64_t mark_day_ = 0;
     double margin_peak_ = 0.0;
     bool stale_ = false, simulated_ = false, replay_ = false, kill_ = false;
 };

@@ -55,6 +55,7 @@
 #include <live/latency.hpp>
 #include <live/ledger.hpp>
 #include <live/models.hpp>
+#include <live/report.hpp>
 #include <live/tape.hpp>
 #include <live/universe.hpp>
 #include <risk/charges_toml.hpp>
@@ -267,7 +268,10 @@ void usage(const char* exe) {
         "                         options, same starting ledger, same bundle; writes to --replay-out\n"
         "                         (default data/live/replay/<tape>) and must decide exactly as it did\n"
         "    --replay-out DIR     where a replay writes its files\n"
-        "    --force-replay       replay even if the inputs no longer match the recorded bundle\n\n"
+        "    --force-replay       replay even if the inputs no longer match the recorded bundle\n"
+        "    --verify-against DIR after a replay, compare its journal, decisions, margin and marks with\n"
+        "                         the recorded session's rows in DIR (default <root>/data/live/paper);\n"
+        "                         the verdict goes to data/live/replay_checks/<tape>.json\n\n"
         "  Start the feed first: altair_price_service --live --go (FYERS, else Kite) or --sim.\n"
         "  Writes data/live/engine_state.json and data/live/paper/*.csv. Places no orders.\n"
         "  New entries stop while data/kill_request.json exists (the desktop's Kill Switch).\n",
@@ -277,6 +281,7 @@ void usage(const char* exe) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    const std::int64_t started_unix = unix_now();
     unsigned short port = 7421;
     int until = 15 * 60 + 35, seconds = 0;
     bool unverified_costs = false;
@@ -285,7 +290,7 @@ int main(int argc, char** argv) {
     lv::LiveRiskLimits limits;
     double gate_z = 1.0;   // standard errors a direction call's value must clear
     bool record = false, force_replay = false;
-    fs::path replay_path, replay_out;
+    fs::path replay_path, replay_out, verify_against;
     fs::path root = ALTAIR_SOURCE_DIR;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -309,6 +314,7 @@ int main(int argc, char** argv) {
         if (a == "--replay" && has) { replay_path = argv[++i]; continue; }
         if (a == "--replay-out" && has) { replay_out = argv[++i]; continue; }
         if (a == "--force-replay") { force_replay = true; continue; }
+        if (a == "--verify-against" && has) { verify_against = argv[++i]; continue; }
         std::printf("unknown argument %s\n", a.c_str());
         usage(argv[0]);
         return 2;
@@ -608,6 +614,7 @@ int main(int argc, char** argv) {
 
     // ---- the tape: everything this session is told, in order ---------------
     std::optional<lv::TapeWriter> tape_out;
+    std::string tape_path;
     if (record) {
         const fs::path tdir = root / "data/live/tapes";
         fs::create_directories(tdir, ec);
@@ -617,6 +624,7 @@ int main(int argc, char** argv) {
                       static_cast<long long>((ist / 60) % 60), static_cast<long long>(ist % 60));
         const fs::path tpath = tdir / (date + "-" + stamp + ".tape");
         tape_out.emplace(tpath.string());
+        tape_path = tpath.string();
         if (!tape_out->ok()) { std::printf("cannot write the tape %s\n", tpath.string().c_str()); return 2; }
         start = {{"args", args_text}, {"universe.csv", universe_text}, {"charges.toml", charges_text}};
         if (have_journal) start.emplace_back("journal.csv", journal_text);
@@ -706,6 +714,8 @@ int main(int argc, char** argv) {
     // changed here in a live session and put on the tape where they change; a
     // replay takes them from the tape and only reports its own write failures.
     std::string replay_unwritten;
+    std::uint64_t halts = 0;
+    bool kill_seen = false;
     const auto flush_outputs = [&] {
         for (const auto& f : ledger.collect(engine)) lat_fill.record(f.ns - f.submit_ns);
         for (auto& c : engine.book().take_cancelled()) {
@@ -722,13 +732,17 @@ int main(int argc, char** argv) {
         } else {
             const std::string halt = lv::LivePaperLedger::halt_text(failed);
             if (halt != engine.halt()) {
-                if (engine.halt().empty()) std::printf("HALTED: cannot write %s; rows kept, retrying every second\n", failed.c_str());
+                if (engine.halt().empty()) {
+                    std::printf("HALTED: cannot write %s; rows kept, retrying every second\n", failed.c_str());
+                    ++halts;
+                }
                 else if (halt.empty()) std::printf("ledger writes resumed\n");
                 tape_text(lv::TapeKind::Halt, wall_ns(), halt);
                 engine.set_halt(halt);
             }
             std::error_code kec;
             const bool kill = fs::exists(kill_file, kec);
+            kill_seen = kill_seen || kill;
             if (kill != engine.kill()) {
                 tape_text(lv::TapeKind::Kill, wall_ns(), kill ? "1" : "0");
                 engine.set_kill(kill);
@@ -832,6 +846,14 @@ int main(int argc, char** argv) {
                 last_write = now;
                 flush_outputs();
             }
+            // After the close the market stops printing, so the feed's clock
+            // stops short of --until: a quiet minute past 15:30 ends the day.
+            const std::int64_t c = engine.clock_ns();
+            if (c > 0 && lv::live_minute_of_day(lv::live_ist_minute_index(c)) >= lv::kLiveCloseMinute
+                && now - last_frame > std::chrono::seconds(60)) {
+                std::printf("the market has closed and the feed has been quiet for a minute: stopping\n");
+                break;
+            }
         }
     } else {
         // Every record in order, into the same engine; the views are written
@@ -839,6 +861,7 @@ int main(int argc, char** argv) {
         lv::TapeRecord rec;
         std::int64_t last_flush = std::numeric_limits<std::int64_t>::min();
         bool second_start = false;
+        std::int64_t first_clock = 0;
         while (!g_stop.load() && tape_in->next(rec)) {
             switch (rec.kind) {
             case lv::TapeKind::Data: on_data(rec.bytes.data(), rec.bytes.size(), steady_ns()); break;
@@ -854,6 +877,7 @@ int main(int argc, char** argv) {
             case lv::TapeKind::Start: second_start = true; break;
             }
             if (second_start) { std::printf("a second start record: the tape is two sessions; stopping at the first\n"); break; }
+            if (first_clock == 0) first_clock = engine.clock_ns();
             if (rec.wall_ns > 0 && (last_flush == std::numeric_limits<std::int64_t>::min() || rec.wall_ns - last_flush >= 1'000'000'000LL)) {
                 last_flush = rec.wall_ns;
                 flush_outputs();
@@ -866,6 +890,60 @@ int main(int argc, char** argv) {
         if (!tape_in->ok()) std::printf("the tape holds a record of no known kind; the replay stopped there\n");
         if (diverged > 0)
             std::printf("REPLAY DIVERGED: %llu watchdog action(s) recorded did not repeat\n", static_cast<unsigned long long>(diverged));
+        flush_outputs();
+        // The verdict: this replay's rows against the recorded session's, over
+        // the feed time the tape covered. Sessions never overlap in a live
+        // feed's time; two SIM runs of one day can, and then this says so.
+        const fs::path original = !verify_against.empty() ? verify_against : root / "data/live/paper";
+        if (first_clock == 0) {
+            std::printf("the tape holds no market data: nothing to verify\n");
+        } else if (fs::exists(original / "journal.csv", ec) || fs::exists(original / "decisions.csv", ec)) {
+            const std::int64_t lo = first_clock, hi = engine.clock_ns();
+            const auto rows_in = [lo, hi](const fs::path& p, std::size_t col) {
+                std::vector<std::string> out;
+                std::ifstream in(p);
+                std::string line;
+                std::getline(in, line);
+                while (std::getline(in, line)) {
+                    const auto c = lv::report::csv_fields(line);
+                    if (c.size() <= col) continue;
+                    const std::int64_t ns = std::atoll(c[col].c_str());
+                    if (ns >= lo && ns <= hi) out.push_back(line);
+                }
+                return out;
+            };
+            bool identical = true;
+            std::string first_diff, counts;
+            for (const auto& [file, col] : std::vector<std::pair<std::string, std::size_t>>{
+                     {"journal.csv", 0}, {"decisions.csv", 1}, {"margin.csv", 1}, {"marks.csv", 1}}) {
+                const auto mine = rows_in(paper_dir / file, col), theirs = rows_in(original / file, col);
+                counts += (counts.empty() ? "" : ", ") + std::string("\"") + file + "\": [" + std::to_string(mine.size()) + ", "
+                        + std::to_string(theirs.size()) + "]";
+                if (mine == theirs) continue;
+                identical = false;
+                if (!first_diff.empty()) continue;
+                std::size_t k = 0;
+                while (k < mine.size() && k < theirs.size() && mine[k] == theirs[k]) ++k;
+                first_diff = file + " row " + std::to_string(k + 1) + ": replay " + (k < mine.size() ? mine[k] : "(none)")
+                           + " / recorded " + (k < theirs.size() ? theirs[k] : "(none)");
+            }
+            const std::string* recorded_id = lv::tape_section(start, "bundle_id");
+            const bool bundle_match = recorded_id != nullptr && *recorded_id == bundle_id;
+            std::string verdict = "{\"tape\": " + lb::str(replay_path.string()) + ", \"date\": " + lb::str(date) + ", \"source\": \""
+                                + (engine.simulated() ? "SIM" : "LIVE") + "\", \"bundle_match\": " + (bundle_match ? "true" : "false")
+                                + ", \"identical\": " + (identical ? "true" : "false") + ", \"feed_from_ns\": " + std::to_string(lo)
+                                + ", \"feed_to_ns\": " + std::to_string(hi) + ", \"rows\": {" + counts + "}, \"first_difference\": "
+                                + lb::str(first_diff) + ", \"checked_unix\": " + std::to_string(unix_now()) + "}\n";
+            std::printf("%s the recorded session (%s)%s%s\n", identical ? "IDENTICAL to" : "DIFFERS from", original.string().c_str(),
+                        first_diff.empty() ? "" : ": ", first_diff.substr(0, 300).c_str());
+            std::ofstream(live_dir / "replay_check.json", std::ios::binary | std::ios::trunc) << verdict;
+            const fs::path checks = root / "data/live/replay_checks";
+            fs::create_directories(checks, ec);
+            std::ofstream(checks / (replay_path.stem().string() + ".json"), std::ios::binary | std::ios::trunc) << verdict;
+            if (!identical && diverged == 0) diverged = 1;   // exit 6: the replay did not reproduce the session
+        } else {
+            std::printf("no recorded ledger at %s to compare with (--verify-against DIR)\n", original.string().c_str());
+        }
     }
     flush_outputs();
     if (tape_out) {
@@ -890,8 +968,29 @@ int main(int argc, char** argv) {
     std::printf("latency, frame received -> processed:  %s\n", lat_frame.text(1e3, "us").c_str());
     std::printf("latency, frames that ran the models:  %s\n", lat_decision.text(1e3, "us").c_str());
     std::printf("latency, decision -> fill (feed clock): %s\n", lat_fill.text(1e6, "ms").c_str());
-    if (!engine.halt().empty() && !replaying) { std::printf("UNWRITTEN ROWS REMAIN: %s\n", engine.halt().c_str()); return 4; }
-    if (!replay_unwritten.empty()) { std::printf("UNWRITTEN ROWS REMAIN: %s\n", replay_unwritten.c_str()); return 4; }
-    if (diverged > 0) return 6;
-    return 0;
+    int rc = 0;
+    if (!engine.halt().empty() && !replaying) { std::printf("UNWRITTEN ROWS REMAIN: %s\n", engine.halt().c_str()); rc = 4; }
+    else if (!replay_unwritten.empty()) { std::printf("UNWRITTEN ROWS REMAIN: %s\n", replay_unwritten.c_str()); rc = 4; }
+    else if (diverged > 0) rc = 6;
+
+    // One row per session: the operational record the readiness gates read
+    // (altair_readiness). A replay writes its own beside its files.
+    {
+        lv::LiveCsvLog sessions(live_dir / "sessions.csv",
+                                "date,started_unix,ended_unix,source,replay,frames,trade_frames_missed,trade_gaps,late_prints,halts,"
+                                "kill_seen,frame_p50_us,frame_p99_us,frame_p999_us,decision_p99_us,fill_p99_ms,round_trips,"
+                                "open_positions,working_orders,tape,tape_complete,bundle,exit_code");
+        const auto us = [](std::uint64_t ns) { return lv::live_fmt::num(static_cast<double>(ns) / 1e3, 1); };
+        sessions.add(date + "," + std::to_string(started_unix) + "," + std::to_string(unix_now()) + ","
+                     + (engine.simulated() ? "SIM" : "LIVE") + "," + (replaying ? "1" : "0") + "," + std::to_string(frames) + ","
+                     + std::to_string(consumer.missed(altair::kTopicTrades)) + "," + std::to_string(engine.trade_gaps()) + ","
+                     + std::to_string(engine.late_prints()) + "," + std::to_string(halts) + "," + (kill_seen ? "1" : "0") + ","
+                     + us(lat_frame.quantile(0.5)) + "," + us(lat_frame.quantile(0.99)) + "," + us(lat_frame.quantile(0.999)) + ","
+                     + us(lat_decision.quantile(0.99)) + "," + lv::live_fmt::num(static_cast<double>(lat_fill.quantile(0.99)) / 1e6, 1)
+                     + "," + std::to_string(engine.book().trades().size()) + "," + std::to_string(engine.book().positions().size())
+                     + "," + std::to_string(engine.book().working_orders()) + "," + lv::live_csv_text(tape_path) + ","
+                     + (tape_out ? (tape_failed ? "0" : "1") : "") + "," + bundle_id + "," + std::to_string(rc));
+        if (!sessions.flush()) std::printf("could not append to %s\n", (live_dir / "sessions.csv").string().c_str());
+    }
+    return rc;
 }
