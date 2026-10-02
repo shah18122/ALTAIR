@@ -76,8 +76,8 @@ struct LiveMarginLeg {
         if (!(l.underlying > 0.0) || !(l.strike > 0.0)) return kNaN;
         const double u = l.underlying * q;
         const double otm = std::max(0.0, l.kind == LiveKind::Call ? l.strike - l.underlying : l.underlying - l.strike) * q;
-        const double min = l.index ? r.index_short_min : r.stock_short_min;
-        return std::max(scan * u - otm, min * u) + expo * u;
+        const double floor_rate = l.index ? r.index_short_min : r.stock_short_min;
+        return std::max(scan * u - otm, floor_rate * u) + expo * u;
     }
     }
     return kNaN;

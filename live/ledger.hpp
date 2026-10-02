@@ -168,8 +168,8 @@ public:
     std::string flush(const LiveEngine& e) {
         if (!journal.flush()) return journal.path().string();
         std::string failed;
-        for (LiveCsvLog* log : {&trades, &fills, &decisions, &margin})
-            if (!log->flush() && failed.empty()) failed = log->path().string();
+        for (LiveCsvLog* view : {&trades, &fills, &decisions, &margin})
+            if (!view->flush() && failed.empty()) failed = view->path().string();
         if (positions_dirty_) {
             if (live_write_positions(positions_path_.string(), e.book().held())) positions_dirty_ = false;
             else if (failed.empty()) failed = positions_path_.string();
