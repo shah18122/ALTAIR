@@ -269,19 +269,41 @@ class CurriculumDesign {
 public:
     [[nodiscard]] static std::expected<CurriculumDesign, DatasetError>
     make(const CurriculumTrack& tr, const CurriculumStage& st) {
+        if (st.test_end <= st.train_rows) { return std::unexpected(DatasetError::TooFewRows); }
+        return build(tr, st.train_rows, st.test_end);
+    }
+
+    /// Every row before `train_rows` is training and nothing is forecast yet:
+    /// a model fitted here before the session, then asked at the decision on
+    /// make()'s design with the same training rows plus today's, gives the
+    /// same call as one fitted at the decision -- the scaler sees the same
+    /// rows -- without fitting inside the market-data path.
+    [[nodiscard]] static std::expected<CurriculumDesign, DatasetError>
+    make_fit_only(const CurriculumTrack& tr, std::size_t train_rows) {
+        return build(tr, train_rows, train_rows);
+    }
+
+private:
+    [[nodiscard]] static std::expected<CurriculumDesign, DatasetError>
+    build(const CurriculumTrack& tr, std::size_t train_rows, std::size_t rows) {
         CurriculumDesign d;
         d.tr_ = &tr;
         d.p_ = tr.p;
-        d.train_ = st.train_rows;
-        d.rows_ = st.test_end;
-        d.now_ = st.train_rows;
-        if (d.train_ < 2 || d.rows_ <= d.train_) { return std::unexpected(DatasetError::TooFewRows); }
+        d.train_ = train_rows;
+        d.rows_ = rows;
+        d.now_ = train_rows;
+        if (d.train_ < 2 || d.rows_ < d.train_ || d.rows_ > tr.rows()) { return std::unexpected(DatasetError::TooFewRows); }
         d.z_.assign(tr.x.begin(), tr.x.begin() + static_cast<std::ptrdiff_t>(d.rows_ * d.p_));
         Matrix m{d.z_.data(), d.rows_, d.p_};
         Scaler scaler;
         if (auto ok = scaler.fit(m, 0, d.train_); !ok) { return std::unexpected(ok.error()); }
+        d.scale_mean_.resize(d.p_);
+        d.scale_sd_.resize(d.p_);
+        for (std::size_t j = 0; j < d.p_; ++j) { d.scale_mean_[j] = scaler.mean(j); d.scale_sd_[j] = scaler.sd(j); }
         if (auto ok = scaler.transform(m, 0, d.train_, false); !ok) { return std::unexpected(ok.error()); }
-        if (auto ok = scaler.transform(m, d.train_, d.rows_, true); !ok) { return std::unexpected(ok.error()); }
+        if (d.rows_ > d.train_) {
+            if (auto ok = scaler.transform(m, d.train_, d.rows_, true); !ok) { return std::unexpected(ok.error()); }
+        }
         // A column constant over the training rows taught nothing and was left
         // unscaled; it is zeroed everywhere so its raw test values cannot leak
         // in as a large, unscaled input.
@@ -312,6 +334,7 @@ public:
         return d;
     }
 
+public:
     [[nodiscard]] const CurriculumTrack& track() const noexcept { return *tr_; }
     [[nodiscard]] std::size_t p() const noexcept { return p_; }
     [[nodiscard]] std::size_t train_rows() const noexcept { return train_; }
@@ -319,6 +342,9 @@ public:
     [[nodiscard]] std::size_t now() const noexcept { return now_; }
     [[nodiscard]] std::size_t degenerate_features() const noexcept { return degenerate_; }
     [[nodiscard]] std::size_t refusals() const noexcept { return refusals_; }
+    /// The standardisation the training rows set: mean and sd per feature.
+    [[nodiscard]] std::span<const double> scaler_mean() const noexcept { return scale_mean_; }
+    [[nodiscard]] std::span<const double> scaler_sd() const noexcept { return scale_sd_; }
 
     /// The engine moves the clock. Models only ever get a const design.
     void set_now(std::size_t i) noexcept { now_ = i; }
@@ -382,6 +408,29 @@ public:
     [[nodiscard]] double mean_up() const noexcept { return mean_up_; }
     [[nodiscard]] double mean_down() const noexcept { return mean_down_; }
 
+    /// The design a hyper-parameter search runs on: the same rows [0, train),
+    /// standardised with the mean and sd of rows [0, v) ONLY. A candidate fits
+    /// on [0, v) and is scored on [v, train); scaled with statistics that
+    /// included [v, train), the score would have seen the rows it is judged on.
+    /// Its targets stop at v -- the validation targets come from this (outer)
+    /// design -- and every feature of [0, train) is readable.
+    ///
+    /// Built once per design and shared by every model that tunes on it. Not
+    /// thread-safe: a design belongs to one run. Null when [0, v) is too short.
+    [[nodiscard]] const CurriculumDesign* inner(std::size_t v) const {
+        if (inner_ && inner_v_ == v) { return inner_.get(); }
+        CurriculumStage st;
+        st.train_rows = v;
+        st.test_begin = v;
+        st.test_end = train_;
+        auto made = make(*tr_, st);
+        if (!made) { return nullptr; }
+        made->set_now(train_ - 1);
+        inner_ = std::make_shared<const CurriculumDesign>(std::move(*made));
+        inner_v_ = v;
+        return inner_.get();
+    }
+
     /// Training rows [from, to) as one contiguous row-major block.
     [[nodiscard]] std::vector<double> block(std::size_t from, std::size_t to) const {
         std::vector<double> out;
@@ -394,11 +443,14 @@ public:
 private:
     const CurriculumTrack* tr_ = nullptr;
     std::vector<double> z_;
+    std::vector<double> scale_mean_, scale_sd_;
     std::vector<double> ret_;
     std::size_t p_ = 0, train_ = 0, rows_ = 0, now_ = 0, degenerate_ = 0;
     std::size_t ups_ = 0, downs_ = 0;
     double mean_ = 0.0, sd_ = 0.0, mean_up_ = 0.0, mean_down_ = 0.0;
     mutable std::size_t refusals_ = 0;
+    mutable std::shared_ptr<const CurriculumDesign> inner_;   ///< the tuning fold, once built
+    mutable std::size_t inner_v_ = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -454,6 +506,9 @@ public:
     [[nodiscard]] virtual CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const = 0;
     /// What this stage's fit chose, if anything ("k=15").
     [[nodiscard]] virtual std::string tuned() const { return {}; }
+    /// The fitted parameters, in words, for a model bundle ("" where they do
+    /// not fit on a line: trees and nets are pinned by their fingerprint instead).
+    [[nodiscard]] virtual std::string params() const { return {}; }
 };
 
 namespace curriculum_detail {
@@ -519,6 +574,13 @@ inline double sign_accuracy(const std::vector<double>& p, const CurriculumDesign
 inline std::string trim_double(double v) {
     char buf[32];
     std::snprintf(buf, sizeof buf, "%g", v);
+    return buf;
+}
+
+/// Round-trips exactly: 17 significant digits.
+inline std::string exact_double(double v) {
+    char buf[40];
+    std::snprintf(buf, sizeof buf, "%.17g", v);
     return buf;
 }
 
@@ -594,14 +656,14 @@ public:
         if (n < 8) { return "fewer than 8 rows"; }
         const double grid[] = {1e-3, 1e-1, 1.0};
         l2_ = grid[0];
-        if (n >= 40) {
-            const std::size_t v = curriculum_detail::inner_split(n);
+        const std::size_t v = curriculum_detail::inner_split(n);
+        if (const CurriculumDesign* di = n >= 40 ? d.inner(v) : nullptr) {
             double best = -1.0;
             for (const double l2 : grid) {
-                const auto m = fit_range(d, 0, v, l2);
+                const auto m = fit_range(*di, 0, v, l2);
                 if (!m) { continue; }
                 std::vector<double> p;
-                for (std::size_t j = v; j < n; ++j) { p.push_back(m->probability(d.features(j))); }
+                for (std::size_t j = v; j < n; ++j) { p.push_back(m->probability(di->features(j))); }
                 const double acc = curriculum_detail::sign_accuracy(p, d, v);
                 if (acc > best) { best = acc; l2_ = l2; }
             }
@@ -618,6 +680,11 @@ public:
         return curriculum_detail::from_probability(p, p * mu_up_ + (1.0 - p) * mu_down_);
     }
     std::string tuned() const override { return "l2=" + curriculum_detail::trim_double(l2_); }
+    std::string params() const override {
+        std::string o = "bias " + curriculum_detail::exact_double(model_.bias()) + "; w";
+        for (const double w : model_.weights()) { o += " " + curriculum_detail::exact_double(w); }
+        return o;
+    }
 
 private:
     static std::expected<LogisticRegression, ClassicalError>
@@ -917,15 +984,15 @@ public:
         if (n < 10) { return "fewer than 10 rows"; }
         const std::size_t grid[] = {5, 15, 45};
         k_ = grid[0];
-        if (n >= 40) {
+        const std::size_t v = curriculum_detail::inner_split(n);
+        if (const CurriculumDesign* di = n >= 40 ? d.inner(v) : nullptr) {
             // One search for the largest k answers every k on the grid: the
             // k nearest are the first k of the 45 nearest, in the same order.
-            const std::size_t v = curriculum_detail::inner_split(n);
-            index_.build(d, 0, v);
+            index_.build(*di, 0, v);
             std::vector<double> p[3];
             std::vector<std::uint8_t> near;
             for (std::size_t j = v; j < n; ++j) {
-                const bool ok = index_.nearest(d.features(j), grid[2], near);
+                const bool ok = index_.nearest(di->features(j), grid[2], near);
                 for (std::size_t g = 0; g < 3; ++g) {
                     if (!ok || grid[g] > v || near.size() < grid[g]) { p[g].push_back(curriculum_detail::nan()); continue; }
                     double up = 0.0;
@@ -972,14 +1039,14 @@ public:
         if (n < 20) { return "fewer than 20 rows"; }
         const std::size_t grid[] = {3, 6};
         depth_ = grid[0];
-        if (n >= 80) {
-            const std::size_t v = curriculum_detail::inner_split(n);
+        const std::size_t v = curriculum_detail::inner_split(n);
+        if (const CurriculumDesign* di = n >= 80 ? d.inner(v) : nullptr) {
             double best = -1.0;
             for (const std::size_t depth : grid) {
-                const auto m = fit_range(d, 0, v, depth);
+                const auto m = fit_range(*di, 0, v, depth);
                 if (!m) { continue; }
                 std::vector<double> p;
-                for (std::size_t j = v; j < n; ++j) { p.push_back(m->predict(d.features(j))); }
+                for (std::size_t j = v; j < n; ++j) { p.push_back(m->predict(di->features(j))); }
                 const double acc = curriculum_detail::sign_accuracy(p, d, v);
                 if (acc > best) { best = acc; depth_ = depth; }
             }
@@ -1247,6 +1314,14 @@ public:
         sigma_ = std::sqrt(std::max(0.0, model_.residual_variance));
         return {};
     }
+    std::string params() const override {
+        std::string o = "intercept " + curriculum_detail::exact_double(model_.intercept);
+        for (std::size_t k = 0; k < model_.ar.size(); ++k)
+            o += "; ar[" + std::to_string(model_.ar_lags[k]) + "] " + curriculum_detail::exact_double(model_.ar[k]);
+        for (std::size_t k = 0; k < model_.ma.size(); ++k)
+            o += "; ma[" + std::to_string(model_.ma_lags[k]) + "] " + curriculum_detail::exact_double(model_.ma[k]);
+        return o + "; sigma " + curriculum_detail::exact_double(sigma_);
+    }
     CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
         const auto h = d.history(i);
         std::size_t lag = 0;
@@ -1495,15 +1570,15 @@ public:
         if (n < d.p() + 5) { return "fewer rows than features"; }
         const double grid[] = {1e-3, 1e-1, 10.0};   // x n: the penalty grows with the sample
         lambda_ = grid[1];
-        if (n >= 60) {
-            const std::size_t v = curriculum_detail::inner_split(n);
+        const std::size_t v = curriculum_detail::inner_split(n);
+        if (const CurriculumDesign* di = n >= 60 ? d.inner(v) : nullptr) {
             double best = -1.0;
             for (const double g : grid) {
                 std::vector<double> w;
-                if (!curriculum_detail::ridge_fit(d, 0, v, g * static_cast<double>(v), w)) { continue; }
+                if (!curriculum_detail::ridge_fit(*di, 0, v, g * static_cast<double>(v), w)) { continue; }
                 std::vector<double> pr;
                 for (std::size_t j = v; j < n; ++j) {
-                    pr.push_back(curriculum_detail::dot_row(w, d.features(j)) > 0.0 ? 1.0 : 0.0);
+                    pr.push_back(curriculum_detail::dot_row(w, di->features(j)) > 0.0 ? 1.0 : 0.0);
                 }
                 const double acc = curriculum_detail::sign_accuracy(pr, d, v);
                 if (acc > best) { best = acc; lambda_ = g; }
@@ -1524,6 +1599,11 @@ public:
         return curriculum_detail::from_return(curriculum_detail::dot_row(w_, f), sigma_);
     }
     std::string tuned() const override { return "lambda=" + curriculum_detail::trim_double(lambda_) + " x n"; }
+    std::string params() const override {
+        std::string o = "w (intercept last)";
+        for (const double w : w_) { o += " " + curriculum_detail::exact_double(w); }
+        return o;
+    }
 
 private:
     std::vector<double> w_;

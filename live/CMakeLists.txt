@@ -23,4 +23,24 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_live_execution_test tests/test_execution.cpp)
     target_link_libraries(altair_live_execution_test PRIVATE altair_live)
     add_test(NAME live_execution COMMAND altair_live_execution_test)
+
+    add_executable(altair_live_tape_test tests/test_tape.cpp)
+    target_link_libraries(altair_live_tape_test PRIVATE altair_live)
+    add_test(NAME live_tape COMMAND altair_live_tape_test)
+
+    add_executable(altair_live_ledger_test tests/test_ledger.cpp)
+    target_link_libraries(altair_live_ledger_test PRIVATE altair_live)
+    add_test(NAME live_ledger COMMAND altair_live_ledger_test)
+
+    add_executable(altair_live_report_test tests/test_report.cpp)
+    target_link_libraries(altair_live_report_test PRIVATE altair_live)
+    add_test(NAME live_report COMMAND altair_live_report_test)
+
+    add_executable(altair_live_readiness_test tests/test_readiness.cpp)
+    target_link_libraries(altair_live_readiness_test PRIVATE altair_live)
+    add_test(NAME live_readiness COMMAND altair_live_readiness_test)
+
+    add_executable(altair_live_exec_study_test tests/test_exec_study.cpp)
+    target_link_libraries(altair_live_exec_study_test PRIVATE altair_live)
+    add_test(NAME live_exec_study COMMAND altair_live_exec_study_test)
 endif()

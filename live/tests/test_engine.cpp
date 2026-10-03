@@ -175,6 +175,47 @@ int main() {
         }
     }
 
+    // A restart after 09:20: the strangle takes up the legs resumed from the
+    // journal, and its stop still watches them.
+    {
+        const auto session = [&](LiveEngine& x, std::uint32_t tok, std::int64_t bid, std::int64_t ask, std::int64_t ns) {
+            QuotePayload q; q.token = tok; q.flags = kQuoteHasTop; q.bid = bid; q.ask = ask; q.bid_qty = 650; q.ask_qty = 650;
+            x.on_quote(q, ns);
+            PricePayload p; p.token = tok; p.last_paise = (bid + ask) / 2; x.on_trade(p, ns);
+        };
+        const LiveExecPolicy pol{0, 10'000'000'000LL, 60'000'000'000LL};
+        const LiveVolInputs v{"NIFTY", 0.008, 0.75, 24000.0};
+        const std::int64_t t0 = (today * 86400 + 9 * 3600 + 15 * 60 - 19800) * 1'000'000'000LL;
+        LiveEngine first(u, nullptr, pol);
+        first.add_model(std::make_unique<LiveStrangleModel>(v, 2.0));
+        session(first, kLiveNiftyToken, 2400000, 2400000, t0);
+        for (const auto& i : u) if (i.kind == LiveKind::Call || i.kind == LiveKind::Put) session(first, i.token, 5000, 5100, t0 + 299'000'000'000LL);
+        session(first, kLiveNiftyToken, 2400000, 2400000, t0 + 300'000'000'000LL);   // 09:20: sells
+        const auto held = first.book().held();
+        check(held.size() == 2, "restart test: the first session sold the strangle");
+
+        LiveEngine again(u, nullptr, pol);                                              // the restart, at 09:21
+        again.add_model(std::make_unique<LiveStrangleModel>(v, 2.0));
+        for (const auto& p : held) again.book().restore(p);
+        std::uint32_t ct = 0;
+        for (const auto& p : held) if (p.inst.kind == LiveKind::Call) ct = p.inst.token;
+        for (const auto& p : held) session(again, p.inst.token, 5000, 5100, t0 + 360'000'000'000LL);
+        session(again, kLiveNiftyToken, 2400000, 2400000, t0 + 360'000'000'000LL);
+        session(again, kLiveNiftyToken, 2400000, 2400000, t0 + 420'000'000'000LL);       // 09:22 close: the model's first minute
+        bool resumed = false, missed = false;
+        for (const auto& d : again.take_decisions()) {
+            resumed = resumed || d.text.find("Resumed at") != std::string::npos;
+            missed = missed || d.text.find("Missed today") != std::string::npos;
+        }
+        check(resumed && !missed, "the restarted model says it resumed its legs, not that it missed the day");
+        session(again, ct, 10500, 10600, t0 + 590'000'000'000LL);                         // the call doubles
+        for (const auto& p : held) if (p.inst.token != ct) session(again, p.inst.token, 5000, 5100, t0 + 599'000'000'000LL);
+        session(again, ct, 10500, 10600, t0 + 599'000'000'000LL);
+        session(again, kLiveNiftyToken, 2400000, 2400000, t0 + 600'000'000'000LL);      // 09:25 close
+        check(again.book().position("Strangle 80% NIFTY stop2x", ct) == nullptr && again.book().positions().size() == 1,
+              "and its stop buys back a resumed leg that doubled");
+    }
+
     // Bars: one-minute bars on the IST grid, closed by the clock.
     {
         LiveBarBuilder b;

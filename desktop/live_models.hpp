@@ -277,6 +277,23 @@ private:
         if (!paused.isEmpty()) gate += QStringLiteral(" · <b style='color:#F4C95D'>%1</b>").arg(paused.toHtmlEscaped());
         const int working = o.value(QStringLiteral("working_orders")).toInt();
         if (working > 0) gate += QStringLiteral(" · %1 order(s) working").arg(working);
+        // The capital the book ties up (an estimate, not SPAN) and how fast the engine keeps up.
+        const QJsonObject mg = o.value(QStringLiteral("margin")).toObject();
+        if (!mg.isEmpty()) {
+            const auto r = [](const QJsonValue& v) {
+                return v.isDouble() ? live_models_detail::rupees(v.toDouble()) : QStringLiteral("unknown");
+            };
+            gate += QStringLiteral(" · margin est. %1 of %2 (peak today %3; not SPAN)")
+                        .arg(r(mg.value(QStringLiteral("estimate"))), r(mg.value(QStringLiteral("limit"))),
+                             r(mg.value(QStringLiteral("peak_today"))));
+        }
+        const QJsonObject lat = o.value(QStringLiteral("latency")).toObject();
+        if (!lat.isEmpty()) {
+            const double fp = lat.value(QStringLiteral("frame_us")).toObject().value(QStringLiteral("p99")).toDouble(-1.0);
+            const double dp = lat.value(QStringLiteral("decision_us")).toObject().value(QStringLiteral("p99")).toDouble(-1.0);
+            if (fp >= 0.0 && dp >= 0.0)
+                gate += QStringLiteral(" · p99 frame %1 µs, decision %2 µs").arg(fp, 0, 'f', 0).arg(dp, 0, 'f', 0);
+        }
         status_->setText(QStringLiteral("%1 &nbsp;<span style='color:%2'>engine %3 IST%4%5 · %6</span>")
                              .arg(tag, muted, live_detail::ist(eng, false))
                              .arg((stale ? QStringLiteral(" · <b style='color:#F07A6A'>FEED STALE: no new entries</b>") : QString()) + gate)

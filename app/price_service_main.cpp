@@ -111,6 +111,9 @@ void usage(const char* exe) {
         "  --seconds N         stop after N seconds (default: run until\n"
         "                      interrupted; a replay always stops at the end)\n"
         "  --rate N            replay bars per second (default 200)\n"
+        "  --live-dir DIR      where universe.csv, watchlist.csv and feed_status.json\n"
+        "                      live (default data/live in the source tree; tests\n"
+        "                      point it elsewhere)\n"
         "  --tail N            replay only the most recent N bars. A\n"
         "                      replay otherwise starts at the first bar on\n"
         "                      disk -- 2015 for NIFTY 1-minute -- and would\n"
@@ -709,6 +712,7 @@ int main(int argc, char** argv) {
     double speed = 1.0, atm_nifty = 0.0, atm_banknifty = 0.0;
     std::uint64_t seed = 20261001;
     std::string sim_date;   // YYYY-MM-DD: simulate that day instead of today
+    std::string live_dir_arg;   // --live-dir: universe.csv and friends (default <source>/data/live)
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -760,6 +764,8 @@ int main(int argc, char** argv) {
             strikes = std::atoi(argv[++i]);
         } else if (a == "--depth-strikes" && i + 1 < argc) {
             depth_strikes = std::atoi(argv[++i]);
+        } else if (a == "--live-dir" && i + 1 < argc) {
+            live_dir_arg = argv[++i];
         } else if (a == "--no-stocks") {
             stocks = false;
         } else if (a == "--atm-nifty" && i + 1 < argc) {
@@ -853,7 +859,7 @@ int main(int argc, char** argv) {
         uo.stocks = stocks;
         auto uni = altair::live::build_universe(
             rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);
-        const std::string live_dir = src + "/data/live";
+        const std::string live_dir = live_dir_arg.empty() ? src + "/data/live" : live_dir_arg;
         const std::string watch_path = live_dir + "/watchlist.csv";
         // The market watch's added scrips (data/live/watchlist.csv).
         std::vector<std::uint32_t> watched = altair::live::read_watchlist(watch_path);

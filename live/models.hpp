@@ -138,11 +138,31 @@ public:
     void on_new_day(LiveEngine&) override { traded_today_ = false; note_.clear(); call_ = put_ = nullptr; }
 
     void on_minute(LiveEngine& e, int m) override {
-        if (m == kDecideMinute && !traded_today_) decide(e);
+        if (m == kDecideMinute && !traded_today_) {
+            LiveDecisionScope log(e, name(), [this] { return note_; });
+            decide(e);
+        }
         if (m > kDecideMinute && !traded_today_) {
-            // The engine joined after 09:20: today's decision was never taken.
             traded_today_ = true;
-            note_ = "Missed today: the engine's first bar closed at " + live_fmt::hhmm(m) + ", after 09:20.";
+            // A restart: the legs this model sold before it are in the book
+            // (resumed from the journal). Take them up again -- the stop
+            // watches them and the page shows them -- rather than call the
+            // day missed.
+            for (const auto& p : e.book().positions()) {
+                if (p.model != name()) continue;
+                const LiveInstrument* in = e.instrument(p.inst.token);
+                if (in == nullptr) continue;
+                if (in->kind == LiveKind::Call) call_ = in;
+                if (in->kind == LiveKind::Put) put_ = in;
+            }
+            if (call_ != nullptr || put_ != nullptr) {
+                note_ = "Resumed at " + live_fmt::hhmm(m) + ": holding " + (call_ ? call_->symbol : std::string()) + (call_ && put_ ? " and " : "")
+                      + (put_ ? put_->symbol : std::string()) + " sold earlier today" + (stop_ > 0.0 ? "; the stop watches them." : ".");
+            } else {
+                // The engine joined after 09:20: today's decision was never taken.
+                note_ = "Missed today: the models first ran at " + live_fmt::hhmm(m) + ", after 09:20 (a late start, or decisions paused on a feed gap).";
+            }
+            e.note_decision(name(), note_);
         }
         if (stop_ > 0.0 && m % 5 == 0 && m > kDecideMinute && m < kLiveSquareOffMinute) {
             for (const LiveInstrument* leg : {call_, put_}) {
@@ -153,8 +173,14 @@ public:
                 const LiveTop t = e.top(leg->token);
                 if (t.ask <= 0 || !e.book().fresh(t.quote_ns, e.clock_ns())) continue;
                 const double ask = static_cast<double>(t.ask) / 100.0;
-                if (ask >= stop_ * p->entry)
+                if (ask >= stop_ * p->entry) {
+                    // Read before closing: with no latency the exit fills inside
+                    // close() and the position (and `p`) is gone.
+                    const double sold = p->entry;
                     (void)e.book().close(name(), leg->token, e.clock_ns(), "premium doubled: stop at " + live_fmt::hhmm(m));
+                    e.note_decision(name(), "stop: " + leg->symbol + " ask " + live_fmt::num(ask) + " against "
+                                                + live_fmt::num(sold) + " sold; buying back");
+                }
             }
         }
     }
@@ -298,6 +324,7 @@ public:
     void on_minute(LiveEngine& e, int m) override {
         z_ = zscore(e);
         if (m != kLiveRollMinute || !f_.ok || !std::isfinite(z_)) return;
+        LiveDecisionScope log(e, name(), [this] { return "z " + live_fmt::num(z_) + ": " + note_; });
         const LiveInstrument* a = e.carry_future("NIFTY");
         const LiveInstrument* b = e.carry_future("BANKNIFTY");
         const bool in = e.book().engaged(name());
@@ -387,6 +414,7 @@ public:
 
     void on_minute(LiveEngine& e, int m) override {
         if (m != kLiveRollMinute || !in_.ok) return;
+        LiveDecisionScope log(e, name(), [this] { return note_; });
         const LiveInstrument* idx = e.index_of("NIFTY");
         const double mkt = idx ? e.ltp(idx->token) : 0.0;
         if (!(mkt > 0.0) || !(in_.market_last_close > 0.0)) { note_ = "No NIFTY price at 15:15."; return; }

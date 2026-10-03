@@ -53,6 +53,45 @@ void test_value() {
           "a 55 % call loses on a 40 bp day and earns on a 100 bp one: the size of the move decides");
 }
 
+void test_conditional_gate() {
+    // No history: both magnitudes are a normal move's, sqrt(2/pi) sigmas.
+    WalkForwardPayoff none;
+    const auto e0 = none.estimate();
+    check(std::fabs(e0.gain - 0.7978845608) < 1e-9 && std::fabs(e0.loss - 0.7978845608) < 1e-9,
+          "with no resolved calls, gain and loss default to a normal move's E|z|");
+
+    // Symmetric history: the conditional gate agrees with the old (2q-1)E|r|.
+    std::mt19937 g(3);
+    std::normal_distribution<double> z(0.0, 1.0);
+    WalkForwardPayoff sym;
+    for (int i = 0; i < 4000; ++i) sym.add(i % 5 != 0, std::fabs(z(g)));
+    const auto es = sym.estimate();
+    const GateValue vs = gate_value(0.58, 0.01, es, 100.0, 6.3, 0.0);
+    check(std::fabs(vs.value_bp - call_value_bp(0.58, expected_abs_move(100.0), 6.3)) < 2.0,
+          "when right and wrong calls move alike, it reduces to (2q-1)E|r| - cost");
+
+    // Right on the small days, wrong on the big ones: 60 % accurate, and losing.
+    WalkForwardPayoff skew;
+    for (int i = 0; i < 1000; ++i) skew.add(i % 5 < 3, i % 5 < 3 ? 0.4 : 1.4);
+    const auto ek = skew.estimate();
+    const GateValue vk = gate_value(0.60, 0.01, ek, 100.0, 6.3, 0.0);
+    check(call_value_bp(0.60, expected_abs_move(100.0), 6.3) > 0.0 && vk.value_bp < 0.0,
+          "a 60 % model right on small moves and wrong on big ones: the old gate opens, the conditional one does not");
+    check(ek.gain < 0.45 && ek.loss > 1.3 && ek.gain_se < 0.02, "it learned the two magnitudes, and how well it knows them");
+
+    // Uncertainty: the same point value, opened only when it is known well enough.
+    WalkForwardCalibrator thin, thick;
+    for (int i = 0; i < 10; ++i) thin.add(0.75, i < 7);
+    for (int i = 0; i < 2000; ++i) thick.add(0.75, i % 10 < 7);
+    check(thin.calibrated_se(0.75) > 3.0 * thick.calibrated_se(0.75), "ten calls know q far less well than two thousand");
+    const GateValue v_thin = gate_value(thin.calibrated(0.75), thin.calibrated_se(0.75), es, 60.0, 6.3, 1.0);
+    const GateValue v_thick = gate_value(thick.calibrated(0.75), thick.calibrated_se(0.75), es, 60.0, 6.3, 1.0);
+    check(v_thick.open() && !v_thin.open(),
+          "a thin history keeps the gate shut where a thick one with the same edge opens it");
+    check(v_thick.lower_bp < v_thick.value_bp && std::fabs(v_thick.lower_bp - (v_thick.value_bp - v_thick.se_bp)) < 1e-9,
+          "the gate's bound is value - z x se");
+}
+
 } // namespace
 
 int main() {
@@ -60,6 +99,7 @@ int main() {
     test_stats();
     test_calibrator();
     test_value();
+    test_conditional_gate();
     std::printf("Magnitude: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

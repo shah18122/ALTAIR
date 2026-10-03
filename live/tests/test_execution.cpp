@@ -10,6 +10,8 @@
 #include <live/engine.hpp>
 #include <live/feed_consumer.hpp>
 #include <live/file_lock.hpp>
+#include <live/latency.hpp>
+#include <live/margin.hpp>
 #include <live/paper.hpp>
 
 #include <chrono>
@@ -146,6 +148,61 @@ int main() {
               "an exit never expires: unquoted for nine minutes, it is still working");
         quote(e, 10, 2399000, 2399200, 500, at(11, 10, 1));
         check(e.book().position("pair", 10) == nullptr && e.book().trades().size() == 1, "and fills when a quote returns");
+    }
+
+    // ---- cancels and fills that cross ------------------------------------------
+    {
+        // A quote does not move the clock; one that arrives after an entry's
+        // deadline, before any trade has, must not fill it.
+        LiveEngine e(u, cost5bp);
+        trade(e, kLiveNiftyToken, 2400000, at(12, 0));
+        quote(e, 10, 2399900, 2400100, 50, at(12, 0));
+        check(e.book().open("m", u[1], 1, 1, at(12, 0), "x", false), "an entry is working");
+        quote(e, 10, 2399900, 2400100, 0, at(12, 0));   // the size goes before the latency is up
+        e.advance(at(12, 0, 1));
+        check(e.book().position("m", 10) && !e.book().position("m", 10)->filled(), "nothing to take: it keeps working");
+        quote(e, 10, 2399900, 2400100, 500, at(12, 1, 1));   // 61 s on; the clock still says 12:00:01
+        check(e.book().position("m", 10) == nullptr && e.book().fills().empty(),
+              "a quote after the deadline does not fill it: the entry is cancelled, not filled late");
+        check(!e.book().take_cancelled().empty(), "and the cancellation is reported");
+
+        // The last instant before the deadline still fills.
+        LiveEngine f(u, cost5bp);
+        trade(f, kLiveNiftyToken, 2400000, at(12, 0));
+        quote(f, 10, 2399900, 2400100, 50, at(12, 0));
+        (void)f.book().open("m", u[1], 1, 1, at(12, 0), "x", false);
+        quote(f, 10, 2399900, 2400100, 0, at(12, 0));
+        quote(f, 10, 2399900, 2400100, 500, at(12, 1) - 1'000'000);
+        check(f.book().position("m", 10) && f.book().position("m", 10)->filled() && f.book().fills().size() == 1,
+              "one millisecond before the deadline, it fills");
+
+        // An exit decided while the entry is part-filled: the rest of the
+        // entry is withdrawn, only what filled is sold, and a quote arriving
+        // after adds nothing to the position.
+        LiveEngine g(u, cost5bp);
+        trade(g, kLiveNiftyToken, 2400000, at(12, 0));
+        quote(g, 10, 2399900, 2400100, 50, at(12, 0));
+        (void)g.book().open("m", u[1], 1, 2, at(12, 0), "two lots", false);
+        quote(g, 10, 2399900, 2400100, 30, at(12, 0, 1));   // 30 of 100
+        check(g.book().position("m", 10) && g.book().position("m", 10)->qty == 30, "30 of 100 filled");
+        check(g.book().close("m", 10, at(12, 0, 1), "stop"), "an exit crosses the working entry");
+        quote(g, 10, 2399800, 2400200, 500, at(12, 0, 2));
+        g.advance(at(12, 0, 2));
+        std::int64_t opened = 0, closed = 0;
+        for (const auto& fl : g.book().fills()) (fl.role == LiveFillRole::Open ? opened : closed) += fl.qty;
+        check(opened == 30 && closed == 30 && g.book().position("m", 10) == nullptr && g.book().working_orders() == 0,
+              "30 bought, 30 sold, nothing left working: the withdrawn 70 never fill");
+        check(g.book().trades().size() == 1 && g.book().trades().back().qty == 30, "one round trip of exactly what was held");
+
+        // An exit decided before an entry's first fill: cancelled outright.
+        LiveEngine h(u, cost5bp);
+        trade(h, kLiveNiftyToken, 2400000, at(12, 0));
+        quote(h, 10, 2399900, 2400100, 50, at(12, 0));
+        (void)h.book().open("m", u[1], 1, 1, at(12, 0), "x", false);
+        check(h.book().close("m", 10, at(12, 0) + 100'000'000, "changed its mind"), "an exit before the latency is up");
+        quote(h, 10, 2399900, 2400100, 500, at(12, 0, 1));
+        check(h.book().fills().empty() && h.book().position("m", 10) == nullptr && h.book().working_orders() == 0,
+              "cancels the entry: no fill in either direction");
     }
 
     // ---- exits are obligations, across a gap in the feed ----------------------
@@ -293,6 +350,16 @@ int main() {
         e.set_limits(l);
         check(!e.book().open("m", u[2], 1, 1, at(10, 0), "x", false, &why) && why.find("gross") != std::string::npos,
               "the gross notional limit counts what is held plus the new order");
+        l.max_gross_notional = 1.0e8;
+        l.max_margin = 2.0e5;           // one lot's estimate is 12 % of 1.2 million: 144,000
+        e.set_limits(l);
+        check(std::fabs(e.margin_estimate() - 144000.0) < 1e-6, "the margin estimate of a held future: scan plus exposure, 12 %");
+        check(!e.book().open("m", u[2], 1, 1, at(10, 0), "x", false, &why) && why.find("margin estimate") != std::string::npos,
+              "the margin limit counts what is held plus the new order");
+        l.max_margin = 3.0e5;
+        e.set_limits(l);
+        check(e.book().open("m", u[2], 1, 1, at(10, 0), "x", false, &why) && std::fabs(e.margin_estimate() - 288000.0) < 1e-6,
+              "and a working entry counts at what it asked for");
         e.set_kill(true);
         check(e.book().close("m", 10, at(10, 0), "exit under kill") && e.book().position("m", 10) == nullptr,
               "an exit is never refused, kill request or not");
@@ -343,6 +410,53 @@ int main() {
         check(first.held() && !second.held() && second.why().find("another process") != std::string::npos,
               "one engine per ledger: a second lock is refused");
         fs::remove_all(dir, ec);
+    }
+
+    // ---- the margin estimate (not SPAN: conservative by construction) -------------
+    {
+        const auto close_to = [](double a, double b) { return std::fabs(a - b) < 1e-6; };
+        LiveMarginLeg f;
+        f.kind = LiveKind::Future; f.side = -1; f.qty = 75; f.price = 23000.0;
+        check(close_to(live_margin(f), 0.12 * 23000.0 * 75), "a future, either side: index scan 10 % plus exposure 2 %");
+        f.index = false;
+        check(close_to(live_margin(f), (0.20 + 0.035) * 23000.0 * 75), "a stock future at the stock rates");
+        LiveMarginLeg c;
+        c.kind = LiveKind::Call; c.side = -1; c.qty = 75; c.price = 40.0; c.underlying = 23000.0; c.strike = 23500.0;
+        const double un = 23000.0 * 75;
+        check(close_to(live_margin(c), 0.10 * un - 500.0 * 75 + 0.02 * un), "a short call: scan less the out-of-the-money amount, plus exposure");
+        LiveMarginLeg pt = c;
+        pt.kind = LiveKind::Put; pt.strike = 20000.0;
+        check(close_to(live_margin(pt), 0.03 * un + 0.02 * un), "a far short put: never below the short-option minimum");
+        pt.strike = 23500.0;
+        check(close_to(live_margin(pt), 0.12 * un), "an in-the-money short put: the whole scan, no credit");
+        LiveMarginLeg lc = c;
+        lc.side = 1;
+        check(close_to(live_margin(lc), 40.0 * 75), "a long option blocks its premium");
+        c.underlying = 0.0;
+        check(std::isnan(live_margin(c)), "a short option with no underlying level is unknown, not zero");
+        LiveMarginLeg eq;
+        eq.kind = LiveKind::Equity; eq.index = false; eq.side = 1; eq.qty = 10; eq.price = 800.0; eq.carry = true;
+        check(close_to(live_margin(eq), 8000.0), "cash equity held overnight: its whole value");
+        eq.carry = false;
+        check(close_to(live_margin(eq), 1600.0), "held intraday: the intraday fraction");
+        eq.side = -1; eq.carry = true;
+        check(close_to(live_margin(eq), 1600.0), "a cash short is intraday whatever it says");
+        check(live_margin(LiveMarginLeg{}) == 0.0, "nothing held, nothing blocked");
+    }
+
+    // ---- latency percentiles ----------------------------------------------------
+    {
+        LatencyHistogram h;
+        for (std::int64_t v = 1; v <= 1'000'000; ++v) h.record(v * 1000);   // 1 us .. 1 s, uniform
+        const auto close_to = [](std::uint64_t got, double want) { return std::fabs(static_cast<double>(got) / want - 1.0) < 0.04; };
+        check(h.count() == 1'000'000 && h.max() == 1'000'000'000ull, "every sample counted, and the max is exact");
+        check(close_to(h.quantile(0.5), 5e8) && close_to(h.quantile(0.99), 9.9e8) && close_to(h.quantile(0.999), 9.99e8),
+              "p50, p99 and p99.9 within the buckets' 3 % of the truth");
+        check(h.quantile(0.5) >= 500'000'000ull, "a quantile is its bucket's upper edge: never optimistic");
+        LatencyHistogram tiny;
+        for (int v = 0; v < 32; ++v) tiny.record(v);
+        check(tiny.quantile(0.5) == 15 || tiny.quantile(0.5) == 16, "below 32 ns every value is its own bucket");
+        check(h.json(1e3).find("\"p999\"") != std::string::npos, "and it reads out as JSON for the state file");
     }
 
     std::printf("%s\n", failures == 0 ? "all live execution checks passed" : "live execution checks did not pass");

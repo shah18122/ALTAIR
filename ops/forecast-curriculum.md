@@ -61,7 +61,10 @@ Options:
 | NIFTY, BANKNIFTY, INDIA VIX 15m, 5m, 1m | close of every bar of a full 09:15–15:30 session but the last | the next bar's close (no overnight bar) |
 
 Features (all known at the decision; standardised on the training window
-only): recent returns (1, 2, 3, 5, 20 days or the last two bars), 10-day
+only — and where a model tunes a hyperparameter (k, λ, depth, the L2 weight),
+it tunes on an inner split of that window, re-standardised on the inner
+training rows alone, so the rows it is scored on never shape a choice):
+recent returns (1, 2, 3, 5, 20 days or the last two bars), 10-day
 volatility, range, where the close sits in the range, the opening gap,
 weekday or hour, previous-day return and range (hourly), and **INDIA VIX**
 (level, change, level against its 20-day mean) on every index track. The
@@ -392,32 +395,61 @@ gives each model two magnitude measures:
 
 `altair_magnitude` reads the per-forecast logs. It adds the |move| on right
 calls against wrong ones, and a **value gate** (`models/magnitude.hpp`): take
-a call only when (2q − 1) × E|r| beats the cost.
-- q is the model's own probability, calibrated walk-forward.
-- E|r| is σ√(2/π), with σ from a HAR forecast of that window's 5-minute
-  realised variance.
-- Both use only what was known when the call was made.
+a call only when q·gain − (1 − q)·loss − cost clears zero by `--gate-z`
+standard errors.
+- q is the model's own probability, calibrated walk-forward, with its
+  standard error.
+- gain and loss are the moves the model's right and wrong calls actually
+  caught, in units of σ (σ from a HAR forecast of that window's 5-minute
+  realised variance), learned walk-forward and shrunk toward a normal's
+  √(2/π) while there are few. A model right on small moves and wrong on big
+  ones has loss > gain, and the gate sees it.
+- The uncertainty is the delta method over q, gain and loss.
+- Everything uses only what was known when the call was made.
 
-On the 2026-10-01 run, at 6.3 bp:
+The gate used to be (2q − 1) × E|r| > cost. That assumes a right call and a
+wrong one move the same |r|, the very thing this section measures and
+finds false.
 
-| Track | Median accuracy | Median magnitude-weighted | Models better on big moves | Median net bp / call | Gated share | Median gated net |
-|---|---|---|---|---|---|---|
-| NIFTY daily | 52.1 % | 51.1 % | 14 / 42 | −4.8 | 10 % | −4.7 |
-| BANKNIFTY daily | 51.4 % | 50.7 % | 11 / 42 | −5.1 | 11 % | −7.4 |
-| NIFTY FUT daily | 51.5 % | 50.9 % | 11 / 41 | −5.1 | 7 % | −12.9 |
-| NIFTY 09:20→close | 51.2 % | 52.4 % | 37 / 42 | −3.6 | 6 % | −0.3 |
-| BANKNIFTY 09:20→close | 50.5 % | 49.9 % | 19 / 42 | −6.5 | 6 % | −8.2 |
-| NIFTY 10:15→close | 52.3 % | 53.0 % | 35 / 42 | −3.4 | 7 % | −2.3 |
-| BANKNIFTY 10:15→close | 51.3 % | 51.0 % | 22 / 42 | −5.0 | 6 % | −3.1 |
+On the 2026-10-02 run, at 6.3 bp, with the inner-fold tuning and this gate
+at z = 1 (the daily, 09:20 and 10:15 tracks, first pass;
+`altair_forecast_curriculum --only daily|0920|1015 --no-bands --no-feeds`, then
+`altair_magnitude`). The last column is the old (2q − 1) gate on the same
+forecasts:
 
+| Track | Median accuracy | Median magnitude-weighted | Models better on big moves | Median net bp / call | Gated share | Median gated net | Old gate: share / net |
+|---|---|---|---|---|---|---|---|
+| NIFTY daily | 52.1 % | 51.1 % | 14 / 42 | −4.8 | 0 % | −19.5 | 10 % / −4.7 |
+| BANKNIFTY daily | 51.4 % | 50.6 % | 11 / 42 | −5.3 | 1 % | −12.1 | 11 % / −7.5 |
+| NIFTY FUT daily | 51.5 % | 50.9 % | 11 / 41 | −5.1 | 1 % | −20.5 | 7 % / −12.9 |
+| NIFTY 09:20→close | 51.2 % | 52.4 % | 37 / 42 | −3.6 | 2 % | −10.3 | 6 % / −0.3 |
+| BANKNIFTY 09:20→close | 50.5 % | 49.8 % | 20 / 42 | −6.6 | 0 % | −11.3 | 6 % / −8.2 |
+| NIFTY 10:15→close | 52.3 % | 53.1 % | 35 / 42 | −3.3 | 1 % | −11.1 | 7 % / −3.3 |
+| BANKNIFTY 10:15→close | 51.3 % | 51.0 % | 22 / 42 | −5.0 | 0 % | +0.1 | 6 % / −3.0 |
+
+(Median gated net is over the models the gate opened for at least once.)
+
+- **Tuning on an inner fold barely moves the medians.** Only the tuned
+  models (logistic, kNN, forest, ridge) can change, and the accuracies match
+  the 2026-10-01 run to a tenth of a point. The old gate's shares and nets
+  match too.
 - **On the daily tracks, accuracy flatters the models.** Most are slightly
   *less* right on big days than small ones.
 - **On the NIFTY session tracks it is the reverse.** 35–37 of 42 models are
   more right on the big moves.
-- **The gate lifts the best models' edge per trade** to +20 to +43 bp, mostly
-  AR and ARMA on 10:15→close, with t ≈ 2.5–3.2.
-- **None survives the 1,136 gated tests,** which need t > 4.09. They are
-  candidates for a forward test, not findings.
+- **The conditional gate is far stricter than (2q − 1)·E|r|.** It opens on
+  0–2 % of calls, not 6–11 %. Charging a model the loss it actually takes
+  when wrong, with the uncertainty of q, gain and loss, shuts most of what
+  the symmetric gate let through.
+- **The best gated results** are all on 10:15→close:
+  - BANKNIFTY ARMA(1,1): +21.0 bp a trade, 57.6 % right, t = 3.01 over 347
+    calls;
+  - NIFTY SARIMA: +18.0 bp, t = 2.03;
+  - BANKNIFTY VAR(1): +17.6 bp, t = 1.98.
+- **None survives the 106 gated tests,** which need t > 3.50. They are
+  candidates for the forward test the live engine runs, not findings.
+- The earlier tables in this file predate the inner-fold fix. The
+  accuracies above suggest it moves little, but they are not re-run here.
 
 ### What would improve it next
 - **Broker-verified data:** run `ops\broker_audit.ps1`, then repeat the run.

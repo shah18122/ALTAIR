@@ -32,8 +32,9 @@
 // prices but are not trades and never enter a bar.
 //
 // ONE RISK CHECK BEFORE EVERY ENTRY (LiveRiskLimits): the feed is fresh, no
-// halt or kill request, the position count, gross notional and the day's loss
-// are inside their limits. Exits are never refused.
+// halt or kill request, the position count, gross notional, estimated margin
+// (live/margin.hpp: conservative, not SPAN) and the day's loss are inside
+// their limits. Exits are never refused.
 //
 // NOTHING HERE CAN TRADE. The paper book is arithmetic; live/ links no broker
 // and no OMS.
@@ -41,6 +42,7 @@
 #pragma once
 
 #include <live/bars.hpp>
+#include <live/margin.hpp>
 #include <live/paper.hpp>
 #include <live/universe.hpp>
 #include <server/price_payload.hpp>
@@ -53,6 +55,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -81,6 +84,38 @@ struct LiveRiskLimits {
     std::size_t max_per_model = 60;
     double max_gross_notional = 1.0e8;     ///< rupees: |qty x price| of everything held or working, plus the new order
     double max_daily_loss = 2.0e5;         ///< rupees: today's realised (gross where unpriced) plus open marks
+    double max_margin = 1.0e7;             ///< rupees: estimated margin (live/margin.hpp) of everything held or working, plus the new order
+};
+
+/// The estimated margin at one minute's close: what the CLI appends to margin.csv.
+struct LiveMarginSample {
+    std::int64_t ns = 0;          ///< the minute's close, feed time
+    double margin = 0.0;          ///< rupees, all models; NaN when a leg could not be priced
+    std::size_t positions = 0;
+    std::vector<std::pair<std::string, double>> by_model;   ///< the models holding or working something
+};
+
+/// A held position's mark near the close (the first minute at or after
+/// 15:29): what the CLI appends to marks.csv, and what the paper report marks
+/// carried positions to. The mid, else the last trade; not the exchange's
+/// settlement price.
+struct LiveMarkSample {
+    std::int64_t ns = 0;
+    std::string model, symbol;
+    std::uint32_t token = 0;
+    int side = 0;
+    std::int64_t qty = 0;
+    double mark = 0.0;            ///< rupees; 0 when nothing priced it
+    bool carry = false;
+};
+inline constexpr int kLiveMarkMinute = 15 * 60 + 29;
+
+/// One decision, in words, at the feed time it was taken: what the CLI
+/// appends to decisions.csv -- the record a replay is compared against.
+struct LiveDecisionNote {
+    std::int64_t ns = 0;
+    std::string model;
+    std::string text;
 };
 
 /// What a model shows on the Live Models page.
@@ -221,11 +256,26 @@ public:
     void set_halt(std::string why) { halt_ = std::move(why); }
     [[nodiscard]] const std::string& halt() const noexcept { return halt_; }
     void set_kill(bool on) noexcept { kill_ = on; }
+    [[nodiscard]] bool kill() const noexcept { return kill_; }
     void set_limits(const LiveRiskLimits& l) { limits_ = l; }
     [[nodiscard]] const LiveRiskLimits& limits() const noexcept { return limits_; }
+    void set_margin_rates(const LiveMarginRates& r) { rates_ = r; }
+    [[nodiscard]] const LiveMarginRates& margin_rates() const noexcept { return rates_; }
     /// True while a trade gap holds decisions back.
     [[nodiscard]] bool paused() const noexcept { return live_ist_minute_index(clock_ns_) < pause_until_minute_; }
     [[nodiscard]] std::uint64_t late_prints() const noexcept { return late_prints_; }
+    /// Minute boundaries at which the models ran: a frame that moves this
+    /// carried a decision (the CLI times those separately).
+    [[nodiscard]] std::uint64_t decision_minutes() const noexcept { return decision_minutes_; }
+    /// A JSON object the CLI keeps current (latency percentiles); shown under "latency".
+    void set_metrics(std::string json_object) { metrics_ = std::move(json_object); }
+
+    /// Record a decision (models call this when they decide, or decide not to).
+    void note_decision(const std::string& model, std::string text) {
+        notes_.push_back(LiveDecisionNote{clock_ns_, model, std::move(text)});
+    }
+    /// Decisions since the last call.
+    [[nodiscard]] std::vector<LiveDecisionNote> take_decisions() { return std::exchange(notes_, {}); }
     [[nodiscard]] std::uint64_t trade_gaps() const noexcept { return gaps_; }
 
     // ---- what models read -------------------------------------------------
@@ -288,6 +338,63 @@ public:
         }
         return best;
     }
+    /// The underlying's level in rupees: the index, else the stock, else its
+    /// nearest future; 0 while none is streamed and priced.
+    [[nodiscard]] double underlying_level(const std::string& under) const {
+        if (const LiveInstrument* i = index_of(under)) {
+            if (const double v = mid(i->token); v > 0.0) return v;
+        }
+        for (const auto& i : u_) {
+            if (i.kind != LiveKind::Equity || (i.underlying != under && i.symbol != under)) continue;
+            if (const double v = mid(i.token); v > 0.0) return v;
+        }
+        if (const LiveInstrument* f = near_future(under)) return mid(f->token);
+        return 0.0;
+    }
+    /// The estimated margin of one leg at `price` (live/margin.hpp); NaN when unpriceable.
+    [[nodiscard]] double margin_of(const LiveInstrument& in, int side, std::int64_t qty, double price, bool carry) const {
+        LiveMarginLeg l;
+        l.kind = in.kind;
+        l.index = live_index_underlying(in.underlying) || index_of(in.underlying) != nullptr;
+        l.side = side; l.qty = qty; l.price = price; l.strike = in.strike; l.carry = carry;
+        if (in.kind == LiveKind::Call || in.kind == LiveKind::Put) l.underlying = underlying_level(in.underlying);
+        return live_margin(l, rates_);
+    }
+    /// Everything held or working, marked now: an entry still working counts
+    /// at what it asked for, a long option at the premium it paid. NaN when
+    /// any leg cannot be priced -- unknown, never zero.
+    [[nodiscard]] double margin_estimate() const {
+        double m = 0.0;
+        for (const auto& [model, v] : margin_by_model()) m += v;
+        return m;
+    }
+    /// The same, model by model (sorted by name).
+    [[nodiscard]] std::vector<std::pair<std::string, double>> margin_by_model() const {
+        std::vector<std::pair<std::string, double>> out;
+        for (const auto& p : book_.positions()) {
+            const bool working = p.state == LivePosState::Opening;
+            const std::int64_t q = working ? std::max(p.qty, p.want_qty) : p.qty;
+            double px = mid(p.inst.token);
+            if (p.filled() && p.side > 0 && (p.inst.kind == LiveKind::Call || p.inst.kind == LiveKind::Put)) px = p.entry;
+            else if (!p.filled()) {
+                const LiveTop t = top(p.inst.token);
+                px = static_cast<double>(p.side > 0 ? t.ask : t.bid) / 100.0;
+            }
+            const double v = margin_of(p.inst, p.side, q, px, p.carry);
+            auto it = std::find_if(out.begin(), out.end(), [&](const auto& x) { return x.first == p.model; });
+            if (it == out.end()) out.emplace_back(p.model, v);
+            else it->second += v;
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+    /// The day's highest margin estimate at a minute's close (NaN if one was unpriceable).
+    [[nodiscard]] double margin_peak_today() const noexcept { return margin_peak_; }
+    /// Minute samples since the last call.
+    [[nodiscard]] std::vector<LiveMarginSample> take_margin_samples() { return std::exchange(margin_samples_, {}); }
+    /// Close marks since the last call.
+    [[nodiscard]] std::vector<LiveMarkSample> take_marks() { return std::exchange(marks_, {}); }
+
     /// Calls or puts of the nearest streamed expiry of `under`, by strike.
     [[nodiscard]] std::vector<const LiveInstrument*> chain(const std::string& under, LiveKind kind) const {
         std::int64_t expiry = 0;
@@ -335,6 +442,13 @@ public:
         o += "  \"working_orders\": " + std::to_string(book_.working_orders()) + ",\n";
         o += "  \"late_prints\": " + std::to_string(late_prints_) + ",\n";
         o += "  \"trade_gaps\": " + std::to_string(gaps_) + ",\n";
+        {
+            const double m = margin_estimate();
+            o += "  \"margin\": {\"estimate\": " + (std::isfinite(m) ? num(m, 0) : std::string("null")) + ", \"peak_today\": "
+               + (std::isfinite(margin_peak_) ? num(margin_peak_, 0) : std::string("null")) + ", \"limit\": "
+               + num(limits_.max_margin, 0) + ", \"basis\": \"estimate, not SPAN (live/margin.hpp)\"},\n";
+        }
+        if (!metrics_.empty()) o += "  \"latency\": " + metrics_ + ",\n";
         o += "  \"note\": \"" + json_escape(note) + "\",\n";
         o += "  \"models\": [";
         for (std::size_t m = 0; m < models_.size(); ++m) {
@@ -383,6 +497,7 @@ public:
                                ns, "expired contract (the roll was missed)");
             }
             day_ = day;
+            margin_peak_ = 0.0;
             bars_.new_day();
             bars_.advance(ns, [](std::uint32_t, const LiveBar&) {});
             for (auto& m : models_) m->on_new_day(*this);
@@ -401,9 +516,28 @@ public:
             const int close = live_minute_of_day(m);
             if (close < kLiveOpenMinute) continue;
             obligations(close, ns, false);
-            if (close <= kLiveCloseMinute && m >= pause_until_minute_)
+            if (close <= kLiveCloseMinute && m >= pause_until_minute_) {
                 for (auto& mdl : models_) mdl->on_minute(*this, close);
+                ++decision_minutes_;
+            }
             if (close >= kLiveSquareOffMinute) square_off(ns, close > kLiveSquareOffMinute && sq_day_ != day_, false);
+        }
+        if (const int close = live_minute_of_day(minute); close >= kLiveOpenMinute && close <= kLiveCloseMinute) {
+            // The book at this minute's close, after its decisions: the capital it ties up.
+            const std::int64_t at = minute * 60'000'000'000LL - 19800'000'000'000LL;
+            auto by = margin_by_model();
+            double m = 0.0;
+            for (const auto& [model, v] : by) m += v;
+            margin_samples_.push_back(LiveMarginSample{at, m, book_.positions().size(), std::move(by)});
+            if (close >= kLiveMarkMinute && mark_day_ != day_) {
+                mark_day_ = day_;
+                for (const auto& p : book_.held()) {
+                    const double px = mid(p.inst.token);
+                    marks_.push_back(LiveMarkSample{at, p.model, p.inst.symbol, p.inst.token, p.side, p.qty, px > 0.0 ? px : 0.0, p.carry});
+                }
+            }
+            margin_peak_ = std::isfinite(m) && std::isfinite(margin_peak_) ? std::max(margin_peak_, m)
+                                                                           : std::numeric_limits<double>::quiet_NaN();
         }
         last_minute_ = minute;
         book_.on_clock(ns);
@@ -412,15 +546,18 @@ public:
     /// The feed has stopped and the machine's clock (`wall_ns`) has moved on:
     /// submit the roll and the square-off that are now overdue, so they fill
     /// the moment quotes return. Live feeds only -- a simulated session's
-    /// clock is not the machine's.
-    void watchdog(std::int64_t wall_ns) {
-        if (simulated_ || replay_ || day_ == 0 || wall_ns <= clock_ns_ + 60'000'000'000LL) return;
+    /// clock is not the machine's. True when it changed anything (the CLI
+    /// records those calls on the tape so a replay makes them too).
+    bool watchdog(std::int64_t wall_ns) {
+        if (simulated_ || replay_ || day_ == 0 || wall_ns <= clock_ns_ + 60'000'000'000LL) return false;
         const std::int64_t m = live_ist_minute_index(wall_ns);
-        if (live_day_of(m) != day_) return;
+        if (live_day_of(m) != day_) return false;
         const int close = live_minute_of_day(m);
-        if (close < kLiveOpenMinute) return;
+        if (close < kLiveOpenMinute) return false;
+        const auto before = std::make_tuple(book_.version(), roll_day_, sq_day_);
         obligations(close, wall_ns, true);
         if (close >= kLiveSquareOffMinute) square_off(wall_ns, true, true);
+        return before != std::make_tuple(book_.version(), roll_day_, sq_day_);
     }
 
 private:
@@ -429,18 +566,25 @@ private:
         if (close >= kLiveRollMinute && roll_day_ != day_) {
             roll_day_ = day_;
             const std::int64_t today = day_;
+            const std::uint64_t v = book_.version();
+            const std::string why = watchdog ? "expiry roll (feed stopped; watchdog)" : close > kLiveRollMinute
+                                                   ? "expiry roll (overdue: the clock reached " + live_fmt::hhmm(close) + ")"
+                                                   : "expiry roll";
             book_.close_if([today](const LivePosition& p) { return p.carry && p.inst.expiry_day != 0 && p.inst.expiry_day <= today; },
-                           ns, watchdog ? "expiry roll (feed stopped; watchdog)" : close > kLiveRollMinute
-                                              ? "expiry roll (overdue: the clock reached " + live_fmt::hhmm(close) + ")"
-                                              : "expiry roll");
+                           ns, why);
+            note_decision("engine", why + (book_.version() != v ? ": exits submitted" : ": nothing expiring"));
         }
     }
     /// Every intraday position out. Idempotent: an exit already working is left alone.
     void square_off(std::int64_t ns, bool overdue, bool watchdog) {
+        const bool first = sq_day_ != day_;
         sq_day_ = day_;
-        book_.close_if([](const LivePosition& p) { return !p.carry; }, ns,
-                       watchdog ? "15:20 square-off (feed stopped; watchdog)"
-                                : overdue ? "15:20 square-off (overdue)" : "15:20 square-off");
+        const std::uint64_t v = book_.version();
+        const char* why = watchdog ? "15:20 square-off (feed stopped; watchdog)"
+                                   : overdue ? "15:20 square-off (overdue)" : "15:20 square-off";
+        book_.close_if([](const LivePosition& p) { return !p.carry; }, ns, why);
+        if (first || book_.version() != v)
+            note_decision("engine", std::string(why) + (book_.version() != v ? ": exits submitted" : ": nothing intraday held"));
     }
 
     /// The one pre-trade check every entry passes.
@@ -466,6 +610,14 @@ private:
             return "per-model position limit (" + std::to_string(limits_.max_per_model) + ")";
         if (gross > limits_.max_gross_notional)
             return "gross notional " + live_fmt::num(gross, 0) + " over " + live_fmt::num(limits_.max_gross_notional, 0);
+        if (r.inst != nullptr) {
+            const double held = margin_estimate();
+            if (!std::isfinite(held)) return std::string("margin unknown: a held leg cannot be priced");
+            const double add = margin_of(*r.inst, r.side, r.qty, r.price, r.carry);
+            if (!std::isfinite(add)) return "margin unknown for " + r.inst->symbol + " (no price for it or its underlying)";
+            if (held + add > limits_.max_margin)
+                return "margin estimate " + live_fmt::num(held + add, 0) + " over " + live_fmt::num(limits_.max_margin, 0);
+        }
         double day_pnl = 0.0;
         for (const auto& t : book_.trades())
             if (live_day_of(live_ist_minute_index(t.exit_ns)) == day_) day_pnl += std::isfinite(t.net) ? t.net : t.gross;
@@ -487,10 +639,32 @@ private:
     std::int64_t clock_ns_ = 0, day_ = 0, last_minute_ = 0;
     std::int64_t roll_day_ = 0, sq_day_ = 0, pause_until_minute_ = 0;
     std::size_t trades_out_ = 0, fills_out_ = 0, positions_seen_ = 0;
-    std::uint64_t late_prints_ = 0, gaps_ = 0, missed_trades_ = 0;
-    std::string pause_note_, halt_;
+    std::uint64_t late_prints_ = 0, gaps_ = 0, missed_trades_ = 0, decision_minutes_ = 0;
+    std::string pause_note_, halt_, metrics_;
+    std::vector<LiveDecisionNote> notes_;
     LiveRiskLimits limits_;
+    LiveMarginRates rates_;
+    std::vector<LiveMarginSample> margin_samples_;
+    std::vector<LiveMarkSample> marks_;
+    std::int64_t mark_day_ = 0;
+    double margin_peak_ = 0.0;
     bool stale_ = false, simulated_ = false, replay_ = false, kill_ = false;
+};
+
+/// Records a model's decision when the deciding scope ends, however it ends
+/// (decisions return early on every reason not to act): `text()` is read then.
+template <class Text>
+class LiveDecisionScope {
+public:
+    LiveDecisionScope(LiveEngine& e, std::string model, Text text) : e_(e), model_(std::move(model)), text_(std::move(text)) {}
+    ~LiveDecisionScope() { e_.note_decision(model_, text_()); }
+    LiveDecisionScope(const LiveDecisionScope&) = delete;
+    LiveDecisionScope& operator=(const LiveDecisionScope&) = delete;
+
+private:
+    LiveEngine& e_;
+    std::string model_;
+    Text text_;
 };
 
 } // namespace altair::live
