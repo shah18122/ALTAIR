@@ -334,6 +334,86 @@ https_post_json(std::string_view host, std::string_view target,
     }
 }
 
+/// A FYERS v3 call: GET, POST or DELETE with the session's `Authorization`,
+/// a JSON body (none for GET) and the `version: 3` header every call in the
+/// official SDK carries. The order router's only transport
+/// (oms/order_router_main.cpp); nothing here retries.
+[[nodiscard]] inline std::expected<HttpResponse, HttpError>
+https_fyers_request(std::string_view method, std::string_view host, std::string_view target,
+                    std::string_view body, std::string_view authorization,
+                    std::chrono::seconds timeout = std::chrono::seconds{10})
+{
+    namespace beast = boost::beast;
+    namespace http = beast::http;
+    namespace net = boost::asio;
+    namespace ssl = net::ssl;
+    using tcp = net::ip::tcp;
+
+    const http::verb verb = method == "GET" ? http::verb::get
+                          : method == "POST" ? http::verb::post
+                          : method == "DELETE" ? http::verb::delete_
+                          : http::verb::unknown;
+    if (verb == http::verb::unknown) { return std::unexpected(HttpError::Unknown); }
+    try {
+        net::io_context ioc;
+        ssl::context ctx{ssl::context::tls_client};
+        ctx.set_verify_mode(ssl::verify_peer);
+        ctx.set_default_verify_paths();
+        if (detail::load_platform_roots(ctx.native_handle()) == 0) {
+            return std::unexpected(HttpError::TlsFailed);
+        }
+
+        tcp::resolver resolver{ioc};
+        beast::ssl_stream<beast::tcp_stream> stream{ioc, ctx};
+        const std::string host_s{host};
+        if (!SSL_set_tlsext_host_name(stream.native_handle(), host_s.c_str())) {
+            return std::unexpected(HttpError::TlsFailed);
+        }
+        stream.set_verify_callback(ssl::host_name_verification(host_s));
+
+        boost::system::error_code ec;
+        const auto results = resolver.resolve(host_s, "443", ec);
+        if (ec) { return std::unexpected(HttpError::ResolveFailed); }
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        beast::get_lowest_layer(stream).connect(results, ec);
+        if (ec) { return std::unexpected(HttpError::ConnectFailed); }
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        stream.handshake(ssl::stream_base::client, ec);
+        if (ec) { return std::unexpected(HttpError::TlsFailed); }
+
+        http::request<http::string_body> req{verb, std::string{target}, 11};
+        req.set(http::field::host, host_s);
+        req.set(http::field::user_agent, "altair/0.1");
+        req.set(http::field::content_type, "application/json");
+        req.set(http::field::authorization, std::string{authorization});
+        req.set("version", "3");
+        if (verb != http::verb::get) req.body() = std::string{body};
+        req.prepare_payload();
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        http::write(stream, req, ec);
+        if (ec) { return std::unexpected(HttpError::TransportFailed); }
+
+        beast::flat_buffer buffer;
+        http::response_parser<http::string_body> parser;
+        // RULE 11: a reply past 8 MB is refused, not read -- a day's order book is far smaller.
+        parser.body_limit(8ull * 1024 * 1024);
+        beast::get_lowest_layer(stream).expires_after(timeout);
+        http::read(stream, buffer, parser, ec);
+        if (ec) { return std::unexpected(HttpError::TransportFailed); }
+        auto res = parser.release();
+        HttpResponse out{};
+        out.status = res.result_int();
+        out.body = res.body();
+
+        beast::get_lowest_layer(stream).expires_after(std::chrono::seconds{5});
+        boost::system::error_code shut;
+        stream.shutdown(shut);
+        return out;
+    } catch (const std::exception&) {
+        return std::unexpected(HttpError::Unknown);
+    }
+}
+
 /// GET over TLS with a Kite `Authorization` header.
 ///
 /// P2-12b. Added because the historical candle API is a GET and this file had
