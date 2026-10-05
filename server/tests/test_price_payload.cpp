@@ -182,12 +182,19 @@ int main()
     {
         altair::PricePayload p;
         p.flags = altair::kPriceHasBook;
-        p.depth_levels = 9;                 // deeper than the format allows
-        altair::PriceLevel lv[9]{};
-        std::uint8_t buf[1024]{};
+        p.depth_levels = 51;                // deeper than the format allows
+        altair::PriceLevel lv[51]{};
+        std::uint8_t buf[4096]{};
         check(!altair::encode_price(p, lv, lv, buf, sizeof buf).has_value(),
-              "encoding a book deeper than five levels is refused, not "
-              "truncated to five");
+              "encoding a book deeper than fifty levels is refused, not "
+              "truncated to fifty");
+        p.depth_levels = 50;                // the FYERS 50-level book
+        const auto n = altair::encode_price(p, lv, lv, buf, sizeof buf);
+        check(n.has_value() && *n == altair::price_frame_bytes(50) && *n == 2448,
+              "a fifty-level book encodes to 48 + 2*50*24 = 2448 bytes");
+        check(n.has_value() && altair::decode_price(buf, *n).has_value()
+                  && altair::decode_price(buf, *n)->payload.depth_levels == 50,
+              "and decodes with all fifty levels");
     }
     {
         altair::PricePayload p;

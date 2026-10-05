@@ -226,7 +226,7 @@ public:
         simulated_ = simulated_ || s.simulated;
         if (q.has(kQuoteHasTop)) book_.on_market(q.token, std::max(ns, clock_ns_));
     }
-    /// Five levels a side, at feed time `ns`.
+    /// Up to fifty levels a side (the FYERS 50-level book), at feed time `ns`.
     void on_book(std::uint32_t token, std::uint16_t levels, const LiveLevel* bids, const LiveLevel* asks, std::int64_t ns) {
         LiveState& s = state_[token];
         s.levels = static_cast<std::uint16_t>(std::min<std::size_t>(levels, kLiveDepth));

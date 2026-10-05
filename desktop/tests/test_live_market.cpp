@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
     PricePayload book;
     book.token = 12468226;
     book.flags = kPriceHasBook | kPriceSimulated;
-    book.depth_levels = kMaxDepthLevels;
+    book.depth_levels = 5;   // the HSM and Kite books; the FYERS 50-level book is below
     PriceLevel bids[kMaxDepthLevels]{}, asks[kMaxDepthLevels]{};
     for (std::size_t i = 0; i < kMaxDepthLevels; ++i) {
         bids[i] = PriceLevel{2401230 - 10 * static_cast<std::int64_t>(i), 650 * static_cast<std::int64_t>(i + 1), static_cast<std::uint32_t>(i + 1), 0};
@@ -149,6 +149,18 @@ int main(int argc, char** argv) {
               && depth->item(4, 3) && depth->item(4, 3)->text() == QStringLiteral("24012.90"),
           "depth shows five levels a side");
     check(depth->item(5, 1) && depth->item(5, 1)->text() == QStringLiteral("9,750"), "and the bid total");
+    {
+        // The FYERS 50-level book: every level shows, the total under them.
+        PricePayload deep = book;
+        deep.depth_levels = static_cast<std::uint16_t>(kMaxDepthLevels);
+        bus.publish(kTopicBook, deep, bids, asks, t0 + 6'000'000);
+        pump(bus, 3000, [&] { return client.price(12468226) != nullptr && client.price(12468226)->levels == kMaxDepthLevels; });
+        pump(bus, 400, [] { return false; });
+        check(depth->rowCount() == 51 && depth->item(49, 2) && depth->item(49, 2)->text() == QStringLiteral("24007.40")
+                  && depth->item(49, 3) && depth->item(49, 3)->text() == QStringLiteral("24017.40"),
+              "a 50-level book shows all fifty levels a side");
+        check(depth->item(50, 0) && depth->item(50, 0)->text() == QStringLiteral("Total"), "with the totals under the fiftieth");
+    }
     auto* tape = page.tape();
     check(tape->rowCount() == 2 && tape->item(0, 1) && tape->item(0, 1)->text() == QStringLiteral("24012.50")
               && tape->item(1, 1)->text() == QStringLiteral("24012.00"),

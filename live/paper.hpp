@@ -54,7 +54,7 @@
 
 namespace altair::live {
 
-inline constexpr std::size_t kLiveDepth = 5;
+inline constexpr std::size_t kLiveDepth = 50;   ///< the deepest book the feed carries (server/price_payload.hpp)
 
 struct LiveLevel {
     std::int64_t px = 0;    ///< paise
@@ -66,7 +66,7 @@ struct LiveTop {
     std::int64_t ltp = 0, bid = 0, ask = 0;   ///< paise; 0 when absent
     std::int64_t bid_qty = 0, ask_qty = 0;    ///< units at the touch; 0 = none shown
     std::int64_t quote_ns = 0;                ///< feed time the bid/ask was stamped; 0 = never quoted
-    std::int64_t book_ns = 0;                 ///< feed time of the five-level book; 0 = none
+    std::int64_t book_ns = 0;                 ///< feed time of the book (5 or 50 levels); 0 = none
     std::uint16_t levels = 0;
     LiveLevel bids[kLiveDepth]{}, asks[kLiveDepth]{};
 };

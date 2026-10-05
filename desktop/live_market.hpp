@@ -434,12 +434,14 @@ inline void live_set(QTableWidget* t, int r, int c, const QString& text, const Q
     if (fg.isValid()) it->setForeground(fg);
 }
 
-/// Five levels a side and the totals.
+/// Every level the feed sends a side (five, or fifty from the FYERS 50-level
+/// book) and the totals. Never fewer than five rows, so the ladder keeps its shape.
 inline void show_live_depth(QTableWidget* t, const LivePrice* p) {
-    t->setRowCount(static_cast<int>(kMaxDepthLevels) + 1);
+    const int rows = std::max(5, p != nullptr ? static_cast<int>(std::min<std::size_t>(p->levels, kMaxDepthLevels)) : 0);
+    t->setRowCount(rows + 1);
     const QColor bid(0x7F, 0xB8, 0xF0), ask(0xF0, 0xA0, 0x7F);
     qint64 tb = 0, ta = 0;
-    for (int k = 0; k < static_cast<int>(kMaxDepthLevels); ++k) {
+    for (int k = 0; k < rows; ++k) {
         const bool have = p != nullptr && k < p->levels;
         const PriceLevel* b = have ? &p->bids[k] : nullptr;
         const PriceLevel* a = have ? &p->asks[k] : nullptr;
@@ -451,7 +453,7 @@ inline void show_live_depth(QTableWidget* t, const LivePrice* p) {
         live_set(t, k, 5, have && a->qty > 0 ? QString::number(a->orders) : QString(), ask);
         if (have) { tb += b->qty; ta += a->qty; }
     }
-    const int last = static_cast<int>(kMaxDepthLevels);
+    const int last = rows;
     const bool any = p != nullptr && p->levels > 0;
     live_set(t, last, 0, QStringLiteral("Total"));
     live_set(t, last, 1, any ? live_detail::qty(tb) : QStringLiteral("no book"), bid);

@@ -91,7 +91,7 @@ struct LivePrice {
     /// counts every one, so the window never passes for the whole day.
     std::deque<LiveTapePrint> tape;
 
-    /// Five levels a side, and how many are real.
+    /// Up to fifty levels a side, and how many are real.
     PriceLevel bids[kMaxDepthLevels]{};
     PriceLevel asks[kMaxDepthLevels]{};
     std::uint16_t levels = 0;

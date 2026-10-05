@@ -55,6 +55,7 @@
 #include <broker/https_client.hpp>
 #include <broker/kite_ticker.hpp>
 #include <feed/fyers_hsm.hpp>
+#include <feed/fyers_tbt.hpp>
 #include <feed/kite_decoder.hpp>
 #include <instruments/contract_spec.hpp>
 #include <live/universe.hpp>
@@ -77,14 +78,17 @@ void usage(const char* exe) {
         "  %s --replay <symbol> <interval> [--port N] [--seconds N]\n"
         "  %s --go [--port N] [--seconds N] [--tokens a,b,c]\n"
         "  %s --fyers [--go] [--until HH:MM] [--strikes N] [--depth-strikes N]\n"
-        "      [--no-stocks] [--atm-nifty X] [--atm-banknifty X]\n"
+        "      [--no-stocks] [--atm-nifty X] [--atm-banknifty X] [--depth50 N|off]\n"
         "  %s --kite [--go] [same options as --fyers]\n"
         "  %s --live [--go] [same options as --fyers]\n"
         "  %s --sim [--date YYYY-MM-DD] [--speed N] [--from HH:MM] [--seed N]\n\n"
         "  --fyers             the LIVE TERMINAL feed from FYERS: NIFTY, BANKNIFTY,\n"
         "                      INDIA VIX, the near futures, both option chains\n"
         "                      (ATM +/- --strikes, default 20) and the NIFTY 50, with\n"
-        "                      quotes and 5-level depth. Needs data/fyers_session.json\n"
+        "                      quotes and depth: the FYERS 50-level book for the\n"
+        "                      futures, the options near the money and the stocks\n"
+        "                      (--depth50 N: at most N of them, default 250; off: the\n"
+        "                      5-level book only). Needs data/fyers_session.json\n"
         "                      (altair_fyers_login) or ALTAIR_FYERS_CLIENT_ID and\n"
         "                      ALTAIR_FYERS_ACCESS_TOKEN. Without --go: prints the\n"
         "                      universe and exits. Runs until --until (default 15:35\n"
@@ -256,6 +260,8 @@ struct Bar {
 
 std::atomic<bool> g_stop{false};
 extern "C" void on_stop_signal(int) { g_stop.store(true); }
+/// Most instruments given the FYERS 50-level book (--depth50 N; 0 = off).
+std::size_t g_depth50 = 250;
 
 /// "HH:MM" to minutes after midnight; -1 when it is not a time.
 [[nodiscard]] int parse_hhmm(const std::string& s) {
@@ -322,6 +328,129 @@ void fyers_spots(const FySession& s, double& nifty, double& banknifty) {
     };
     nifty = lp_after("\"NSE:NIFTY50-INDEX\"");
     banknifty = lp_after("\"NSE:NIFTYBANK-INDEX\"");
+}
+
+/// The FYERS 50-level book (feed/fyers_tbt.hpp) for the instruments that
+/// carry depth, on its own socket and thread. Its books replace the HSM's five
+/// levels on the bus: while one is fresh, the HSM book for that instrument is
+/// not published, so the two never alternate on screen.
+struct TbtFeed {
+    explicit TbtFeed(std::size_t n) : last_ns(n) {}
+    ~TbtFeed() {
+        stop.store(true);
+        if (th.joinable()) th.join();
+    }
+    [[nodiscard]] bool fresh(std::size_t i) const {
+        if (i >= last_ns.size()) return false;
+        const std::int64_t t = last_ns[i].load(std::memory_order_relaxed);
+        return t > 0 && steady_ns() - t < 5'000'000'000LL;
+    }
+    [[nodiscard]] static std::int64_t steady_ns() {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+    std::vector<std::atomic<std::int64_t>> last_ns;   ///< per universe index: the last 50-level publish (steady)
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> books{0};
+    std::thread th;
+};
+
+void run_fyers_tbt(const FySession& session, const std::vector<altair::live::LiveInstrument>& u,
+                   altair::live_sources::SharedBus& bus, std::int64_t deadline_unix, TbtFeed& feed) {
+    namespace tbt = altair::fyers_tbt;
+    using altair::live::LiveKind;
+    const auto auth = altair::fyers::authorization_header(session.client.c_str(), session.access.c_str());
+    if (!auth) return;
+    // Futures first, then options, then equities: if FYERS caps the count,
+    // the instruments the 50-level book matters most for are the ones it keeps.
+    std::vector<std::size_t> idx;
+    for (std::size_t i = 0; i < u.size(); ++i)
+        if (u[i].depth && u[i].kind != LiveKind::Index) idx.push_back(i);
+    const auto rank = [&u](std::size_t i) { return u[i].kind == LiveKind::Future ? 0 : u[i].kind == LiveKind::Equity ? 2 : 1; };
+    std::stable_sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) { return rank(a) < rank(b); });
+    if (idx.size() > g_depth50) {
+        // RULE 11: said, not silent -- the rest keep the five-level book.
+        std::printf("  50-level book: %zu instrument(s) beyond --depth50 %zu keep the 5-level book\n", idx.size() - g_depth50, g_depth50);
+        idx.resize(g_depth50);
+    }
+    if (idx.empty()) return;
+    std::unordered_map<std::string, std::size_t> by_symbol;
+    std::vector<std::string> symbols;
+    for (const std::size_t i : idx) { by_symbol.emplace(u[i].fyers, i); symbols.push_back(u[i].fyers); }
+    std::vector<std::string> left;
+    const auto channels = tbt::tbt_channels(symbols, &left);
+    if (!left.empty()) std::printf("  50-level book: %zu instrument(s) past 50 channels keep the 5-level book\n", left.size());
+
+    std::string host = tbt::kTbtDefaultHost, path = tbt::kTbtDefaultPath;
+    if (const auto r = altair::https_get_auth(tbt::kTbtUrlHost, tbt::kTbtUrlPath, *auth, "", std::chrono::seconds{15});
+        r && r->status == 200) {
+        if (const auto url = tbt::tbt_socket_url(r->body)) { host = url->first; path = url->second; }
+    }
+    std::vector<altair::FyersFrame> opening;
+    const auto bytes = [](const std::string& t) { return altair::FyersFrame(t.begin(), t.end()); };
+    for (std::size_t c = 0; c < channels.size(); ++c) opening.push_back(bytes(tbt::tbt_subscribe_text(channels[c], static_cast<int>(c) + 1)));
+    opening.push_back(bytes(tbt::tbt_resume_text(static_cast<int>(channels.size()))));
+    std::printf("  50-level book: %zu instrument(s) on %zu channel(s) at %s\n", symbols.size(), channels.size(), host.c_str());
+    std::fflush(stdout);
+
+    tbt::TbtBooks books;
+    int server_errors = 0;
+    const auto on_frame = [&](const std::uint8_t* p, std::size_t n, std::vector<altair::FyersFrame>&) -> bool {
+        tbt::TbtMessage m;
+        if (books.on_message(p, n, m)) {
+            if (m.error) {
+                // RULE 11: the first few reasons are printed; the rest are counted.
+                if (++server_errors <= 5) std::printf("  50-level book: FYERS says: %s\n", m.text.c_str());
+                std::fflush(stdout);
+            }
+            const std::int64_t recv = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            for (const auto& t : m.updated) {
+                const auto it = by_symbol.find(t);
+                const tbt::TbtBook* b = books.book(t);
+                if (it == by_symbol.end() || b == nullptr) continue;
+                const std::size_t levels = std::min(b->depth(), altair::kMaxDepthLevels);
+                if (levels == 0) continue;
+                altair::PricePayload pp;
+                pp.token = u[it->second].token;
+                pp.flags |= altair::kPriceHasBook;
+                pp.depth_levels = static_cast<std::uint16_t>(levels);
+                pp.exchange_ts_ns = recv;
+                altair::PriceLevel bids[altair::kMaxDepthLevels]{};
+                altair::PriceLevel asks[altair::kMaxDepthLevels]{};
+                for (std::size_t k = 0; k < levels; ++k) {
+                    bids[k] = {b->bid_px[k], b->bid_qty[k], b->bid_orders[k], 0};
+                    asks[k] = {b->ask_px[k], b->ask_qty[k], b->ask_orders[k], 0};
+                }
+                bus.book(pp, bids, asks, recv);
+                feed.last_ns[it->second].store(TbtFeed::steady_ns(), std::memory_order_relaxed);
+                feed.books.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        return !feed.stop.load() && !g_stop.load() && unix_now() < deadline_unix;
+    };
+    altair::FyersSocketOptions opt;
+    opt.host = host;
+    opt.path = path;
+    opt.authorization = *auth;
+    opt.text = true;
+    opt.stop = [&feed] { return feed.stop.load() || g_stop.load(); };
+    const std::string ping = "ping";
+    for (long attempt = 0; !feed.stop.load() && !g_stop.load(); ++attempt) {
+        const std::int64_t left_s = deadline_unix - unix_now();
+        if (left_s < 1) break;
+        books.reset();
+        // The book can be quiet for minutes (a closed market): never "idle".
+        const auto run = altair::fyers_data_socket_run(opening, on_frame, bytes(ping), std::chrono::seconds{tbt::kTbtPingSeconds},
+                                                       std::chrono::seconds{left_s}, std::chrono::seconds{left_s}, opt);
+        if (feed.stop.load() || g_stop.load()) break;
+        if (!run && (attempt < 3 || attempt % 20 == 0)) {
+            std::printf("  50-level book: %s; the 5-level book stays (retrying)\n", altair::fyers_socket_error_text(run.error()));
+            std::fflush(stdout);
+        }
+        // RULE 11: safe-side clamp -- back-off grows to 30 s and stops there.
+        const long backoff = attempt < 4 ? (2L << attempt) : 30L;
+        for (long s2 = 0; s2 < backoff && !feed.stop.load() && !g_stop.load(); ++s2) std::this_thread::sleep_for(std::chrono::seconds{1});
+    }
 }
 
 /// Stream the universe from FYERS until `deadline_unix` or Ctrl+C.
@@ -422,6 +551,8 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     std::printf("  subscribing %zu topic(s) for %zu instrument(s)\n", topics.size(), u.size());
     std::fflush(stdout);
 
+    TbtFeed tbt(u.size());
+    if (g_depth50 > 0) tbt.th = std::thread([&] { run_fyers_tbt(session, u, bus, deadline_unix, tbt); });
     std::vector<altair::fyers_frames::LastTrade> last(u.size());
     altair::fyers_frames::Frames f;
     bool auth_rejected = false;
@@ -433,7 +564,8 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         if (!altair::fyers_frames::to_frames(up, u[up.cookie].token, last[up.cookie], recv, f)) { return; }
         if (f.quote) { bus.quote(f.quote_p, f.quote_ns); }
         if (f.trade) { bus.trade(f.price, f.trade_ns); st.engine_ns = f.trade_ns; }
-        if (f.book) { bus.book(f.price, f.bids, f.asks, f.trade_ns); }
+        // The 50-level book wins while it is fresh: no flicker back to five levels.
+        if (f.book && !tbt.fresh(up.cookie)) { bus.book(f.price, f.bids, f.asks, f.trade_ns); }
     };
     auto last_status = std::chrono::steady_clock::now();
     const auto on_frame = [&](const std::uint8_t* p, std::size_t n, std::vector<altair::FyersFrame>& replies) -> bool {
@@ -768,6 +900,9 @@ int main(int argc, char** argv) {
             live_dir_arg = argv[++i];
         } else if (a == "--no-stocks") {
             stocks = false;
+        } else if (a == "--depth50" && i + 1 < argc) {
+            const std::string v = argv[++i];
+            g_depth50 = v == "off" ? 0 : static_cast<std::size_t>(std::strtoul(v.c_str(), nullptr, 10));
         } else if (a == "--atm-nifty" && i + 1 < argc) {
             atm_nifty = std::atof(argv[++i]);
         } else if (a == "--atm-banknifty" && i + 1 < argc) {
