@@ -10,6 +10,7 @@
 #pragma once
 
 #include <QComboBox>
+#include <QDate>
 #include <QCompleter>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -165,6 +166,9 @@ public:
         fill_instruments();
     }
 
+    /// Expiries before this day (YYYY-MM-DD) are not offered; today by default.
+    void set_today(const QString& iso) { today_ = iso; fill_expiries(); }
+
     /// The contract the choices name; 0 while they name none.
     [[nodiscard]] quint32 token() const noexcept { return token_; }
     [[nodiscard]] QString resolved_text() const { return resolved_->text(); }
@@ -242,7 +246,9 @@ private:
     void fill_expiries() {
         std::set<QString> ex;
         const QString sym = symbol_->currentText().trimmed().toUpper();
-        for (const auto& m : master_) if (in_kind(m) && key_of(m) == sym && !m.expiry.isEmpty()) ex.insert(m.expiry);
+        // A master a few days old still lists contracts that have expired: not offered.
+        for (const auto& m : master_)
+            if (in_kind(m) && key_of(m) == sym && !m.expiry.isEmpty() && m.expiry >= today_) ex.insert(m.expiry);
         const QString keep = expiry_->currentText();
         {
             const QSignalBlocker b(expiry_);
@@ -301,6 +307,7 @@ private:
     QLabel* resolved_ = nullptr;
     QPushButton* add_ = nullptr;
     quint32 token_ = 0;
+    QString today_ = QDate::currentDate().toString(Qt::ISODate);
 };
 
 } // namespace altair::ui

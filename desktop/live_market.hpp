@@ -780,7 +780,7 @@ public:
         sel_->setTextFormat(Qt::RichText);
         sel_->setWordWrap(true);
         dv->addWidget(sel_);
-        auto* depth_title = new QLabel(QStringLiteral("MARKET DEPTH — best five"), side_);
+        auto* depth_title = new QLabel(QStringLiteral("MARKET DEPTH — every level the feed sends (50 from FYERS)"), side_);
         depth_title->setObjectName(QStringLiteral("sectionKicker"));
         dv->addWidget(depth_title);
         depth_ = make_live_table(6, {QStringLiteral("Orders"), QStringLiteral("Bid Qty"), QStringLiteral("Bid"),

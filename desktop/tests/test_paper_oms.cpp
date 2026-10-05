@@ -287,6 +287,7 @@ int main(int argc, char** argv) {
             row(9012, "NIFTY26OCT25100CE", "NFO", "NFO-OPT", "NIFTY", "CE", "2026-10-27", 25100, 75),
         };
         AddScripDialog add(master);
+        add.set_today(QStringLiteral("2026-10-01"));
         add.choose(QStringLiteral("NFO"), QStringLiteral("OPTIDX"), QStringLiteral("NIFTY"), QStringLiteral("2026-10-27"),
                    QStringLiteral("PE"), QStringLiteral("25000"));
         check(add.instruments() == QStringList({QStringLiteral("FUTIDX"), QStringLiteral("FUTSTK"), QStringLiteral("OPTIDX"),
@@ -296,6 +297,9 @@ int main(int argc, char** argv) {
               "OPTIDX NIFTY 27-Oct PE 25000 names one contract; only the strikes that exist for PE are offered");
         add.choose(QStringLiteral("NFO"), QStringLiteral("FUTIDX"), QStringLiteral("NIFTY"), QStringLiteral("2026-11-24"));
         check(add.token() == 9002 && add.expiries().size() == 2, "FUTIDX NIFTY lists both expiries and picks November's");
+        add.set_today(QStringLiteral("2026-10-28"));
+        check(add.expiries() == QStringList({QStringLiteral("2026-11-24")}), "an expiry that has passed is not offered");
+        add.set_today(QStringLiteral("2026-10-01"));
         add.choose(QStringLiteral("NFO"), QStringLiteral("FUTSTK"), QStringLiteral("SBIN"), QStringLiteral("2026-10-27"));
         check(add.token() == 9003, "a stock future is FUTSTK, not FUTIDX");
         add.choose(QStringLiteral("BSE"), QStringLiteral("EQ"), QStringLiteral("SBIN"));
