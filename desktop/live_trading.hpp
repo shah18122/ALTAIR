@@ -41,6 +41,7 @@
 #include <QTimeZone>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -91,13 +92,14 @@ struct LiveTradingArm {
     return a;
 }
 
-/// When an arm given now ends: 15:30 IST today, or half an hour from now when
-/// that has passed (the router refuses orders after 15:30 anyway).
+/// When an arm given now ends: 15:30 IST today, but never more than twelve
+/// hours away (the router refuses a longer arm); half an hour from now when
+/// 15:30 has passed (the router refuses orders after 15:30 anyway).
 [[nodiscard]] inline qint64 live_arm_expiry(const QDateTime& now) {
     const QDateTime ist = now.toTimeZone(QTimeZone(19'800));
     const QDateTime close(ist.date(), QTime(15, 30), QTimeZone(19'800));
     const qint64 n = now.toSecsSinceEpoch(), c = close.toSecsSinceEpoch();
-    return c > n + 60 ? c : n + 1800;
+    return c > n + 60 ? std::min(c, n + 12 * 3600) : n + 1800;
 }
 
 /// Write the arm file in one step (QSaveFile: a reader sees the old file or the new).

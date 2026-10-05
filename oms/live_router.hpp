@@ -280,8 +280,9 @@ inline constexpr std::int64_t kRouterCeilingOrdersPerDay = 200;
 inline constexpr std::int64_t kRouterCeilingOpenOrders = 50;
 inline constexpr std::int64_t kRouterCeilingDailyLossPaise = 10'00'000LL * 100;      // Rs 10 lakh
 inline constexpr double kRouterCeilingBandPct = 20.0;
-/// An arm lasts at most this long: one session, never overnight.
-inline constexpr std::int64_t kRouterMaxArmSeconds = 8 * 3600;
+/// An arm lasts at most this long: one session, never overnight (armed at
+/// 03:30 IST it reaches 15:30; the Terminal never asks for more).
+inline constexpr std::int64_t kRouterMaxArmSeconds = 12 * 3600;
 
 struct RouterArm {
     bool armed = false;

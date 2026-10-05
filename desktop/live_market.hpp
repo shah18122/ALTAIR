@@ -35,6 +35,7 @@
 #pragma once
 
 #include "price_client.hpp"
+#include "scrip_master.hpp"
 #include "theme.hpp"
 
 #include <analytics/greeks.hpp>
@@ -657,64 +658,6 @@ private:
 // The page
 // ---------------------------------------------------------------------------
 
-/// One row of the instrument master the scrip search offers.
-struct MasterScrip {
-    quint32 token = 0;
-    QString symbol, exchange, segment, display;
-};
-
-/// The NSE equities and NSE F&O contracts of data/instruments.csv (the Kite
-/// master), for the scrip search. Read on first use: it is ~9 MB.
-[[nodiscard]] inline std::vector<MasterScrip> load_master_scrips(const QString& path) {
-    std::vector<MasterScrip> out;
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return out;
-    QTextStream in(&f);
-    const auto split = [](const QString& line) {
-        QStringList fields;
-        QString cur;
-        bool quoted = false;
-        for (const QChar c : line) {
-            if (c == QLatin1Char('"')) { quoted = !quoted; continue; }
-            if (c == QLatin1Char(',') && !quoted) { fields << cur; cur.clear(); continue; }
-            cur += c;
-        }
-        fields << cur;
-        return fields;
-    };
-    const QStringList head = split(in.readLine());
-    const int c_tok = static_cast<int>(head.indexOf(QStringLiteral("instrument_token")));
-    const int c_sym = static_cast<int>(head.indexOf(QStringLiteral("tradingsymbol")));
-    const int c_name = static_cast<int>(head.indexOf(QStringLiteral("name")));
-    const int c_exp = static_cast<int>(head.indexOf(QStringLiteral("expiry")));
-    const int c_type = static_cast<int>(head.indexOf(QStringLiteral("instrument_type")));
-    const int c_seg = static_cast<int>(head.indexOf(QStringLiteral("segment")));
-    const int c_ex = static_cast<int>(head.indexOf(QStringLiteral("exchange")));
-    if (c_tok < 0 || c_sym < 0 || c_seg < 0 || c_ex < 0 || c_type < 0) return out;
-    const int need = std::max({c_tok, c_sym, c_seg, c_ex, c_type, c_name, c_exp}) + 1;
-    out.reserve(100000);
-    while (!in.atEnd()) {
-        const QStringList c = split(in.readLine());
-        if (c.size() < need) continue;
-        const QString ex = c[c_ex], seg = c[c_seg], type = c[c_type];
-        const bool eq = ex == QLatin1String("NSE") && seg == QLatin1String("NSE") && type == QLatin1String("EQ");
-        const bool fo = ex == QLatin1String("NFO") && (seg == QLatin1String("NFO-FUT") || seg == QLatin1String("NFO-OPT"));
-        if (!eq && !fo) continue;
-        MasterScrip m;
-        m.token = c[c_tok].toUInt();
-        if (m.token == 0) continue;
-        m.symbol = c[c_sym];
-        m.exchange = ex;
-        m.segment = seg;
-        const QString name = c_name >= 0 ? c[c_name] : QString();
-        const QString expiry = c_exp >= 0 ? c[c_exp] : QString();
-        m.display = eq ? QStringLiteral("%1  ·  NSE EQ  ·  %2").arg(m.symbol, name)
-                       : QStringLiteral("%1  ·  %2  ·  %3").arg(m.symbol, seg == QLatin1String("NFO-FUT") ? QStringLiteral("FUT") : type, expiry);
-        out.push_back(std::move(m));
-    }
-    return out;
-}
-
 class LiveMarketWatch final : public QWidget {
 public:
     enum class View { Watch, Chain };
@@ -734,8 +677,9 @@ public:
         auto* bar = new QHBoxLayout;
         group_ = new QComboBox(this);
         group_->addItem(QStringLiteral("All"), QString());
-        for (const char* g : {"Indices", "Futures", "NIFTY options", "BANKNIFTY options", "NIFTY 50", "Stock futures", "Watchlist"})
-            group_->addItem(QString::fromLatin1(g), QString::fromLatin1(g));
+        for (const char* g : {"Indices", "Futures", "NIFTY options", "BANKNIFTY options", "NIFTY 50", "NIFTY 50 · BSE",
+                              "Stock futures", "Watchlist"})
+            group_->addItem(QString::fromUtf8(g), QString::fromUtf8(g));
         search_ = new QLineEdit(this);
         search_->setObjectName(QStringLiteral("watchFind"));
         search_->setPlaceholderText(QStringLiteral("Find in watch  (Ctrl+F)"));
@@ -746,9 +690,12 @@ public:
         add_->setEditable(true);
         add_->setInsertPolicy(QComboBox::NoInsert);
         add_->setMinimumWidth(320);
-        add_->lineEdit()->setPlaceholderText(QStringLiteral("＋ Add scrip: type a symbol, e.g. SBIN or NIFTY26OCT  (Insert)"));
-        add_->setToolTip(QStringLiteral("Search NSE equities and NSE F&O from the instrument master; pick one to add it to the "
-                                        "watch. The feed starts streaming it within a few seconds."));
+        add_->lineEdit()->setPlaceholderText(QStringLiteral("Quick add: type a symbol, e.g. SBIN or NIFTY26OCT"));
+        add_->setToolTip(QStringLiteral("Search NSE and BSE equities and NSE F&O from the instrument master; pick one to add it "
+                                        "to the watch. The feed starts streaming it within a few seconds."));
+        add_btn_ = new QPushButton(QStringLiteral("＋ Add scrip"), this);
+        add_btn_->setObjectName(QStringLiteral("addScripButton"));
+        add_btn_->setToolTip(QStringLiteral("Insert · the GETS way: Exchange, Instrument, Symbol, Expiry, Option type, Strike"));
         start_live_ = new QPushButton(QStringLiteral("▶ Start live feed"), this);
         start_live_->setObjectName(QStringLiteral("startLiveFeed"));
         start_live_->setToolTip(QStringLiteral(
@@ -760,6 +707,7 @@ public:
         auto_start_->setToolTip(QStringLiteral("Start the live feed by itself when the Terminal opens and nothing is streaming"));
         bar->addWidget(group_);
         bar->addWidget(search_);
+        bar->addWidget(add_btn_);
         bar->addWidget(add_, 1);
         bar->addWidget(start_live_);
         bar->addWidget(stop_);
@@ -866,6 +814,7 @@ public:
         chain_->grid()->installEventFilter(this);
         add_->installEventFilter(this);
         connect(add_, &QComboBox::activated, this, [this](int) { add_from_box(); });
+        connect(add_btn_, &QPushButton::clicked, this, [this] { focus_add(); });
         connect(add_->lineEdit(), &QLineEdit::returnPressed, this, [this] { add_from_box(); });
         if (client_ != nullptr) {
             connect(client_, &PriceClient::priceUpdated, this, [this](unsigned tok) {
@@ -930,10 +879,12 @@ public:
     [[nodiscard]] View view_mode() const { return main_->currentWidget() == chain_ ? View::Chain : View::Watch; }
     void show_chain() { set_view(View::Chain); }
     void focus_find() { search_->setFocus(); search_->selectAll(); }
+    /// Insert: the GETS Add Scrip window (scrip_master.hpp).
     void focus_add() {
         ensure_master();
-        add_->setFocus();
-        add_->lineEdit()->selectAll();
+        if (master_.empty()) return;
+        AddScripDialog d(master_, this);
+        if (d.exec() == QDialog::Accepted && d.token() != 0) add_scrip(d.token());
     }
 
     void set_rows_for_test(std::vector<LiveRow> rows) {
@@ -963,11 +914,21 @@ public:
             LiveRow r;
             r.token = token;
             r.symbol = it->symbol;
+            // FYERS names: NSE equity "-EQ", BSE equity group A (live/universe.hpp), F&O as Kite does.
             r.fyers = it->exchange == QLatin1String("NSE") ? QStringLiteral("NSE:%1-EQ").arg(it->symbol)
+                    : it->exchange == QLatin1String("BSE") ? QStringLiteral("BSE:%1-A").arg(it->symbol)
                                                            : QStringLiteral("NSE:%1").arg(it->symbol);
             r.group = QStringLiteral("Watchlist");
-            r.kind = it->segment == QLatin1String("NSE") ? QStringLiteral("equity")
-                   : it->segment == QLatin1String("NFO-FUT") ? QStringLiteral("future") : QStringLiteral("option");
+            r.kind = it->type == QLatin1String("EQ")    ? QStringLiteral("equity")
+                   : it->type == QLatin1String("FUT")   ? QStringLiteral("future")
+                   : it->type == QLatin1String("CE")    ? QStringLiteral("call")
+                   : it->type == QLatin1String("PE")    ? QStringLiteral("put")
+                   : it->segment == QLatin1String("NSE") ? QStringLiteral("equity") : QStringLiteral("option");
+            r.underlying = it->type == QLatin1String("EQ") ? it->symbol : it->name;
+            r.lot = it->lot;
+            r.tick = it->tick;
+            r.strike = it->strike;
+            r.expiry_day = live_detail::parse_day(it->expiry);
             pending_.push_back(r);
             auto rows = model_->rows();
             rows.push_back(r);
@@ -1107,7 +1068,7 @@ private:
                 view_->setFocus();
                 return;
             }
-        note_ = QStringLiteral("No NSE equity or NSE F&O scrip called %1 in the master.").arg(t.toHtmlEscaped());
+        note_ = QStringLiteral("No NSE/BSE equity or NSE F&O scrip called %1 in the master.").arg(t.toHtmlEscaped());
         refresh_status();
     }
     void add_from_box() { ensure_master(); add_by_display(add_->currentText()); }
@@ -1314,6 +1275,7 @@ private:
     QComboBox* group_ = nullptr;
     QLineEdit* search_ = nullptr;
     QComboBox* add_ = nullptr;
+    QPushButton* add_btn_ = nullptr;
     QPushButton* start_live_ = nullptr;
     QPushButton* start_sim_ = nullptr;
     QPushButton* stop_ = nullptr;

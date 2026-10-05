@@ -266,6 +266,51 @@ int main(int argc, char** argv) {
         QFile g(root.filePath(QStringLiteral("data/live/watchlist.csv")));
         const QString after = g.open(QIODevice::ReadOnly | QIODevice::Text) ? QTextStream(&g).readAll() : QString();
         check(!after.contains(QStringLiteral("779521")), "removing takes it out of the feed's list");
+
+        // The GETS Add Scrip window: Exchange -> Instrument -> Symbol -> Expiry -> Option -> Strike.
+        const auto row = [](quint32 tok, const char* sym, const char* ex, const char* seg, const char* name, const char* type,
+                            const char* expiry, double strike, qint64 lot) {
+            MasterScrip m;
+            m.token = tok; m.symbol = QString::fromLatin1(sym); m.exchange = QString::fromLatin1(ex); m.segment = QString::fromLatin1(seg);
+            m.name = QString::fromLatin1(name); m.type = QString::fromLatin1(type); m.expiry = QString::fromLatin1(expiry);
+            m.strike = strike; m.lot = lot; m.display = m.symbol;
+            return m;
+        };
+        const std::vector<MasterScrip> master{
+            row(779521, "SBIN", "NSE", "NSE", "STATE BANK OF INDIA", "EQ", "", 0, 1),
+            row(128028676, "SBIN", "BSE", "BSE", "STATE BANK OF INDIA", "EQ", "", 0, 1),
+            row(9001, "NIFTY26OCTFUT", "NFO", "NFO-FUT", "NIFTY", "FUT", "2026-10-27", 0, 75),
+            row(9002, "NIFTY26NOVFUT", "NFO", "NFO-FUT", "NIFTY", "FUT", "2026-11-24", 0, 75),
+            row(9003, "SBIN26OCTFUT", "NFO", "NFO-FUT", "SBIN", "FUT", "2026-10-27", 0, 750),
+            row(9010, "NIFTY26OCT25000CE", "NFO", "NFO-OPT", "NIFTY", "CE", "2026-10-27", 25000, 75),
+            row(9011, "NIFTY26OCT25000PE", "NFO", "NFO-OPT", "NIFTY", "PE", "2026-10-27", 25000, 75),
+            row(9012, "NIFTY26OCT25100CE", "NFO", "NFO-OPT", "NIFTY", "CE", "2026-10-27", 25100, 75),
+        };
+        AddScripDialog add(master);
+        add.choose(QStringLiteral("NFO"), QStringLiteral("OPTIDX"), QStringLiteral("NIFTY"), QStringLiteral("2026-10-27"),
+                   QStringLiteral("PE"), QStringLiteral("25000"));
+        check(add.instruments() == QStringList({QStringLiteral("FUTIDX"), QStringLiteral("FUTSTK"), QStringLiteral("OPTIDX"),
+                                                QStringLiteral("OPTSTK")}),
+              "NFO offers FUTIDX, FUTSTK, OPTIDX, OPTSTK");
+        check(add.token() == 9011 && add.strikes() == QStringList({QStringLiteral("25000")}),
+              "OPTIDX NIFTY 27-Oct PE 25000 names one contract; only the strikes that exist for PE are offered");
+        add.choose(QStringLiteral("NFO"), QStringLiteral("FUTIDX"), QStringLiteral("NIFTY"), QStringLiteral("2026-11-24"));
+        check(add.token() == 9002 && add.expiries().size() == 2, "FUTIDX NIFTY lists both expiries and picks November's");
+        add.choose(QStringLiteral("NFO"), QStringLiteral("FUTSTK"), QStringLiteral("SBIN"), QStringLiteral("2026-10-27"));
+        check(add.token() == 9003, "a stock future is FUTSTK, not FUTIDX");
+        add.choose(QStringLiteral("BSE"), QStringLiteral("EQ"), QStringLiteral("SBIN"));
+        check(add.token() == 128028676 && add.resolved_text().contains(QStringLiteral("BSE")), "BSE EQ SBIN is the BSE listing");
+        add.choose(QStringLiteral("NFO"), QStringLiteral("OPTIDX"), QStringLiteral("NIFTY"), QStringLiteral("2026-10-27"),
+                   QStringLiteral("CE"), QStringLiteral("99999"));
+        check(add.token() == 0, "choices naming no contract cannot be added");
+        watch.set_master_for_test(master);
+        check(watch.add_scrip(128028676), "the BSE listing joins the watch");
+        const LiveRow* bse = watch.row_of_token(128028676);
+        check(bse != nullptr && bse->fyers == QStringLiteral("BSE:SBIN-A") && paper_instrument_of(*bse).exchange == QStringLiteral("BSE"),
+              "streamed as BSE:SBIN-A and ordered as a BSE equity");
+        check(watch.add_scrip(9010) && watch.row_of_token(9010) != nullptr && watch.row_of_token(9010)->kind == QStringLiteral("call")
+                  && watch.row_of_token(9010)->lot == 75,
+              "an option joins as a call, with its lot");
         const LiveRow* r = watch.row_of_token(779521);
         const PaperInstrument pi = r != nullptr ? paper_instrument_of(*r) : PaperInstrument{};
         check(pi.exchange == QStringLiteral("NSE") && pi.tradable, "an added equity trades on NSE");

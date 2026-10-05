@@ -488,7 +488,7 @@ int main(int argc, char** argv)
         const qint64 now_s = QDateTime::currentSecsSinceEpoch();
         const qint64 until = static_cast<qint64>(arm.value(QStringLiteral("expires_unix")).toDouble());
         check(arm.value(QStringLiteral("armed")).toBool() && arm.value(QStringLiteral("max_lots")).toInt() == 1
-                  && until > now_s && until - now_s <= 8 * 3600,
+                  && until > now_s && until - now_s <= 12 * 3600,
               "the arm file: armed, one lot, and it ends within one session");
 
         int asked = 0;
@@ -539,6 +539,9 @@ int main(int argc, char** argv)
         check(live_arm_expiry(QDateTime(QDate(2026, 10, 5), QTime(4, 0), QTimeZone::utc())) ==
                   QDateTime(QDate(2026, 10, 5), QTime(10, 0), QTimeZone::utc()).toSecsSinceEpoch(),
               "an arm at 09:30 IST ends at 15:30 IST");
+        check(live_arm_expiry(QDateTime(QDate(2026, 10, 4), QTime(19, 0), QTimeZone::utc())) ==
+                  QDateTime(QDate(2026, 10, 5), QTime(7, 0), QTimeZone::utc()).toSecsSinceEpoch(),
+              "one given at 00:30 IST ends twelve hours later, never past what the router accepts");
     }
 
     std::printf("\n%s -- %d failing check(s)\n",

@@ -180,7 +180,7 @@ int main() {
               "an armed file without its limits is refused");
         check(read_router_arm("not json", now_unix).verdict == RouterArmVerdict::Unreadable, "garbage is unreadable, and off");
         std::string long_arm = arm_text(true, now_unix);
-        long_arm.replace(long_arm.find(std::to_string(now_unix + 3 * 3600)), 10, std::to_string(now_unix + 9 * 3600));
+        long_arm.replace(long_arm.find(std::to_string(now_unix + 3 * 3600)), 10, std::to_string(now_unix + 13 * 3600));
         check(read_router_arm(long_arm, now_unix).verdict == RouterArmVerdict::Expired, "an arm longer than one session is refused");
     }
 
