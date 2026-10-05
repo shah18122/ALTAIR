@@ -340,7 +340,7 @@ int main() {
         check(fx.posts == 2 && router.rows().back().status == RouterOrderStatus::Refused, "two open: the third is refused");
 
         // A cancel from the Terminal.
-        write(paths.cancels, "{\"id\":\"26100500001\"}\n", true);
+        write(paths.cancels, "{\"id\":\"26100500001\",\"at_unix\":" + std::to_string(now_unix + 8) + "}\n", true);
         router.tick(kMonday10 + 8 * kSec);
         check(fx.deletes == 1, "a cancel request becomes one DELETE");
         router.tick(kMonday10 + 10 * kSec);

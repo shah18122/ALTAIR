@@ -57,6 +57,7 @@
 #include "gets_workspace.hpp"
 #include "live_market.hpp"
 #include "live_models.hpp"
+#include "live_trading.hpp"
 #include "paper_oms.hpp"
 #include "paper_windows.hpp"
 #include "position_table.hpp"
@@ -70,7 +71,10 @@
 #include <QKeySequence>
 #include <QShortcut>
 #include <QLabel>
+#include <QHash>
 #include <QLockFile>
+#include <QMessageBox>
+#include <QProcess>
 #include <QDir>
 #include <QHeaderView>
 #include <QLineEdit>
@@ -276,7 +280,7 @@ class TerminalPage final : public QWidget {
 
 public:
     TerminalPage(Role role, const QString& user, QWidget* parent = nullptr)
-        : QWidget(parent) {
+        : QWidget(parent), user_(user) {
         setObjectName(QStringLiteral("AltairTerminal"));
         setAttribute(Qt::WA_StyledBackground, true);
         setStyleSheet(QString::fromLatin1(kTerminalStyle));
@@ -314,6 +318,18 @@ public:
         toast_->setObjectName(QStringLiteral("terminalToast"));
         toast_->setTextFormat(Qt::RichText);
         h->addWidget(toast_);
+        // LIVE: off by default. On sends Buy/Sell to FYERS through the order
+        // router after a typed confirmation (live_trading.hpp).
+        live_btn_ = new QPushButton(QStringLiteral("PAPER"), strip);
+        live_btn_->setObjectName(QStringLiteral("liveSwitch"));
+        live_btn_->setToolTip(QStringLiteral(
+            "Paper: orders fill against the live book and nothing reaches a broker. Click to switch LIVE on: "
+            "Buy/Sell go to FYERS with real money, within limits you set, until 15:30 or until you switch it off."));
+        h->addWidget(live_btn_);
+        live_orders_btn_ = new QPushButton(QStringLiteral("Live orders"), strip);
+        live_orders_btn_->setObjectName(QStringLiteral("liveOrdersButton"));
+        live_orders_btn_->setToolTip(QStringLiteral("Every order sent to FYERS today and what became of it; cancel from here"));
+        h->addWidget(live_orders_btn_);
         const auto view_button = [&](const QString& text, const QString& tip) {
             auto* b = new QPushButton(text, strip);
             b->setCheckable(true);
@@ -586,8 +602,9 @@ public:
             sc->setContext(Qt::WidgetWithChildrenShortcut);
             connect(sc, &QShortcut::activated, this, fn);
         };
-        // GETS / ODIN keys. F1/F2 OPEN A PAPER ORDER WINDOW; the gated live
-        // ticket stays in Operations and is never reachable by a hotkey.
+        // GETS / ODIN keys. F1/F2 open the order window: paper, or -- only
+        // while LIVE is on -- a FYERS order that asks for a confirmation
+        // before it becomes a request for the order router.
         key(QKeySequence(Qt::Key_F1), [this] { open_order(true); });
         key(QKeySequence(Qt::Key_F2), [this] { open_order(false); });
         key(QKeySequence(Qt::Key_F3), [this] { show_book(order_book_); });
@@ -609,6 +626,16 @@ public:
 
         seed_strip_from_disk();
         refresh_stream();
+        build_live_trading();
+    }
+
+    ~TerminalPage() override {
+        // Let the router finish a pass rather than die mid-send; it resumes
+        // from its files when it next starts.
+        if (router_ != nullptr && router_->state() != QProcess::NotRunning) {
+            router_->terminate();
+            if (!router_->waitForFinished(1500)) router_->kill();
+        }
     }
 
     /// Keep the account-first terminal within a laptop viewport. Wide chain
@@ -684,6 +711,108 @@ public:
         books_dirty();
         return r;
     }
+    // ---- LIVE (live_trading.hpp; the order router decides and sends) ---------
+    /// LIVE is on: the arm file says so and has not expired.
+    [[nodiscard]] bool live_on() const noexcept { return live_on_; }
+    [[nodiscard]] QPushButton* live_switch() const noexcept { return live_btn_; }
+    [[nodiscard]] LiveTradingOrdersWindow* live_orders() const noexcept { return live_orders_; }
+    /// Tests: where data/ is, whether the router is started, and the confirmation's answer.
+    void set_live_root(const QString& root) { live_root_ = root; refresh_live(); }
+    void set_router_autostart(bool on) { router_autostart_ = on; }
+    void set_live_confirm(std::function<bool(const QString&)> f) { live_confirm_ = std::move(f); }
+
+    /// Switch LIVE on with these limits (the dialog's OK; tests call it directly).
+    bool arm_live(const LiveTradingLimits& l) {
+        const QString path = live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingArmFile);
+        if (!write_live_arm(path, true, live_user(), l, QDateTime::currentDateTimeUtc())) {
+            toast(QStringLiteral("LIVE not switched on: %1 could not be written").arg(path), false);
+            return false;
+        }
+        log_text_->appendPlainText(QStringLiteral("%1  LIVE ON by %2: up to %3 lot(s) and Rs %4 per order, %5 orders, stop at a Rs %6 loss")
+                                       .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), live_user())
+                                       .arg(l.max_lots)
+                                       .arg(paper_ui::money(l.max_order_value))
+                                       .arg(l.max_orders_per_day)
+                                       .arg(paper_ui::money(l.max_daily_loss)));
+        ensure_router();
+        refresh_live();
+        toast(QStringLiteral("LIVE: Buy/Sell now go to FYERS (until 15:30, or until you switch it off)"), true);
+        return true;
+    }
+    bool disarm_live() {
+        const QString path = live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingArmFile);
+        const LiveTradingArm a = read_live_arm(path, QDateTime::currentSecsSinceEpoch());
+        if (!write_live_arm(path, false, live_user(), a.limits, QDateTime::currentDateTimeUtc())) {
+            toast(QStringLiteral("LIVE NOT switched off: %1 could not be written. Use the kill switch.").arg(path), false);
+            return false;
+        }
+        log_text_->appendPlainText(QStringLiteral("%1  LIVE OFF").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss"))));
+        refresh_live();
+        toast(QStringLiteral("LIVE off: orders are paper again. Orders already at FYERS stay there; cancel them in Live orders."), true);
+        return true;
+    }
+
+    /// Send one order to FYERS: a confirmation, then a request for the router.
+    /// Returns the request's id.
+    std::expected<QString, QString> place_live(const PaperOrder& o, bool ask) {
+        if (!live_on_) return std::unexpected(QStringLiteral("LIVE is off: switch it on first"));
+        const qint64 lot = std::max<qint64>(1, o.inst.lot);
+        if (o.qty <= 0 || o.qty % lot != 0) return std::unexpected(QStringLiteral("The quantity is not a whole number of lots"));
+        IntentDraft d;
+        d.by = live_user();
+        d.token = o.inst.token;
+        d.symbol = o.inst.symbol;
+        d.exchange = o.inst.exchange;
+        d.buy = o.side == PaperSide::Buy;
+        d.lots = static_cast<int>(o.qty / lot);
+        d.market = o.type == PaperType::Market;
+        d.limit_paise = d.market ? 0 : o.limit_paise;
+        d.product = o.product;
+        d.validity = QStringLiteral("DAY");
+        if (!intent_symbol_ok(d.symbol) || !intent_exchange_ok(d.exchange) || d.token == 0)
+            return std::unexpected(QStringLiteral("%1 cannot be sent as a live order").arg(d.symbol));
+        if (!d.market && d.limit_paise <= 0) return std::unexpected(QStringLiteral("A limit order needs a price"));
+        const PaperQuote q = paper_ui::quote_of(client_, o.inst.token);
+        const qint64 ref = d.buy ? (q.ask > 0 ? q.ask : q.ltp) : (q.bid > 0 ? q.bid : q.ltp);
+        if (ask) {
+            const QString text = live_order_confirmation(d, lot, ref);
+            bool yes = false;
+            if (live_confirm_) {
+                yes = live_confirm_(text);
+            } else {
+                QMessageBox box(QMessageBox::Warning, QStringLiteral("Send a real order to FYERS?"), text, QMessageBox::NoButton, this);
+                box.setTextFormat(Qt::RichText);
+                auto* send = box.addButton(QStringLiteral("Send to FYERS"), QMessageBox::AcceptRole);
+                auto* no = box.addButton(QStringLiteral("Do not send"), QMessageBox::RejectRole);
+                box.setDefaultButton(no);
+                box.setEscapeButton(no);
+                box.exec();
+                yes = box.clickedButton() == send;
+            }
+            if (!yes) return std::unexpected(QStringLiteral("Not sent"));
+        }
+        const IntentDraft stamped = stamp_draft(d, QDateTime::currentDateTimeUtc());
+        ensure_router();
+        const QString path = live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingIntentFile);
+        if (append_intent(path, stamped) != AppendResult::Ok)
+            return std::unexpected(QStringLiteral("The order was NOT sent: %1 could not be written").arg(path));
+        log_text_->appendPlainText(QStringLiteral("%1  LIVE REQUEST %2 %3 lot(s) %4 %5 %6 (%7)")
+                                       .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
+                                            d.buy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
+                                       .arg(d.lots)
+                                       .arg(d.symbol, d.market ? QStringLiteral("MARKET") : QStringLiteral("LIMIT ") + rupees_text(d.limit_paise),
+                                            d.product, stamped.id));
+        toast(QStringLiteral("Sent to the order router: %1 %2 — see Live orders").arg(d.buy ? QStringLiteral("BUY") : QStringLiteral("SELL"), d.symbol));
+        show_live_orders();
+        return stamped.id;
+    }
+
+    void show_live_orders() {
+        live_orders_->refresh(read_live_router(live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingOrdersFile), now_ns()));
+        live_orders_->show();
+        live_orders_->raise();
+    }
+
     /// Empty when this window may write the paper book; else why not.
     [[nodiscard]] QString paper_writer() {
         if (!paper_write_error_.isEmpty()) return paper_write_error_;
@@ -906,6 +1035,111 @@ private:
 
     void books_dirty() { if (!books_timer_.isActive()) books_timer_.start(); }
 
+    // ---- LIVE plumbing ---------------------------------------------------------
+    [[nodiscard]] QString live_user() const { return intent_user_ok(user_) ? user_ : QStringLiteral("terminal"); }
+
+    void build_live_trading() {
+#ifdef ALTAIR_SOURCE_DIR
+        live_root_ = QStringLiteral(ALTAIR_SOURCE_DIR);
+#else
+        live_root_ = QDir::currentPath();
+#endif
+        live_orders_ = new LiveTradingOrdersWindow(this);
+        live_orders_->on_cancel = [this](const QString& id, bool all) { cancel_live(id, all); };
+        connect(live_btn_, &QPushButton::clicked, this, [this] { toggle_live(); });
+        connect(live_orders_btn_, &QPushButton::clicked, this, [this] { show_live_orders(); });
+        live_timer_.setInterval(1000);
+        connect(&live_timer_, &QTimer::timeout, this, [this] { refresh_live(); });
+        live_timer_.start();
+        refresh_live();
+    }
+
+    void toggle_live() {
+        const LiveTradingArm a = read_live_arm(live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingArmFile),
+                                               QDateTime::currentSecsSinceEpoch());
+        if (a.armed) { disarm_live(); return; }
+        LiveTradingArmDialog d(a.limits, this);
+        if (d.exec() == QDialog::Accepted) arm_live(d.limits());
+    }
+
+    void cancel_live(const QString& id, bool all) {
+        if (!all && id.isEmpty()) { toast(QStringLiteral("Select an order with a FYERS id"), false); return; }
+        ensure_router();
+        const QString path = live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingCancelsFile);
+        if (!append_live_cancel(path, id, all)) { toast(QStringLiteral("Cancel NOT sent: %1 could not be written").arg(path), false); return; }
+        toast(all ? QStringLiteral("Cancel all sent to the order router") : QStringLiteral("Cancel %1 sent to the order router").arg(id), true);
+    }
+
+    /// Start altair_order_router unless one is running here. Another one
+    /// already holding its lock exits by itself (code 3), which is fine.
+    void ensure_router() {
+        if (!router_autostart_ || router_ != nullptr) return;
+        const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+        if (now_ms - router_started_ms_ < 15'000) return;   // a router that keeps dying is not restarted every second
+        const QString exe = live_detail::find_helper(QStringLiteral("altair_order_router"));
+        if (exe.isEmpty()) {
+            router_note_ = QStringLiteral("altair_order_router is not built (build the net preset: .\\build.bat net)");
+            return;
+        }
+        router_started_ms_ = now_ms;
+        router_ = new QProcess(this);
+        router_->setWorkingDirectory(live_root_);
+        router_->setProcessChannelMode(QProcess::MergedChannels);
+        connect(router_, &QProcess::readyRead, this, [this] {
+            const QStringList lines = QString::fromLocal8Bit(router_->readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            for (const QString& l : lines)
+                log_text_->appendPlainText(QStringLiteral("%1  ROUTER %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), l.trimmed()));
+        });
+        connect(router_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
+            router_note_ = code == 3 ? QString() : QStringLiteral("the order router exited (%1); see the message log (F10)").arg(code);
+            router_->deleteLater();
+            router_ = nullptr;
+            refresh_live();
+        });
+        router_->start(exe, {QStringLiteral("--root"), live_root_});
+    }
+
+    void refresh_live() {
+        if (live_btn_ == nullptr || live_orders_ == nullptr) return;
+        const LiveTradingArm a = read_live_arm(live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingArmFile),
+                                               QDateTime::currentSecsSinceEpoch());
+        const LiveTradingView v = read_live_router(live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingOrdersFile), now_ns());
+        live_on_ = a.armed;
+        if (live_on_) {
+            const QString until = QDateTime::fromSecsSinceEpoch(a.expires_unix).toString(QStringLiteral("HH:mm"));
+            live_btn_->setText(!v.running ? QStringLiteral("● LIVE · router down")
+                               : v.killed ? QStringLiteral("● LIVE · KILL ON")
+                               : v.why.isEmpty() ? QStringLiteral("● LIVE") : QStringLiteral("● LIVE · refusing"));
+            live_btn_->setStyleSheet(QStringLiteral("background:#DA3633;color:#FFFFFF;font-weight:700;border-radius:4px;padding:3px 10px;"));
+            live_btn_->setToolTip(QStringLiteral("Orders go to FYERS until %1. %2 Click to switch LIVE off.")
+                                      .arg(until, !v.running ? (router_note_.isEmpty() ? QStringLiteral("The order router is not running.")
+                                                                                      : router_note_)
+                                                  : v.why.isEmpty() ? QString() : QStringLiteral("Refusing: ") + v.why));
+            if (!v.running) ensure_router();
+        } else {
+            live_btn_->setText(QStringLiteral("PAPER"));
+            live_btn_->setStyleSheet(QString());
+        }
+        // Say what became of each live order, once.
+        for (const LiveTradingOrder& o : v.orders) {
+            const auto it = live_seen_.constFind(o.intent);
+            if (it != live_seen_.constEnd() && *it == o.status) continue;
+            const bool first = it == live_seen_.constEnd() && !live_seen_loaded_;
+            live_seen_.insert(o.intent, o.status);
+            if (first) continue;
+            log_text_->appendPlainText(QStringLiteral("%1  LIVE %2 %3 %4 %5: %6%7")
+                                           .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), o.side)
+                                           .arg(o.qty)
+                                           .arg(o.symbol, o.status, o.message,
+                                                o.id.isEmpty() ? QString() : QStringLiteral(" (FYERS %1)").arg(o.id)));
+            if (!o.open())
+                toast(QStringLiteral("LIVE %1 %2 %3: %4").arg(o.side, o.symbol, o.status, o.message),
+                      o.status == QLatin1String("FILLED") || o.status == QLatin1String("CANCELLED"));
+        }
+        live_seen_loaded_ = true;
+        if (live_orders_->isVisible()) live_orders_->refresh(v);
+    }
+
     void refresh_books() {
         for (const QString& m : oms_.take_messages()) {
             log_text_->appendPlainText(QStringLiteral("%1  %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), m));
@@ -957,7 +1191,14 @@ private:
             return;
         }
         PaperOrderWindow w(buy ? PaperSide::Buy : PaperSide::Sell, inst, client_, this);
+        const bool live = live_on();
+        w.set_live(live);
         if (w.exec() != QDialog::Accepted) return;
+        if (live) {
+            const auto sent = place_live(w.order(), true);
+            if (!sent) toast(sent.error(), false);
+            return;
+        }
         const auto placed = place_paper(w.order());
         if (!placed) toast(placed.error(), false);
     }
@@ -1156,6 +1397,21 @@ private:
     QLabel* stream_state_ = nullptr;
     QPushButton* stream_btn_ = nullptr;
     Tile nifty_, bnf_, vix_;
+    // ---- LIVE ----
+    QString user_;
+    QString live_root_;
+    QPushButton* live_btn_ = nullptr;
+    QPushButton* live_orders_btn_ = nullptr;
+    LiveTradingOrdersWindow* live_orders_ = nullptr;
+    QProcess* router_ = nullptr;
+    QString router_note_;
+    QTimer live_timer_;
+    bool live_on_ = false;
+    bool router_autostart_ = true;
+    qint64 router_started_ms_ = 0;
+    QHash<QString, QString> live_seen_;
+    bool live_seen_loaded_ = false;
+    std::function<bool(const QString&)> live_confirm_;
 };
 
 } // namespace altair::ui

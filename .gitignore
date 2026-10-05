@@ -150,6 +150,11 @@ data/bhavcopy/
 # belongs in history.
 data/order_intents.jsonl
 data/kill_request.json
+# The LIVE switch and the order router's book, journal and cursor: one
+# machine's trading state, never shared.
+data/live_trading.json
+data/live_orders/
+data/order_intents.jsonl.lock
 **/*.altick
 
 # GETSClient is a read-only reference UI/installer distribution (~1.8 GB) that

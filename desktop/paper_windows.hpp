@@ -129,6 +129,10 @@ inline void tool_window(QDialog* d, const QString& title, QSize size) {
 // Order entry: the blue buy and red sell windows
 // ---------------------------------------------------------------------------
 
+inline constexpr const char* kPaperNote =
+    "PAPER ORDER · market fills at the live ask (buy) or bid (sell); a limit rests until the book "
+    "crosses it · nothing reaches a broker · F1/F2 switch side · Enter submits · Esc closes";
+
 class PaperOrderWindow final : public QDialog {
 public:
     PaperOrderWindow(PaperSide side, const PaperInstrument& inst, const PriceClient* client,
@@ -187,13 +191,11 @@ public:
         market_->setTextFormat(Qt::RichText);
         market_->setContentsMargins(12, 0, 12, 0);
         v->addWidget(market_);
-        auto* note = new QLabel(QStringLiteral(
-            "PAPER ORDER · market fills at the live ask (buy) or bid (sell); a limit rests until the book "
-            "crosses it · nothing reaches a broker · F1/F2 switch side · Enter submits · Esc closes"), this);
-        note->setWordWrap(true);
-        note->setContentsMargins(12, 0, 12, 0);
-        note->setStyleSheet(QStringLiteral("color:#8B949E;font-size:11px;"));
-        v->addWidget(note);
+        note_ = new QLabel(QString::fromUtf8(kPaperNote), this);
+        note_->setWordWrap(true);
+        note_->setContentsMargins(12, 0, 12, 0);
+        note_->setStyleSheet(QStringLiteral("color:#8B949E;font-size:11px;"));
+        v->addWidget(note_);
 
         auto* buttons = new QHBoxLayout;
         buttons->setContentsMargins(12, 0, 12, 0);
@@ -238,6 +240,17 @@ public:
         lots_->selectAll();
     }
 
+    /// LIVE: the order goes to FYERS through the order router (live_trading.hpp).
+    void set_live(bool on) {
+        live_ = on;
+        note_->setText(on ? QStringLiteral("LIVE ORDER · sent to FYERS with real money after you confirm it · the order router "
+                                           "checks your limits and the last price first · F1/F2 switch side · Esc closes")
+                          : QString::fromUtf8(kPaperNote));
+        note_->setStyleSheet(on ? QStringLiteral("color:#FF7B72;font-size:11px;font-weight:700;")
+                                : QStringLiteral("color:#8B949E;font-size:11px;"));
+        set_side(side_);
+    }
+    [[nodiscard]] bool live() const noexcept { return live_; }
     [[nodiscard]] PaperSide side() const noexcept { return side_; }
     [[nodiscard]] int modifying() const noexcept { return modify_id_; }
     [[nodiscard]] qint64 qty() const { return static_cast<qint64>(lots_->value()) * std::max<qint64>(1, inst_.lot); }
@@ -269,14 +282,17 @@ private:
         const char* colour = buy ? paper_ui::kBuyColour : paper_ui::kSellColour;
         header_->setStyleSheet(QStringLiteral("background:%1;color:#FFFFFF;padding:9px 12px;font-weight:700;font-size:14px;")
                                    .arg(QString::fromLatin1(colour)));
-        header_->setText(QStringLiteral("%1 ORDER ENTRY &nbsp;·&nbsp; PAPER%2")
+        header_->setText(QStringLiteral("%1 ORDER ENTRY &nbsp;·&nbsp; %3%2")
                              .arg(buy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
-                             .arg(modify_id_ > 0 ? QStringLiteral(" &nbsp;·&nbsp; MODIFY #%1").arg(modify_id_) : QString()));
+                             .arg(modify_id_ > 0 ? QStringLiteral(" &nbsp;·&nbsp; MODIFY #%1").arg(modify_id_) : QString(),
+                                  live_ ? QStringLiteral("<span style='background:#FFFFFF;color:#DA3633;padding:0 6px'>LIVE · FYERS</span>")
+                                        : QStringLiteral("PAPER")));
         submit_->setText(modify_id_ > 0 ? QStringLiteral("Modify (Enter)")
                                         : buy ? QStringLiteral("Buy (Enter)") : QStringLiteral("Sell (Enter)"));
         submit_->setStyleSheet(QStringLiteral("background:%1;color:#FFFFFF;border:0;border-radius:5px;padding:7px 18px;font-weight:700;")
                                    .arg(QString::fromLatin1(colour)));
-        setWindowTitle(buy ? QStringLiteral("Buy order entry (paper)") : QStringLiteral("Sell order entry (paper)"));
+        setWindowTitle(QStringLiteral("%1 order entry (%2)").arg(buy ? QStringLiteral("Buy") : QStringLiteral("Sell"),
+                                                                 live_ ? QStringLiteral("LIVE, FYERS") : QStringLiteral("paper")));
         refresh_fields();
     }
 
@@ -300,7 +316,9 @@ private:
     const PriceClient* client_;
     PaperSide side_;
     int modify_id_ = 0;
+    bool live_ = false;
     QLabel* header_ = nullptr;
+    QLabel* note_ = nullptr;
     QComboBox* product_ = nullptr;
     QComboBox* type_ = nullptr;
     QSpinBox* lots_ = nullptr;

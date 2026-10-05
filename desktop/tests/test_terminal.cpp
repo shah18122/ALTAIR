@@ -21,7 +21,12 @@
 
 #include <QApplication>
 #include <QDateTime>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTableWidget>
+#include <QTemporaryDir>
+#include <QTimeZone>
 
 #include <cmath>
 #include <cstdint>
@@ -446,6 +451,94 @@ int main(int argc, char** argv)
         std::swap(back.stamps_ns[0], back.stamps_ns[2]);
         check(stamps_ascending(s) && !stamps_ascending(back),
               "a file out of date order is detected, so it gets no basis");
+    }
+
+    // ------------------------------------------------------------------
+    // [9] LIVE: off by default; on only with LIVE typed; every order is
+    // confirmed and becomes one request line for the order router.
+    // ------------------------------------------------------------------
+    std::printf("\n[9] LIVE: off by default, a typed switch, a confirmed request\n");
+    {
+        QTemporaryDir tmp;
+        term.set_router_autostart(false);
+        term.set_live_root(tmp.path());
+        check(!term.live_on() && term.live_switch()->text() == QStringLiteral("PAPER"),
+              "LIVE is off by default: the switch says PAPER");
+        LiveTradingArmDialog dlg(LiveTradingLimits{});
+        dlg.type_phrase(QStringLiteral("live"));
+        check(!dlg.can_accept(), "the switch needs LIVE typed exactly");
+        dlg.type_phrase(QStringLiteral("LIVE"));
+        check(dlg.can_accept() && dlg.limits().max_lots == 1, "typed: it may switch on, one lot per order by default");
+
+        PaperOrder o;
+        o.inst = PaperInstrument{111u, QStringLiteral("NIFTY26OCTFUT"), QStringLiteral("NFO"), 75, 5, true};
+        o.product = QStringLiteral("NRML");
+        o.side = PaperSide::Buy;
+        o.type = PaperType::Limit;
+        o.qty = 75;
+        o.limit_paise = 2'500'000;
+        const QString intents = tmp.path() + QStringLiteral("/data/order_intents.jsonl");
+        check(!term.place_live(o, false).has_value() && !QFile::exists(intents), "with LIVE off, nothing is requested");
+
+        check(term.arm_live(LiveTradingLimits{}) && term.live_on() && term.live_switch()->text().contains(QStringLiteral("LIVE")),
+              "switched on, and the switch says LIVE");
+        QFile armf(tmp.path() + QStringLiteral("/data/live_trading.json"));
+        const QJsonObject arm = armf.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(armf.readAll()).object() : QJsonObject{};
+        armf.close();
+        const qint64 now_s = QDateTime::currentSecsSinceEpoch();
+        const qint64 until = static_cast<qint64>(arm.value(QStringLiteral("expires_unix")).toDouble());
+        check(arm.value(QStringLiteral("armed")).toBool() && arm.value(QStringLiteral("max_lots")).toInt() == 1
+                  && until > now_s && until - now_s <= 8 * 3600,
+              "the arm file: armed, one lot, and it ends within one session");
+
+        int asked = 0;
+        term.set_live_confirm([&](const QString& text) {
+            ++asked;
+            return !(text.contains(QStringLiteral("REAL ORDER")) && text.contains(QStringLiteral("NIFTY26OCTFUT")));
+        });
+        check(!term.place_live(o, true).has_value() && asked == 1 && !QFile::exists(intents),
+              "the confirmation names the order; declined, nothing is written");
+        term.set_live_confirm([&](const QString&) { ++asked; return true; });
+        const auto id = term.place_live(o, true);
+        QFile f(intents);
+        const QByteArray line = f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray{};
+        check(id.has_value() && asked == 2 && line.count('\n') == 1 && line.contains("\"token\":111")
+                  && line.contains("\"lots\":1,") && line.contains("\"order_type\":\"LIMIT\",\"limit_paise\":2500000")
+                  && line.contains("\"product\":\"NRML\""),
+              "confirmed: one request line, in lots, with the exact limit");
+        o.qty = 100;
+        check(!term.place_live(o, false).has_value(), "a quantity that is not whole lots is refused");
+
+        // The router's book, as the Terminal shows it.
+        QDir().mkpath(tmp.path() + QStringLiteral("/data/live_orders"));
+        QFile book(tmp.path() + QStringLiteral("/data/live_orders/orders.json"));
+        if (book.open(QIODevice::WriteOnly)) {
+            book.write(QStringLiteral("{\"router\":{\"beat_ns\":%1,\"armed\":true,\"killed\":false,\"dry_run\":false,\"session\":true,"
+                                      "\"why\":\"\",\"day_pnl_paise\":-12050,\"orders_today\":1,\"open\":1,\"max_orders_per_day\":20},"
+                                      "\"orders\":[{\"at_ns\":%1,\"intent\":\"x\",\"id\":\"26100500001\",\"symbol\":\"NIFTY26OCTFUT\","
+                                      "\"side\":\"BUY\",\"type\":\"LIMIT\",\"qty\":75,\"limit_paise\":2500000,\"status\":\"OPEN\","
+                                      "\"filled\":0,\"avg_paise\":0,\"message\":\"\"}]}")
+                           .arg(QDateTime::currentMSecsSinceEpoch() * 1'000'000LL)
+                           .toUtf8());
+            book.close();
+        }
+        const LiveTradingView v = read_live_router(book.fileName(), QDateTime::currentMSecsSinceEpoch() * 1'000'000LL);
+        check(v.running && v.armed && v.day_pnl_paise == -12'050 && v.orders.size() == 1 && v.orders[0].open(),
+              "the router's heartbeat, P&L and open order are read");
+        term.show_live_orders();
+        auto* lt = term.live_orders()->findChild<QTableWidget*>(QStringLiteral("liveOrderTable"));
+        check(lt != nullptr && lt->rowCount() == 1 && lt->item(0, 6)->text() == QStringLiteral("OPEN")
+                  && lt->item(0, 9)->text() == QStringLiteral("26100500001"),
+              "Live orders lists it, with FYERS's id to cancel by");
+        term.live_orders()->hide();
+
+        check(term.disarm_live() && !term.live_on() && term.live_switch()->text() == QStringLiteral("PAPER"),
+              "switched off: PAPER again");
+        o.qty = 75;
+        check(!term.place_live(o, false).has_value(), "and nothing more is requested");
+        check(live_arm_expiry(QDateTime(QDate(2026, 10, 5), QTime(4, 0), QTimeZone::utc())) ==
+                  QDateTime(QDate(2026, 10, 5), QTime(10, 0), QTimeZone::utc()).toSecsSinceEpoch(),
+              "an arm at 09:30 IST ends at 15:30 IST");
     }
 
     std::printf("\n%s -- %d failing check(s)\n",

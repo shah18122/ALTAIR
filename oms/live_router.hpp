@@ -748,9 +748,9 @@ public:
                      "Move it aside if no order router has run in the last minute.";
             return;
         }
-        // Cancels written before this start are not this run's to act on.
-        cancel_offset_ = static_cast<std::uint64_t>(std::filesystem::file_size(p_.cancels, ec));
-        if (ec) cancel_offset_ = 0;
+        // A cancel from the minute before this start is acted on (the Terminal
+        // may have written it while starting the router); older ones are not.
+        cancel_after_unix_ = router_detail::floor_div(now_ns, 1'000'000'000LL) - 60;
         load_rows(now_ns);
         journal(now_ns, "start", dry_run_ ? "\"dry_run\":true" : "\"dry_run\":false");
     }
@@ -969,16 +969,22 @@ private:
         while (std::getline(lines, line)) {
             const auto j = parse_router_json(line);
             if (!j) continue;
-            if (j->truth("all")) { cancel_open(now_ns, "cancel all, from the Terminal"); continue; }
+            const auto at_unix = static_cast<std::int64_t>(j->num("at_unix", 0.0));
+            if (at_unix < cancel_after_unix_) continue;
+            // "All" means the orders that existed when it was asked: a replay
+            // after a restart never cancels an order placed since.
+            if (j->truth("all")) { cancel_open(now_ns, "cancel all, from the Terminal", (at_unix + 1) * 1'000'000'000LL); continue; }
             const std::string id = j->str("id");
             for (RouterOrder& r : rows_)
                 if (!id.empty() && r.fyers_id == id && !router_final(r.status)) send_cancel(r, now_ns, "cancel, from the Terminal");
         }
     }
 
-    void cancel_open(std::int64_t now_ns, const char* why) {
+    void cancel_open(std::int64_t now_ns, const char* why,
+                     std::int64_t placed_before_ns = std::numeric_limits<std::int64_t>::max()) {
         for (RouterOrder& r : rows_)
-            if (!r.cancel_sent && !r.fyers_id.empty() && !router_final(r.status)) send_cancel(r, now_ns, why);
+            if (!r.cancel_sent && !r.fyers_id.empty() && !router_final(r.status) && r.at_ns < placed_before_ns)
+                send_cancel(r, now_ns, why);
     }
 
     void send_cancel(RouterOrder& r, std::int64_t now_ns, const char* why) {
@@ -1144,6 +1150,7 @@ private:
     std::optional<IntentDrainer> drainer_;
     IntentCursor cursor_{};
     std::uint64_t cancel_offset_ = 0;
+    std::int64_t cancel_after_unix_ = 0;
     RouterArmRead arm_;
     std::uint64_t arm_revision_ = 1;
     bool killed_ = true;
