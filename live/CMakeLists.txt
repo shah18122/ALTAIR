@@ -40,6 +40,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_live_readiness_test PRIVATE altair_live)
     add_test(NAME live_readiness COMMAND altair_live_readiness_test)
 
+    add_executable(altair_live_arbitrage_test tests/test_arbitrage.cpp)
+    target_link_libraries(altair_live_arbitrage_test PRIVATE altair_live)
+    add_test(NAME live_arbitrage COMMAND altair_live_arbitrage_test)
+
     add_executable(altair_live_exec_study_test tests/test_exec_study.cpp)
     target_link_libraries(altair_live_exec_study_test PRIVATE altair_live)
     add_test(NAME live_exec_study COMMAND altair_live_exec_study_test)

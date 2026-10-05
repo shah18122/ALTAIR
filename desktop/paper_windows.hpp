@@ -74,13 +74,15 @@ inline constexpr const char* kSellColour = "#DA3633";
 
 } // namespace paper_ui
 
-/// The paper instrument for a market-watch row: NSE for an equity, NFO for
-/// F&O; an index is shown but cannot be traded.
+/// The paper instrument for a market-watch row: NSE or BSE for an equity (by
+/// its FYERS symbol), NFO for F&O; an index is shown but cannot be traded.
 [[nodiscard]] inline PaperInstrument paper_instrument_of(const LiveRow& r) {
     PaperInstrument i;
     i.token = r.token;
     i.symbol = r.symbol;
-    i.exchange = r.kind == QLatin1String("equity") ? QStringLiteral("NSE") : QStringLiteral("NFO");
+    i.exchange = r.fyers.startsWith(QLatin1String("BSE:")) ? QStringLiteral("BSE")
+               : r.kind == QLatin1String("equity")         ? QStringLiteral("NSE")
+                                                            : QStringLiteral("NFO");
     i.lot = std::max<qint64>(1, r.lot);
     i.tick_paise = std::max<qint64>(1, std::llround(r.tick * 100.0));
     i.tradable = r.kind != QLatin1String("index");
@@ -162,7 +164,7 @@ public:
         auto* exch = new QLabel(inst_.exchange, this);
         auto* sym = new QLabel(QStringLiteral("<b>%1</b>").arg(inst_.symbol.toHtmlEscaped()), this);
         product_ = new QComboBox(this);
-        product_->addItems(inst_.exchange == QLatin1String("NSE")
+        product_->addItems(inst_.exchange == QLatin1String("NSE") || inst_.exchange == QLatin1String("BSE")
                                ? QStringList{QStringLiteral("CNC"), QStringLiteral("MIS")}
                                : QStringList{QStringLiteral("NRML"), QStringLiteral("MIS")});
         type_ = new QComboBox(this);

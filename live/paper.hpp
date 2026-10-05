@@ -162,6 +162,10 @@ public:
         : top_(std::move(top)), cost_(std::move(cost)), pol_(policy) {}
 
     void set_policy(const LiveExecPolicy& p) { pol_ = p; }
+    /// What one fill would cost by the book's own expense function; NaN when unpriced.
+    [[nodiscard]] double expense(const LiveInstrument& in, bool buy, double qty, double price, std::int64_t ns) const {
+        return cost_ ? cost_(in, buy, qty, price, ns) : std::numeric_limits<double>::quiet_NaN();
+    }
     [[nodiscard]] const LiveExecPolicy& policy() const noexcept { return pol_; }
     void set_risk(LiveRiskFn fn) { risk_ = std::move(fn); }
 

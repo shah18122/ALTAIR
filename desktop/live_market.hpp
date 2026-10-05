@@ -321,7 +321,7 @@ public:
         // ABSENCE IS NOT ZERO: a field the feed has not sent is a dash, never 0.
         const QString none = QStringLiteral("—");
         switch (col) {
-        case Symbol: return row.symbol;
+        case Symbol: return row.fyers.startsWith(QLatin1String("BSE:")) ? row.symbol + QStringLiteral(" · BSE") : row.symbol;
         case Ltp: {
             if (ltp <= 0) return none;
             const Flash& f = flash_[static_cast<std::size_t>(idx.row())];

@@ -142,8 +142,15 @@ public:
         unverified_->setToolTip(QStringLiteral(
             "Pass --unverified-costs: price expenses from config/charges.toml although it is unverified. "
             "Every expense and net figure is then marked UNVERIFIED."));
+        auto_demo_ = new QCheckBox(QStringLiteral("Demo trade automatically"), this);
+        auto_demo_->setObjectName(QStringLiteral("autoDemo"));
+        auto_demo_->setToolTip(QStringLiteral(
+            "Start the models by themselves whenever the feed is streaming: every model, the cross-exchange "
+            "arbitrage included, paper-trades its signals. Nothing reaches a broker. Stop models turns it off "
+            "until Start models."));
         bar->addWidget(start_);
         bar->addWidget(stop_);
+        bar->addWidget(auto_demo_);
         bar->addWidget(unverified_);
         bar->addStretch();
         v->addLayout(bar);
@@ -212,11 +219,16 @@ public:
         stack->setStretchFactor(1, 45);
         v->addWidget(stack, 1);
 
-        connect(start_, &QPushButton::clicked, this, [this] { start_engine(); });
-        connect(stop_, &QPushButton::clicked, this, [this] { stop_engine(); });
+        connect(start_, &QPushButton::clicked, this, [this] { user_stopped_ = false; start_engine(); });
+        connect(stop_, &QPushButton::clicked, this, [this] { user_stopped_ = true; stop_engine(); });
         connect(models_, &QTableWidget::currentCellChanged, this, [this](int r, int, int, int) { show_fields(r); });
         file_timer_.setInterval(1000);
-        connect(&file_timer_, &QTimer::timeout, this, [this] { reload(); });
+        connect(&file_timer_, &QTimer::timeout, this, [this] {
+            reload();
+            // Demo trading by default: the models start once the feed streams.
+            if (auto_demo_->isChecked() && engine_ == nullptr && !user_stopped_ && client_ != nullptr && client_->connected())
+                start_engine();
+        });
         file_timer_.start();
         mark_timer_.setInterval(250);
         connect(&mark_timer_, &QTimer::timeout, this, [this] { if (isVisible()) mark(); });
@@ -236,6 +248,10 @@ public:
     [[nodiscard]] QTableWidget* models_table() const noexcept { return models_; }
     /// "Price UNVERIFIED expenses": the Terminal's paper orders follow it too.
     [[nodiscard]] bool price_unverified() const { return unverified_->isChecked(); }
+    /// Demo trading by default (the app turns it on; tests leave it off).
+    void set_auto_demo(bool on) { auto_demo_->setChecked(on); }
+    [[nodiscard]] bool auto_demo() const { return auto_demo_->isChecked(); }
+    [[nodiscard]] bool engine_running() const noexcept { return engine_ != nullptr; }
     [[nodiscard]] QTableWidget* positions_table() const noexcept { return positions_; }
     [[nodiscard]] QTableWidget* trades_table() const noexcept { return trades_; }
     [[nodiscard]] QTableWidget* by_model_table() const noexcept { return by_model_; }
@@ -506,6 +522,8 @@ private:
     QPushButton* start_ = nullptr;
     QPushButton* stop_ = nullptr;
     QCheckBox* unverified_ = nullptr;
+    QCheckBox* auto_demo_ = nullptr;
+    bool user_stopped_ = false;
     QLabel* status_ = nullptr;
     QLabel* totals_ = nullptr;
     QTabWidget* tabs_ = nullptr;

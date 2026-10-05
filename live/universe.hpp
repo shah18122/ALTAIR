@@ -214,6 +214,7 @@ struct LiveUniverseOptions {
     int futures = 2;                    ///< nearest N futures per index
     bool stocks = true;
     bool stock_futures = true;          ///< the stocks' near and next futures (stat-arb trades and rolls them)
+    bool bse_twins = true;              ///< the same stocks on BSE: the cross-exchange arbitrage's other leg
 };
 
 struct LiveUniverse {
@@ -323,6 +324,28 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
             in.group = "NIFTY 50";
             in.depth = true;
             rep.instruments.push_back(std::move(in));
+        }
+        if (o.bse_twins) {
+            // The same stocks on BSE (live/arbitrage.hpp). FYERS names a BSE
+            // equity "BSE:<SYM>-<group>"; every NIFTY 50 stock is in group A.
+            std::map<std::string, const LiveKiteRow*> bse;
+            for (const auto& r : rows)
+                if (r.segment == "BSE" && r.exchange == "BSE" && r.type == "EQ") bse.emplace(r.symbol, &r);
+            for (const auto& s : stocks) {
+                if (eq.find(s.symbol) == eq.end()) continue;   // no NSE leg, no pair
+                const auto it = bse.find(s.symbol);
+                if (it == bse.end()) { rep.notes.push_back(s.symbol + ": not a BSE equity in the master"); continue; }
+                LiveInstrument in;
+                in.token = it->second->token;
+                in.fyers = "BSE:" + s.symbol + "-A";
+                in.symbol = s.symbol;
+                in.underlying = s.symbol;
+                in.kind = LiveKind::Equity;
+                in.lot = 1;
+                in.tick = it->second->tick > 0.0 ? it->second->tick : 0.05;
+                in.group = "NIFTY 50 · BSE";
+                rep.instruments.push_back(std::move(in));
+            }
         }
     }
     if (o.stocks && o.stock_futures) {
@@ -477,7 +500,8 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
 
 /// One row of the Kite master as a streamable instrument: what the market
 /// watch's scrip search adds. NSE equity -> "NSE:<SYM>-EQ"; NSE F&O ->
-/// "NSE:<SYM>" (FYERS and Kite share the derivative trading symbol). Other
+/// "NSE:<SYM>" (FYERS and Kite share the derivative trading symbol), and a
+/// BSE equity "BSE:<SYM>-A". Other
 /// exchanges and segments are not streamed; nullopt says so.
 [[nodiscard]] inline std::optional<LiveInstrument> instrument_from_master(const LiveKiteRow& r) {
     LiveInstrument in;
@@ -491,6 +515,15 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
         in.kind = LiveKind::Equity;
         in.fyers = "NSE:" + r.symbol + "-EQ";
         in.underlying = r.symbol;
+        return in;
+    }
+    if (r.exchange == "BSE" && r.segment == "BSE" && r.type == "EQ") {
+        // Group A assumed: the Kite master does not carry the BSE group, and
+        // FYERS refuses (and the feed names) a symbol in any other.
+        in.kind = LiveKind::Equity;
+        in.fyers = "BSE:" + r.symbol + "-A";
+        in.underlying = r.symbol;
+        in.depth = false;
         return in;
     }
     if (r.exchange == "NFO" && (r.segment == "NFO-FUT" || r.segment == "NFO-OPT")) {
@@ -528,7 +561,7 @@ inline void add_watchlist(std::vector<LiveInstrument>& u, const std::vector<Live
         const auto row = std::find_if(master.begin(), master.end(), [t](const LiveKiteRow& r) { return r.token == t; });
         if (row == master.end()) { notes.push_back("watchlist token " + std::to_string(t) + " is not in the master"); continue; }
         auto in = instrument_from_master(*row);
-        if (!in) { notes.push_back("watchlist " + row->symbol + ": only NSE equity and NSE F&O stream"); continue; }
+        if (!in) { notes.push_back("watchlist " + row->symbol + ": only NSE and BSE equity and NSE F&O stream"); continue; }
         u.push_back(std::move(*in));
     }
 }

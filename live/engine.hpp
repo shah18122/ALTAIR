@@ -140,6 +140,11 @@ public:
     /// After the one-minute bars ending at `close_minute` (IST minute of day) closed.
     virtual void on_minute(LiveEngine& e, int close_minute) = 0;
     virtual void on_new_day(LiveEngine&) {}
+    /// A fresh bid/ask for `token` between minute closes, for a model that
+    /// acts on quotes (the cross-exchange arbitrage). Runs only while
+    /// decisions do: in session and not paused by a trade gap. The time to
+    /// act at is LiveEngine::quote_ns().
+    virtual void on_quote(LiveEngine&, std::uint32_t /*token*/) {}
     [[nodiscard]] virtual LiveModelView view(const LiveEngine& e) const = 0;
 };
 
@@ -224,8 +229,18 @@ public:
         if (q.has(kQuoteHasOhlc)) s.open = q.open;
         s.simulated = s.simulated || q.has(kQuoteSimulated);
         simulated_ = simulated_ || s.simulated;
-        if (q.has(kQuoteHasTop)) book_.on_market(q.token, std::max(ns, clock_ns_));
+        if (q.has(kQuoteHasTop)) {
+            quote_ns_ = std::max(ns, clock_ns_);
+            book_.on_market(q.token, quote_ns_);
+            if (day_ != 0 && !paused()) {
+                const int mod = live_minute_of_day(live_ist_minute_index(quote_ns_));
+                if (mod >= kLiveOpenMinute && mod < kLiveCloseMinute)
+                    for (auto& m : models_) m->on_quote(*this, q.token);
+            }
+        }
     }
+    /// The feed time of the quote being handled (on_quote), never before the clock.
+    [[nodiscard]] std::int64_t quote_ns() const noexcept { return std::max(quote_ns_, clock_ns_); }
     /// Up to fifty levels a side (the FYERS 50-level book), at feed time `ns`.
     void on_book(std::uint32_t token, std::uint16_t levels, const LiveLevel* bids, const LiveLevel* asks, std::int64_t ns) {
         LiveState& s = state_[token];
@@ -637,6 +652,7 @@ private:
     LivePaperBook book_;
     std::vector<std::unique_ptr<LiveModel>> models_;
     std::int64_t clock_ns_ = 0, day_ = 0, last_minute_ = 0;
+    std::int64_t quote_ns_ = 0;
     std::int64_t roll_day_ = 0, sq_day_ = 0, pause_until_minute_ = 0;
     std::size_t trades_out_ = 0, fills_out_ = 0, positions_seen_ = 0;
     std::uint64_t late_prints_ = 0, gaps_ = 0, missed_trades_ = 0, decision_minutes_ = 0;

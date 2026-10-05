@@ -696,7 +696,11 @@ public:
     /// Where manual_orders.csv and manual_trades.csv go (tests: a temp dir).
     void set_paper_dir(const QString& dir) { paper_dir_ = dir; }
     /// Start the live feed by itself when nothing streams (main.cpp; never in tests).
-    void set_autostart_feed(bool on) { live_->set_autostart(on); }
+    /// And demo trading: the models paper-trade once the feed streams.
+    void set_autostart_feed(bool on) {
+        live_->set_autostart(on);
+        models_->set_auto_demo(on);
+    }
 
     /// Place a paper order as the order window would (tests, square-off).
     /// Refused while another Altair holds the paper book, or the book could
@@ -1009,7 +1013,7 @@ private:
             if (schedules_.empty() || (!charges_verified_ && !models_->price_unverified())) return std::nullopt;
             std::vector<ChargeSchedule> s = schedules_;
             for (auto& x : s) x.verified = true;
-            const Segment seg = t.inst.exchange == QLatin1String("NSE") ? Segment::Cash
+            const Segment seg = (t.inst.exchange == QLatin1String("NSE") || t.inst.exchange == QLatin1String("BSE")) ? Segment::Cash
                               : t.inst.symbol.endsWith(QLatin1String("FUT")) ? Segment::Fut : Segment::Opt;
             const auto c = demo_costs::fill(seg, t.side == PaperSide::Buy ? Side::Buy : Side::Sell,
                                             static_cast<double>(t.qty), static_cast<double>(t.price_paise) / 100.0,

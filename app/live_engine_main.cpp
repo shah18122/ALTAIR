@@ -54,6 +54,7 @@
 #include <live/file_lock.hpp>
 #include <live/latency.hpp>
 #include <live/ledger.hpp>
+#include <live/arbitrage.hpp>
 #include <live/models.hpp>
 #include <live/report.hpp>
 #include <live/tape.hpp>
@@ -522,6 +523,8 @@ int main(int argc, char** argv) {
     if (dir->names.empty()) engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dir, 0));
     engine.add_model(std::make_unique<lv::LivePairsModel>(pf));
     engine.add_model(std::make_unique<lv::LiveStatArbModel>(std::move(sa)));
+    // NSE against BSE, on every quote: demo trading, in paper, from the start.
+    engine.add_model(std::make_unique<lv::LiveCrossArbModel>());
 
     // Carried positions from the last run, rebuilt from the journal (the
     // record); a tree from before the journal falls back to the snapshot. An
