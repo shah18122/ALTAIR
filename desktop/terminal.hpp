@@ -333,11 +333,6 @@ public:
         views->addButton(chain_btn_);
         views->addButton(models_btn_);
         watch_btn_->setChecked(true);
-        keys_btn_ = new QPushButton(QStringLiteral("⌨ Keys"), strip);
-        keys_btn_->setToolTip(QStringLiteral("F12 · every shortcut: + / − orders, F3 order book, F8 trade book, Alt+F6 net position…"));
-        h->addWidget(keys_btn_);
-        title->setToolTip(QStringLiteral(
-            "+ / F1 buy · − / F2 sell · F3 order book · F8 trade book · Alt+F6 net position · F5 market picture · F12 all keys"));
         v->addWidget(strip);
 
         // ---- ACCOUNT-FIRST SURFACE -------------------------------------
@@ -524,7 +519,6 @@ public:
         connect(watch_btn_, &QPushButton::clicked, this, [this] { show_view(QStringLiteral("watch")); });
         connect(chain_btn_, &QPushButton::clicked, this, [this] { show_view(QStringLiteral("chain")); });
         connect(models_btn_, &QPushButton::clicked, this, [this] { show_view(QStringLiteral("models")); });
-        connect(keys_btn_, &QPushButton::clicked, this, [this] { show_keys(); });
         live_->on_view_changed = [this](LiveMarketWatch::View view) {
             if (surface_->currentWidget() != live_) return;
             (view == LiveMarketWatch::View::Chain ? chain_btn_ : watch_btn_)->setChecked(true);
@@ -612,8 +606,6 @@ public:
         key(QKeySequence(Qt::SHIFT | Qt::Key_F3), [this] { cancel_all_orders(); });
         key(QKeySequence(Qt::CTRL | Qt::Key_F), [this] { show_view(QStringLiteral("watch")); live_->focus_find(); });
         key(QKeySequence(Qt::Key_Insert), [this] { show_view(QStringLiteral("watch")); live_->focus_add(); });
-        key(QKeySequence(Qt::Key_F12), [this] { show_keys(); });
-        key(QKeySequence(Qt::CTRL | Qt::Key_Slash), [this] { show_keys(); });
 
         seed_strip_from_disk();
         refresh_stream();
@@ -936,18 +928,6 @@ private:
         net_window_->refresh(oms_);
         show_window(net_window_);
     }
-    void show_keys() {
-        QDialog d(this);
-        d.setWindowTitle(QStringLiteral("Terminal keys"));
-        auto* l = new QVBoxLayout(&d);
-        auto* text = new QLabel(shortcut_help_html(), &d);
-        text->setTextFormat(Qt::RichText);
-        l->addWidget(text);
-        auto* ok = new QPushButton(QStringLiteral("Close"), &d);
-        connect(ok, &QPushButton::clicked, &d, &QDialog::accept);
-        l->addWidget(ok, 0, Qt::AlignRight);
-        d.exec();
-    }
     void show_market_picture() {
         const LiveRow* r = live_->row_of_token(live_->selected_token());
         if (r == nullptr) { toast(QStringLiteral("Select a scrip first"), false); return; }
@@ -1128,7 +1108,6 @@ private:
     GetsWorkspace* gets_ = nullptr;
     QHash<std::uint32_t, InstrumentDisplay> instrument_names_;
     QPushButton* chain_btn_ = nullptr;
-    QPushButton* keys_btn_ = nullptr;
     QLabel* toast_ = nullptr;
     QDialog* ops_window_ = nullptr;
     NetPositionWindow* net_window_ = nullptr;

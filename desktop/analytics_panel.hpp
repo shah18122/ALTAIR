@@ -155,10 +155,10 @@ private Q_SLOTS:
         // ---- MONTE CARLO -------------------------------------------------
         o += QStringLiteral("\n\nMONTE CARLO — backtest/montecarlo.hpp "
                             "(P6-07)\n");
-        o += QStringLiteral("  1,000 paths of %1 days, resampled from the "
+        o += QStringLiteral("  10,000 paths of %1 days, resampled from the "
                             "SAME returns.\n\n").arg(r.size());
 
-        constexpr std::size_t kPaths = 1000;
+        constexpr std::size_t kPaths = 10000;
         const std::size_t n = r.size();
         std::vector<double> path(n);
         Rng rng(0xA17A12u);
@@ -183,7 +183,7 @@ private Q_SLOTS:
         }
         const double pn = static_cast<double>(kPaths);
         o += QStringLiteral("                        mean max drawdown   "
-                            "worst of 1,000\n");
+                            "worst of 10,000\n");
         o += QStringLiteral("  IID bootstrap         %1%              %2%\n")
                  .arg(100.0 * iid_dd / pn, 6, 'f', 2)
                  .arg(100.0 * iid_worst, 6, 'f', 2);

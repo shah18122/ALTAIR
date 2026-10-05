@@ -99,7 +99,6 @@ Credentials:
 | F10 | Message log |
 | Insert / Delete | Add / remove a scrip |
 | Ctrl+F | Find in the watch |
-| F12 or Ctrl+/ | Every key |
 
 ### Paper orders
 

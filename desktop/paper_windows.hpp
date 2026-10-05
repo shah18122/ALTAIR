@@ -647,32 +647,4 @@ private:
         .arg(r.group);
 }
 
-[[nodiscard]] inline QString shortcut_help_html() {
-    struct K { const char* key; const char* what; };
-    static const K keys[] = {
-        {"+  or  F1", "Buy order entry for the selected scrip (paper)"},
-        {"−  or  F2", "Sell order entry for the selected scrip (paper)"},
-        {"F3", "Order book"},
-        {"Shift+F1 / Shift+F2 / Shift+F3", "Cancel / modify the selected pending order · cancel all pending"},
-        {"F4", "Market watch"},
-        {"Ctrl+O", "Option chain"},
-        {"F5 / F6 / Shift+F9", "Market picture (best five) · snap quote of the selected scrip"},
-        {"Shift+F7", "Security information"},
-        {"F8", "Trade book"},
-        {"Alt+F6", "Net position, with the broker account and GETS tabs"},
-        {"F10", "Message log"},
-        {"Insert", "Add a scrip (search the instrument master)"},
-        {"Delete", "Remove the selected scrip from the market watch"},
-        {"Ctrl+F", "Find in the market watch"},
-        {"Ctrl+M", "Live models"},
-        {"F12  or  Ctrl+/", "This list"},
-        {"Esc", "Close the window in front"},
-    };
-    QString html = QStringLiteral("<table cellspacing=5>");
-    for (const auto& k : keys)
-        html += QStringLiteral("<tr><td style='color:#F4C95D;font-family:Consolas,monospace'><b>%1</b></td><td>%2</td></tr>")
-                    .arg(QString::fromUtf8(k.key).toHtmlEscaped(), QString::fromUtf8(k.what).toHtmlEscaped());
-    return html + QStringLiteral("</table>");
-}
-
 } // namespace altair::ui
