@@ -1,7 +1,7 @@
 # Demo trading: band-fade short options and futures pairs
 
-Paper trades only. Nothing here reaches a broker, and live order submission
-stays disabled. Two research CLIs write CSVs under `data/verified/`, and the
+Paper trades only. Nothing here reaches a broker (real orders go only through
+the Terminal's LIVE switch: ops/live-terminal.md). Two research CLIs write CSVs under `data/verified/`, and the
 desktop's **Strategies → Demo Trading** page runs them and shows the results.
 
 | What | Code | CLI | Output |

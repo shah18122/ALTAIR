@@ -421,7 +421,7 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
                     bids[k] = {b->bid_px[k], b->bid_qty[k], b->bid_orders[k], 0};
                     asks[k] = {b->ask_px[k], b->ask_qty[k], b->ask_orders[k], 0};
                 }
-                bus.book(pp, bids, asks, recv);
+                bus.second_book(pp, bids, asks, recv);   // this thread is the bus's second producer
                 feed.last_ns[it->second].store(TbtFeed::steady_ns(), std::memory_order_relaxed);
                 feed.books.fetch_add(1, std::memory_order_relaxed);
             }

@@ -900,3 +900,45 @@ policy. On a 30x simulated session:
   * stat-arb abstained (no data/pairs history).
 SIM P&L is the simulator's random walk and means nothing. See
 ops/live-terminal.md.
+
+==============================================================================
+23. LIVE ORDERS, 50-LEVEL DEPTH, CROSS-EXCHANGE ARBITRAGE, GETS ADD -- 2026-10-05
+==============================================================================
+Asked: order book to depth 50; add instruments like GETS; drop the shortcuts
+dialog; Buy in the Terminal must reach FYERS; Monte Carlo 10,000 runs;
+arbitrage cross-exchange only, demo trading on by default.
+
+  oms/live_router.hpp, order_router_main.cpp (new)  altair_order_router:
+                          Terminal requests -> FYERS orders, only while
+                          data/live_trading.json is armed; per-order lots,
+                          value, orders/day, open orders, day loss (FYERS
+                          positions), price band vs FYERS LTP, tick, product,
+                          hours; dispatch gate issued and rechecked before
+                          the POST; never retried (uncertain -> order book by
+                          tag -> NOT PLACED); kill switch cancels open
+                          orders; --dry-run. (test_live_router, fake FYERS)
+  broker/https_client.hpp https_fyers_request: GET/POST/DELETE with the
+                          SDK's version: 3 header.
+  desktop/live_trading.hpp (new), terminal.hpp, paper_windows.hpp  PAPER/LIVE
+                          switch (limits + LIVE typed), LIVE order window,
+                          a confirmation on every order, Live orders window
+                          with cancel; switch off = armed false.
+  feed/fyers_tbt.hpp (new)  the FYERS 50-level book (protobuf), vectors from
+                          the official SDK; price service runs it per depth
+                          instrument (--depth50 N|off); wire, client, paper
+                          engine, SIM and the depth ladder carry 50 levels.
+  live/arbitrage.hpp (new), universe.hpp, sim.hpp, engine.hpp  BSE twins of
+                          the NIFTY 50; Cross-exchange arbitrage model on
+                          every quote, costs from the engine's expense
+                          function; SIM basis with 12-30 bp dislocations.
+  desktop/arbitrage_workspace.hpp  NSE vs BSE only; demo-trading view.
+  desktop/live_models.hpp Demo trade automatically (on in the app).
+  desktop/scrip_master.hpp (new)  GETS Add Scrip: Exchange -> Instrument ->
+                          Symbol -> Expiry -> Option -> Strike; BSE equity.
+  desktop/analytics_panel.hpp  Monte Carlo VaR: 10,000 paths.
+  desktop/terminal.hpp    the shortcuts dialog (F12, Ctrl+/) is gone.
+Verified here: unit tests (router against a fake FYERS, TBT vectors, the
+arbitrage on known quotes, the desktop LIVE flow), the full suite, and a SIM
+session (297 arbitrage entries). Not verified here: a real FYERS order, the
+50-level socket, BSE symbols -- this environment cannot reach FYERS. Test LIVE
+with one lot first.
