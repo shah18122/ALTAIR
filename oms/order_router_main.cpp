@@ -187,7 +187,9 @@ int main(int argc, char** argv) {
             std::fflush(stdout);
         }
         if (once || g_stop.load()) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        // Armed, a request is picked up within 5 ms (an arbitrage's legs go
+        // back to back); off, four passes a second is plenty.
+        std::this_thread::sleep_for(std::chrono::milliseconds(router.status().armed ? 5 : 250));
     }
     return 0;
 }

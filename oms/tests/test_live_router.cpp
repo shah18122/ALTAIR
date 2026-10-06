@@ -245,6 +245,50 @@ int main() {
               "a token whose symbol is not the one requested");
     }
 
+    // ---- strategies: their own switch and caps -----------------------------------------------
+    {
+        std::string text = arm_text(true, now_unix, 2);
+        text.pop_back();   // the closing brace
+        text += ",\"strategies\":{\"arbitrage\":{\"on\":true,\"max_lots\":1,\"max_order_value\":2000000,"
+                "\"max_orders_per_day\":2,\"max_daily_loss\":2000},\"ohl\":{\"on\":false,\"max_lots\":1,"
+                "\"max_order_value\":2000000,\"max_orders_per_day\":2,\"max_daily_loss\":2000},"
+                "\"option_arb\":{\"on\":true,\"max_lots\":500}}}";
+        const auto read = read_router_arm(text, now_unix);
+        const RouterArm& arm = read.arm;
+        check(read.verdict == RouterArmVerdict::Armed && arm.strategy("arbitrage") && arm.strategy("arbitrage")->on
+                  && arm.strategy("ohl") && !arm.strategy("ohl")->on,
+              "the arm carries each strategy's switch");
+        check(arm.strategy("option_arb") != nullptr && !arm.strategy("option_arb")->on,
+              "a strategy with caps missing or past the ceilings is off, and the arm itself stands");
+        const RouterInstrument f = fut();
+        const RouterBook book{0, 0, -120'050};
+        const auto strat = [](OrderIntent in, const char* by) { in.by = by; return in; };
+        const auto plan = [&](OrderIntent in, RouterBook b) { return plan_router_order(in, &f, arm, b, 2'500'000, kMonday10); };
+        check(plan(strat(intent("s1", 111, "NIFTY26OCTFUT", "NFO", 2'500'000), "strategy.arbitrage"), book).has_value(),
+              "an arbitrage entry with its switch on is planned");
+        const auto off = plan(strat(intent("s2", 111, "NIFTY26OCTFUT", "NFO", 2'500'000), "strategy.ohl"), book);
+        check(!off && off.error().find("switched off") != std::string::npos, "an OHL entry with its switch off is refused");
+        const auto two = plan(strat(intent("s3", 111, "NIFTY26OCTFUT", "NFO", 2'500'000, "NRML", 2), "strategy.arbitrage"), book);
+        check(!two && two.error().find("arbitrage's limit") != std::string::npos,
+              "two lots is over arbitrage's own one-lot limit, inside the arm's two");
+        RouterBook spent = book;
+        spent.strategy_entries_today = 2;
+        const auto third = plan(strat(intent("s4", 111, "NIFTY26OCTFUT", "NFO", 2'500'000), "strategy.arbitrage"), spent);
+        check(!third && third.error().find("entries today") != std::string::npos, "a third entry over its two a day is refused");
+        const auto mkt = plan(strat(intent("s5", 111, "NIFTY26OCTFUT", "NFO", 0, "MIS"), "strategy.arbitrage"), book);
+        check(!mkt && mkt.error().find("limit price") != std::string::npos, "a strategy's order carries its limit");
+        const RouterBook stopped{3, 2, -900'000, 2};
+        check(plan(strat(intent("s6", 111, "NIFTY26OCTFUT", "NFO", 2'500'000), "strategy.ohl.exit"), stopped).has_value(),
+              "an exit is never refused by a count, the loss stop or the switch: refusing it would leave the position on");
+        check(!plan(strat(intent("s7", 111, "NIFTY26OCTFUT", "NFO", 2'500'000), "strategy.ohl"), stopped).has_value(),
+              "while an entry in the same state is");
+        check(!plan(strat(intent("s8", 111, "NIFTY26OCTFUT", "NFO", 2'500'000), "strategy.unknown"), book).has_value(),
+              "a strategy the arm does not name sends nothing");
+        check(router_strategy_of("smit") == std::nullopt && router_strategy_of("strategy.ohl.exit")->second
+                  && router_strategy_of("strategy.ohl.exit")->first == "ohl",
+              "a person's request is not a strategy's; .exit marks an exit");
+    }
+
     // ---- the gate --------------------------------------------------------------------------
     {
         RouterEvidence e{true, false, true, 77, 5, kMonday10, kMonday10, true, kMonday10};

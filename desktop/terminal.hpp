@@ -754,6 +754,8 @@ public:
                                        .arg(paper_ui::money(l.max_order_value))
                                        .arg(l.max_orders_per_day)
                                        .arg(paper_ui::money(l.max_daily_loss)));
+        log_text_->appendPlainText(QStringLiteral("%1  %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
+                                                                live_strategies_text(l)));
         ensure_router();
         refresh_live();
         toast(QStringLiteral("LIVE: Buy/Sell now go to FYERS (until 15:30, or until you switch it off)"), true);
@@ -1221,7 +1223,9 @@ private:
                               : t.inst.symbol.endsWith(QLatin1String("FUT")) ? Segment::Fut : Segment::Opt;
             const auto c = demo_costs::fill(seg, t.side == PaperSide::Buy ? Side::Buy : Side::Sell,
                                             static_cast<double>(t.qty), static_cast<double>(t.price_paise) / 100.0,
-                                            (t.ns > 0 ? t.ns : now_ns()) / 1'000'000'000LL + 19800, s);
+                                            (t.ns > 0 ? t.ns : now_ns()) / 1'000'000'000LL + 19800, s,
+                                            t.inst.exchange == QLatin1String("BSE") || t.inst.exchange == QLatin1String("BFO")
+                                                ? Exchange::BSE : Exchange::NSE);
             if (!c.priced) return std::nullopt;
             return c.total;
 #else
@@ -1323,8 +1327,8 @@ private:
                                : v.killed ? QStringLiteral("● LIVE · KILL ON")
                                : v.why.isEmpty() ? QStringLiteral("● LIVE") : QStringLiteral("● LIVE · refusing"));
             live_btn_->setStyleSheet(QStringLiteral("background:#DA3633;color:#FFFFFF;font-weight:700;border-radius:4px;padding:3px 10px;"));
-            live_btn_->setToolTip(QStringLiteral("Orders go to FYERS until %1. %2 Click to switch LIVE off.")
-                                      .arg(until, !v.running ? (router_note_.isEmpty() ? QStringLiteral("The order router is not running.")
+            live_btn_->setToolTip(QStringLiteral("Orders go to FYERS until %1. %3. %2 Click to switch LIVE off.")
+                                      .arg(until, live_strategies_text(a.limits), !v.running ? (router_note_.isEmpty() ? QStringLiteral("The order router is not running.")
                                                                                       : router_note_)
                                                   : v.why.isEmpty() ? QString() : QStringLiteral("Refusing: ") + v.why));
             if (!v.running) ensure_router();

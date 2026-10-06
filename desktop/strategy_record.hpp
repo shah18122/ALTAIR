@@ -27,6 +27,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -43,7 +45,7 @@ struct StrategyTrip {
 };
 
 struct StrategyTotals {
-    int trips = 0, wins = 0;
+    int trips = 0, wins = 0, unpriced = 0;   ///< unpriced: no expenses, so left out of the net
     double gross = 0.0, expenses = 0.0, net = 0.0;
 };
 
@@ -111,9 +113,15 @@ namespace strategy_record_detail {
         t.entry = at(c_e).toDouble();
         t.exit_time = at(c_xt);
         t.exit = at(c_x).toDouble();
+        // Blank when a fill could not be priced: no expenses, so no net.
+        const auto num = [&at](int c) {
+            bool ok = false;
+            const double v = at(c).trimmed().toDouble(&ok);
+            return ok ? v : std::numeric_limits<double>::quiet_NaN();
+        };
         t.gross = at(c_g).toDouble();
-        t.expenses = at(c_ex).toDouble();
-        t.net = at(c_n).toDouble();
+        t.expenses = num(c_ex);
+        t.net = num(c_n);
         t.why_in = at(c_wi);
         t.why_out = at(c_wo);
         out.push_back(std::move(t));
@@ -125,8 +133,9 @@ namespace strategy_record_detail {
     StrategyTotals t;
     for (const auto& r : trips) {
         ++t.trips;
-        if (r.net > 0) ++t.wins;
         t.gross += r.gross;
+        if (!std::isfinite(r.net) || !std::isfinite(r.expenses)) { ++t.unpriced; continue; }
+        if (r.net > 0) ++t.wins;
         t.expenses += r.expenses;
         t.net += r.net;
     }
@@ -141,9 +150,12 @@ namespace strategy_record_detail {
     const auto colour = [](double v) { return v > 0 ? QStringLiteral("#7EE787") : v < 0 ? QStringLiteral("#F85149") : QStringLiteral("#C9D1D9"); };
     return QStringLiteral("<b>%1</b> · %2 round trip(s), %3 won · <b>without expenses</b> "
                           "<span style='color:%4'>%5</span> · expenses %6 · <b>with expenses</b> "
-                          "<span style='color:%7'><b>%8</b></span>")
+                          "<span style='color:%7'><b>%8</b></span>%9")
         .arg(label).arg(t.trips).arg(t.wins)
-        .arg(colour(t.gross), strategy_money(t.gross), strategy_money(t.expenses), colour(t.net), strategy_money(t.net));
+        .arg(colour(t.gross), strategy_money(t.gross), strategy_money(t.expenses), colour(t.net), strategy_money(t.net),
+             t.unpriced > 0 ? QStringLiteral(" · <span style='color:#F0B429'>%1 with unpriced expenses (left out of the net)</span>")
+                                  .arg(t.unpriced)
+                            : QString());
 }
 
 /// The record of one strategy: the engine's reading of it, what it holds and
@@ -258,8 +270,10 @@ public:
             const auto& t = trips[static_cast<std::size_t>(trips.size()) - 1 - static_cast<std::size_t>(i)];   // newest first
             const QStringList cells{t.date, t.model, t.symbol, t.side, QString::number(t.qty), t.entry_time,
                                     QString::number(t.entry, 'f', 2), t.exit_time, QString::number(t.exit, 'f', 2),
-                                    QString::number(t.gross, 'f', 2), QString::number(t.expenses, 'f', 2),
-                                    QString::number(t.net, 'f', 2), t.why_in, t.why_out};
+                                    QString::number(t.gross, 'f', 2),
+                                    std::isfinite(t.expenses) ? QString::number(t.expenses, 'f', 2) : QStringLiteral("unpriced"),
+                                    std::isfinite(t.net) ? QString::number(t.net, 'f', 2) : QStringLiteral("unpriced"), t.why_in,
+                                    t.why_out};
             for (int c = 0; c < cells.size(); ++c) {
                 auto* it = new QTableWidgetItem(cells[c]);
                 if (c == 9 || c == 11)

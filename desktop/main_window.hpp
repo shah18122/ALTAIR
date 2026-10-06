@@ -1443,6 +1443,35 @@ private:
         connect(parity_page->button(), &QPushButton::clicked, parity_page,
                 [parity_page] { parity_page->set_text(arbitrage_scans_report()); });
         arb_page->addTab(parity_page, QStringLiteral("Parity & calendar"));
+        {
+            // Each strategy's round trips, demo and real, before and after expenses.
+#ifdef ALTAIR_SOURCE_DIR
+            const QString root = QStringLiteral(ALTAIR_SOURCE_DIR);
+#else
+            const QString root = QDir::currentPath();
+#endif
+            const auto record_tab = [&](const QString& model, const QString& name, const QString& text) {
+                auto* w = new QWidget(arb_page);
+                w->setObjectName(QStringLiteral("arbRecord_") + name);
+                auto* v = new QVBoxLayout(w);
+                auto* head = new QLabel(text, w);
+                head->setWordWrap(true);
+                head->setTextFormat(Qt::RichText);
+                v->addWidget(head);
+                v->addWidget(new StrategyRecordPanel(model, root, w), 1);
+                arb_page->addTab(w, name);
+            };
+            record_tab(QStringLiteral("Cross-exchange arbitrage"), QStringLiteral("NSE \u2194 BSE record"),
+                       QStringLiteral("<b>NSE \u2194 BSE arbitrage.</b> Demo trades always; real orders only while LIVE is on "
+                                      "<b>and</b> Auto: Arbitrage is ticked in the LIVE switch, within its caps. Both legs go "
+                                      "as IOC limits at the touch; a leg that does not fill has the other flattened at once "
+                                      "(a legging loss). Every round trip, gross and net of expenses."));
+            record_tab(QStringLiteral("Option arbitrage"), QStringLiteral("Option arbitrage record"),
+                       QStringLiteral("<b>Option arbitrage.</b> Put-call parity (conversion / reversal against the future) and "
+                                      "box spreads, entered when the lock beats every leg's expenses and spreads in and out; "
+                                      "the order book's imbalance orders the legs and stops a lock the book says is about to "
+                                      "vanish. Demo by default; real only with LIVE on and Auto: Option arb ticked."));
+        }
         pages_->addWidget(arb_page);
 
         // P36-01. THE MODEL ATLAS.

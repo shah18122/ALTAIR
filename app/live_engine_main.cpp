@@ -47,6 +47,7 @@
 #include <app/forecast_tracks.hpp>
 #include <app/live_bundle.hpp>
 #include <app/live_direction.hpp>
+#include <app/live_real_orders.hpp>
 #include <analytics/har_rv.hpp>
 #include <app/live_feed_reader.hpp>
 #include <live/engine.hpp>
@@ -56,6 +57,8 @@
 #include <live/ledger.hpp>
 #include <live/arbitrage.hpp>
 #include <live/models.hpp>
+#include <live/option_arb.hpp>
+#include <live/threshold.hpp>
 #include <live/report.hpp>
 #include <live/tape.hpp>
 #include <live/universe.hpp>
@@ -246,7 +249,7 @@ void usage(const char* exe) {
         "  The live models, paper-trading on altair_price_service's stream.\n\n"
         "    %s [--port 7421] [--until HH:MM] [--seconds N] [--root DIR] [--unverified-costs] [--date YYYY-MM-DD]\n\n"
         "    --port     the price service's loopback port (default 7421)\n"
-        "    --until    stop once the feed's own clock reaches this IST time (default 15:35)\n"
+        "    --until    stop once the feed's own clock reaches this IST time (default 15:40)\n"
         "    --seconds  stop after N seconds (tests)\n"
         "    --root     the tree holding dataset/, config/ and data/ (default: the source tree)\n"
         "    --unverified-costs  price expenses from config/charges.toml although it is UNVERIFIED;\n"
@@ -284,7 +287,7 @@ void usage(const char* exe) {
 int main(int argc, char** argv) {
     const std::int64_t started_unix = unix_now();
     unsigned short port = 7421;
-    int until = 15 * 60 + 35, seconds = 0;
+    int until = 15 * 60 + 40, seconds = 0;
     bool unverified_costs = false;
     std::string date;   // a simulated past day (altair_price_service --sim --date)
     lv::LiveExecPolicy policy;
@@ -444,7 +447,8 @@ int main(int argc, char** argv) {
         const altair::Segment seg = in.kind == lv::LiveKind::Future ? altair::Segment::Fut
                                   : (in.kind == lv::LiveKind::Equity ? altair::Segment::Cash : altair::Segment::Opt);
         const auto c = altair::demo_costs::fill(seg, buy ? altair::Side::Buy : altair::Side::Sell, qty, px,
-                                                ns / 1'000'000'000LL + 19800, schedules);
+                                                ns / 1'000'000'000LL + 19800, schedules,
+                                                in.fyers.rfind("BSE:", 0) == 0 ? altair::Exchange::BSE : altair::Exchange::NSE);
         return c.priced ? c.total : std::numeric_limits<double>::quiet_NaN();
     };
 
@@ -496,8 +500,13 @@ int main(int argc, char** argv) {
                        + ", \"days\": " + std::to_string(sa.history.day.size()) + ", \"digest\": \"" + fp.hex() + "\"}";
     }
 
-    auto dir = std::make_shared<altair::live_direction::DirectionShared>();
-    {
+    // One walk-forward track per decision time (10:15 to 14:15, each to the
+    // 15:20 square-off): a direction model trades at the first where its gate
+    // opens, so it is not tied to one minute of the day.
+    std::vector<std::shared_ptr<altair::live_direction::DirectionShared>> dirs;
+    for (const int minute : altair::live_direction::kDecideMinutes) {
+        auto dir = std::make_shared<altair::live_direction::DirectionShared>();
+        dir->decide_minute = minute;
         // The last three years: what runs live, and a walk-forward that finishes in seconds.
         const std::int64_t from = today - 3 * 365;
         for (const auto& x : nifty5) if (da::audit_day(x.t) >= from) dir->nifty5.push_back(x);
@@ -505,10 +514,12 @@ int main(int argc, char** argv) {
         dir->gate_z = gate_z;
         const auto t0 = std::chrono::steady_clock::now();
         altair::live_direction::calibrate(*dir);
-        std::printf("  direction: %s (%.1f s; today's fit %.2f s, before the session)\n",
+        std::printf("  direction %s: %s (%.1f s; today's fit %.2f s, before the session)\n", lv::live_fmt::hhmm(minute).c_str(),
                     dir->ok ? (std::to_string(dir->history_days) + " days walked forward").c_str() : dir->why.c_str(),
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), dir->fit_seconds);
+        dirs.push_back(std::move(dir));
     }
+    const auto& dir = dirs.front();
 
     // ---- the engine --------------------------------------------------------
     lv::LiveEngine engine(universe, cost, policy);
@@ -519,12 +530,24 @@ int main(int argc, char** argv) {
     engine.add_model(std::make_unique<lv::LiveStrangleModel>(bv, 0.0));
     engine.add_model(std::make_unique<lv::LiveStrangleModel>(bv, 2.0));
     for (std::size_t i = 0; i <= dir->names.size(); ++i)
-        engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dir, i));
-    if (dir->names.empty()) engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dir, 0));
+        engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dirs, i));
+    if (dir->names.empty()) engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dirs, 0));
     engine.add_model(std::make_unique<lv::LivePairsModel>(pf));
     engine.add_model(std::make_unique<lv::LiveStatArbModel>(std::move(sa)));
     // NSE against BSE, on every quote: demo trading, in paper, from the start.
     engine.add_model(std::make_unique<lv::LiveCrossArbModel>());
+    // Threshold: OHL on every near future at 09:15 (live/threshold.hpp).
+    engine.add_model(std::make_unique<lv::LiveOhlModel>());
+    // Option arbitrage: parity and box locks, timed by the book's imbalance.
+    engine.add_model(std::make_unique<lv::LiveOptionArbModel>());
+    // Real orders for the strategies switched on in the LIVE arm (and only
+    // those, and only while armed): requests for the order router. Never in
+    // a replay.
+    std::optional<altair::live_real::RealOrderBridge> real;
+    if (!replaying) {
+        real.emplace(root, cost);
+        real->attach(engine);
+    }
 
     // Carried positions from the last run, rebuilt from the journal (the
     // record); a tree from before the journal falls back to the snapshot. An
@@ -720,6 +743,7 @@ int main(int argc, char** argv) {
     std::uint64_t halts = 0;
     bool kill_seen = false;
     const auto flush_outputs = [&] {
+        if (real) real->poll(wall_ns());
         for (const auto& f : ledger.collect(engine)) lat_fill.record(f.ns - f.submit_ns);
         for (auto& c : engine.book().take_cancelled()) {
             std::printf("  %s\n", c.c_str());

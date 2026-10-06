@@ -154,9 +154,26 @@ struct LivePosition {
     [[nodiscard]] bool filled() const noexcept { return qty > 0; }
 };
 
+/// An order the paper book accepted: what a strategy decided, as it decided
+/// it. The real-order bridge (app/live_real_orders.hpp) turns the ones whose
+/// strategy is switched on into requests for the order router.
+struct LiveOrderEvent {
+    std::string model;
+    LiveInstrument inst;
+    int side = 0;                  ///< +1 buy, -1 sell
+    std::int64_t qty = 0;          ///< units
+    std::int64_t touch_paise = 0;  ///< the price it would take now (ask to buy, bid to sell); 0 if none
+    std::int64_t ns = 0;
+    std::int64_t decided_ns = 0;   ///< legs of one decision share it
+    bool exit = false;
+    std::string reason;
+};
+
 class LivePaperBook {
 public:
     using TopFn = std::function<LiveTop(std::uint32_t)>;
+    /// Every order accepted (entries and exits), as it is submitted.
+    std::function<void(const LiveOrderEvent&)> on_order;
 
     LivePaperBook(TopFn top, LiveCostFn cost, LiveExecPolicy policy = {})
         : top_(std::move(top)), cost_(std::move(cost)), pol_(policy) {}
@@ -198,6 +215,7 @@ public:
         o.id = next_id_++; o.key = key; o.side = side; o.remaining = qty; o.submit_ns = ns;
         o.due_ns = ns + pol_.latency_ns; o.expire_ns = ns + pol_.entry_timeout_ns; o.reason = reason; o.exit = false;
         orders_.emplace(o.id, o);
+        if (on_order) on_order(LiveOrderEvent{model, in, side, qty, touch, ns, ns, false, reason});
         if (pol_.latency_ns <= 0) execute(o.id, ns);
         return true;
     }
@@ -214,6 +232,7 @@ public:
             drop_order_for(it->first, false);
             if (!p.filled()) {
                 cancelled_.push_back(model + " " + p.inst.symbol + ": entry cancelled before it filled (" + reason + ")");
+                dropped(p, ns, reason);
                 positions_.erase(it);
                 return true;
             }
@@ -226,6 +245,10 @@ public:
         o.id = next_id_++; o.key = it->first; o.side = -p.side; o.remaining = p.qty; o.submit_ns = ns;
         o.due_ns = ns + pol_.latency_ns; o.expire_ns = 0; o.reason = reason; o.exit = true;
         orders_.emplace(o.id, o);
+        if (on_order) {
+            const LiveTop t = top_(p.inst.token);
+            on_order(LiveOrderEvent{model, p.inst, -p.side, p.qty, -p.side > 0 ? t.ask : t.bid, ns, p.decided_ns, true, reason});
+        }
         if (pol_.latency_ns <= 0) execute(o.id, ns);
         return true;
     }
@@ -433,12 +456,21 @@ private:
         const std::int64_t decided = p.decided_ns;
         cancelled_.push_back(model + " " + p.inst.symbol + ": entry unfilled after " + secs
                              + " -- no executable quote with size");
+        dropped(p, now, "entry unfilled after " + std::string(secs));
         positions_.erase(pit);
         // A leg of the same decision must not stay on alone.
         std::vector<std::uint32_t> siblings;
         for (const auto& [k, q] : positions_)
             if (k.first == model && q.decided_ns == decided && q.state != LivePosState::Closing) siblings.push_back(k.second);
         for (const std::uint32_t tok : siblings) (void)close(model, tok, now, "other leg unfilled");
+    }
+
+    /// An entry dropped unfilled here may have filled for real: the strategy
+    /// is out of it, so whatever a real order holds must come out too.
+    void dropped(const LivePosition& p, std::int64_t ns, const std::string& reason) {
+        if (!on_order) return;
+        const LiveTop t = top_(p.inst.token);
+        on_order(LiveOrderEvent{p.model, p.inst, -p.side, p.want_qty, -p.side > 0 ? t.ask : t.bid, ns, p.decided_ns, true, reason});
     }
 
     TopFn top_;

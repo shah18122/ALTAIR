@@ -10,14 +10,20 @@
 //
 // OFF BY DEFAULT, AND OFF AGAIN BY ITSELF: an arm lasts until 15:30 IST the
 // day it was given (never overnight); switching LIVE off rewrites the file
-// with "armed": false. The kill switch (kill_switch.hpp) stops the router
+// with "armed": false. The halt (F11+F12, kill_switch.hpp) stops the router
 // sending and cancels what is open.
+//
+// STRATEGIES. The arm also carries each auto strategy's own switch and caps
+// ("strategies": arbitrage, ohl, option_arb -- oms/live_router.hpp). A
+// strategy switched on sends its own orders, without asking, through the same
+// router, only while LIVE is on; all are off unless switched on here.
 #pragma once
 
 #include "order_ticket.hpp"
 #include "paper_windows.hpp"
 
 #include <QAbstractItemView>
+#include <QCheckBox>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -26,6 +32,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -45,6 +53,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace altair::ui {
 
@@ -55,6 +64,26 @@ inline constexpr const char* kLiveTradingIntentFile = "data/order_intents.jsonl"
 /// The router writes orders.json at least every two seconds; older is "not running".
 inline constexpr std::int64_t kLiveTradingBeatNs = 6'000'000'000LL;
 
+/// One auto strategy's switch and caps, as the router reads them. Rupees.
+struct LiveStrategyCaps {
+    QString key;                          ///< the router's name for it
+    QString label;
+    bool on = false;
+    int max_lots = 1;                     ///< a leg; a stock's lot is one share
+    double max_order_value = 2'50'000.0;  ///< a leg
+    int max_orders_per_day = 10;          ///< entries; each leg is one
+    double max_daily_loss = 2'000.0;      ///< its own real net loss today
+};
+
+/// Off, one lot: switched on only in the dialog, deliberately.
+[[nodiscard]] inline std::vector<LiveStrategyCaps> live_strategy_defaults() {
+    return {
+        {QStringLiteral("arbitrage"), QStringLiteral("Arbitrage (NSE \u2194 BSE)"), false, 1, 2'50'000.0, 20, 2'000.0},
+        {QStringLiteral("ohl"), QStringLiteral("OHL threshold"), false, 1, 25'00'000.0, 4, 2'000.0},
+        {QStringLiteral("option_arb"), QStringLiteral("Option arbitrage"), false, 1, 25'00'000.0, 12, 2'000.0},
+    };
+}
+
 /// The limits the router enforces, as the arm dialog edits them. Rupees.
 struct LiveTradingLimits {
     int max_lots = 1;
@@ -63,7 +92,22 @@ struct LiveTradingLimits {
     int max_open_orders = 5;
     double max_daily_loss = 5'000.0;
     double price_band_pct = 3.0;
+    std::vector<LiveStrategyCaps> strategies = live_strategy_defaults();
 };
+
+/// "Auto: Arbitrage ON (1 lot a leg) · OHL off ..." for the log and the LIVE tooltip.
+[[nodiscard]] inline QString live_strategies_text(const LiveTradingLimits& l) {
+    QStringList parts;
+    for (const auto& s : l.strategies)
+        parts << (s.on ? QStringLiteral("%1 ON (%2 lot(s), Rs %3 a leg, %4 entries, stop at Rs %5)")
+                             .arg(s.label)
+                             .arg(s.max_lots)
+                             .arg(paper_ui::money(s.max_order_value))
+                             .arg(s.max_orders_per_day)
+                             .arg(paper_ui::money(s.max_daily_loss))
+                       : s.label + QStringLiteral(" off"));
+    return QStringLiteral("Auto: ") + parts.join(QStringLiteral(" \u00B7 "));
+}
 
 struct LiveTradingArm {
     bool present = false;
@@ -89,6 +133,16 @@ struct LiveTradingArm {
     l.max_open_orders = o.value(QStringLiteral("max_open_orders")).toInt(l.max_open_orders);
     l.max_daily_loss = o.value(QStringLiteral("max_daily_loss")).toDouble(l.max_daily_loss);
     l.price_band_pct = o.value(QStringLiteral("price_band_pct")).toDouble(l.price_band_pct);
+    const QJsonObject st = o.value(QStringLiteral("strategies")).toObject();
+    for (auto& s : l.strategies) {
+        const QJsonObject j = st.value(s.key).toObject();
+        if (j.isEmpty()) continue;
+        s.on = j.value(QStringLiteral("on")).toBool();
+        s.max_lots = j.value(QStringLiteral("max_lots")).toInt(s.max_lots);
+        s.max_order_value = j.value(QStringLiteral("max_order_value")).toDouble(s.max_order_value);
+        s.max_orders_per_day = j.value(QStringLiteral("max_orders_per_day")).toInt(s.max_orders_per_day);
+        s.max_daily_loss = j.value(QStringLiteral("max_daily_loss")).toDouble(s.max_daily_loss);
+    }
     return a;
 }
 
@@ -116,6 +170,17 @@ struct LiveTradingArm {
     o[QStringLiteral("max_open_orders")] = l.max_open_orders;
     o[QStringLiteral("max_daily_loss")] = l.max_daily_loss;
     o[QStringLiteral("price_band_pct")] = l.price_band_pct;
+    QJsonObject st;
+    for (const auto& s : l.strategies) {
+        QJsonObject j;
+        j[QStringLiteral("on")] = s.on;
+        j[QStringLiteral("max_lots")] = s.max_lots;
+        j[QStringLiteral("max_order_value")] = s.max_order_value;
+        j[QStringLiteral("max_orders_per_day")] = s.max_orders_per_day;
+        j[QStringLiteral("max_daily_loss")] = s.max_daily_loss;
+        st[s.key] = j;
+    }
+    o[QStringLiteral("strategies")] = st;
     QDir().mkpath(QFileInfo(path).absolutePath());
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) return false;
@@ -235,8 +300,9 @@ public:
         auto* warn = new QLabel(QStringLiteral(
             "<p style='color:#FF7B72;font-weight:700;font-size:14px'>LIVE: orders go to FYERS with real money.</p>"
             "<p>Until you switch LIVE off, or 15:30 today, Buy (F1) and Sell (F2) in this Terminal send real orders. "
-            "Each one asks you to confirm first. The order router refuses anything outside these limits, and the "
-            "kill switch (Operations) stops it and cancels what is open.</p>"
+            "Each one asks you to confirm first. A strategy switched on below sends its own orders <b>without "
+            "asking</b>, inside its caps; its exits always go. The order router refuses anything outside these "
+            "limits, and F11+F12 halts everything and cancels what is open.</p>"
             "<p><b>Test with 1 lot first.</b></p>"), this);
         warn->setWordWrap(true);
         warn->setTextFormat(Qt::RichText);
@@ -273,6 +339,45 @@ public:
         form->addRow(QStringLiteral("Stop new orders at a loss today of (Rs)"), loss_);
         form->addRow(QStringLiteral("Refuse a limit this far from the last price"), band_);
         v->addLayout(form);
+        // The auto strategies: each off unless ticked, each with its own caps.
+        auto* box = new QGroupBox(QStringLiteral("Strategies that send their own orders (off unless ticked)"), this);
+        auto* grid = new QGridLayout(box);
+        const QStringList heads{QStringLiteral("Strategy"), QStringLiteral("Lots a leg"), QStringLiteral("Rs a leg"),
+                                QStringLiteral("Entries today"), QStringLiteral("Stop at a loss of Rs")};
+        for (int c = 0; c < heads.size(); ++c) grid->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(heads[c]), box), 0, c);
+        int r = 1;
+        for (const auto& s : start.strategies) {
+            StrategyRow w;
+            w.caps = s;
+            w.on = new QCheckBox(s.label, box);
+            w.on->setObjectName(QStringLiteral("liveArmStrategy_") + s.key);
+            w.on->setChecked(s.on);
+            w.lots = new QSpinBox(box);
+            w.lots->setRange(1, 50);
+            w.lots->setValue(s.max_lots);
+            w.lots->setToolTip(QStringLiteral("For a stock a lot is one share; the router's ceiling is 50 an order"));
+            w.value = new QDoubleSpinBox(box);
+            w.value->setRange(1'000.0, 1'00'00'000.0);
+            w.value->setDecimals(0);
+            w.value->setSingleStep(50'000.0);
+            w.value->setValue(s.max_order_value);
+            w.orders = new QSpinBox(box);
+            w.orders->setRange(1, 200);
+            w.orders->setValue(s.max_orders_per_day);
+            w.loss = new QDoubleSpinBox(box);
+            w.loss->setRange(100.0, 10'00'000.0);
+            w.loss->setDecimals(0);
+            w.loss->setSingleStep(500.0);
+            w.loss->setValue(s.max_daily_loss);
+            grid->addWidget(w.on, r, 0);
+            grid->addWidget(w.lots, r, 1);
+            grid->addWidget(w.value, r, 2);
+            grid->addWidget(w.orders, r, 3);
+            grid->addWidget(w.loss, r, 4);
+            rows_.push_back(w);
+            ++r;
+        }
+        v->addWidget(box);
         auto* type_row = new QHBoxLayout;
         type_row->addWidget(new QLabel(QStringLiteral("Type <b>LIVE</b> to switch on:"), this));
         phrase_ = new QLineEdit(this);
@@ -298,19 +403,45 @@ public:
         l.max_open_orders = open_->value();
         l.max_daily_loss = loss_->value();
         l.price_band_pct = band_->value();
+        l.strategies.clear();
+        for (const auto& w : rows_) {
+            LiveStrategyCaps c = w.caps;
+            c.on = w.on->isChecked();
+            c.max_lots = w.lots->value();
+            c.max_order_value = w.value->value();
+            c.max_orders_per_day = w.orders->value();
+            c.max_daily_loss = w.loss->value();
+            l.strategies.push_back(c);
+        }
         return l;
     }
-    /// For tests: type the phrase.
+    /// For tests: type the phrase; tick a strategy.
     void type_phrase(const QString& t) { phrase_->setText(t); }
+    void set_strategy(const QString& key, bool on, int lots = 0) {
+        for (auto& w : rows_)
+            if (w.caps.key == key) {
+                w.on->setChecked(on);
+                if (lots > 0) w.lots->setValue(lots);
+            }
+    }
     [[nodiscard]] bool can_accept() const { return ok_->isEnabled(); }
 
 private:
+    struct StrategyRow {
+        LiveStrategyCaps caps;
+        QCheckBox* on = nullptr;
+        QSpinBox* lots = nullptr;
+        QDoubleSpinBox* value = nullptr;
+        QSpinBox* orders = nullptr;
+        QDoubleSpinBox* loss = nullptr;
+    };
     QSpinBox* lots_ = nullptr;
     QDoubleSpinBox* value_ = nullptr;
     QSpinBox* orders_ = nullptr;
     QSpinBox* open_ = nullptr;
     QDoubleSpinBox* loss_ = nullptr;
     QDoubleSpinBox* band_ = nullptr;
+    std::vector<StrategyRow> rows_;
     QLineEdit* phrase_ = nullptr;
     QPushButton* ok_ = nullptr;
 };

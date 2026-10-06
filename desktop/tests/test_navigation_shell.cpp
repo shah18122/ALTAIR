@@ -212,6 +212,11 @@ int main(int argc, char** argv) {
         window.show_page(QStringLiteral("strategies.threshold"));
         check(stack->currentWidget()->findChild<QWidget*>(QStringLiteral("strategyRecord")) != nullptr,
               "Threshold page shows the OHL record");
+        window.show_page(QStringLiteral("strategies.parity-calendar"));
+        check(stack->currentWidget()->findChild<QWidget*>(QStringLiteral("arbRecord_NSE \u2194 BSE record")) != nullptr
+                  && stack->currentWidget()->findChild<QWidget*>(QStringLiteral("arbRecord_Option arbitrage record")) != nullptr
+                  && stack->currentWidget()->findChildren<QWidget*>(QStringLiteral("strategyRecord")).size() == 2,
+              "Arbitrage shows the NSE-BSE and option arbitrage records, demo and real");
         window.show_page(QStringLiteral("system.data-flow"));
         check(stack->currentWidget()->findChild<QWidget*>(QStringLiteral("liveDataflow")) != nullptr,
               "Data Flow shows today's live path");

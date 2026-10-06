@@ -284,6 +284,32 @@ inline constexpr double kRouterCeilingBandPct = 20.0;
 /// 03:30 IST it reaches 15:30; the Terminal never asks for more).
 inline constexpr std::int64_t kRouterMaxArmSeconds = 12 * 3600;
 
+/// A strategy the arm lets send orders by itself (the models engine writes
+/// them, `by` "strategy.<key>" for an entry and "strategy.<key>.exit" for an
+/// exit). Its own caps sit inside the arm's: entries need the switch on and
+/// pass these; an exit is never refused by them (an exit refused leaves a
+/// position on). Its day-loss cap is the engine's to keep: it is the one that
+/// knows the strategy's own P&L.
+struct RouterStrategy {
+    std::string key;
+    bool on = false;
+    std::int64_t max_lots = 1;
+    std::int64_t max_order_value_paise = 0;
+    std::int64_t max_orders_per_day = 0;     ///< entries
+    std::int64_t max_daily_loss_paise = 0;
+};
+inline constexpr const char* kRouterStrategyKeys[] = {"arbitrage", "ohl", "option_arb"};
+
+/// Which strategy a request is from: (key, is an exit); nullopt for a person's.
+[[nodiscard]] inline std::optional<std::pair<std::string, bool>> router_strategy_of(std::string_view by) {
+    constexpr std::string_view kPrefix = "strategy.";
+    if (by.substr(0, kPrefix.size()) != kPrefix) return std::nullopt;
+    std::string_view rest = by.substr(kPrefix.size());
+    bool exit = false;
+    if (rest.size() > 5 && rest.substr(rest.size() - 5) == ".exit") { exit = true; rest.remove_suffix(5); }
+    return std::make_pair(std::string(rest), exit);
+}
+
 struct RouterArm {
     bool armed = false;
     std::string by;
@@ -295,6 +321,11 @@ struct RouterArm {
     std::int64_t max_open_orders = 5;
     std::int64_t max_daily_loss_paise = 5'000LL * 100;         ///< FYERS positions' P&L for the day
     double price_band_pct = 3.0;                               ///< a limit this far from the last price is refused
+    std::vector<RouterStrategy> strategies;                    ///< the strategies' switches and caps (absent: all off)
+    [[nodiscard]] const RouterStrategy* strategy(std::string_view key) const {
+        for (const auto& s : strategies) if (s.key == key) return &s;
+        return nullptr;
+    }
 };
 
 enum class RouterArmVerdict : std::uint8_t { Unreadable = 0, Absent, Disarmed, Expired, OutOfBounds, Armed };
@@ -343,6 +374,30 @@ struct RouterArmRead {
     a.max_open_orders = static_cast<std::int64_t>(open);
     a.max_daily_loss_paise = std::llround(loss * 100.0);
     a.price_band_pct = band;
+    // The strategies' switches. A strategy whose caps are missing or beyond the
+    // ceilings is off; the arm itself stands.
+    if (const RouterJson* st = j->get("strategies"); st != nullptr && st->kind == RouterJson::Kind::Object) {
+        for (const char* key : kRouterStrategyKeys) {
+            const RouterJson* o = st->get(key);
+            if (o == nullptr || o->kind != RouterJson::Kind::Object) continue;
+            RouterStrategy s;
+            s.key = key;
+            const double sl = o->num("max_lots", -1.0), sv = o->num("max_order_value", -1.0),
+                         so = o->num("max_orders_per_day", -1.0), sd = o->num("max_daily_loss", -1.0);
+            const bool ok = sl >= 1.0 && sl <= static_cast<double>(kRouterCeilingLots) && sl == std::floor(sl)
+                         && sv > 0.0 && sv * 100.0 <= static_cast<double>(kRouterCeilingOrderValuePaise)
+                         && so >= 1.0 && so <= static_cast<double>(kRouterCeilingOrdersPerDay)
+                         && sd > 0.0 && sd * 100.0 <= static_cast<double>(kRouterCeilingDailyLossPaise);
+            s.on = ok && o->truth("on");
+            if (ok) {
+                s.max_lots = static_cast<std::int64_t>(sl);
+                s.max_order_value_paise = std::llround(sv * 100.0);
+                s.max_orders_per_day = static_cast<std::int64_t>(so);
+                s.max_daily_loss_paise = std::llround(sd * 100.0);
+            }
+            a.strategies.push_back(std::move(s));
+        }
+    }
     if (a.expires_unix <= now_unix || a.armed_unix <= 0 || a.armed_unix > now_unix + 60
         || a.expires_unix - a.armed_unix > kRouterMaxArmSeconds) {
         r.verdict = RouterArmVerdict::Expired;
@@ -389,6 +444,7 @@ struct RouterBook {
     std::int64_t orders_today = 0;               ///< sent today, whatever became of them
     std::int64_t open_orders = 0;                ///< sent and not yet final
     std::optional<std::int64_t> day_pnl_paise;   ///< FYERS positions; nullopt = not read
+    std::int64_t strategy_entries_today = 0;     ///< this request's strategy, entries sent today
 };
 
 /// One request, checked and translated: the exact body that will be sent.
@@ -432,6 +488,23 @@ plan_router_order(const OrderIntent& in, const RouterInstrument* inst, const Rou
     if (inst->lot <= 0 || inst->tick_paise <= 0 || inst->fyers.empty())
         return std::unexpected(in.symbol + " has no lot size, tick or FYERS symbol in the universe");
     if (!router_market_open(now_ns)) return std::unexpected("the market is closed (orders go 09:15 to 15:30 IST, weekdays)");
+    // A strategy's request: its switch and its caps, then the arm's.
+    const auto strat = router_strategy_of(in.by);
+    const RouterStrategy* rs_cap = strat ? arm.strategy(strat->first) : nullptr;
+    const bool strategy_exit = strat && strat->second;
+    if (strat) {
+        if (rs_cap == nullptr) return std::unexpected("strategy " + strat->first + " has no switch in the arm: not sent");
+        if (in.order_type != IntentType::Limit) return std::unexpected("a strategy's order must carry its limit price");
+        if (!strategy_exit) {
+            if (!rs_cap->on) return std::unexpected("strategy " + strat->first + " is switched off (Auto: " + strat->first + ")");
+            if (in.lots > rs_cap->max_lots)
+                return std::unexpected(std::to_string(in.lots) + " lots is over " + strat->first + "'s limit of "
+                                       + std::to_string(rs_cap->max_lots));
+            if (book.strategy_entries_today >= rs_cap->max_orders_per_day)
+                return std::unexpected(std::to_string(book.strategy_entries_today) + " " + strat->first
+                                       + " entries today: its limit is " + std::to_string(rs_cap->max_orders_per_day));
+        }
+    }
     if (in.lots > arm.max_lots)
         return std::unexpected(std::to_string(in.lots) + " lots is over the limit of " + std::to_string(arm.max_lots) + " per order");
 
@@ -469,12 +542,18 @@ plan_router_order(const OrderIntent& in, const RouterInstrument* inst, const Rou
     p.value_paise = price * p.qty;
     if (p.value_paise > arm.max_order_value_paise)
         return std::unexpected("the order is worth " + rs(p.value_paise) + ", over the limit of " + rs(arm.max_order_value_paise));
-    if (book.orders_today >= arm.max_orders_per_day)
+    if (strat && !strategy_exit && p.value_paise > rs_cap->max_order_value_paise)
+        return std::unexpected("the order is worth " + rs(p.value_paise) + ", over " + strat->first + "'s limit of "
+                               + rs(rs_cap->max_order_value_paise));
+    if (strategy_exit) {
+        // An exit is never refused by a count or the loss stop: refusing it
+        // would leave the position on.
+    } else if (book.orders_today >= arm.max_orders_per_day)
         return std::unexpected(std::to_string(book.orders_today) + " orders today: the limit is " + std::to_string(arm.max_orders_per_day));
-    if (book.open_orders >= arm.max_open_orders)
+    if (!strategy_exit && book.open_orders >= arm.max_open_orders)
         return std::unexpected(std::to_string(book.open_orders) + " orders are open: the limit is " + std::to_string(arm.max_open_orders));
-    if (!book.day_pnl_paise) return std::unexpected("today's P&L could not be read from FYERS positions: not sent");
-    if (*book.day_pnl_paise <= -arm.max_daily_loss_paise)
+    if (!strategy_exit && !book.day_pnl_paise) return std::unexpected("today's P&L could not be read from FYERS positions: not sent");
+    if (!strategy_exit && *book.day_pnl_paise <= -arm.max_daily_loss_paise)
         return std::unexpected("today's P&L is " + rs(*book.day_pnl_paise) + ": the loss limit of " + rs(arm.max_daily_loss_paise)
                                + " is reached");
 
@@ -864,16 +943,27 @@ private:
         for (const auto& x : u_)
             if (x.token == in.token) { inst = &x; break; }
         std::optional<std::int64_t> ltp;
+        const auto strat = router_strategy_of(in.by);
         if (inst != nullptr) {
             r.fyers_symbol = inst->fyers;
             r.qty = in.lots * inst->lot;
-            const RouterCall q = t_.get(std::string(kRouterQuotesPath) + router_url_escape(inst->fyers));
-            note_auth(q, now_ns);
-            if (q.transport_ok && q.status == 200)
-                if (const auto j = parse_router_json(q.body)) ltp = router_ltp_paise(*j, inst->fyers);
+            if (strat && in.order_type == IntentType::Limit && in.limit_paise > 0) {
+                // A strategy prices its order off the live book on the price
+                // bus a moment ago; asking FYERS again would add ~100 ms to
+                // every leg of an arbitrage. Its limit is the reference.
+                ltp = in.limit_paise;
+            } else {
+                const RouterCall q = t_.get(std::string(kRouterQuotesPath) + router_url_escape(inst->fyers));
+                note_auth(q, now_ns);
+                if (q.transport_ok && q.status == 200)
+                    if (const auto j = parse_router_json(q.body)) ltp = router_ltp_paise(*j, inst->fyers);
+            }
         }
-        if (now_ns - pnl_ns_ >= 5'000'000'000LL) refresh_pnl(now_ns);
-        const RouterBook book{orders_today(now_ns), open_count(), day_pnl_};
+        // The P&L is refreshed every 15 s by tick(); a request reads it fresh
+        // only when it is older than that (it no longer costs every order a round trip).
+        if (now_ns - pnl_ns_ >= 15'000'000'000LL) refresh_pnl(now_ns);
+        RouterBook book{orders_today(now_ns), open_count(), day_pnl_};
+        if (strat && !strat->second) book.strategy_entries_today = strategy_entries_today(in.by, now_ns);
         auto plan = plan_router_order(in, inst, arm_.arm, book, ltp, now_ns);
         if (!plan) return refuse(std::move(r), plan.error(), now_ns);
         r.qty = plan->qty;
@@ -1011,6 +1101,13 @@ private:
     }
     [[nodiscard]] std::int64_t open_count() const {
         return std::count_if(rows_.begin(), rows_.end(), [](const RouterOrder& r) { return !router_final(r.status); });
+    }
+    [[nodiscard]] std::int64_t strategy_entries_today(const std::string& by, std::int64_t now_ns) const {
+        const std::int64_t today = router_ist(now_ns).day;
+        return std::count_if(rows_.begin(), rows_.end(), [today, &by](const RouterOrder& r) {
+            return r.by == by && router_ist(r.at_ns).day == today && r.status != RouterOrderStatus::Refused
+                && r.status != RouterOrderStatus::DryRun && r.status != RouterOrderStatus::NotPlaced;
+        });
     }
     [[nodiscard]] std::int64_t orders_today(std::int64_t now_ns) const {
         const std::int64_t today = router_ist(now_ns).day;

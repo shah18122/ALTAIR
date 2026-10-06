@@ -52,6 +52,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -69,7 +70,7 @@ inline constexpr int kLiveSquareOffMinute = 15 * 60 + 20;  ///< 15:20
 /// The newest state of one instrument, from the feed.
 struct LiveState {
     std::int64_t ltp = 0, last_ns = 0, volume = -1, oi = -1;
-    std::int64_t bid = 0, ask = 0, prev_close = 0, open = 0;
+    std::int64_t bid = 0, ask = 0, prev_close = 0, open = 0, high = 0, low = 0;   ///< open/high/low: the exchange's, today
     std::int64_t bid_qty = 0, ask_qty = 0;
     std::int64_t quote_ns = 0;     ///< feed time of the last bid/ask
     std::int64_t book_ns = 0;      ///< feed time of the last five-level book
@@ -185,6 +186,9 @@ public:
     }
 
     void add_model(std::unique_ptr<LiveModel> m) { models_.push_back(std::move(m)); }
+    /// Called once a trade or quote has been handled, its decisions all made
+    /// (the real-order bridge sends a decision's legs together from here).
+    std::function<void()> after_event;
     [[nodiscard]] const std::vector<std::unique_ptr<LiveModel>>& models() const noexcept { return models_; }
 
     // ---- the feed --------------------------------------------------------
@@ -206,6 +210,7 @@ public:
         if (!bars_.feed(p.token, static_cast<double>(p.last_paise) / 100.0, ns, s.volume, [](std::uint32_t, const LiveBar&) {}))
             ++late_prints_;
         book_.on_market(p.token, std::max(ns, clock_ns_));
+        if (after_event) after_event();
     }
     /// A late joiner's bootstrap: the last trade as it stands, not a trade now.
     /// Updates the price; never enters a bar or moves the clock.
@@ -226,7 +231,7 @@ public:
             s.quote_ns = ns;
         }
         if (q.has(kQuoteHasPrevClose)) s.prev_close = q.prev_close;
-        if (q.has(kQuoteHasOhlc)) s.open = q.open;
+        if (q.has(kQuoteHasOhlc)) { s.open = q.open; s.high = q.high; s.low = q.low; }
         s.simulated = s.simulated || q.has(kQuoteSimulated);
         simulated_ = simulated_ || s.simulated;
         if (q.has(kQuoteHasTop)) {
@@ -238,6 +243,7 @@ public:
                     for (auto& m : models_) m->on_quote(*this, q.token);
             }
         }
+        if (after_event) after_event();
     }
     /// The feed time of the quote being handled (on_quote), never before the clock.
     [[nodiscard]] std::int64_t quote_ns() const noexcept { return std::max(quote_ns_, clock_ns_); }
@@ -298,6 +304,7 @@ public:
     [[nodiscard]] std::int64_t clock_ns() const noexcept { return clock_ns_; }
     [[nodiscard]] std::int64_t today() const noexcept { return day_; }
     [[nodiscard]] bool simulated() const noexcept { return simulated_; }
+    [[nodiscard]] bool replayed() const noexcept { return replay_; }
     [[nodiscard]] const std::vector<LiveInstrument>& universe() const noexcept { return u_; }
     [[nodiscard]] LivePaperBook& book() noexcept { return book_; }
     [[nodiscard]] const LivePaperBook& book() const noexcept { return book_; }

@@ -30,13 +30,15 @@ Terminal (LIVE on) ──► data/order_intents.jsonl ──► altair_order_rou
 
    **Start live feed** does the same by hand; **Live on open** turns the
    automatic start off.
-3. **The models start by themselves** once the feed streams (*Demo trade
-   automatically*, on by default): `altair_live_engine` paper-trades every
-   model, the cross-exchange arbitrage included. **Stop models** turns that off
-   until **Start models**.
+3. **The models start by themselves** once the feed streams. There is no
+   Start or Stop button and no start time: `altair_live_engine` paper-trades
+   every model all session (09:15 to 15:10 for entries, square-off at 15:20,
+   records written until 15:40), the cross-exchange arbitrage, the OHL
+   threshold rule and the option arbitrage included. If the engine exits it is
+   started again 15 s later.
    - Tick **Price UNVERIFIED expenses** to have expenses charged while
-     `config/charges.toml` is unverified. Every figure is then marked UNVERIFIED.
-     The paper orders follow the same tick box.
+     `config/charges.toml` is unverified (the engine restarts with it). Every
+     figure is then marked UNVERIFIED. The paper orders follow the same tick box.
    - Unticked, expenses are refused, as in every demo, and P&L is gross.
 4. **When the market is shut,** pick a day, a start time and a speed next to
    **Start SIM**. The previous closes are the session before that day. When

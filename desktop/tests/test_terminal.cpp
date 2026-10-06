@@ -20,6 +20,7 @@
 #include <core/types/units.hpp>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QDateTime>
 #include <QFile>
 #include <QJsonDocument>
@@ -490,6 +491,26 @@ int main(int argc, char** argv)
         check(arm.value(QStringLiteral("armed")).toBool() && arm.value(QStringLiteral("max_lots")).toInt() == 1
                   && until > now_s && until - now_s <= 12 * 3600,
               "the arm file: armed, one lot, and it ends within one session");
+        const QJsonObject st = arm.value(QStringLiteral("strategies")).toObject();
+        bool any_on = false;
+        for (const QString& k : {QStringLiteral("arbitrage"), QStringLiteral("ohl"), QStringLiteral("option_arb")})
+            any_on = any_on || !st.contains(k) || st.value(k).toObject().value(QStringLiteral("on")).toBool();
+        check(st.size() == 3 && !any_on, "the arm names every auto strategy, each off unless ticked");
+        {
+            LiveTradingArmDialog d2(LiveTradingLimits{});
+            d2.set_strategy(QStringLiteral("arbitrage"), true, 10);
+            const LiveTradingLimits l2 = d2.limits();
+            const QString p2 = tmp.path() + QStringLiteral("/arm2.json");
+            const bool wrote = write_live_arm(p2, true, QStringLiteral("t"), l2, QDateTime::currentDateTimeUtc());
+            const LiveTradingArm back = read_live_arm(p2, QDateTime::currentSecsSinceEpoch());
+            check(d2.findChild<QCheckBox*>(QStringLiteral("liveArmStrategy_arbitrage")) != nullptr && wrote
+                      && back.limits.strategies.size() == 3 && back.limits.strategies[0].key == QStringLiteral("arbitrage")
+                      && back.limits.strategies[0].on && back.limits.strategies[0].max_lots == 10
+                      && !back.limits.strategies[1].on && !back.limits.strategies[2].on,
+                  "ticking Auto: Arbitrage switches on it alone, with its own caps, and the file reads back the same");
+            check(live_strategies_text(l2).contains(QStringLiteral("ON")) && live_strategies_text(l2).contains(QStringLiteral("OHL threshold off")),
+                  "the LIVE tooltip says which strategies trade by themselves");
+        }
 
         int asked = 0;
         term.set_live_confirm([&](const QString& text) {

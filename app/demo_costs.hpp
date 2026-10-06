@@ -4,7 +4,8 @@
 // schedule live on the fill's date. Brokerage is commercial, not regulatory,
 // so it is not in charges.toml; the literals here are the ones
 // desktop/cost_panel.hpp states: Rs 20 an option order, and Rs 20 or 0.03 %
-// (whichever is lower) a futures order.
+// (whichever is lower) a futures or intraday equity order. The exchange
+// matters: a BSE fill pays BSE's transaction charge, not NSE's.
 
 #pragma once
 
@@ -34,13 +35,13 @@ struct Costs {
 
 /// One fill: `ist_seconds` is the fill time, IST seconds since the epoch.
 /// Unpriced (priced = false) when no schedule covers the date or the charge
-/// engine refuses.
+/// engine refuses. Cash is intraday.
 [[nodiscard]] inline Costs fill(Segment seg, Side side, double qty, double price, std::int64_t ist_seconds,
-                                const std::vector<ChargeSchedule>& schedules) {
+                                const std::vector<ChargeSchedule>& schedules, Exchange venue = Exchange::NSE) {
     Costs c;
     BrokerageRule br{};
     br.flat_per_order = Notional{2'000};
-    if (seg == Segment::Fut) {
+    if (seg == Segment::Fut || seg == Segment::Cash) {
         br.pct = rate_from(0.0003L);
         br.take_lower = true;
     } else {
@@ -49,7 +50,7 @@ struct Costs {
     }
     Trade tr{};
     tr.segment = seg;
-    tr.exchange = Exchange::NSE;
+    tr.exchange = venue;
     tr.side = side;
     tr.qty = Qty{static_cast<std::int64_t>(std::llround(qty))};
     tr.price = Price{static_cast<std::int64_t>(std::llround(price * 100.0))};

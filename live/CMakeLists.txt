@@ -44,6 +44,14 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_live_arbitrage_test PRIVATE altair_live)
     add_test(NAME live_arbitrage COMMAND altair_live_arbitrage_test)
 
+    add_executable(altair_live_threshold_test tests/test_threshold.cpp)
+    target_link_libraries(altair_live_threshold_test PRIVATE altair_live)
+    add_test(NAME live_threshold COMMAND altair_live_threshold_test)
+
+    add_executable(altair_live_option_arb_test tests/test_option_arb.cpp)
+    target_link_libraries(altair_live_option_arb_test PRIVATE altair_live)
+    add_test(NAME live_option_arb COMMAND altair_live_option_arb_test)
+
     add_executable(altair_live_exec_study_test tests/test_exec_study.cpp)
     target_link_libraries(altair_live_exec_study_test PRIVATE altair_live)
     add_test(NAME live_exec_study COMMAND altair_live_exec_study_test)

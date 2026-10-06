@@ -320,7 +320,7 @@ find_package(Boost CONFIG QUIET COMPONENTS headers)
 if(TARGET altair_charges_toml AND Boost_FOUND)
     add_executable(altair_live_engine live_engine_main.cpp)
     target_link_libraries(altair_live_engine PRIVATE
-        altair_live altair_models altair_strategies altair_analytics altair_charges_toml altair_flags Boost::headers Threads::Threads)
+        altair_live altair_models altair_strategies altair_analytics altair_charges_toml altair_flags altair_oms Boost::headers Threads::Threads)
     target_include_directories(altair_live_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_live_engine PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     # The commit at configure time, written beside each model bundle (not part of its id).
@@ -426,6 +426,12 @@ if(ALTAIR_BUILD_TESTS)
         altair_live altair_models altair_strategies altair_analytics altair_flags)
     target_include_directories(altair_live_direction_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME live_direction COMMAND altair_live_direction_test)
+    # A switched-on strategy's real orders: requests, sizing to the caps, fills,
+    # the P&L record, legging and the halt -- on files, no broker.
+    add_executable(altair_live_real_orders_test tests/test_live_real_orders.cpp)
+    target_link_libraries(altair_live_real_orders_test PRIVATE altair_live altair_oms altair_flags)
+    target_include_directories(altair_live_real_orders_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME live_real_orders COMMAND altair_live_real_orders_test)
     # NSE F&O bhavcopy, both formats, from fixtures written to a temp dir.
     add_executable(altair_bhavcopy_test tests/test_bhavcopy.cpp)
     target_link_libraries(altair_bhavcopy_test PRIVATE altair_flags)

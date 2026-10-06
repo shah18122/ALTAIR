@@ -110,6 +110,12 @@ int main(int argc, char** argv) {
     panel.reload();
     QCoreApplication::processEvents();
 
+    bool start_stop = false;
+    for (auto* b : panel.findChildren<QPushButton*>())
+        start_stop = start_stop || b->text().contains(QStringLiteral("Start models")) || b->text().contains(QStringLiteral("Stop models"));
+    check(!start_stop && panel.findChild<QLabel*>(QStringLiteral("modelsRunning")) != nullptr,
+          "no Start or Stop button: the models run by themselves, all session");
+
     auto* m = panel.models_table();
     check(m->rowCount() == 3 && cell(m, 0, 0) == QStringLiteral("Strangle 80% NIFTY") && cell(m, 0, 2) == QStringLiteral("in position"),
           "every model has a row with its state");
