@@ -534,6 +534,16 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
         in.strike = in.kind == LiveKind::Future ? 0.0 : r.strike;
         return in;
     }
+    if (r.exchange == "BFO" && (r.segment == "BFO-FUT" || r.segment == "BFO-OPT")) {
+        // BSE F&O (SENSEX, BANKEX). FYERS names them under BSE: with the same
+        // trading symbol; one it does not know is named by the feed and skipped.
+        in.kind = r.segment == "BFO-FUT" ? LiveKind::Future : r.type == "CE" ? LiveKind::Call : LiveKind::Put;
+        in.fyers = "BSE:" + r.symbol;
+        in.underlying = r.name;
+        in.expiry_day = r.expiry_day;
+        in.strike = in.kind == LiveKind::Future ? 0.0 : r.strike;
+        return in;
+    }
     return std::nullopt;
 }
 
@@ -561,7 +571,7 @@ inline void add_watchlist(std::vector<LiveInstrument>& u, const std::vector<Live
         const auto row = std::find_if(master.begin(), master.end(), [t](const LiveKiteRow& r) { return r.token == t; });
         if (row == master.end()) { notes.push_back("watchlist token " + std::to_string(t) + " is not in the master"); continue; }
         auto in = instrument_from_master(*row);
-        if (!in) { notes.push_back("watchlist " + row->symbol + ": only NSE and BSE equity and NSE F&O stream"); continue; }
+        if (!in) { notes.push_back("watchlist " + row->symbol + ": only NSE and BSE equity and F&O stream"); continue; }
         u.push_back(std::move(*in));
     }
 }

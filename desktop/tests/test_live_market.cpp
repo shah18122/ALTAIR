@@ -7,6 +7,7 @@
 //
 // No check description here may contain the substring "F" "AIL" joined.
 
+#include "../greek_watch.hpp"
 #include "../live_market.hpp"
 
 #include <server/price_bus.hpp>
@@ -180,6 +181,50 @@ int main(int argc, char** argv) {
           "and a call and put at one strike agree, off the forward carried to the options' expiry");
     const QString cd = g->item(0, LiveChainView::CDelta) ? g->item(0, LiveChainView::CDelta)->text() : QString();
     check(cd.toDouble() > 0.4 && cd.toDouble() < 0.6, "an at-the-money call's delta is near one half");
+
+    // GREEK WATCH: the 24000 call from the chain, every column from the stream.
+    {
+        GreekWatchWindow gw(&client);
+        GreekLeg leg;
+        leg.c.token = 1001; leg.c.symbol = QStringLiteral("NIFTY26O0624000CE"); leg.c.strike = 24000;
+        leg.c.expiry_day = opt_exp; leg.c.lot = 65; leg.c.call = true;
+        leg.under = QStringLiteral("NIFTY"); leg.fut = 12468226; leg.fut_expiry = fut_exp; leg.spot = 256265;
+        GreekLeg put = leg;
+        put.c.token = 1002; put.c.symbol = QStringLiteral("NIFTY26O0624000PE"); put.c.call = false;
+        check(gw.add(leg) && gw.add(put) && !gw.add(leg), "a strike joins Greek Watch once");
+        gw.refresh();
+        const GreekRow r = greek_row(&client, gw.legs()[0], 0.065);
+        std::printf("    Greek Watch CE: IV %.2f %%, delta %.3f, gamma %.6f, vega %.2f, theta %.2f\n",
+                    r.iv * 100.0, r.delta, r.gamma, r.vega, r.theta);
+        check(std::fabs(r.iv - 0.13) < 0.01 && r.delta > 0.4 && r.delta < 0.6 && r.gamma > 0 && r.vega > 0 && r.theta < 0,
+              "IV, delta, gamma, vega and theta fill from the live prices");
+        check(gw.grid()->item(0, GreekWatchWindow::Units)->text() == QStringLiteral("65")
+                  && gw.grid()->item(0, GreekWatchWindow::DVal)->text().toDouble() > 20.0,
+              "one lot by default, and the value columns use it");
+        gw.grid()->item(1, GreekWatchWindow::Units)->setText(QStringLiteral("-65"));
+        gw.refresh();
+        auto* sum = gw.summary();
+        check(sum->rowCount() == 1 && sum->item(0, GreekWatchWindow::SLegs)->text() == QStringLiteral("2")
+                  && sum->item(0, GreekWatchWindow::SUnits)->text() == QStringLiteral("0"),
+              "the summary adds the legs up per underlying and expiry (long call, short put)");
+        const double dval = sum->item(0, GreekWatchWindow::SDVal)->text().toDouble();
+        check(dval > 50.0 && dval < 75.0, "long call + short put is about one lot of delta: a synthetic future");
+    }
+
+    // ONLY ROWS ON SCREEN REPAINT. Hide the watch: a tick repaints nothing.
+    {
+        auto* model = page.model();
+        page.set_view(LiveMarketWatch::View::Chain);
+        QApplication::processEvents();
+        trade(12468226, 2401300, 65, t0 + 7'000'000);
+        pump(bus, 600, [] { return false; });
+        check(model->last_flush_rows() == 0, "with the watch off screen a tick repaints no row");
+        page.set_view(LiveMarketWatch::View::Watch);
+        QApplication::processEvents();
+        trade(12468226, 2401350, 65, t0 + 8'000'000);
+        pump(bus, 2000, [&] { return model->last_flush_rows() > 0; });
+        check(model->last_flush_rows() == 1, "on screen, the one row that ticked repaints, and only it");
+    }
 
     check(page.status_text().contains(QStringLiteral("SIM")), "a simulated stream is labelled SIM, never LIVE");
     check(!page.status_text().contains(QStringLiteral("● LIVE")), "and not LIVE");

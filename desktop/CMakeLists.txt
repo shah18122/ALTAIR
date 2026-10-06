@@ -127,6 +127,9 @@ qt_add_executable(altair_desktop
     # The full-screen shell: About, the live data-flow page, F11+F12 halt.
     shell_pages.hpp
     strategy_record.hpp
+    # The Terminal's Greek Watch and the demo books' reports.
+    greek_watch.hpp
+    demo_reports.hpp
 )
 
 # P34-02. THE ICON RESOURCE WAS NEVER COMPILED, AND NOTHING SAID SO.

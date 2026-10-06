@@ -49,6 +49,8 @@
 #include <deque>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace altair::ui {
 
@@ -66,6 +68,9 @@ inline constexpr std::size_t kLiveTapeDepth = 300;
 struct LivePrice {
     std::int64_t last_paise = 0;
     std::int64_t last_qty = 0;
+    /// +1 / -1: the direction of the last price CHANGE (the tick rule), kept
+    /// per trade so a screen that repaints once per burst still knows it.
+    int tick_dir = 0;
     std::int64_t volume = 0;
     std::int64_t oi = 0;
     std::int64_t exchange_ts_ns = 0;
@@ -194,13 +199,19 @@ Q_SIGNALS:
 private Q_SLOTS:
     void drain() {
         buf_.append(sock_->readAll());
+        // ONE PASS OVER THE BURST. Frames are consumed by advancing an offset
+        // and the buffer is compacted once at the end: removing each frame
+        // from the front moved the whole remaining burst every time, which on
+        // a megabyte of 50-level books was the GUI thread copying gigabytes.
+        std::size_t off = 0;
+        const auto total = static_cast<std::size_t>(buf_.size());
         for (;;) {
-            if (static_cast<std::size_t>(buf_.size()) < kFrameHeaderBytes) {
+            if (total - off < kFrameHeaderBytes) {
                 break;
             }
             const auto* raw =
-                reinterpret_cast<const std::uint8_t*>(buf_.constData());
-            const auto h = decode_header(raw, static_cast<std::size_t>(buf_.size()));
+                reinterpret_cast<const std::uint8_t*>(buf_.constData()) + off;
+            const auto h = decode_header(raw, total - off);
             if (!h) {
                 // THE STREAM IS NOT FRAME-ALIGNED AND CANNOT BE RECOVERED BY
                 // GUESSING. Hunting for the next magic would resynchronise
@@ -209,12 +220,13 @@ private Q_SLOTS:
                 // reconnect and get a clean stream.
                 ++bad_;
                 buf_.clear();
+                touched_.clear();
                 sock_->abort();
                 Q_EMIT statusChanged();
                 return;
             }
             const std::size_t need = kFrameHeaderBytes + h->payload_len;
-            if (static_cast<std::size_t>(buf_.size()) < need) { break; }
+            if (total - off < need) { break; }
 
             // DISPATCH BY TOPIC. A quote frame is not a price frame, and
             // decoding one as the other would read a previous close as a
@@ -233,8 +245,17 @@ private Q_SLOTS:
             } else {
                 ++unknown_topic_;   // a newer service; skipped by topic, never misread
             }
-            buf_.remove(0, static_cast<qsizetype>(need));
+            off += need;
         }
+        if (off > 0) buf_.remove(0, static_cast<qsizetype>(off));
+        // ONE NOTICE PER INSTRUMENT PER BURST. Every frame has already updated
+        // its instrument's state; a screen only needs to know which ones moved,
+        // and painting the same row forty times in one read is the freeze.
+        // (Trades still notify one by one: a trade is an event, not a state.)
+        auto touched = std::move(touched_);
+        touched_.clear();
+        touched_seen_.clear();
+        for (const auto token : touched) Q_EMIT priceUpdated(token);
     }
 
 private:
@@ -285,6 +306,8 @@ private:
         lp.exchange_ts_ns = d.payload.exchange_ts_ns;
         lp.last_ns = std::max(lp.last_ns, h.engine_time_ns);
         if (h.topic == kTopicTrades) {
+            if (lp.last_paise > 0 && d.payload.last_paise > 0 && d.payload.last_paise != lp.last_paise)
+                lp.tick_dir = d.payload.last_paise > lp.last_paise ? 1 : -1;
             lp.last_paise = d.payload.last_paise;
             lp.last_qty = d.payload.last_qty;
             // A snapshot is the last trade as it stood, not a new print: it
@@ -309,7 +332,7 @@ private:
                 lp.asks[i] = d.asks[i];
             }
         }
-        Q_EMIT priceUpdated(d.payload.token);
+        touch(d.payload.token);
         if (h.topic == kTopicTrades && !snapshot) Q_EMIT tradeUpdated(d.payload.token);
     }
 
@@ -324,7 +347,10 @@ private:
         lp.last_ns = std::max(lp.last_ns, h.engine_time_ns);
         lp.replay = q.has(kQuoteReplay);
         lp.simulated = q.has(kQuoteSimulated);
-        Q_EMIT priceUpdated(q.token);
+        touch(q.token);
+    }
+    void touch(std::uint32_t token) {
+        if (touched_seen_.insert(token).second) touched_.push_back(token);
     }
 
     QTcpSocket* sock_ = nullptr;
@@ -334,6 +360,8 @@ private:
     qint64 cap_ = 0;
     std::unordered_map<std::uint32_t, LivePrice> last_;
     std::unordered_map<std::uint32_t, std::uint64_t> seq_;
+    std::vector<std::uint32_t> touched_;            ///< instruments updated in this burst, first-touch order
+    std::unordered_set<std::uint32_t> touched_seen_;
     std::uint64_t frames_ = 0;
     std::uint64_t gaps_ = 0;
     std::uint64_t missed_ = 0;

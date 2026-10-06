@@ -544,6 +544,39 @@ int main(int argc, char** argv)
               "one given at 00:30 IST ends twelve hours later, never past what the router accepts");
     }
 
+    // ------------------------------------------------------------------
+    // [10] The strip: no Market Watch / Option Chain buttons; Models toggles;
+    // the movers sit beside LIVE; Greek Watch opens from an option.
+    // ------------------------------------------------------------------
+    std::printf("\n[10] strip, Models toggle, movers, Greek Watch\n");
+    {
+        bool view_buttons = false;
+        for (auto* b : term.findChildren<QPushButton*>())
+            view_buttons = view_buttons || b->text() == QStringLiteral("Market Watch") || b->text() == QStringLiteral("Option Chain");
+        check(!view_buttons, "no Market Watch or Option Chain button: Enter on a scrip opens its chain");
+        check(term.findChild<QLabel*>(QStringLiteral("moversStrip")) != nullptr
+                  && term.movers_text().contains(QStringLiteral("movers")),
+              "the movers strip sits beside LIVE (waiting until prices arrive)");
+        check(term.show_view(QStringLiteral("models")) && term.show_view(QStringLiteral("watch")),
+              "Models (Ctrl+M) and back to the watch (F4)");
+        MasterScrip ce;
+        ce.token = 9030; ce.symbol = QStringLiteral("SBIN26OCT800CE"); ce.exchange = QStringLiteral("NFO");
+        ce.segment = QStringLiteral("NFO-OPT"); ce.name = QStringLiteral("SBIN"); ce.type = QStringLiteral("CE");
+        ce.expiry = QStringLiteral("2099-10-27"); ce.strike = 800; ce.lot = 750;
+        MasterScrip fut = ce;
+        fut.token = 9003; fut.symbol = QStringLiteral("SBIN99OCTFUT"); fut.segment = QStringLiteral("NFO-FUT");
+        fut.type = QStringLiteral("FUT"); fut.strike = 0;
+        MasterScrip eq;
+        eq.token = 779521; eq.symbol = QStringLiteral("SBIN"); eq.exchange = QStringLiteral("NSE");
+        eq.segment = QStringLiteral("NSE"); eq.type = QStringLiteral("EQ");
+        term.market_watch()->set_master_for_test({ce, fut, eq});
+        check(term.open_greek(9030) && term.greek_watch()->legs().size() == 1
+                  && term.greek_watch()->legs()[0].fut == 9003 && term.greek_watch()->legs()[0].spot == 779521,
+              "Greek Watch takes the option with its future and its stock to value it on");
+        check(!term.open_greek(779521), "an equity is not an option: Greek Watch refuses it");
+        term.greek_watch()->hide();
+    }
+
     std::printf("\n%s -- %d failing check(s)\n",
                 failures == 0 ? "PASS" : "FAILED", failures);
     return failures == 0 ? 0 : 1;

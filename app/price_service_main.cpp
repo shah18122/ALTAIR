@@ -34,6 +34,8 @@
 #include <boost/asio/io_context.hpp>
 
 #include <algorithm>
+#include <deque>
+#include <mutex>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -458,9 +460,56 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
 /// caller rebuilds the universe and reconnects with them.
 inline constexpr int kRestartForWatchlist = 10;
 
+/// FYERS symbol tokens for `symbols` -> (symbol, HSM token) pairs, in chunks
+/// the symbol-token call accepts. Unknown symbols are counted in `invalid`.
+/// Empty with `why` set when the call itself failed.
+[[nodiscard]] inline std::vector<std::pair<std::string, std::string>>
+fyers_symbol_tokens(const FySession& session, const std::vector<std::string>& symbols, std::string& why,
+                    std::vector<std::string>& invalid) {
+    namespace hsm = altair::fyers_hsm;
+    std::vector<std::pair<std::string, std::string>> out;
+    const auto bare = std::string{hsm::bare_token(session.access)};
+    const auto rest_auth = altair::fyers::authorization_header(session.client.c_str(), session.access.c_str());
+    constexpr std::size_t kChunk = 50;
+    for (std::size_t at = 0; at < symbols.size(); at += kChunk) {
+        std::string body = "{\"symbols\":[";
+        for (std::size_t i = at; i < symbols.size() && i < at + kChunk; ++i) {
+            if (i > at) { body.push_back(','); }
+            body += "\"" + symbols[i] + "\"";
+        }
+        body += "]}";
+        std::optional<hsm::SymbolTokens> tokens;
+        for (int attempt = 0; attempt < 2 && !tokens; ++attempt) {
+            const std::string auth = attempt == 0 ? bare : (rest_auth ? *rest_auth : std::string{});
+            if (auth.empty()) { break; }
+            const auto response = altair::https_post_json(hsm::kSymbolTokenHost, hsm::kSymbolTokenPath, body,
+                                                          std::chrono::seconds{20}, auth);
+            if (!response) { why = "symbol-token request: transport failed"; continue; }
+            auto parsed = hsm::parse_symbol_tokens(response->body);
+            if (parsed) { tokens = std::move(*parsed); break; }
+            why = "symbol-token request: HTTP " + std::to_string(response->status) + ", "
+                + hsm::error_text(parsed.error());
+        }
+        if (!tokens) { return {}; }
+        for (const auto& bad : tokens->invalid) { invalid.push_back(bad); }
+        for (const auto& [symbol, fytoken] : tokens->valid) { out.emplace_back(symbol, fytoken); }
+    }
+    why.clear();
+    return out;
+}
+
+/// Stream the universe from FYERS until `deadline_unix` or Ctrl+C.
+///
+/// SCRIPS ADDED WHILE STREAMING ARE SUBSCRIBED ON THE SAME SOCKET. `take_added`
+/// is asked every couple of seconds for instruments the market watch or an
+/// opened option chain asked for; their FYERS symbol tokens are looked up on a
+/// helper thread (an HTTPS call must not stall the socket), and the socket
+/// thread maps and subscribes them on its next frame. Nothing reconnects, so
+/// nothing else misses a tick. They are re-subscribed with the rest after any
+/// reconnect. (The 50-level TBT book keeps the universe it started with.)
 int run_fyers(const FySession& session, const std::vector<altair::live::LiveInstrument>& u,
               altair::live_sources::SharedBus& bus, std::int64_t deadline_unix, const std::string& status_path,
-              const std::function<bool()>& watch_changed = {}) {
+              const std::function<std::vector<altair::live::LiveInstrument>()>& take_added = {}) {
     namespace hsm = altair::fyers_hsm;
     using altair::live_sources::FeedStatus;
     FeedStatus st;
@@ -483,41 +532,25 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     for (std::size_t i = 0; i < u.size(); ++i) { index_of.emplace(u[i].fyers, i); }
     hsm::HsmSession decoder{false};
     std::vector<std::string> topics;
-    const auto bare = std::string{hsm::bare_token(session.access)};
-    const auto rest_auth = altair::fyers::authorization_header(session.client.c_str(), session.access.c_str());
-    constexpr std::size_t kChunk = 50;
-    for (std::size_t at = 0; at < u.size(); at += kChunk) {
-        std::string body = "{\"symbols\":[";
-        for (std::size_t i = at; i < u.size() && i < at + kChunk; ++i) {
-            if (i > at) { body.push_back(','); }
-            body += "\"" + u[i].fyers + "\"";
-        }
-        body += "]}";
-        std::optional<hsm::SymbolTokens> tokens;
+    {
+        std::vector<std::string> symbols;
+        symbols.reserve(u.size());
+        for (const auto& in : u) symbols.push_back(in.fyers);
         std::string why;
-        for (int attempt = 0; attempt < 2 && !tokens; ++attempt) {
-            const std::string auth = attempt == 0 ? bare : (rest_auth ? *rest_auth : std::string{});
-            if (auth.empty()) { break; }
-            const auto response = altair::https_post_json(hsm::kSymbolTokenHost, hsm::kSymbolTokenPath, body,
-                                                          std::chrono::seconds{20}, auth);
-            if (!response) { why = "symbol-token request: transport failed"; continue; }
-            auto parsed = hsm::parse_symbol_tokens(response->body);
-            if (parsed) { tokens = std::move(*parsed); break; }
-            why = "symbol-token request: HTTP " + std::to_string(response->status) + ", "
-                + hsm::error_text(parsed.error());
-        }
-        if (!tokens) {
+        std::vector<std::string> invalid;
+        const auto valid = fyers_symbol_tokens(session, symbols, why, invalid);
+        if (!why.empty()) {
             st.state = "refused";
             st.error = why;
             altair::live_sources::write_status(status_path, st);
             std::printf("  %s\n", why.c_str());
             return 3;
         }
-        for (const auto& bad : tokens->invalid) {
+        for (const auto& bad : invalid) {
             ++st.unknown_symbols;
             std::printf("    FYERS does not know %s -- not streamed\n", bad.c_str());
         }
-        for (const auto& [symbol, fytoken] : tokens->valid) {
+        for (const auto& [symbol, fytoken] : valid) {
             const auto it = index_of.find(symbol);
             if (it == index_of.end()) { continue; }
             const auto cookie = static_cast<std::uint32_t>(it->second);
@@ -554,18 +587,79 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     TbtFeed tbt(u.size());
     if (g_depth50 > 0) tbt.th = std::thread([&] { run_fyers_tbt(session, u, bus, deadline_unix, tbt); });
     std::vector<altair::fyers_frames::LastTrade> last(u.size());
+    // Instruments added while streaming: cookies u.size() + k. Deques, so a
+    // reference handed to the decoder's callback never moves.
+    std::deque<altair::live::LiveInstrument> extra;
+    std::deque<altair::fyers_frames::LastTrade> extra_last;
+    // Symbol-token lookups for them, done off the socket thread.
+    struct Looked { altair::live::LiveInstrument in; std::string fytoken; };
+    std::mutex looked_mu;
+    std::vector<Looked> looked;
+    std::vector<std::thread> lookups;
     altair::fyers_frames::Frames f;
     bool auth_rejected = false;
-    bool restart = false;
     const auto emit = [&](const hsm::HsmUpdate& up) {
-        if (up.cookie >= u.size()) { return; }
+        const std::size_t n = u.size() + extra.size();
+        if (up.cookie >= n) { return; }
+        const bool base = up.cookie < u.size();
+        const std::uint32_t token = base ? u[up.cookie].token : extra[up.cookie - u.size()].token;
+        auto& lt = base ? last[up.cookie] : extra_last[up.cookie - u.size()];
         const std::int64_t recv = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
-        if (!altair::fyers_frames::to_frames(up, u[up.cookie].token, last[up.cookie], recv, f)) { return; }
+        if (!altair::fyers_frames::to_frames(up, token, lt, recv, f)) { return; }
         if (f.quote) { bus.quote(f.quote_p, f.quote_ns); }
         if (f.trade) { bus.trade(f.price, f.trade_ns); st.engine_ns = f.trade_ns; }
         // The 50-level book wins while it is fresh: no flicker back to five levels.
-        if (f.book && !tbt.fresh(up.cookie)) { bus.book(f.price, f.bids, f.asks, f.trade_ns); }
+        if (f.book && !(base && tbt.fresh(up.cookie))) { bus.book(f.price, f.bids, f.asks, f.trade_ns); }
+    };
+    // Map and subscribe what the helper threads looked up (socket thread only).
+    const auto subscribe_looked = [&](std::vector<altair::FyersFrame>& replies) {
+        std::vector<Looked> ready;
+        {
+            const std::lock_guard<std::mutex> lock(looked_mu);
+            ready.swap(looked);
+        }
+        if (ready.empty()) { return; }
+        std::vector<std::string> fresh;
+        for (auto& l : ready) {
+            const auto cookie = static_cast<std::uint32_t>(u.size() + extra.size());
+            for (int pass = 0; pass < (l.in.depth ? 2 : 1); ++pass) {
+                const auto type = pass == 0 ? hsm::DataType::SymbolUpdate : hsm::DataType::DepthUpdate;
+                auto topic = hsm::topic_for(l.in.fyers, l.fytoken, type);
+                if (topic.empty()) { continue; }
+                decoder.map_topic(topic, l.in.fyers, cookie);
+                fresh.push_back(std::move(topic));
+            }
+            std::printf("  streaming %s (added while running)\n", l.in.symbol.c_str());
+            extra.push_back(std::move(l.in));
+            extra_last.emplace_back();
+        }
+        for (std::size_t i = 0; i < fresh.size(); i += hsm::kSubscribeChunk) {
+            const std::size_t n = fresh.size() - i < hsm::kSubscribeChunk ? fresh.size() - i : hsm::kSubscribeChunk;
+            const auto frame = hsm::topics_frame(true, std::span<const std::string>{fresh.data() + i, n},
+                                                 hsm::kDefaultChannel, session.client.size() + 1 + session.access.size(),
+                                                 hsm::kDefaultSource.size());
+            if (!frame) { continue; }
+            replies.push_back(*frame);
+            subscribe.push_back(*frame);   // and again after any reconnect
+        }
+        st.instruments = u.size() + extra.size();
+        std::fflush(stdout);
+    };
+    const auto look_up = [&](std::vector<altair::live::LiveInstrument> added) {
+        lookups.emplace_back([&, added = std::move(added)]() mutable {
+            std::vector<std::string> symbols;
+            for (const auto& in : added) symbols.push_back(in.fyers);
+            std::string why;
+            std::vector<std::string> invalid;
+            const auto valid = fyers_symbol_tokens(session, symbols, why, invalid);
+            if (!why.empty()) { std::printf("  could not add scrips: %s\n", why.c_str()); return; }
+            for (const auto& bad : invalid) std::printf("    FYERS does not know %s -- not streamed\n", bad.c_str());
+            const std::lock_guard<std::mutex> lock(looked_mu);
+            for (const auto& [symbol, fytoken] : valid)
+                for (auto& in : added)
+                    if (in.fyers == symbol) { looked.push_back({in, fytoken}); break; }
+        });
     };
     auto last_status = std::chrono::steady_clock::now();
     const auto on_frame = [&](const std::uint8_t* p, std::size_t n, std::vector<altair::FyersFrame>& replies) -> bool {
@@ -580,13 +674,17 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
             auth_rejected = true;
             return false;
         }
+        if (st.state == "streaming") { subscribe_looked(replies); }
         const auto now = std::chrono::steady_clock::now();
         if (now - last_status > std::chrono::seconds(2)) {
             last_status = now;
             st.clients = bus.clients();
             st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
             altair::live_sources::write_status(status_path, st);
-            if (watch_changed && watch_changed()) { restart = true; return false; }
+            if (take_added) {
+                auto added = take_added();
+                if (!added.empty()) { look_up(std::move(added)); }
+            }
         }
         return !g_stop.load() && unix_now() < deadline_unix;
     };
@@ -604,7 +702,6 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         const auto run = altair::fyers_data_socket_run(
             {hsm::auth_frame(*hsm_key, source), hsm::mode_frame(false, hsm::kDefaultChannel)}, on_frame,
             hsm::ping_frame(), std::chrono::seconds{hsm::kPingSeconds}, std::chrono::seconds{left});
-        if (restart) { break; }
         if (run) {
             last_error.reset();
             if (run->interrupted) { break; }
@@ -624,11 +721,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         const long backoff = attempt < 3 ? (1L << attempt) : 8L;
         std::this_thread::sleep_for(std::chrono::seconds{backoff});
     }
-    if (restart) {
-        std::printf("  watchlist changed: reconnecting with the new scrips\n");
-        std::fflush(stdout);
-        return kRestartForWatchlist;
-    }
+    for (auto& t : lookups) { if (t.joinable()) t.join(); }
     if (st.state != "refused") { st.state = "stopped"; }
     st.clients = bus.clients();
     st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
@@ -1035,24 +1128,34 @@ int main(int argc, char** argv) {
         altair::live_sources::SharedBus shared(bus);
         const std::string status = live_dir + "/feed_status.json";
         const auto started = std::chrono::steady_clock::now();
-        // The watchlist file, checked every couple of seconds: new tokens are
-        // added to the universe (and universe.csv, which the desktop reads).
+        // The watchlist file and the option chains the Terminal opened
+        // (chain_request.csv), checked every couple of seconds: new tokens are
+        // added to what streams (and universe.csv, which the desktop reads).
+        // `known` grows; uni.instruments does not change under a running feed
+        // (the 50-level thread reads it), and is caught up between runs.
+        std::vector<altair::live::LiveInstrument> known = uni.instruments;
+        const std::string chain_path = live_dir + "/chain_request.csv";
         std::error_code wec;
         auto watch_stamp = std::filesystem::last_write_time(watch_path, wec);
+        auto chain_stamp = std::filesystem::last_write_time(chain_path, wec);
         const auto take_new_watch = [&]() -> std::vector<altair::live::LiveInstrument> {
-            std::error_code e;
-            const auto stamp = std::filesystem::last_write_time(watch_path, e);
-            if (e || stamp == watch_stamp) return {};
-            watch_stamp = stamp;
-            const auto now_watched = altair::live::read_watchlist(watch_path);
-            const std::size_t before = uni.instruments.size();
+            std::error_code e1, e2;
+            const auto ws = std::filesystem::last_write_time(watch_path, e1);
+            const auto cs = std::filesystem::last_write_time(chain_path, e2);
+            const bool watch_new = !e1 && ws != watch_stamp, chain_new = !e2 && cs != chain_stamp;
+            if (!watch_new && !chain_new) return {};
+            if (!e1) watch_stamp = ws;
+            if (!e2) chain_stamp = cs;
+            auto wanted = altair::live::read_watchlist(watch_path);
+            for (const auto t : altair::live::read_watchlist(chain_path))
+                if (std::find(wanted.begin(), wanted.end(), t) == wanted.end()) wanted.push_back(t);
+            const std::size_t before = known.size();
             std::vector<std::string> notes;
-            altair::live::add_watchlist(uni.instruments, rows, now_watched, notes);
+            altair::live::add_watchlist(known, rows, wanted, notes);
             for (const auto& n : notes) { std::printf("  note: %s\n", n.c_str()); }
-            std::vector<altair::live::LiveInstrument> added(uni.instruments.begin() + static_cast<std::ptrdiff_t>(before),
-                                                           uni.instruments.end());
+            std::vector<altair::live::LiveInstrument> added(known.begin() + static_cast<std::ptrdiff_t>(before), known.end());
             if (!added.empty()) {
-                (void)altair::live::write_universe(live_dir + "/universe.csv", uni.instruments);
+                (void)altair::live::write_universe(live_dir + "/universe.csv", known);
                 for (const auto& in : added) std::printf("  added %s\n", in.symbol.c_str());
                 std::fflush(stdout);
             }
@@ -1101,8 +1204,9 @@ int main(int argc, char** argv) {
         const std::function<bool()> watch_changed = [&] { return !take_new_watch().empty(); };
         bool on_kite = mode == "kite";
         for (;;) {
+            uni.instruments = known;   // everything added so far streams from the start of this run
             int rc = on_kite ? run_kite(*kcreds, uni.instruments, shared, deadline, status, watch_changed)
-                             : run_fyers(*session, uni.instruments, shared, deadline, status, watch_changed);
+                             : run_fyers(*session, uni.instruments, shared, deadline, status, take_new_watch);
             // FYERS refused the socket and Kite is logged in: carry on from Kite.
             if (!on_kite && rc == 4 && kcreds && !g_stop.load() && unix_now() < deadline) {
                 std::printf("FYERS refused the feed; switching to Kite\n");

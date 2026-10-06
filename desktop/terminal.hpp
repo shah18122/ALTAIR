@@ -48,6 +48,7 @@
 
 #include "auth.hpp"
 #include <broker/account_snapshot.hpp>
+#include "greek_watch.hpp"
 #include "kill_switch.hpp"
 #include "live_feed.hpp"
 #include "option_chain.hpp"
@@ -330,25 +331,21 @@ public:
         live_orders_btn_->setObjectName(QStringLiteral("liveOrdersButton"));
         live_orders_btn_->setToolTip(QStringLiteral("Every order sent to FYERS today and what became of it; cancel from here"));
         h->addWidget(live_orders_btn_);
-        const auto view_button = [&](const QString& text, const QString& tip) {
-            auto* b = new QPushButton(text, strip);
-            b->setCheckable(true);
-            b->setToolTip(tip);
-            h->addWidget(b);
-            return b;
-        };
-        watch_btn_ = view_button(QStringLiteral("Market Watch"), QStringLiteral(
-            "F4 · every scrip ticking: LTP, change, best bid/ask, volume, OI, OHLC; depth and time & sales beside it"));
-        chain_btn_ = view_button(QStringLiteral("Option Chain"), QStringLiteral(
-            "Ctrl+O · CE | strike | PE, live, with IV and Δ from the market mid; click a side to trade it"));
-        models_btn_ = view_button(QStringLiteral("Models"), QStringLiteral(
-            "Ctrl+M · live models: what each is doing and why, paper positions and trades with expenses"));
-        auto* views = new QButtonGroup(this);
-        views->setExclusive(true);
-        views->addButton(watch_btn_);
-        views->addButton(chain_btn_);
-        views->addButton(models_btn_);
-        watch_btn_->setChecked(true);
+        // Top gainers and losers of the streamed NSE stocks, beside LIVE; a
+        // click opens the top ten of each.
+        movers_ = new QLabel(strip);
+        movers_->setObjectName(QStringLiteral("moversStrip"));
+        movers_->setTextFormat(Qt::RichText);
+        movers_->setToolTip(QStringLiteral("Top gainers and losers of the streamed stocks, every 2 s. Click for the top ten."));
+        movers_->setText(QStringLiteral("<span style='color:#6B7380'>movers: waiting for prices</span>"));
+        h->addWidget(movers_);
+        // The market watch is home; Enter on a scrip opens its option chain.
+        // Models toggles the live models over it (Ctrl+M; F4 back).
+        models_btn_ = new QPushButton(QStringLiteral("Models"), strip);
+        models_btn_->setCheckable(true);
+        models_btn_->setToolTip(QStringLiteral(
+            "Ctrl+M · live models: what each is doing and why, paper positions and trades with expenses. F4: the market watch."));
+        h->addWidget(models_btn_);
         v->addWidget(strip);
 
         // ---- ACCOUNT-FIRST SURFACE -------------------------------------
@@ -485,6 +482,10 @@ public:
             return priced;
         });
         net_window_->add_tab(gets_, QStringLiteral("Broker account · GETS"));
+        gets_->set_demo_ltp([this](quint32 tok) {
+            const LivePrice* p = client_->price(tok);
+            return p != nullptr && p->last_paise > 0 ? static_cast<double>(p->last_paise) / 100.0 : 0.0;
+        });
 
         connect(position_filter_, &QLineEdit::textChanged, this,
                 [this](const QString& text) {
@@ -532,14 +533,25 @@ public:
         // A TERMINAL OPENS ON THE MARKET.
         surface_->setCurrentWidget(live_);
         v->addWidget(surface_, 1);
-        connect(watch_btn_, &QPushButton::clicked, this, [this] { show_view(QStringLiteral("watch")); });
-        connect(chain_btn_, &QPushButton::clicked, this, [this] { show_view(QStringLiteral("chain")); });
-        connect(models_btn_, &QPushButton::clicked, this, [this] { show_view(QStringLiteral("models")); });
-        live_->on_view_changed = [this](LiveMarketWatch::View view) {
-            if (surface_->currentWidget() != live_) return;
-            (view == LiveMarketWatch::View::Chain ? chain_btn_ : watch_btn_)->setChecked(true);
-        };
+        connect(models_btn_, &QPushButton::clicked, this, [this](bool on) {
+            show_view(on ? QStringLiteral("models") : QStringLiteral("watch"));
+        });
         live_->on_order_key = [this](bool buy) { open_order(buy); };
+        // Greek Watch: Enter or double-click on a CE / PE in the chain.
+        greek_ = new GreekWatchWindow(client_, this);
+        paper_ui::tool_window(greek_, QStringLiteral("Greek Watch"), QSize(1320, 560));
+        live_->on_greek = [this](quint32 tok) { open_greek(tok); };
+#ifdef ALTAIR_SOURCE_DIR
+        greek_->set_store(QStringLiteral(ALTAIR_SOURCE_DIR "/data/live/greek_watch.csv"));
+#endif
+        movers_->setCursor(Qt::PointingHandCursor);
+        movers_->installEventFilter(this);
+        movers_timer_.setInterval(2000);
+        connect(&movers_timer_, &QTimer::timeout, this, [this] {
+            restore_greeks();
+            if (isVisible()) refresh_movers();
+        });
+        movers_timer_.start();
         build_paper_book();
 
         // ---- WIRES ------------------------------------------------------
@@ -609,7 +621,6 @@ public:
         key(QKeySequence(Qt::Key_F2), [this] { open_order(false); });
         key(QKeySequence(Qt::Key_F3), [this] { show_book(order_book_); });
         key(QKeySequence(Qt::Key_F4), [this] { show_view(QStringLiteral("watch")); });
-        key(QKeySequence(Qt::CTRL | Qt::Key_O), [this] { show_view(QStringLiteral("chain")); });
         key(QKeySequence(Qt::CTRL | Qt::Key_M), [this] { show_view(QStringLiteral("models")); });
         key(QKeySequence(Qt::Key_F5), [this] { show_market_picture(); });
         key(QKeySequence(Qt::Key_F6), [this] { show_market_picture(); });
@@ -659,13 +670,14 @@ public:
         if (v == QLatin1String("watch")) {
             surface_->setCurrentWidget(live_);
             live_->set_view(LiveMarketWatch::View::Watch);
-            watch_btn_->setChecked(true);
+            models_btn_->setChecked(false);
             return true;
         }
         if (v == QLatin1String("chain")) {
+            // The chain of the selected scrip (Enter does the same).
             surface_->setCurrentWidget(live_);
-            live_->set_view(LiveMarketWatch::View::Chain);
-            chain_btn_->setChecked(true);
+            if (!live_->open_chain()) live_->set_view(LiveMarketWatch::View::Chain);
+            models_btn_->setChecked(false);
             return true;
         }
         if (v == QLatin1String("models")) { surface_->setCurrentWidget(models_); models_btn_->setChecked(true); return true; }
@@ -969,6 +981,143 @@ public:
         right_->setCurrentWidget(halt_);
         show_window(ops_window_);
     }
+
+    // ---- Greek Watch (from the option chain) -----------------------------------
+    [[nodiscard]] GreekWatchWindow* greek_watch() const noexcept { return greek_; }
+    /// An option's contract and what it is valued on: from the open chain, else
+    /// from the instrument master.
+    bool greek_leg(quint32 tok, GreekLeg& g) const {
+        const LiveChainView* chain = live_->chain();
+        if (const ChainContract* c = chain->contract(tok)) {
+            g.c = *c;
+            g.under = chain->underlying();
+            g.fut = chain->future_token();
+            g.fut_expiry = chain->future_expiry();
+            g.spot = chain->spot_token();
+            return true;
+        }
+        const auto& master = live_->master();
+        const auto it = std::find_if(master.begin(), master.end(), [tok](const MasterScrip& m) {
+            return m.token == tok && (m.type == QLatin1String("CE") || m.type == QLatin1String("PE"));
+        });
+        if (it == master.end()) return false;
+        g.c.token = it->token; g.c.symbol = it->symbol; g.c.exchange = it->exchange; g.c.strike = it->strike;
+        g.c.expiry_day = live_detail::parse_day(it->expiry); g.c.lot = it->lot; g.c.tick = it->tick;
+        g.c.call = it->type == QLatin1String("CE");
+        g.under = it->name;
+        const QString today = QDate::currentDate().toString(Qt::ISODate);
+        for (const auto& m : master)
+            if (m.name == it->name && m.type == QLatin1String("FUT") && m.expiry >= today) {
+                const qint64 e = live_detail::parse_day(m.expiry);
+                if (g.fut == 0 || e < g.fut_expiry) { g.fut = m.token; g.fut_expiry = e; }
+            }
+        g.spot = index_spot_token(it->name);
+        if (g.spot == 0)
+            for (const auto& m : master)
+                if (m.exchange == QLatin1String("NSE") && m.type == QLatin1String("EQ") && m.symbol == it->name) { g.spot = m.token; break; }
+        return true;
+    }
+    /// Add an option to Greek Watch and show it; its prices are asked of the feed.
+    bool open_greek(quint32 tok) {
+        GreekLeg g;
+        if (!greek_leg(tok, g)) { toast(QStringLiteral("Greek Watch takes options: pick a CE or PE"), false); return false; }
+        greek_->add(g);
+        stream_greeks();
+        show_window(greek_);
+        return true;
+    }
+    /// Ask the feed for every Greek Watch option and what it is valued on.
+    void stream_greeks() {
+        std::vector<std::pair<quint32, QString>> want;
+        for (const auto& g : greek_->legs()) {
+            want.emplace_back(g.c.token, g.c.symbol);
+            if (g.fut != 0) want.emplace_back(g.fut, QStringLiteral("future"));
+            if (g.spot != 0) want.emplace_back(g.spot, QStringLiteral("spot"));
+        }
+        live_->set_extra_requests(std::move(want));
+    }
+    /// The Greek Watch kept from the last session, once the master is read.
+    void restore_greeks() {
+        if (greek_restored_ || live_->master().empty()) return;
+        greek_restored_ = true;
+        for (const auto& [tok, units] : greek_->stored()) {
+            GreekLeg g;
+            if (!greek_leg(tok, g)) continue;
+            g.units = units;
+            greek_->add(g);
+        }
+        stream_greeks();
+    }
+    /// The movers strip's text now (tests).
+    [[nodiscard]] QString movers_text() const { return movers_->text(); }
+
+    /// Top gainers and losers of the streamed NSE stocks by % change.
+    struct Mover { QString symbol; double pct = 0.0; double ltp = 0.0; };
+    [[nodiscard]] std::vector<Mover> movers() const {
+        std::vector<Mover> out;
+        for (const auto& r : live_->model()->rows()) {
+            if (r.kind != QLatin1String("equity") || !r.fyers.startsWith(QLatin1String("NSE:"))) continue;
+            const LivePrice* p = client_->price(r.token);
+            if (p == nullptr || p->last_paise <= 0 || !p->has_quote || !p->quote.has(kQuoteHasPrevClose) || p->quote.prev_close <= 0) continue;
+            out.push_back({r.symbol, 100.0 * static_cast<double>(p->last_paise - p->quote.prev_close) / static_cast<double>(p->quote.prev_close),
+                           static_cast<double>(p->last_paise) / 100.0});
+        }
+        std::sort(out.begin(), out.end(), [](const Mover& a, const Mover& b) { return a.pct > b.pct; });
+        return out;
+    }
+    void refresh_movers() {
+        const auto m = movers();
+        if (m.empty()) {
+            movers_->setText(QStringLiteral("<span style='color:#6B7380'>movers: waiting for prices</span>"));
+            return;
+        }
+        QStringList up, down;
+        for (std::size_t i = 0; i < m.size() && i < 3; ++i)
+            if (m[i].pct > 0) up << QStringLiteral("%1 <span style='color:#7FD17F'>+%2%</span>").arg(m[i].symbol).arg(m[i].pct, 0, 'f', 2);
+        for (std::size_t i = 0; i < m.size() && i < 3; ++i) {
+            const Mover& x = m[m.size() - 1 - i];
+            if (x.pct < 0) down << QStringLiteral("%1 <span style='color:#F07A6A'>%2%</span>").arg(x.symbol).arg(x.pct, 0, 'f', 2);
+        }
+        movers_->setText(QStringLiteral("<span style='color:#7FD17F'>▲</span> %1 &nbsp; <span style='color:#F07A6A'>▼</span> %2")
+                             .arg(up.isEmpty() ? QStringLiteral("—") : up.join(QStringLiteral(" · ")),
+                                  down.isEmpty() ? QStringLiteral("—") : down.join(QStringLiteral(" · "))));
+    }
+    void show_movers() {
+        const auto m = movers();
+        QDialog d(this);
+        d.setWindowTitle(QStringLiteral("Top movers · streamed NSE stocks"));
+        auto* l = new QHBoxLayout(&d);
+        const auto side = [&d, l](const QString& title, const std::vector<Mover>& rows) {
+            auto* box = new QVBoxLayout;
+            box->addWidget(new QLabel(title, &d));
+            auto* t = new QTableWidget(static_cast<int>(rows.size()), 3, &d);
+            t->setHorizontalHeaderLabels({QStringLiteral("Symbol"), QStringLiteral("LTP"), QStringLiteral("% change")});
+            t->verticalHeader()->hide();
+            t->setEditTriggers(QAbstractItemView::NoEditTriggers);
+            for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+                t->setItem(i, 0, new QTableWidgetItem(rows[static_cast<std::size_t>(i)].symbol));
+                t->setItem(i, 1, new QTableWidgetItem(QString::number(rows[static_cast<std::size_t>(i)].ltp, 'f', 2)));
+                t->setItem(i, 2, new QTableWidgetItem(QString::number(rows[static_cast<std::size_t>(i)].pct, 'f', 2)));
+            }
+            box->addWidget(t);
+            l->addLayout(box);
+        };
+        std::vector<Mover> gain, lose;
+        for (std::size_t i = 0; i < m.size() && gain.size() < 10; ++i) if (m[i].pct > 0) gain.push_back(m[i]);
+        for (std::size_t i = 0; i < m.size() && lose.size() < 10; ++i) if (m[m.size() - 1 - i].pct < 0) lose.push_back(m[m.size() - 1 - i]);
+        side(QStringLiteral("<b style='color:#7FD17F'>Top gainers</b>"), gain);
+        side(QStringLiteral("<b style='color:#F07A6A'>Top losers</b>"), lose);
+        d.resize(640, 380);
+        d.exec();
+    }
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override {
+        if (obj == movers_ && e->type() == QEvent::MouseButtonRelease) { show_movers(); return true; }
+        return QWidget::eventFilter(obj, e);
+    }
+
+public:
     /// For tests: what a strip tile currently SAYS.
     [[nodiscard]] QString tile_text(unsigned tok) const {
         return tok == 256265u ? nifty_.label->text()
@@ -1411,7 +1560,10 @@ private:
     QLabel* account_state_ = nullptr;
     GetsWorkspace* gets_ = nullptr;
     QHash<std::uint32_t, InstrumentDisplay> instrument_names_;
-    QPushButton* chain_btn_ = nullptr;
+    QLabel* movers_ = nullptr;
+    QTimer movers_timer_;
+    GreekWatchWindow* greek_ = nullptr;
+    bool greek_restored_ = false;
     QLabel* toast_ = nullptr;
     QDialog* ops_window_ = nullptr;
     NetPositionWindow* net_window_ = nullptr;
@@ -1453,7 +1605,6 @@ private:
     PriceClient* client_ = nullptr;
     LiveMarketWatch* live_ = nullptr;
     LiveModelsPanel* models_ = nullptr;
-    QPushButton* watch_btn_ = nullptr;
     QPushButton* models_btn_ = nullptr;
     QTimer reconnect_;
     bool auto_connect_ = true;

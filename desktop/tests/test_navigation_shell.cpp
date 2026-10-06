@@ -250,6 +250,10 @@ int main(int argc, char** argv) {
             window.show_page(QStringLiteral("system.data-flow"));
             QApplication::processEvents();
             check(window.grab().save(QString::fromLocal8Bit(argv[1]) + ".dataflow.png"), "data flow image saved");
+            window.show_page(2);
+            window.resize(1600, 900);
+            QApplication::processEvents();
+            check(window.grab().save(QString::fromLocal8Bit(argv[1]) + ".terminal.png"), "terminal image saved");
         }
     }
     QDir::setCurrent(cwd);

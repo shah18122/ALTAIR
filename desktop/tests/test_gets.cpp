@@ -247,7 +247,56 @@ void test_workspace(const MasterIndex&) {
     w.set_watch({QStringLiteral("NSE:NIFTY2692925500CE")});
     w.load(parse_gets_account(account_json()), parse_gets_quotes(quotes_json()), universe());
 
-    check(w.tabs()->count() == 9, "Positions & Funds + eight GETS tabs");
+    const auto visible_tabs = [&w] {
+        QStringList out;
+        for (int i = 0; i < w.tabs()->count(); ++i) if (w.tabs()->isTabVisible(i)) out << w.tabs()->tabText(i);
+        return out;
+    };
+    check(visible_tabs() == QStringList({QStringLiteral("Positions && Funds"), QStringLiteral("Simulation"),
+                                         QStringLiteral("Expense && Margin"), QStringLiteral("Trade History"),
+                                         QStringLiteral("RMS"), QStringLiteral("Index Info")}),
+          "Alt+F6: Greek Watch, Greek Summary and Top Movers have moved to the Terminal");
+    w.set_demo(true);
+    check(visible_tabs().size() == 6 && w.tabs()->isTabVisible(w.tabs()->indexOf(w.demo_trades()))
+              && w.tabs()->isTabVisible(w.tabs()->indexOf(w.demo_rms()))
+              && w.tabs()->isTabVisible(w.tabs()->indexOf(w.demo_expense())),
+          "Demo swaps Trade History, RMS and Expense & Margin to the demo books");
+    {
+        QTemporaryDir paper;
+        const auto write = [&paper](const char* name, const char* text) {
+            QFile f(paper.filePath(QString::fromLatin1(name)));
+            if (f.open(QIODevice::WriteOnly | QIODevice::Text)) f.write(text);
+        };
+        write("fills.csv", "time,model,symbol,token,side,qty,price,expenses,at_quote,reason,source,costs\n"
+                           "2026-10-01 09:20:00,\"Strangle 80% NIFTY\",NIFTY26O0623200CE,10430722,sell,65,81.75,33.81,1,x,SIM,OK\n"
+                           "2026-10-01 15:20:00,\"Strangle 80% NIFTY\",NIFTY26O0623200CE,10430722,buy,65,61.75,30.00,1,y,SIM,OK\n");
+        write("trades.csv", "date,model,symbol,token,side,qty,entry_time,entry,exit_time,exit,gross,expenses,net,why_in,why_out,source,costs\n"
+                            "2026-10-01,Strangle 80% NIFTY,NIFTY26O0623200CE,10430722,sell,65,09:20,81.75,15:20,61.75,1300.00,63.81,1236.19,a,b,SIM,OK\n");
+        write("manual_trades.csv", "id,order_id,ns,token,symbol,exchange,lot,tick,product,side,qty,price,basis,expenses,sim\n"
+                                   "1,1,1790739600000000000,779521,SBIN,NSE,1,5,MIS,B,10,80000,ask,2.10,1\n");
+        write("open_positions.csv", "model,token,symbol,side,qty,entry,entry_ns,entry_expenses,carry,why_in\n"
+                                    "OHL NIFTY,12468226,NIFTY26OCTFUT,1,65,24000.00,0,10,0,open = low\n");
+        auto* trades = w.demo_trades();
+        trades->set_today(QStringLiteral("2026-10-01"));
+        trades->set_dir(paper.path());
+        check(trades->table()->rowCount() == 2 && trades->table()->item(0, 1)->text().contains(QStringLiteral("Strangle")),
+              "demo Trade History lists the models' fills (the manual one is another day)");
+        auto* expense = w.demo_expense();
+        expense->set_today(QStringLiteral("2026-10-01"));
+        expense->set_dir(paper.path());
+        check(expense->table()->rowCount() == 2 && expense->table()->item(0, 3)->text() == QStringLiteral("63.81")
+                  && expense->table()->item(0, 5)->text() == QStringLiteral("1300.00")
+                  && expense->table()->item(0, 6)->text() == QStringLiteral("1236.19"),
+              "demo Expense & Margin: expenses, and the P&L without and with them");
+        w.set_demo_ltp([](quint32 tok) { return tok == 12468226u ? 24100.0 : tok == 779521u ? 810.0 : 0.0; });
+        auto* rms = w.demo_rms();
+        rms->set_today(QStringLiteral("2026-10-01"));
+        rms->set_dir(paper.path());
+        check(rms->table()->rowCount() == 2 && rms->state_text().contains(QStringLiteral("OK"))
+                  && rms->table()->item(0, 6)->text() == QStringLiteral("6500.00"),
+              "demo RMS marks the models' and the paper book's positions to the stream");
+    }
+    w.set_demo(false);
     check(typed_calls >= 1, "the Terminal is handed a typed snapshot on load");
     check(w.watch_model()->rowCount() == 5, "Greek watch: four positions and one watch row");
     check(w.watch_model()->text(0, GwStatus) == QStringLiteral("OK"), "the weekly call is fully valued");
