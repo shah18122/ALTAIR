@@ -727,6 +727,10 @@ public:
 
     /// Switch LIVE on with these limits (the dialog's OK; tests call it directly).
     bool arm_live(const LiveTradingLimits& l) {
+        if (halted()) {
+            toast(QStringLiteral("Trading is halted: resume first (F11+F12), then switch LIVE on"), false);
+            return false;
+        }
         const QString path = live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingArmFile);
         if (!write_live_arm(path, true, live_user(), l, QDateTime::currentDateTimeUtc())) {
             toast(QStringLiteral("LIVE not switched on: %1 could not be written").arg(path), false);
@@ -754,6 +758,57 @@ public:
         refresh_live();
         toast(QStringLiteral("LIVE off: orders are paper again. Orders already at FYERS stay there; cancel them in Live orders."), true);
         return true;
+    }
+
+    // ---- HALT (F11 + F12, from the main window) --------------------------------
+    [[nodiscard]] QString kill_path() const { return live_root_ + QStringLiteral("/data/kill_request.json"); }
+    /// A halt is requested: the request file is there (or there and unreadable,
+    /// which may be one). The router and the models engine read the same file.
+    [[nodiscard]] bool halted() const {
+        const KillRequest k = read_kill_request(kill_path());
+        return k.state == HaltFileState::Present
+            || (k.state == HaltFileState::Unreadable && QFileInfo::exists(kill_path()));
+    }
+    [[nodiscard]] QString halt_summary() const {
+        const KillRequest k = read_kill_request(kill_path());
+        return QStringLiteral("Halted by %1 at %2: %3")
+            .arg(k.requested_by.isEmpty() ? QStringLiteral("?") : k.requested_by.toHtmlEscaped(),
+                 k.requested_at.isEmpty() ? QStringLiteral("?")
+                     : QDateTime::fromString(k.requested_at, Qt::ISODate).toLocalTime().toString(QStringLiteral("HH:mm:ss")),
+                 k.reason.toHtmlEscaped());
+    }
+    /// Stop everything: write the kill request (the router cancels open orders
+    /// and sends nothing; the engine opens nothing new) and switch LIVE off.
+    bool halt_trading(const QString& by, const QString& reason) {
+        (void)QDir().mkpath(live_root_ + QStringLiteral("/data"));
+        QJsonObject o;
+        o[QStringLiteral("requested_at")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        o[QStringLiteral("requested_by")] = by;
+        o[QStringLiteral("reason")] = reason;
+        const bool wrote = write_kill_request(kill_path(), o);
+        const bool was_live = live_on_;
+        if (was_live) (void)disarm_live();
+        if (was_live || router_ != nullptr) ensure_router();   // the router is what cancels at FYERS
+        log_text_->appendPlainText(QStringLiteral("%1  HALT by %2 (%3)%4")
+                                       .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), by, reason,
+                                            wrote ? QString() : QStringLiteral(" — REQUEST FILE NOT WRITTEN")));
+        refresh_live();
+        toast(wrote ? QStringLiteral("HALTED: open orders are being cancelled; no new orders or entries. F11+F12 again to resume.")
+                    : QStringLiteral("HALT NOT WRITTEN: %1").arg(kill_path()), wrote);
+        return wrote;
+    }
+    /// Clear the halt, recording who and why beside it. LIVE stays off.
+    bool resume_trading(const QString& by, const QString& reason) {
+        if (reason.trimmed().isEmpty()) return false;
+        const KillRequest k = read_kill_request(kill_path());
+        if (k.state == HaltFileState::Absent) return true;
+        const ClearRequestResult r = clear_kill_request(kill_path(), k, by, reason.trimmed());
+        log_text_->appendPlainText(QStringLiteral("%1  RESUME by %2 (%3): %4")
+                                       .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), by, reason,
+                                            r == ClearRequestResult::Cleared ? QStringLiteral("cleared") : QStringLiteral("NOT cleared")));
+        refresh_live();
+        if (r == ClearRequestResult::Cleared) toast(QStringLiteral("Resumed. LIVE is off: switch it on for real orders."), true);
+        return r == ClearRequestResult::Cleared;
     }
 
     /// Send one order to FYERS: a confirmation, then a request for the router.
@@ -1109,7 +1164,11 @@ private:
                                                QDateTime::currentSecsSinceEpoch());
         const LiveTradingView v = read_live_router(live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingOrdersFile), now_ns());
         live_on_ = a.armed;
-        if (live_on_) {
+        if (halted()) {
+            live_btn_->setText(QStringLiteral("\u25A0 HALTED"));
+            live_btn_->setStyleSheet(QStringLiteral("background:#6E1B1B;color:#FFFFFF;font-weight:700;border-radius:4px;padding:3px 10px;"));
+            live_btn_->setToolTip(QStringLiteral("Trading is halted (F11+F12). %1. F11+F12 again to resume.").arg(halt_summary()));
+        } else if (live_on_) {
             const QString until = QDateTime::fromSecsSinceEpoch(a.expires_unix).toString(QStringLiteral("HH:mm"));
             live_btn_->setText(!v.running ? QStringLiteral("● LIVE · router down")
                                : v.killed ? QStringLiteral("● LIVE · KILL ON")

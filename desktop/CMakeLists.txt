@@ -123,6 +123,10 @@ qt_add_executable(altair_desktop
     # keeps the target's source list a true statement of what it builds.
     atlas_data.hpp
     atlas.hpp
+    atlas_info.hpp
+    # The full-screen shell: About, the live data-flow page, F11+F12 halt.
+    shell_pages.hpp
+    strategy_record.hpp
 )
 
 # P34-02. THE ICON RESOURCE WAS NEVER COMPILED, AND NOTHING SAID SO.
