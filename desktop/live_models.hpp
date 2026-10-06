@@ -513,7 +513,8 @@ private:
         if (running_ == nullptr) return;
         running_->setText(engine_ != nullptr
                               ? QStringLiteral("<span style='color:#7EE787'>\u25CF Models running</span> \u2014 every model "
-                                               "trades its own signals in demo, all session")
+                                               "trades its own signals in demo, all session; ticks are recorded for "
+                                               "altair_tune (last 5 days)")
                           : !auto_ ? QStringLiteral("<span style='color:#8A93A2'>\u25CB Models off</span>")
                                    : QStringLiteral("<span style='color:#F0B429'>\u25CB Models waiting for the feed</span> "
                                                     "\u2014 they start by themselves"));

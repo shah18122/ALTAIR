@@ -25,8 +25,9 @@ Terminal (LIVE on) ──► data/order_intents.jsonl ──► altair_order_rou
    it, and the login link is shown with a **Copy** button.
 2. **Open Terminal.** If nothing is streaming after a few seconds, the Terminal
    runs `altair_price_service --live --go` itself:
-   - FYERS is used when its session is good today, otherwise Kite.
-   - If FYERS refuses the socket, the feed carries on from Kite.
+   - FYERS only: the feed needs today's FYERS session. Kite is legacy, kept
+     in the collapsed **Legacy: Kite** corner of Brokers, and is never used in
+     FYERS's place (`altair_price_service --kite` still runs it by hand).
 
    **Start live feed** does the same by hand; **Live on open** turns the
    automatic start off.
@@ -51,7 +52,7 @@ From a shell, the same steps:
 
 ```
 altair_price_service --live            # dry run: says which broker it would use, writes the universe
-altair_price_service --live --go       # live, FYERS else Kite, until 15:35 IST (--until HH:MM)
+altair_price_service --live --go       # live, FYERS only, until 15:35 IST (--until HH:MM)
 altair_price_service --fyers --go      # FYERS only        (--kite --go: Kite only)
 altair_price_service --sim --date 2026-09-24 --from 10:00 --speed 30   # that day, simulated, 30x
 altair_live_engine [--unverified-costs] [--date 2026-09-24]   # stops at 15:35 on the feed's clock, or a quiet minute after 15:30
@@ -162,7 +163,7 @@ LIVE on:
    `data/order_intents.jsonl`.
 4. The router sends it only if **all** of these hold, and otherwise refuses it
    and says why (Live orders, the message log F10, `journal.jsonl`):
-   - LIVE is on and not expired; the kill switch is off; a FYERS session exists;
+   - LIVE is on and not expired; no halt (F11 + F12) is in force; a FYERS session exists;
    - market hours (09:15–15:30 IST, weekdays);
    - the token is in today's universe and its symbol and exchange match;
    - product: CNC or MIS for equity (NSE or BSE), NRML or MIS for F&O;
@@ -184,8 +185,43 @@ LIVE on:
 7. **Switching LIVE off** (click the red button) writes `"armed": false`:
    orders are paper again at once. Orders already at FYERS stay there; cancel
    them in Live orders.
-8. **The kill switch** (Operations → Kill switch, `data/kill_request.json`)
-   refuses every new request and cancels every open order the router placed.
+8. **The halt** (**F11 + F12** together, anywhere; `data/kill_request.json`)
+   refuses every new request, cancels every open order the router placed and
+   switches LIVE off. F11 + F12 again opens Resume, which asks for a reason.
+
+**Strategies that send their own orders.** The LIVE dialog also lists
+**Arbitrage (NSE ↔ BSE)**, **OHL threshold** and **Option arbitrage**, each
+**off unless ticked**, each with its own caps: lots a leg, rupees a leg,
+entries today, and a loss today at which it stops entering. A ticked strategy
+sends its entries **without asking**, through the same router, and only while
+all of these hold:
+- the feed is FYERS's live market. Never the SIM, never a replay;
+- LIVE is on and not expired, nothing is halted, and its own loss today is
+  above its cap.
+
+How it sends:
+- **Entries.** The legs of one decision are sized together, keeping their
+  ratio, to the most the caps allow. The router's ceiling is 50 lots an order,
+  and a stock's lot is one share, so a real arbitrage leg is at most 50 shares
+  whatever the demo trades. Then the legs go back to back as **IOC limits at
+  the touch**.
+- **A leg that does not fill.** The legs that did fill are sent straight back
+  out and recorded as a legging loss.
+- **Exits.** A **DAY limit 0.5 % through the touch**, for what really filled
+  and is not already on its way out. Exits are never refused by the strategy's
+  caps.
+
+The router takes a strategy order's own limit as its reference price instead
+of asking FYERS for a quote (about 100 ms saved per leg), and polls the queue
+every 5 ms while armed.
+
+**Records.**
+- Every real round trip is written to `data/live_orders/strategy_trades.csv`
+  with FYERS's average prices, gross, expenses and net. Expenses the schedule
+  cannot price are shown as *unpriced*, never as zero.
+- The **Arbitrage** page (*NSE ↔ BSE record*, *Option arbitrage record*) and
+  the **Threshold** page show each strategy's round trips, **Demo | Real**,
+  with totals with and without expenses.
 
 **Test with one lot first**, and watch it in Live orders and in the FYERS app.
 `altair_order_router --dry-run` checks every request and shows the exact order
@@ -279,12 +315,22 @@ says so.
 | Model | What it does | Held |
 |---|---|---|
 | Vol band (HAR) | HAR forecast of today's σ, realised so far, the 80 % close band and the BANKNIFTY/NIFTY ratio z, recomputed every minute | trades nothing |
-| Strangle 80% NIFTY / BANKNIFTY | at 09:20, sell the 80 % band's two edges (nearest streamed expiry, one lot each, at the bid) | intraday, out at 15:20 |
+| Strangle 80% NIFTY / BANKNIFTY | from 09:20 (and until the last entry at 15:10), sell the 80 % band's two edges (nearest streamed expiry, one lot each, at the bid) | intraday, out at 15:20 |
 | … stop2x | the same, buying a leg back at the first 5-minute close where its premium doubled | intraday |
-| Direction 10:15 AR(2), ARMA(1,1), Logistic, Ridge, GBDT, Vote | at 10:15, forecast 10:15 to the 15:20 square-off; trade one NIFTY future lot only if q·gain − (1−q)·loss − cost clears zero by `--gate-z` (1) standard errors | intraday |
-| Pairs BANKNIFTY/NIFTY | 250-day spread; at 15:15, in at \|z\| ≥ 2, out at ≤ 0.5, stop at 4 | carried, rolled on expiry |
-| Stat-arb NIFTY 50 | Avellaneda-Lee s-scores with today's return as the last day; at 15:15, open at ±1.25; one lot of each stock future | carried, rolled, out after 60 sessions |
+| Direction AR(2), ARMA(1,1), Logistic, Ridge, GBDT, Vote | at each of 10:15, 11:15, 12:15, 13:15 and 14:15, forecast to the 15:20 square-off (each hour its own walk-forward calibration); trade one NIFTY future lot at the first hour where q·gain − (1−q)·loss − cost clears zero by `--gate-z` (1) standard errors | intraday |
+| Pairs BANKNIFTY/NIFTY | 250-day spread; every 15 minutes from 09:30 to 15:15, in at \|z\| ≥ 2, out at ≤ 0.5, stop at 4 | carried, rolled on expiry |
+| Stat-arb NIFTY 50 | Avellaneda-Lee s-scores with today's return as the last day; every 15 minutes from 09:30 to 15:15, open at ±1.25; one lot of each stock future | carried, rolled, out after 60 sessions |
 | Cross-exchange arbitrage | on every quote: when one exchange's bid beats the other's ask (NSE vs BSE, same stock) by the four fills' expenses, both spreads and 2 bp, buy the cheap listing and sell the dear one, Rs 2 lakh a leg (no more than both touches show); out when the mids meet, after 30 minutes, or at 15:15 | intraday |
+| OHL | at 09:15:00 plus one second, on every near future: open = high → sell one lot, stop at high + 0.5 %; open = low → buy one lot, stop at low − 0.5 %; from 1.5 % in profit a stop trails 0.25 % behind the best price (`live/threshold.hpp`) | intraday, out at 15:20 |
+| Option arbitrage | on every quote: put-call parity against the same-expiry future (conversion / reversal) and box spreads, entered when the lock beats every leg's expenses and spreads in and out plus 3 bp; the order book's imbalance orders the legs (the one about to move first) and holds back a lock its book leans against; unwound when under 0.5 bp is left (`live/option_arb.hpp`) | carried (NRML) until the gap closes |
+
+**At the touch.** "The touch" is the best bid and the best ask on screen. Every
+model here buys at the ask and sells at the bid, so a round trip pays a whole
+spread plus the expenses of two fills. Edges at a few minutes are a few basis
+points, which is why the short-horizon models show a loss after the touch and
+expenses even when they call direction better than chance. The answer is not
+to hope: it is the tick tapes and `altair_tune` below, judged net of every
+expense.
 
 **The Arbitrage page** (left bar) is cross-exchange only: the manual pair must
 be the same stock on NSE and BSE, and the page shows the arbitrage model's
@@ -339,7 +385,7 @@ holds:
 - the feed is stale;
 - decisions are paused after a trade gap;
 - the ledger can't be written;
-- `data/kill_request.json` exists (the desktop's Kill Switch);
+- `data/kill_request.json` exists (the halt, F11 + F12);
 - it is an intraday entry after 15:20;
 - the position count (`--max-positions`, also 60 per model) would be exceeded;
 - the gross notional (`--max-gross`) would be exceeded;
@@ -455,11 +501,35 @@ The id is the digest of all of it, so two sessions with one id were built from
 the same inputs and fitted the same models. `oos-<id>.csv` beside it keeps every
 out-of-sample walk-forward call.
 
-**The tape** (`--record`, `live/tape.hpp`). Every byte off the bus, in order,
-plus the controls the machine set, where they took effect: stale, kill
-request, halt, watchdog, connect and disconnect. It starts with the options,
-the universe, the charges, the starting ledger and the bundle. A live day is
-gigabytes, so recording is opt-in.
+**The tape** (`live/tape.hpp`, **on by default**; `--no-record` turns it off).
+Every byte off the bus, in order, plus the controls the machine set, where they
+took effect: stale, kill request, halt, watchdog, connect and disconnect. It
+starts with the options (the tuned settings included), the universe, the
+charges, the starting ledger and the bundle. A live day is gigabytes (a SIM
+morning at 20× was 2.2 GB), so only the last `--keep-tapes` days (5) are kept
+in `data/live/tapes/`.
+
+**Tuning: `altair_tune`** (`app/live_tune.hpp`). FYERS history is one-minute
+bars, which cannot judge a strategy that lives at the touch. The tuner replays
+the tapes instead:
+- **Strategies:** the arbitrage (margin over costs, how long a pair may wait),
+  OHL (stop, trail start, trail) and the option arbitrage (margin to enter,
+  when to unwind).
+- **One pass a tape:** every grid point gets its own engine, so a tape is read
+  once however large the grid.
+- **Walk-forward over the days:** each test day takes the setting that was
+  best on the days before it, net of expenses.
+- **When a setting is written.** It goes to `config/model_params/<key>.toml`
+  only after **5 recorded FYERS days**, and only if out of sample it beat the
+  defaults *and* made money, *and* its daily net survives the Romano-Wolf
+  adjustment for the whole grid (p < 0.10).
+- **Otherwise** the defaults stay and it says why. The engine prints which
+  settings it runs with at start.
+- **Kept out of it:** SIM tapes (unless `--allow-sim`, for trying it out), and
+  passive against aggressive execution, which needs a queue-position fill
+  model in the paper book first.
+
+`data/live/tune/<key>.csv` holds every day × setting.
 
 **The replay** (`--replay TAPE`). The same engine, fed the tape, into
 `replay/<tape>/`:
@@ -472,6 +542,24 @@ gigabytes, so recording is opt-in.
 
 `app/tests/live_replay.sh` proves it in CI: a simulated morning, stopped and
 restarted mid-way, both sessions replayed twice.
+
+## Cores and priorities (`config/latency.toml`)
+
+The price service, the engine and the order router read `config/latency.toml`
+at start and print what they did (`bus: core 2, highest`).
+- **Process (Windows):** HIGH_PRIORITY_CLASS, a 1 ms system timer, and power
+  throttling off, so a background service is never parked on an efficiency
+  core.
+- **Threads:** each latency-critical thread is pinned to a core and raised:
+  - the price bus's owner;
+  - the FYERS socket and decoder;
+  - the 50-level book;
+  - the engine;
+  - the router.
+- **"auto":** leaves cores 0 and 1 to Windows and the desktop and hands out
+  the rest, most critical first. Nothing is pinned with fewer than four cores.
+- **Refusals:** a refused call is reported and the service runs on. A typo in
+  the file is an error naming its line, and the defaults are used.
 
 ## Measuring it
 

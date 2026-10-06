@@ -216,8 +216,8 @@ Tests:
     Expect "Authentication done", "Subscribed", ticks > 0. If FYERS refuses
     the socket token, re-run altair_fyers_login (tokens are daily). --source
     changes the client name sent at auth if FYERS objects to it.
- 2. On your PC: .\build.bat net, log in on Brokers (FYERS or Kite), open
-    Terminal: the live feed starts by itself (FYERS, else Kite). + / - place
+ 2. On your PC: .\build.bat net, log in to FYERS on Brokers, open
+    Terminal: the live feed starts by itself (FYERS only; Kite is legacy). + / - place
     paper orders; Alt+F6 shows positions (paper book and the FYERS account,
     fetched by itself). Put the Kite master at data/instruments.csv so scrips
     can be added (Insert) and monthly expiries and lot sizes resolve (section 13).
@@ -942,3 +942,47 @@ arbitrage on known quotes, the desktop LIVE flow), the full suite, and a SIM
 session (297 arbitrage entries). Not verified here: a real FYERS order, the
 50-level socket, BSE symbols -- this environment cannot reach FYERS. Test LIVE
 with one lot first.
+
+24. FULL-SCREEN WORKSTATION, ALL-SESSION MODELS, REAL STRATEGIES -- 2026-10-06
+==============================================================================
+Asked: dropdown loader; Enter/double-click opens the chain (stocks too);
+models trading by themselves all session in demo; OHL threshold strategy;
+arbitrage placing real trades with a P&L record before and after expenses;
+option arbitrage on book imbalance; FYERS only; Windows pinning; tuning on
+FYERS ticks; full screen, F11+F12 halt, Atlas back/info, About, watchlists,
+Greek Watch, movers beside LIVE, Demo/Real reports, repaint only what shows.
+
+  Phase 1 (9b87eea)  title ALTAIR : GAUTAM GLOBAL LLP : SMIT SHAH, full
+                     screen, no toolbar; F11+F12 halts (again: Resume with a
+                     reason); model pages off the navbar, Backspace back to
+                     the Atlas, (i) what each model is for and was trained on;
+                     Threshold and About (lifetime licence) pages; Data Flow.
+  Phase 2 (abbeb73)  NSE/BSE -> E/FO -> symbol -> expiry -> FUT/CE/PE loader;
+                     Enter opens any scrip's chain (strikes subscribed live,
+                     no reconnect); named watchlists; Greek Watch from a chain
+                     strike, merged with the summary; movers strip; Demo|Real
+                     trade history, RMS, expense and margin; visible-row paint.
+  Phase 3 (2e0baf1)  live/threshold.hpp (OHL), live/option_arb.hpp (parity,
+                     boxes, imbalance), app/live_real_orders.hpp (real orders
+                     for ticked strategies only, legs sized together, IOC at
+                     the touch, legging flattened, data/live_orders/
+                     strategy_trades.csv), router per-strategy caps, LIVE
+                     dialog switches, Arbitrage page records, always-on
+                     models, BSE expenses.
+  Phase 4            FYERS only (Kite: Legacy corner, never a fall-back);
+                     core/affinity.hpp + config/latency.toml (cores,
+                     priorities, HIGH class, 1 ms timer, no throttling);
+                     tapes on by default, 5 days kept; altair_tune
+                     (walk-forward, net, Romano-Wolf) -> config/model_params.
+
+THE TOUCH: the best bid and ask on screen. Buying at the ask and selling at
+the bid pays a whole spread per round trip plus two fills' expenses -- why
+short-horizon models lose after costs even when right more often than not.
+altair_tune judges every setting net of all of it, on recorded FYERS ticks.
+
+Verified here: every unit test (OHL, option arbitrage, router caps, the real
+order bridge end to end on files, latency plan, tuner on a real tape), the
+full core and desktop suites, a SIM session recorded and tuned. Not verified
+here: a real FYERS order or socket (unreachable from this environment). The
+router's ceiling is 50 lots an order -- for a stock that is 50 shares, at
+which a flat Rs 20 an order weighs heavily on an arbitrage. Test one lot first.

@@ -16,6 +16,7 @@
 #include <app/fyers_env_session.hpp>
 #include <broker/fyers_api.hpp>
 #include <broker/https_client.hpp>
+#include <core/affinity.hpp>
 #include <live/file_lock.hpp>
 #include <live/universe.hpp>
 #include <oms/live_router.hpp>
@@ -156,6 +157,14 @@ int main(int argc, char** argv) {
                 (root + "/" + oms::kIntentFile).c_str());
     std::fflush(stdout);
 
+    // Cores and priorities (config/latency.toml): this thread sends the orders.
+    {
+        std::string note;
+        const auto plan = altair::latency::load_plan(root + "/config/latency.toml", note);
+        std::printf("%s\n  %s\n  %s\n", note.c_str(), altair::latency::apply_process(plan).c_str(),
+                    altair::latency::apply_thread(plan, "router").c_str());
+        std::fflush(stdout);
+    }
     auto universe_time = fs::last_write_time(universe_path, ec);
     auto session_time = fs::last_write_time(session_path, ec);
     std::string last_why;

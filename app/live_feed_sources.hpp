@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -105,8 +106,13 @@ class SharedBus {
 public:
     static constexpr std::size_t kRing = 4096;
 
-    explicit SharedBus(PriceBus& bus)
-        : bus_(bus), ring_(std::make_unique<Ring>()), second_(std::make_unique<Ring>()), th_([this] { run(); }) {}
+    /// `owner_init` runs first on the owner thread (its core and priority).
+    explicit SharedBus(PriceBus& bus, std::function<void()> owner_init = {})
+        : bus_(bus), ring_(std::make_unique<Ring>()), second_(std::make_unique<Ring>()), init_(std::move(owner_init)),
+          th_([this] {
+              if (init_) init_();
+              run();
+          }) {}
     ~SharedBus() {
         stop_.store(true, std::memory_order_release);
         th_.join();
@@ -226,6 +232,7 @@ private:
     std::atomic<std::uint64_t> published_{0}, published2_{0};
     std::atomic<std::size_t> clients_{0};
     std::atomic<std::uint64_t> trades_{0}, quotes_{0}, books_{0}, coalesced_{0}, waits_{0}, snapshots_{0};
+    std::function<void()> init_;
     std::thread th_;                ///< last: starts once everything above exists
 };
 

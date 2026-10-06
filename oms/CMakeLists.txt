@@ -103,7 +103,7 @@ endif()
 # Needs the TLS client (the vcpkg `net` feature).
 if(TARGET altair_broker_net)
     add_executable(altair_order_router order_router_main.cpp)
-    target_link_libraries(altair_order_router PRIVATE altair_oms altair_broker_net altair_live altair_flags)
+    target_link_libraries(altair_order_router PRIVATE altair_oms altair_broker_net altair_live altair_affinity altair_flags)
     target_compile_definitions(altair_order_router PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     set_target_properties(altair_order_router PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/app")
     if(WIN32)

@@ -400,9 +400,9 @@ inline constexpr const char* kLiveUniverseHeader = "token,fyers,symbol,underlyin
     return !ec;
 }
 
-[[nodiscard]] inline std::vector<LiveInstrument> read_universe(const std::string& path) {
+/// universe.csv as read from a stream (a file, or a tape's start record).
+[[nodiscard]] inline std::vector<LiveInstrument> read_universe_stream(std::istream& in) {
     std::vector<LiveInstrument> out;
-    std::ifstream in(path);
     std::string line;
     if (!std::getline(in, line) || line.rfind("token,", 0) != 0) return out;
     while (std::getline(in, line)) {
@@ -422,6 +422,11 @@ inline constexpr const char* kLiveUniverseHeader = "token,fyers,symbol,underlyin
         if (i.token != 0) out.push_back(std::move(i));
     }
     return out;
+}
+
+[[nodiscard]] inline std::vector<LiveInstrument> read_universe(const std::string& path) {
+    std::ifstream in(path);
+    return read_universe_stream(in);
 }
 
 /// The latest close in a dataset partition (dataset/spot/<sym>/1d/*.csv), or

@@ -1,0 +1,32 @@
+# config/latency.toml -- thread pinning and priorities (core/affinity.hpp).
+#
+# Read at start by altair_price_service, altair_live_engine and
+# altair_order_router; each prints what it did ("bus: core 2, highest").
+# A key or value this file does not know is an error naming its line, and the
+# defaults are used: a typo never silently runs unpinned.
+
+enabled = true
+
+# The services' process: HIGH_PRIORITY_CLASS, a 1 ms system timer and power
+# throttling off (Windows), so a background service is never parked on an
+# efficiency core. On Linux raising a priority needs privileges.
+high_priority = true
+timer_ms = 1
+
+# Cores left to Windows and the desktop (the Terminal paints there) when a
+# role below says "auto". With fewer than four cores nothing is pinned.
+reserve = 2
+
+[cores]          # "auto", a core number (0 is the first), or "off"
+bus = "auto"     # the price bus's owner thread: every tick to every client
+feed = "auto"    # the FYERS socket and decoder
+engine = "auto"  # the models engine
+router = "auto"  # the order router
+tbt = "auto"     # the FYERS 50-level book
+
+[priority]       # normal | above_normal | highest | time_critical
+bus = "highest"
+feed = "highest"
+engine = "highest"
+router = "highest"
+tbt = "above_normal"

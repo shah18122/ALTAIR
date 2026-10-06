@@ -3,6 +3,7 @@
 #include "../main_window.hpp"
 #include <QElapsedTimer>
 #include <QTemporaryDir>
+#include <QToolButton>
 #include <QScreen>
 #include <cstdio>
 
@@ -236,6 +237,25 @@ int main(int argc, char** argv) {
               "Brokers control plane exposes its tabs");
         check(brokers && brokers->findChild<QLabel*>(QStringLiteral("fyersConnectionState")),
               "FYERS card keeps its attributed connection state");
+        {
+            auto* legacy = brokers ? brokers->findChild<QToolButton*>(QStringLiteral("legacyKiteToggle")) : nullptr;
+            auto* kite_state = brokers ? brokers->findChild<QLabel*>(QStringLiteral("kiteConnectionState")) : nullptr;
+            const auto kite_tabs_visible = [&] {
+                int n = 0;
+                for (int i = 0; i < broker_tabs->count(); ++i)
+                    n += broker_tabs->isTabVisible(i) && broker_tabs->tabText(i).contains(QStringLiteral("Legacy")) ? 1 : 0;
+                return n;
+            };
+            check(legacy != nullptr && kite_state != nullptr && !legacy->isChecked() && !kite_state->isVisible()
+                      && kite_tabs_visible() == 0,
+                  "Kite is stashed in a collapsed Legacy: Kite corner: no card, no tabs");
+            if (legacy != nullptr && kite_state != nullptr) {
+                legacy->setChecked(true);
+                QApplication::processEvents();
+                check(kite_state->isVisible() && kite_tabs_visible() == 2, "opened, the legacy Kite card and its two tabs show");
+                legacy->setChecked(false);
+            }
+        }
         shell_laptop_geometry(window, nav);
         if (argc == 2) {
             QSettings clean(temporary.filePath(QStringLiteral("capture.ini")), QSettings::IniFormat);

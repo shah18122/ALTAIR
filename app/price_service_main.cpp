@@ -7,7 +7,8 @@
 // of them is a stream -- so the "Live Grid" has always been a replay and the
 // depth ladder has been handed a null book since the day it was written.
 //
-// This is the stream. It holds ONE Kite connection and republishes every tick
+// This is the stream. It holds ONE broker connection (FYERS; Kite only when
+// asked for by name, as legacy) and republishes every tick
 // on a local port as protocol frames. Anything that wants prices connects and
 // reads; nothing else needs the credential.
 //
@@ -56,6 +57,7 @@
 #include <broker/credential_store.hpp>
 #include <broker/https_client.hpp>
 #include <broker/kite_ticker.hpp>
+#include <core/affinity.hpp>
 #include <feed/fyers_hsm.hpp>
 #include <feed/fyers_tbt.hpp>
 #include <feed/kite_decoder.hpp>
@@ -95,13 +97,13 @@ void usage(const char* exe) {
         "                      ALTAIR_FYERS_ACCESS_TOKEN. Without --go: prints the\n"
         "                      universe and exits. Runs until --until (default 15:35\n"
         "                      IST), reconnecting after a drop.\n"
-        "  --kite              the same live universe from the Kite ticker (full\n"
-        "                      mode: trades, quotes and 5-level depth). Needs the Kite\n"
-        "                      API key (OS vault or ALTAIR_KITE_API_KEY) and today's\n"
-        "                      data/kite_session.json.\n"
-        "  --live              FYERS when its session is good today, else Kite; and\n"
-        "                      Kite if FYERS refuses the socket. The desktop's\n"
-        "                      \"Start live feed\" runs this.\n"
+        "  --kite              LEGACY, by hand only: the same live universe from the\n"
+        "                      Kite ticker (full mode: trades, quotes and 5-level\n"
+        "                      depth). Needs the Kite API key (OS vault or\n"
+        "                      ALTAIR_KITE_API_KEY) and today's data/kite_session.json.\n"
+        "  --live              FYERS only, when its session is good today; never a\n"
+        "                      fall-back to Kite. The desktop's \"Start live feed\"\n"
+        "                      runs this.\n"
         "  --sim               the same universe, SIMULATED and flagged SIM on every\n"
         "                      frame: the terminal and the live models with the\n"
         "                      market shut. --speed: simulated seconds per second\n"
@@ -264,6 +266,8 @@ std::atomic<bool> g_stop{false};
 extern "C" void on_stop_signal(int) { g_stop.store(true); }
 /// Most instruments given the FYERS 50-level book (--depth50 N; 0 = off).
 std::size_t g_depth50 = 250;
+/// Cores and priorities for this process's threads (config/latency.toml).
+altair::latency::Plan g_latency;
 
 /// "HH:MM" to minutes after midnight; -1 when it is not a time.
 [[nodiscard]] int parse_hhmm(const std::string& s) {
@@ -585,7 +589,11 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     std::fflush(stdout);
 
     TbtFeed tbt(u.size());
-    if (g_depth50 > 0) tbt.th = std::thread([&] { run_fyers_tbt(session, u, bus, deadline_unix, tbt); });
+    if (g_depth50 > 0)
+        tbt.th = std::thread([&] {
+            std::printf("  %s\n", altair::latency::apply_thread(g_latency, "tbt").c_str());
+            run_fyers_tbt(session, u, bus, deadline_unix, tbt);
+        });
     std::vector<altair::fyers_frames::LastTrade> last(u.size());
     // Instruments added while streaming: cookies u.size() + k. Deques, so a
     // reference handed to the decoder's callback never moves.
@@ -1035,24 +1043,18 @@ int main(int argc, char** argv) {
         std::optional<FySession> session;
         std::optional<KiteCreds> kcreds;
         double nifty = atm_nifty, bnf = atm_banknifty;
-        // FYERS first, Kite second: which one serves today is decided here,
-        // from what is logged in, and said.
+        // FYERS only. Kite is legacy: it streams only when asked for by name
+        // (--kite), never as a fall-back.
         if (mode == "auto" || mode == "auto-dry") {
-            std::string fy_why, ki_why;
+            std::string fy_why;
             session = fyers_session(src + "/data/fyers_session.json");
-            const bool fy_ok = fyers_usable(session, fy_why);
-            kcreds = kite_creds(src + "/data/kite_session.json", today, ki_why);
-            if (fy_ok) {
-                std::printf("live source: FYERS%s\n", kcreds ? " (Kite on standby)" : "");
-                mode = mode == "auto" ? "fyers" : "fyers-dry";
-            } else if (kcreds) {
-                std::printf("live source: Kite (FYERS: %s)\n", fy_why.c_str());
-                session.reset();
-                mode = mode == "auto" ? "kite" : "kite-dry";
-            } else {
-                std::printf("no live source today.\n  FYERS: %s\n  Kite: %s\n", fy_why.c_str(), ki_why.c_str());
+            if (!fyers_usable(session, fy_why)) {
+                std::printf("no live source today.\n  FYERS: %s\n  (log in to FYERS on Brokers; Kite is legacy and is not "
+                            "used in its place)\n", fy_why.c_str());
                 return 2;
             }
+            std::printf("live source: FYERS\n");
+            mode = mode == "auto" ? "fyers" : "fyers-dry";
         } else if (mode == "kite" || mode == "kite-dry") {
             std::string why;
             kcreds = kite_creds(src + "/data/kite_session.json", today, why);
@@ -1125,7 +1127,18 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
         std::signal(SIGINT, on_stop_signal);
         std::signal(SIGTERM, on_stop_signal);
-        altair::live_sources::SharedBus shared(bus);
+        // Cores and priorities (config/latency.toml): the process, this
+        // thread (the feed's socket and decoder), the bus's owner thread.
+        {
+            std::string note;
+            g_latency = altair::latency::load_plan(std::string(ALTAIR_SOURCE_DIR) + "/config/latency.toml", note);
+            std::printf("%s\n  %s\n  %s\n", note.c_str(), altair::latency::apply_process(g_latency).c_str(),
+                        altair::latency::apply_thread(g_latency, "feed").c_str());
+        }
+        altair::live_sources::SharedBus shared(bus, [] {
+            std::printf("  %s\n", altair::latency::apply_thread(g_latency, "bus").c_str());
+            std::fflush(stdout);
+        });
         const std::string status = live_dir + "/feed_status.json";
         const auto started = std::chrono::steady_clock::now();
         // The watchlist file and the option chains the Terminal opened
@@ -1205,15 +1218,8 @@ int main(int argc, char** argv) {
         bool on_kite = mode == "kite";
         for (;;) {
             uni.instruments = known;   // everything added so far streams from the start of this run
-            int rc = on_kite ? run_kite(*kcreds, uni.instruments, shared, deadline, status, watch_changed)
-                             : run_fyers(*session, uni.instruments, shared, deadline, status, take_new_watch);
-            // FYERS refused the socket and Kite is logged in: carry on from Kite.
-            if (!on_kite && rc == 4 && kcreds && !g_stop.load() && unix_now() < deadline) {
-                std::printf("FYERS refused the feed; switching to Kite\n");
-                std::fflush(stdout);
-                on_kite = true;
-                continue;
-            }
+            const int rc = on_kite ? run_kite(*kcreds, uni.instruments, shared, deadline, status, watch_changed)
+                                   : run_fyers(*session, uni.instruments, shared, deadline, status, take_new_watch);
             // New scrips: reconnect with them (the board cache keeps the rest).
             if (rc == kRestartForWatchlist && !g_stop.load() && unix_now() < deadline) continue;
             return rc == kRestartForWatchlist ? 0 : rc;

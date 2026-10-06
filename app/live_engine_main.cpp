@@ -48,6 +48,8 @@
 #include <app/live_bundle.hpp>
 #include <app/live_direction.hpp>
 #include <app/live_real_orders.hpp>
+#include <app/live_tune.hpp>
+#include <core/affinity.hpp>
 #include <analytics/har_rv.hpp>
 #include <app/live_feed_reader.hpp>
 #include <live/engine.hpp>
@@ -266,8 +268,10 @@ void usage(const char* exe) {
         "                         conservative estimate, not SPAN: live/margin.hpp)\n"
         "    --gate-z Z           a direction call trades only when its value clears zero by Z\n"
         "                         standard errors (default 1; 0 is the point estimate)\n"
-        "    --record             also write the session tape to data/live/tapes/: every byte off the\n"
-        "                         bus and every control event, for --replay (a live day is GBs)\n"
+        "    --no-record          do not write the session tape. By default every byte off the bus\n"
+        "                         and every control event goes to data/live/tapes/ (for --replay and\n"
+        "                         altair_tune; a live day is GBs)\n"
+        "    --keep-tapes N       days of tapes kept, today's included (default 5)\n"
         "    --replay TAPE        run a recorded session again instead of reading the bus: same\n"
         "                         options, same starting ledger, same bundle; writes to --replay-out\n"
         "                         (default data/live/replay/<tape>) and must decide exactly as it did\n"
@@ -276,8 +280,9 @@ void usage(const char* exe) {
         "    --verify-against DIR after a replay, compare its journal, decisions, margin and marks with\n"
         "                         the recorded session's rows in DIR (default <root>/data/live/paper);\n"
         "                         the verdict goes to data/live/replay_checks/<tape>.json\n\n"
-        "  Start the feed first: altair_price_service --live --go (FYERS, else Kite) or --sim.\n"
-        "  Writes data/live/engine_state.json and data/live/paper/*.csv. Places no orders.\n"
+        "  Start the feed first: altair_price_service --live --go (FYERS) or --sim.\n"
+        "  Writes data/live/engine_state.json and data/live/paper/*.csv. Places no order itself: for the\n"
+        "  strategies switched on in the LIVE arm it writes requests for altair_order_router.\n"
         "  New entries stop while data/kill_request.json exists (the desktop's Kill Switch).\n",
         exe);
 }
@@ -293,7 +298,10 @@ int main(int argc, char** argv) {
     lv::LiveExecPolicy policy;
     lv::LiveRiskLimits limits;
     double gate_z = 1.0;   // standard errors a direction call's value must clear
-    bool record = false, force_replay = false;
+    // The tape is on by default: tuning needs FYERS's own ticks, and FYERS
+    // history is only 1-minute bars. --no-record turns it off.
+    bool record = true, record_asked = false, force_replay = false;
+    int keep_tapes = 5;   ///< days of tapes kept (a live day is GBs)
     fs::path replay_path, replay_out, verify_against;
     fs::path root = ALTAIR_SOURCE_DIR;
     for (int i = 1; i < argc; ++i) {
@@ -314,7 +322,9 @@ int main(int argc, char** argv) {
         if (a == "--max-daily-loss" && has) { limits.max_daily_loss = std::atof(argv[++i]); continue; }
         if (a == "--max-margin" && has) { limits.max_margin = std::atof(argv[++i]); continue; }
         if (a == "--gate-z" && has) { gate_z = std::atof(argv[++i]); continue; }
-        if (a == "--record") { record = true; continue; }
+        if (a == "--record") { record = record_asked = true; continue; }
+        if (a == "--no-record") { record = false; continue; }
+        if (a == "--keep-tapes" && has) { keep_tapes = std::max(1, std::atoi(argv[++i])); continue; }
         if (a == "--replay" && has) { replay_path = argv[++i]; continue; }
         if (a == "--replay-out" && has) { replay_out = argv[++i]; continue; }
         if (a == "--force-replay") { force_replay = true; continue; }
@@ -327,8 +337,11 @@ int main(int argc, char** argv) {
     const bool replaying = !replay_path.empty();
     std::optional<lv::TapeReader> tape_in;
     lv::TapeSections start;   // what this session starts from (written to a recorded tape; read from a replayed one)
+    // The tuned settings the session ran with (altair_tune); a replay takes them from its tape.
+    std::map<std::string, altair::tune::Params> tuned_on_tape;
     if (replaying) {
-        if (record) { std::printf("--record and --replay are exclusive\n"); return 2; }
+        if (record_asked) { std::printf("--record and --replay are exclusive\n"); return 2; }
+        record = false;   // a replay never records
         tape_in.emplace(replay_path.string());
         lv::TapeRecord first;
         if (!tape_in->ok() || !tape_in->next(first) || first.kind != lv::TapeKind::Start || !lv::tape_unpack(first.text(), start)) {
@@ -354,6 +367,12 @@ int main(int argc, char** argv) {
             else if (k == "max_margin") limits.max_margin = std::strtod(v.c_str(), nullptr);
             else if (k == "gate_z") gate_z = std::strtod(v.c_str(), nullptr);
             else if (k == "unverified_costs") unverified_costs = v == "1";
+            else if (k.rfind("tuned.", 0) == 0) {
+                auto& p = tuned_on_tape[k.substr(6)];
+                std::istringstream ps(v);
+                for (std::string kv; std::getline(ps, kv, ';');)
+                    if (const auto c = kv.find(':'); c != std::string::npos) p[kv.substr(0, c)] = std::strtod(kv.c_str() + c + 1, nullptr);
+            }
         }
         std::printf("replaying %s: the session of %s, with its own options\n", replay_path.string().c_str(), date.c_str());
     }
@@ -522,6 +541,13 @@ int main(int argc, char** argv) {
     const auto& dir = dirs.front();
 
     // ---- the engine --------------------------------------------------------
+    // Cores and priorities (config/latency.toml): this thread runs the engine.
+    if (!replaying) {
+        std::string note;
+        const auto plan = altair::latency::load_plan((root / "config/latency.toml").string(), note);
+        std::printf("%s\n  %s\n  %s\n", note.c_str(), altair::latency::apply_process(plan).c_str(),
+                    altair::latency::apply_thread(plan, "engine").c_str());
+    }
     lv::LiveEngine engine(universe, cost, policy);
     engine.set_limits(limits);
     engine.add_model(std::make_unique<lv::LiveVolBandModel>(std::vector<lv::LiveVolInputs>{nv, bv}, rmean, rsd));
@@ -534,12 +560,33 @@ int main(int argc, char** argv) {
     if (dir->names.empty()) engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dirs, 0));
     engine.add_model(std::make_unique<lv::LivePairsModel>(pf));
     engine.add_model(std::make_unique<lv::LiveStatArbModel>(std::move(sa)));
-    // NSE against BSE, on every quote: demo trading, in paper, from the start.
-    engine.add_model(std::make_unique<lv::LiveCrossArbModel>());
-    // Threshold: OHL on every near future at 09:15 (live/threshold.hpp).
-    engine.add_model(std::make_unique<lv::LiveOhlModel>());
-    // Option arbitrage: parity and box locks, timed by the book's imbalance.
-    engine.add_model(std::make_unique<lv::LiveOptionArbModel>());
+    // The event-driven strategies, each with its settings: altair_tune's
+    // (config/model_params/<key>.toml) where it found better ones on recorded
+    // FYERS days, else the defaults; a replay uses the ones on its tape.
+    //   NSE against BSE, on every quote; OHL on every near future at 09:15
+    //   (live/threshold.hpp); option arbitrage, parity and box locks timed by
+    //   the book's imbalance (live/option_arb.hpp).
+    std::string tuned_text;
+    for (const auto& g : altair::tune::all_grids()) {
+        altair::tune::Params p = g.points[g.defaults];
+        if (replaying) {
+            if (const auto it = tuned_on_tape.find(g.key); it != tuned_on_tape.end())
+                for (const auto& [k, v] : it->second) if (p.count(k) != 0) p[k] = v;
+        } else {
+            p = altair::tune::tuned_or_default(g, root);
+        }
+        const bool tuned = p != g.points[g.defaults];
+        std::printf("  %s: %s%s\n", g.key.c_str(), altair::tune::params_text(p).c_str(),
+                    tuned ? " (tuned: config/model_params)" : " (defaults)");
+        tuned_text += "tuned." + g.key + "=";
+        for (const auto& [k, v] : p) {
+            char b[64];
+            std::snprintf(b, sizeof b, "%s:%.17g;", k.c_str(), v);
+            tuned_text += b;
+        }
+        tuned_text += "\n";
+        engine.add_model(g.make(p));
+    }
     // Real orders for the strategies switched on in the LIVE arm (and only
     // those, and only while armed): requests for the order router. Never in
     // a replay.
@@ -585,6 +632,7 @@ int main(int argc, char** argv) {
                       static_cast<long long>(policy.entry_timeout_ns), limits.max_positions, limits.max_per_model,
                       limits.max_gross_notional, limits.max_daily_loss, limits.max_margin, gate_z, unverified_costs ? 1 : 0);
         args_text = text;
+        args_text += tuned_text;
     }
     const auto vol_json = [](const lv::LiveVolInputs& v) {
         return "{\"under\": " + lb::str(v.under) + ", \"sigma_day\": " + lb::num(v.sigma_day) + ", \"intraday_share\": "
@@ -644,6 +692,20 @@ int main(int argc, char** argv) {
     if (record) {
         const fs::path tdir = root / "data/live/tapes";
         fs::create_directories(tdir, ec);
+        // Rotation: the tapes of the last --keep-tapes days (today's included) stay.
+        {
+            std::map<std::string, std::vector<fs::path>> by_day;
+            for (const auto& de : fs::directory_iterator(tdir, ec)) {
+                const std::string n = de.path().filename().string();
+                if (de.path().extension() == ".tape" && n.size() > 10 && n.substr(0, 10) != date) by_day[n.substr(0, 10)].push_back(de.path());
+            }
+            std::size_t removed = 0, days_kept = 1;
+            for (auto it = by_day.rbegin(); it != by_day.rend(); ++it) {
+                if (static_cast<int>(days_kept) < keep_tapes) { ++days_kept; continue; }
+                for (const auto& p : it->second) removed += fs::remove(p, ec) ? 1u : 0u;
+            }
+            if (removed > 0) std::printf("tapes: %zu older than the last %d day(s) removed\n", removed, keep_tapes);
+        }
         char stamp[32];
         const std::int64_t ist = unix_now() + 19800;
         std::snprintf(stamp, sizeof stamp, "%02lld%02lld%02lld", static_cast<long long>((ist / 3600) % 24),
