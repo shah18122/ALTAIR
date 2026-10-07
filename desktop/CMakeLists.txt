@@ -127,6 +127,8 @@ qt_add_executable(altair_desktop
     # The full-screen shell: About, the live data-flow page, F11+F12 halt.
     shell_pages.hpp
     strategy_record.hpp
+    trade_stats.hpp
+    message_bar.hpp
     # The Terminal's Greek Watch and the demo books' reports.
     greek_watch.hpp
     demo_reports.hpp
@@ -834,6 +836,39 @@ if(ALTAIR_BUILD_TESTS)
                 PRIVATE ws2_32 mswsock)
         endif()
         add_test(NAME desktop_live_models COMMAND altair_live_models_test)
+        # Trade statistics, the expense heads of a fill and the strategy record panel.
+        qt_add_executable(altair_trade_stats_test
+            tests/test_trade_stats.cpp
+            trade_stats.hpp
+            strategy_record.hpp)
+        target_link_libraries(altair_trade_stats_test PRIVATE altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
+        target_include_directories(altair_trade_stats_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        if(TARGET altair_charges_toml)
+            target_link_libraries(altair_trade_stats_test PRIVATE altair_charges_toml)
+            target_compile_definitions(altair_trade_stats_test PRIVATE
+                ALTAIR_HAVE_CHARGES_TOML=1
+                ALTAIR_CHARGES_TOML="${CMAKE_SOURCE_DIR}/config/charges.toml")
+        endif()
+        set_target_properties(altair_trade_stats_test PROPERTIES WIN32_EXECUTABLE OFF)
+        add_test(NAME desktop_trade_stats COMMAND altair_trade_stats_test)
+        set_tests_properties(desktop_trade_stats PROPERTIES TIMEOUT 60 ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+        if(WIN32)
+            set_tests_properties(desktop_trade_stats PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        endif()
+        # The Terminal's message bar: DEMO fills and RMS refusals tailed from the engine's files.
+        qt_add_executable(altair_message_bar_test tests/test_message_bar.cpp message_bar.hpp)
+        target_link_libraries(altair_message_bar_test PRIVATE altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
+        target_include_directories(altair_message_bar_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        set_target_properties(altair_message_bar_test PROPERTIES WIN32_EXECUTABLE OFF)
+        add_test(NAME desktop_message_bar COMMAND altair_message_bar_test)
+        set_tests_properties(desktop_message_bar PROPERTIES TIMEOUT 60 ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+        if(WIN32)
+            set_tests_properties(desktop_message_bar PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        endif()
         set_tests_properties(desktop_live_models PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
         if(WIN32)

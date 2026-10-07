@@ -510,7 +510,7 @@ int main(int argc, char** argv) {
             if (fresh) {
                 o << "instrument,variant,entry_date,exit_date,expiry,strike,forward_in,implied_vol,har_vol,realised_vol,"
                      "call_in,put_in,credit,call_out,put_out,debit,qty,option_pnl,hedge_orders,hedge_pnl,gross_pnl,expenses,"
-                     "net_pnl,exit_reason,source,costs\n";
+                     "net_pnl,exit_reason,source,costs,brokerage,stt,exchange_txn,sebi,stamp,ipft,gst\n";
             }
             for (const auto& [name, pr] : rows) {
                 if (name != in.name) { continue; }
@@ -522,7 +522,10 @@ int main(int argc, char** argv) {
                   << ',' << fixed(t.debit, 2) << ',' << fixed(t.qty, 0) << ',' << fixed(t.option_pnl, 2) << ','
                   << t.fills.size() << ',' << fixed(t.hedge_pnl, 2) << ',' << fixed(t.gross, 2) << ','
                   << (pr.priced ? fixed(pr.c.total, 2) : std::string{}) << ',' << (pr.priced ? fixed(pr.net, 2) : std::string{})
-                  << ',' << t.exit_reason << ',' << source << ',' << cost_tag << '\n';
+                  << ',' << t.exit_reason << ',' << source << ',' << cost_tag
+                  << ',' << (pr.priced ? fixed(pr.c.brokerage, 2) + ',' + fixed(pr.c.stt, 2) + ',' + fixed(pr.c.exchange, 2) + ','
+                                 + fixed(pr.c.sebi, 2) + ',' + fixed(pr.c.stamp, 2) + ',' + fixed(pr.c.ipft, 2) + ',' + fixed(pr.c.gst, 2)
+                           : std::string{",,,,,,"}) << '\n';
             }
         }
     }

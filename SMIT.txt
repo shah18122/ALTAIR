@@ -986,3 +986,74 @@ full core and desktop suites, a SIM session recorded and tuned. Not verified
 here: a real FYERS order or socket (unreachable from this environment). The
 router's ceiling is 50 lots an order -- for a stock that is 50 shares, at
 which a flat Rs 20 an order weighs heavily on an arbitrage. Test one lot first.
+
+==============================================================================
+25. TWO-LEG ARBITRAGE, TERMINAL CLEAN-UP, DEMO RATIOS, altair_trader -- 2026-10-07
+==============================================================================
+Asked: arbitrage as 2 legs with expenses and bid/ask matching at the lowest
+size; equity prices missing; 50 levels correct and full height; Shift+S and
+Tab like GETS; feed on by itself 09:00-15:45; one SIMULATION dialog; Ctrl+S
+watchlists; every log in a message bar; Rule explained, touch dropped, P&L per
+trade with expenses, Sharpe/Sortino, double-click; altair_trader.
+
+ARBITRAGE (live/arbitrage.hpp, live/paper.hpp, app/live_real_orders.hpp)
+  Buy at one exchange's ask, sell at the other's bid -- never LTP -- for the
+  smaller of the two sizes; enter when the gap beats both fills' expenses plus
+  2 bp. The pair is netted (the clearing corporation settles it): two fills,
+  no exit fills. Real orders: one pair row; a part fill keeps the matched
+  quantity and flattens the rest. FYERS squares MIS off at 15:20: an
+  intraday pair left open is closed by the broker, not netted.
+  config/charges.toml marked verified on your instruction; the rates were not
+  re-checked against the circulars here.
+
+TERMINAL
+  * Equity prices: FYERS names are looked up by exchange token in FYERS's own
+    masters (live/fyers_names.hpp; data/live/fyers_masters/, daily). The old
+    "-EQ"/"-A" names were wrong for ~18,500 of 21,800 cash scrips (BE/SM/ST
+    series, BSE groups B/T/X/Z...), so FYERS refused them. Refusals are named
+    on the status line.
+  * 50 levels: FYERS diffs carry each level's position in `num`; the decoder
+    (like the official SDK) wrote them by message order -- the wrong prices
+    after level 5. Fixed and pinned by a test. Depth/trades splitter:
+    double-click MARKET DEPTH for all 50 at full height.
+  * Shift+S: scrip selection; Tab/Shift+Tab walk the dropdowns; Enter adds.
+  * No feed button: 09:00-15:45 IST weekdays the feed runs by itself
+    (retried 5 min after a refusal). SIMULATION: one dialog.
+  * Ctrl+S: watchlists dialog. Message bar: paper, LIVE, router, DEMO fills,
+    RMS refusals, engine notes.
+
+DEMO TRADING
+  * The Rule drop-down picks which rule's trades are shown. Every rule sells
+    the 09:20 strangle at the band edges; they differ in the exit:
+      strangle            hold to 15:20
+      strangle-stop2x     buy a leg back once its premium has doubled
+      strangle-hedged     futures delta hedge, reset every 5 minutes
+      expiry-day(-stop2x) monthly expiry days only, the 0DTE contract
+    "touch" sold only after the price had touched the band -- after the move
+    -- which is why it lost while the rest made money. It is dropped.
+  * Every trade: gross, every expense head, net; Sharpe, Sortino, profit
+    factor, drawdown under the table; double-click a row for the walk.
+
+altair_trader (models/meta_trader.hpp, app/trader_main.cpp)
+  One model over 161 model outputs: every base model's out-of-sample call on
+  7 daily tracks. Ridge with forgetting, refitted every day; trades one lot of
+  the NIFTY / BANKNIFTY future only when its expected move beats the round
+  trip's expenses. Run: altair_trader (or Demo Trading -> Run). Walk-forward
+  2016-02-08 to 2026-09-24, 1 lot, expenses priced:
+    NIFTY      675 trips, net Rs 5.65 lakh (longs +6.98, shorts -1.33),
+               Sharpe 0.73; buy and hold the same days: net Rs 9.74 lakh.
+    BANKNIFTY  468 trips, net Rs 3.48 lakh (longs +6.08, shorts -2.60),
+               Sharpe 0.38; buy and hold: net Rs 11.65 lakh.
+  It is right on direction 52.5 % (NIFTY) -- better than a coin, not better
+  than holding in a decade that went up. Its short calls lose.
+  To improve it: (1) predict the move over its trailing drift, so a short is
+  taken only against the trend's expectation; (2) add the vol bands and the
+  regime models' outputs as inputs (when calls work, not only which way);
+  (3) the hourly tracks for intraday entries; (4) size by conviction instead
+  of one lot; (5) refit the base models daily (they refit in doubling stages
+  now). Each is a run of the same walk-forward -- nothing tuned on the result.
+
+THRESHOLD
+  Your "threshold" folder is not in the repository or on GitHub: push it (or
+  copy it into the project and commit) and its demo P&L is built the same
+  way -- paper only, never real orders.

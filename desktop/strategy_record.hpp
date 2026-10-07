@@ -11,8 +11,13 @@
 
 #pragma once
 
+#include "trade_stats.hpp"
+
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QTextBrowser>
 #include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -194,11 +199,18 @@ public:
         totals_->setTextFormat(Qt::RichText);
         totals_->setWordWrap(true);
         v->addWidget(totals_);
+        stats_ = new QLabel(this);
+        stats_->setObjectName(QStringLiteral("strategyStats"));
+        stats_->setTextFormat(Qt::RichText);
+        stats_->setWordWrap(true);
+        v->addWidget(stats_);
         trips_ = table({QStringLiteral("Date"), QStringLiteral("Model"), QStringLiteral("Symbol"), QStringLiteral("Side"),
                         QStringLiteral("Qty"), QStringLiteral("In"), QStringLiteral("Entry"), QStringLiteral("Out"),
                         QStringLiteral("Exit"), QStringLiteral("Gross"), QStringLiteral("Expenses"), QStringLiteral("Net"),
                         QStringLiteral("Why in"), QStringLiteral("Why out")});
+        trips_->setToolTip(QStringLiteral("Double-click a round trip: its fills, every expense head, gross to net"));
         v->addWidget(trips_, 1);
+        QObject::connect(trips_, &QTableWidget::cellDoubleClicked, this, [this](int r, int) { show_trip(r); });
         QObject::connect(mode_, &QComboBox::currentIndexChanged, this, [this] { refresh(); });
         timer_.setInterval(2000);
         QObject::connect(&timer_, &QTimer::timeout, this, [this] { if (isVisible()) refresh(); });
@@ -211,6 +223,13 @@ public:
     [[nodiscard]] QTableWidget* trips_table() const noexcept { return trips_; }
     [[nodiscard]] QTableWidget* held_table() const noexcept { return held_; }
     [[nodiscard]] QString totals_text() const { return totals_->text(); }
+    [[nodiscard]] QString stats_text() const { return stats_->text(); }
+    /// The detail of the trip shown on row `r` (newest first), as the double-click shows it.
+    [[nodiscard]] QString trip_detail(int r) const {
+        if (r < 0 || r >= static_cast<int>(shown_.size())) return {};
+        const auto& t = shown_[static_cast<std::size_t>(r)];
+        return trip_detail_html(t.date, t.symbol, t.side, t.qty, t.entry, t.exit, t.gross, t.expenses, t.net, t.why_in, t.why_out);
+    }
     [[nodiscard]] QString state_text() const { return state_->text(); }
 
     void refresh() {
@@ -265,6 +284,10 @@ public:
         const auto trips = read_strategy_trips(
             root_ + QLatin1Char('/') + QLatin1String(real ? kRealStrategyTradesFile : kDemoTradesFile), strategy_);
         totals_->setText(strategy_totals_html(strategy_totals(trips), real ? QStringLiteral("REAL") : QStringLiteral("DEMO")));
+        std::vector<TradeStatRow> rows;
+        for (const auto& t : trips) rows.push_back(TradeStatRow{t.date, t.gross, t.expenses, t.net});
+        stats_->setText(trade_stats_html(trade_stats(rows)));
+        shown_.assign(trips.rbegin(), trips.rend());
         trips_->setRowCount(static_cast<int>(trips.size()));
         for (int i = 0; i < static_cast<int>(trips.size()); ++i) {
             const auto& t = trips[static_cast<std::size_t>(trips.size()) - 1 - static_cast<std::size_t>(i)];   // newest first
@@ -284,6 +307,23 @@ public:
     }
 
 private:
+    void show_trip(int r) {
+        const QString html = trip_detail(r);
+        if (html.isEmpty()) return;
+        QDialog d(this);
+        d.setWindowTitle(QStringLiteral("Round trip"));
+        d.resize(900, 420);
+        auto* v = new QVBoxLayout(&d);
+        auto* b = new QTextBrowser(&d);
+        b->setObjectName(QStringLiteral("tripDetail"));
+        b->setHtml(html);
+        v->addWidget(b);
+        auto* ok = new QDialogButtonBox(QDialogButtonBox::Close, &d);
+        QObject::connect(ok, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        v->addWidget(ok);
+        d.exec();
+    }
+
     QTableWidget* table(const QStringList& head) {
         auto* t = new QTableWidget(0, static_cast<int>(head.size()), this);
         t->setHorizontalHeaderLabels(head);
@@ -299,6 +339,8 @@ private:
     QString root_;
     QLabel* state_ = nullptr;
     QLabel* totals_ = nullptr;
+    QLabel* stats_ = nullptr;
+    std::vector<StrategyTrip> shown_;   ///< the trips as shown, newest first
     QComboBox* mode_ = nullptr;
     QTableWidget* fields_ = nullptr;
     QTableWidget* held_ = nullptr;

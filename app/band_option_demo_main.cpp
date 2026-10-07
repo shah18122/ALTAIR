@@ -4,7 +4,6 @@
 // NIFTY and BANKNIFTY, every band model (models/band_curriculum.hpp) forecasts
 // at 09:20 the band the session should close in, and each RULE sells options
 // on it (strategies/band_option_fade.hpp), one lot, bought back by 15:20:
-//   touch               wait for an edge to be touched, sell the option past it
 //   strangle            sell both edges at 09:20, before any touch
 //   strangle-stop2x     the same, a leg bought back once its premium doubles
 //   strangle-hedged     the same, delta hedged with whole futures lots
@@ -13,6 +12,9 @@
 // Every trade records the model that placed it, the premiums, the expenses
 // item by item, the net P&L, and where the gross came from: time decay, the
 // underlying's move, the change in IV, and slippage.
+//
+// The old "touch" rule (sell only once an edge had been reached) is gone: it
+// sold after the move, into momentum, and lost after expenses.
 //
 // READ THE ASSUMPTIONS BEFORE THE NUMBERS. They are in meta.csv and on the
 // desktop page, and every one is stated rather than buried:
@@ -81,7 +83,7 @@ void usage(const char* exe) {
         "                          the session by the trailing 250 sessions' variance), calendar (INDIA\n"
         "                          VIX's convention) or trading (decay only while the market is open).\n"
         "                          Synthetic intraday P&L turns on this choice: run all three\n"
-        "    --rules LIST          touch, strangle, strangle-stop2x, strangle-hedged, expiry-day,\n"
+        "    --rules LIST          strangle, strangle-stop2x, strangle-hedged, expiry-day,\n"
         "                          expiry-day-stop2x (default: all)\n"
         "    --rate R              continuously compounded rate for the forward (default 0.065)\n"
         "    --slippage-pts P      option premium points given up per fill (default 0.5)\n"
@@ -216,7 +218,6 @@ struct Rule {
 std::vector<Rule> all_rules() {
     const std::string strangle = "09:20: sell 1 lot CE at the first strike >= the upper edge and 1 lot PE at the first strike <= the lower edge";
     std::vector<Rule> r;
-    r.push_back({"touch", "first touch of an edge after 09:20: sell 1 lot of the option at the first strike past it; buy back at 15:20", true, false, {}});
     r.push_back({"strangle", strangle + "; hold to 15:20", false, false, {}});
     r.push_back({"strangle-stop2x", strangle + "; buy a leg back at the first 5-minute close where its premium has doubled", false, false, {2.0, false}});
     r.push_back({"strangle-hedged", strangle + "; futures delta hedge in whole lots, reset at every 5-minute close", false, false, {0.0, true}});
@@ -588,7 +589,8 @@ int main(int argc, char** argv) {
         std::ofstream f(dir / ("trades_" + rule.id + ".csv"), std::ios::trunc);
         f << "date,instrument,model,rule,entry_time,entry_spot,exit_spot,entry_iv_pct,band_low,band_high,expiry,"
              "call_strike,call_in,call_out,call_exit,put_strike,put_in,put_out,put_exit,qty,hedge_orders,hedge_pnl,"
-             "theta_pnl,move_pnl,iv_pnl,slippage_pnl,gross_pnl,option_expenses,hedge_expenses,expenses,net_pnl,costs\n";
+             "theta_pnl,move_pnl,iv_pnl,slippage_pnl,gross_pnl,option_expenses,hedge_expenses,expenses,net_pnl,costs,"
+             "brokerage,stt,exchange_txn,sebi,stamp,ipft,gst\n";
         std::map<std::pair<std::size_t, std::size_t>, Sum> sums;
         for (const Row& r : rows) {
             const FadeTrade& t0 = r.legs.front().t;
@@ -616,10 +618,17 @@ int main(int argc, char** argv) {
               << r.fills.size() << ',' << fixed(r.hedge, 2) << ',' << fixed(dc.theta, 2) << ',' << fixed(dc.move, 2) << ','
               << fixed(dc.iv, 2) << ',' << fixed(dc.slip, 2) << ',' << fixed(r.gross, 2) << ',';
             if (r.priced) {
+                // Every head, over the option legs and the hedge fills together.
+                Costs h = r.hc;
+                for (const Leg& l : r.legs) {
+                    h.brokerage += l.c.brokerage; h.stt += l.c.stt; h.exchange += l.c.exchange; h.sebi += l.c.sebi;
+                    h.stamp += l.c.stamp; h.ipft += l.c.ipft; h.gst += l.c.gst;
+                }
                 f << fixed(opt_exp, 2) << ',' << fixed(r.hc.total, 2) << ',' << fixed(r.expenses, 2) << ',' << fixed(r.net, 2) << ','
-                  << cost_tag << '\n';
+                  << cost_tag << ',' << fixed(h.brokerage, 2) << ',' << fixed(h.stt, 2) << ',' << fixed(h.exchange, 2) << ','
+                  << fixed(h.sebi, 2) << ',' << fixed(h.stamp, 2) << ',' << fixed(h.ipft, 2) << ',' << fixed(h.gst, 2) << '\n';
             } else {
-                f << ",,,,refused\n";
+                f << ",,,,refused,,,,,,,\n";
             }
             Sum& s = sums[{r.inst, r.model}];
             ++s.n;

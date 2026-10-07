@@ -76,6 +76,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_magnitude_test PRIVATE altair_models altair_flags)
     add_test(NAME models_magnitude COMMAND altair_magnitude_test)
 
+    add_executable(altair_meta_trader_test tests/test_meta_trader.cpp)
+    target_link_libraries(altair_meta_trader_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_meta_trader COMMAND altair_meta_trader_test)
+
     add_executable(altair_stream_forecast_test tests/test_stream_forecast.cpp)
     target_link_libraries(altair_stream_forecast_test PRIVATE altair_models altair_flags)
     add_test(NAME models_stream_forecast COMMAND altair_stream_forecast_test)

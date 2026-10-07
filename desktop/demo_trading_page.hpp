@@ -17,12 +17,16 @@
 
 #include "helper_process.hpp"
 #include "theme.hpp"
+#include "trade_stats.hpp"
 
 #include <QAbstractTableModel>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDate>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QTextBrowser>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -331,6 +335,7 @@ public:
         run_choice_->addItem(QStringLiteral("Pairs with futures"), QStringLiteral("altair_pairs_futures"));
         run_choice_->addItem(QStringLiteral("Vol premium (hedged straddle)"), QStringLiteral("altair_vol_premium"));
         run_choice_->addItem(QStringLiteral("Stat-arb (NIFTY 50 residuals)"), QStringLiteral("altair_resid_reversion"));
+        run_choice_->addItem(QStringLiteral("altair_trader (one model over every model)"), QStringLiteral("altair_trader"));
         run_ = new QPushButton(QStringLiteral("Run"), this);
         unverified_ = new QCheckBox(QStringLiteral("Price UNVERIFIED expenses"), this);
         unverified_->setToolTip(QStringLiteral("Pass --unverified-costs: price expenses from config/charges.toml although "
@@ -365,6 +370,11 @@ public:
         filters->addStretch(1);
         v->addLayout(filters);
         v->addWidget(totals_);
+        stats_ = new QLabel(this);
+        stats_->setObjectName(QStringLiteral("demoStats"));
+        stats_->setWordWrap(true);
+        stats_->setTextFormat(Qt::RichText);
+        v->addWidget(stats_);
 
         tabs_ = new QTabWidget(this);
         summary_ = new demo_detail::CsvModel(this);
@@ -376,6 +386,9 @@ public:
         sa_summary_ = new demo_detail::CsvModel(this);
         sa_trades_ = new demo_detail::CsvModel(this);
         vrp_trades_ = new demo_detail::CsvModel(this);
+        trader_trades_ = new demo_detail::CsvModel(this);
+        trader_days_ = new demo_detail::CsvModel(this);
+        trader_weights_ = new demo_detail::CsvModel(this);
         summary_filter_ = new demo_detail::ColumnFilter(this);
         summary_filter_->setSourceModel(summary_);
         summary_filter_->setSortRole(Qt::UserRole);
@@ -395,7 +408,10 @@ public:
         ratio_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
         ratio_->setContentsMargins(12, 12, 12, 12);
         const auto view = [this](QAbstractItemModel* m) {
-            views_.push_back(demo_detail::table_view(m, this));
+            auto* tv = demo_detail::table_view(m, this);
+            tv->setToolTip(QStringLiteral("Double-click a row: every column, the expense heads and gross to net"));
+            connect(tv, &QTableView::doubleClicked, this, [this, tv](const QModelIndex& i) { show_row(tv, i.row()); });
+            views_.push_back(tv);
             return views_.back();
         };
         tabs_->addTab(view(summary_filter_), QStringLiteral("Options · by model"));
@@ -409,6 +425,14 @@ public:
         tabs_->addTab(view(sorted(sa_summary_)), QStringLiteral("Stat-arb · summary"));
         tabs_->addTab(view(sorted(sa_trades_)), QStringLiteral("Stat-arb · trades"));
         tabs_->addTab(ratio_, QStringLiteral("BANKNIFTY/NIFTY ratio"));
+        // altair_trader (app/trader_main.cpp): its trips, its call every day,
+        // the weight it puts on every model, and its summary.
+        tabs_->addTab(view(sorted(trader_trades_)), QStringLiteral("altair_trader · trades"));
+        tabs_->addTab(view(sorted(trader_days_)), QStringLiteral("altair_trader · days"));
+        tabs_->addTab(view(sorted(trader_weights_)), QStringLiteral("altair_trader · weights"));
+        trader_summary_ = new QTextBrowser(this);
+        trader_summary_->setObjectName(QStringLiteral("traderSummary"));
+        tabs_->addTab(trader_summary_, QStringLiteral("altair_trader · how it works"));
         v->addWidget(tabs_, 1);
 
         connect(run_, &QPushButton::clicked, this, [this] { run(run_choice_->currentData().toString()); });
@@ -416,11 +440,19 @@ public:
         connect(rule_, &QComboBox::currentIndexChanged, this, [this](int) { load_rule(); });
         connect(instrument_, &QComboBox::currentIndexChanged, this, [this](int) { refilter(); });
         connect(model_, &QComboBox::currentIndexChanged, this, [this](int) { refilter(); });
+        connect(tabs_, &QTabWidget::currentChanged, this, [this](int) { update_stats(); });
         reload();
     }
 
     [[nodiscard]] QString banner_text() const { return banner_->text(); }
     [[nodiscard]] QString totals_text() const { return totals_->text(); }
+    [[nodiscard]] QString stats_text() const { return stats_->text(); }
+    [[nodiscard]] QTabWidget* tabs() const noexcept { return tabs_; }
+    /// What a double-click on row `row` of the table in tab `tab` shows.
+    [[nodiscard]] QString row_detail(int tab, int row) const {
+        auto* tv = qobject_cast<QTableView*>(tabs_->widget(tab));
+        return tv == nullptr ? QString() : row_detail_html(tv->model(), row);
+    }
     [[nodiscard]] QString ratio_text() const { return ratio_->text(); }
     [[nodiscard]] int shown_trades() const { return trade_filter_->rowCount(); }
     [[nodiscard]] QComboBox* model_filter() const { return model_; }
@@ -463,6 +495,15 @@ private:
         }
         sa_summary_->set(demo_detail::read_csv(out_dir(QStringLiteral("resid_reversion")) + QStringLiteral("/summary.csv")));
         sa_trades_->set(demo_detail::read_csv(out_dir(QStringLiteral("resid_reversion")) + QStringLiteral("/trades_market+sector.csv")));
+        {
+            const QString tdir = out_dir(QStringLiteral("altair_trader"));
+            trader_trades_->set(demo_detail::read_csv(tdir + QStringLiteral("/trades.csv")));
+            trader_days_->set(demo_detail::read_csv(tdir + QStringLiteral("/days.csv")));
+            trader_weights_->set(demo_detail::read_csv(tdir + QStringLiteral("/weights.csv")));
+            QFile f(tdir + QStringLiteral("/summary.txt"));
+            const QString summary = f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+            trader_summary_->setHtml(trader_how_html(summary));
+        }
         const QString costs = meta_.count(QStringLiteral("costs")) ? meta_[QStringLiteral("costs")] : QString{};
         costs_verified_ = costs == QLatin1String("verified");
 
@@ -473,7 +514,8 @@ private:
         QStringList rules;
         if (rc >= 0) {
             for (const auto& row : sc.rows) {
-                if (rc < row.size() && !rules.contains(row[rc])) rules << row[rc];
+                // "touch" sold after the move and is no longer run; an older output may still hold it.
+                if (rc < row.size() && row[rc] != QLatin1String("touch") && !rules.contains(row[rc])) rules << row[rc];
             }
         }
         {
@@ -580,6 +622,7 @@ private:
         const QString where = inst.isEmpty() ? QStringLiteral("NIFTY + BANKNIFTY") : inst;
         equity_->set(std::move(points), QStringLiteral("Cumulative P&L, 1 lot per trade · %1 · %2").arg(who, where),
                      costs_verified_);
+        update_stats();
         if (n == 0) {
             totals_->setText(QStringLiteral("no option trades loaded"));
             return;
@@ -592,6 +635,120 @@ private:
                   .arg(demo_detail::rupees(gross), demo_detail::rupees(expenses), demo_detail::rupees(net), stamp)
             : QStringLiteral("<nobr>%1 trades</nobr> · <nobr>gross %2</nobr> · expenses not priced (charges schedule unverified)")
                   .arg(n).arg(demo_detail::rupees(gross)));
+    }
+
+    /// The ratios over the trades behind the tab on show: the options'
+    /// filtered trades, or the pairs', the vol premium's, the stat-arb's.
+    void update_stats() {
+        if (stats_ == nullptr || tabs_ == nullptr) return;
+        const int t = tabs_->currentIndex();
+        QAbstractItemModel* m = t <= 2 ? static_cast<QAbstractItemModel*>(trade_filter_)
+                              : t <= 5 ? static_cast<QAbstractItemModel*>(pairs_trades_)
+                              : t <= 7 ? static_cast<QAbstractItemModel*>(vrp_trades_)
+                              : t <= 9 ? static_cast<QAbstractItemModel*>(sa_trades_)
+                              : t >= 11 ? static_cast<QAbstractItemModel*>(trader_trades_) : nullptr;
+        const QString what = t <= 2 ? QStringLiteral("Options") : t <= 5 ? QStringLiteral("Pairs")
+                           : t <= 7 ? QStringLiteral("Vol premium") : t <= 9 ? QStringLiteral("Stat-arb")
+                           : t >= 11 ? QStringLiteral("altair_trader") : QString();
+        if (m == nullptr || m->rowCount() == 0) { stats_->setText(QString()); return; }
+        const auto col = [m](std::initializer_list<const char*> names) {
+            for (const char* n : names)
+                for (int c = 0; c < m->columnCount(); ++c)
+                    if (m->headerData(c, Qt::Horizontal).toString() == QLatin1String(n)) return c;
+            return -1;
+        };
+        const int cd = col({"date", "exit_date"}), cg = col({"gross_pnl", "gross"}), ce = col({"expenses"}), cn = col({"net_pnl", "net"});
+        if (cg < 0) { stats_->setText(QString()); return; }
+        std::vector<TradeStatRow> rows;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        for (int r = 0; r < m->rowCount(); ++r) {
+            const auto num = [&](int c) {
+                if (c < 0) return nan;
+                bool ok = false;
+                const double v = m->index(r, c).data().toString().toDouble(&ok);
+                return ok ? v : nan;
+            };
+            rows.push_back(TradeStatRow{cd >= 0 ? m->index(r, cd).data().toString() : QString(), num(cg), num(ce), num(cn)});
+        }
+        stats_->setText(QStringLiteral("<b>%1, as shown:</b> ").arg(what) + trade_stats_html(trade_stats(rows)));
+    }
+
+    /// altair_trader, explained, with its latest summary under it.
+    [[nodiscard]] static QString trader_how_html(const QString& summary) {
+        QString h = QStringLiteral(
+            "<h3>altair_trader &mdash; one model over every model</h3>"
+            "<p><b>Inputs, model outputs only.</b> Every base model of the forecast curriculum, on every daily track "
+            "(NIFTY, BANKNIFTY, NIFTY futures, INDIA VIX, each also with the VIX forecast fed in), says at each close which "
+            "way the next close goes and how sure it is. Its conviction (2&middot;p<sub>up</sub> &minus; 1, or &plusmn;1) is one "
+            "input. No price, no indicator, no hand rule.</p>"
+            "<p><b>The model.</b> Ridge regression of the next session's move (bp) on those convictions, with old days "
+            "fading (half-life 250 sessions). Several penalties run side by side; each is scored on the calls it made "
+            "before each outcome, and the one with the least recent error makes the call.</p>"
+            "<p><b>Step by step, every day.</b> At each close: yesterday's outcome is learned and the model refitted; "
+            "today's call is made from weights that never saw today; then it trades one lot of the index future. It "
+            "enters only when the expected move beats the round trip's expenses (both fills, priced from "
+            "config/charges.toml), holds while the call points the held way, and exits when it turns. A month end inside "
+            "a holding pays a roll. Every trip lists every expense head (double-click one).</p>"
+            "<p><b>Read it against buy and hold</b> (in the summary): the timing has to beat simply holding the future.</p>");
+        if (summary.isEmpty())
+            h += QStringLiteral("<p><i>No run yet: choose <b>altair_trader</b> and press <b>Run</b> (it reads "
+                                "data/verified/forecast_log/, which altair_forecast_curriculum writes).</i></p>");
+        else
+            h += QStringLiteral("<h4>Latest run</h4><pre>%1</pre>").arg(summary.toHtmlEscaped());
+        return h;
+    }
+
+    /// One row: every column, the expense heads summed, gross walked to net.
+    [[nodiscard]] static QString row_detail_html(const QAbstractItemModel* m, int row) {
+        if (m == nullptr || row < 0 || row >= m->rowCount()) return {};
+        std::map<QString, QString> v;
+        QString h = QStringLiteral("<table border='1' cellspacing='0' cellpadding='3'>");
+        for (int c = 0; c < m->columnCount(); ++c) {
+            const QString name = m->headerData(c, Qt::Horizontal).toString();
+            const QString val = m->index(row, c).data().toString();
+            v[name] = val;
+            h += QStringLiteral("<tr><td><b>%1</b></td><td>%2</td></tr>").arg(name.toHtmlEscaped(), val.toHtmlEscaped());
+        }
+        h += QStringLiteral("</table>");
+        const auto has = [&v](const char* k) { return v.count(QString::fromLatin1(k)) != 0 && !v[QString::fromLatin1(k)].isEmpty(); };
+        const auto get = [&v](const char* k) { return v[QString::fromLatin1(k)]; };
+        // altair_trader names them gross / net.
+        if (!has("gross_pnl") && has("gross")) v[QStringLiteral("gross_pnl")] = v[QStringLiteral("gross")];
+        if (!has("net_pnl") && has("net")) v[QStringLiteral("net_pnl")] = v[QStringLiteral("net")];
+        QString walk;
+        if (has("theta_pnl") && has("gross_pnl"))
+            walk += QStringLiteral("<b>Gross</b> = time decay %1 + the underlying's move %2 + the change in IV %3 + slippage %4%5 = <b>%6</b><br>")
+                        .arg(get("theta_pnl"), get("move_pnl"), get("iv_pnl"), get("slippage_pnl"),
+                             has("hedge_pnl") ? QStringLiteral(" + futures hedge ") + get("hedge_pnl") : QString(), get("gross_pnl"));
+        else if (has("gross_pnl"))
+            walk += QStringLiteral("<b>Gross</b> = <b>%1</b><br>").arg(get("gross_pnl"));
+        if (has("brokerage"))
+            walk += QStringLiteral("<b>Expenses</b> = brokerage %1 + STT %2 + exchange %3 + SEBI %4 + stamp %5 + IPFT %6 + GST %7 = <b>%8</b><br>")
+                        .arg(get("brokerage"), get("stt"), get("exchange_txn"), get("sebi"), get("stamp"), get("ipft"), get("gst"),
+                             get("expenses"));
+        else if (has("expenses"))
+            walk += QStringLiteral("<b>Expenses</b> = <b>%1</b> (this output predates the item-by-item columns: run it again)<br>")
+                        .arg(get("expenses"));
+        else if (has("gross_pnl"))
+            walk += QStringLiteral("<b>Expenses</b>: not priced in this run<br>");
+        if (has("net_pnl")) walk += QStringLiteral("<b>Net</b> = gross − expenses = <b>%1</b>").arg(get("net_pnl"));
+        return (walk.isEmpty() ? QString() : QStringLiteral("<p>") + walk + QStringLiteral("</p>")) + h;
+    }
+
+    void show_row(QTableView* tv, int row) {
+        const QString html = row_detail_html(tv->model(), row);
+        if (html.isEmpty()) return;
+        QDialog d(this);
+        d.setWindowTitle(QStringLiteral("Trade"));
+        d.resize(760, 640);
+        auto* lay = new QVBoxLayout(&d);
+        auto* b = new QTextBrowser(&d);
+        b->setHtml(html);
+        lay->addWidget(b);
+        auto* ok = new QDialogButtonBox(QDialogButtonBox::Close, &d);
+        connect(ok, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        lay->addWidget(ok);
+        d.exec();
     }
 
     void reload_ratio() {
@@ -664,8 +821,13 @@ private:
     QLabel* banner_{};
     QLabel* status_{};
     QLabel* totals_{};
+    QLabel* stats_{};
     QLabel* ratio_{};
     QComboBox* run_choice_{};
+    demo_detail::CsvModel* trader_trades_{};
+    demo_detail::CsvModel* trader_days_{};
+    demo_detail::CsvModel* trader_weights_{};
+    QTextBrowser* trader_summary_{};
     QPushButton* run_{};
     QCheckBox* unverified_{};
     QComboBox* rule_{};
