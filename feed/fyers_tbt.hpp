@@ -19,10 +19,14 @@
 //   MarketLevel   { Int64Value price = 1; UInt32Value qty = 2;
 //                   UInt32Value nord = 3; UInt32Value num = 4; }
 //
-// Prices are paise. An update carries only what changed: a level is
-// positional (its index in the repeated field), and a field is changed when
-// its wrapper is PRESENT -- an empty wrapper is a change to zero. A snapshot
-// replaces the book. This file decodes with no protobuf library: the format
+// Prices are paise. An update carries only what changed: a field is changed
+// when its wrapper is PRESENT -- an empty wrapper is a change to zero -- and a
+// level says where it goes in `num` (0..49). A diff lists only the levels that
+// moved, so `num` is the position, NOT the index in the repeated field: the
+// official SDK (fyers-apiv3 up to 3.1.18) writes by that index and corrupts
+// every level a sparse diff skips -- the "wrong prices after level 5" this
+// code had while it copied the SDK. A level without `num` (the SDK's own test
+// vectors) keeps its index. A snapshot replaces the book. This file decodes with no protobuf library: the format
 // is small, fixed by the SDK, and pinned by vectors the SDK itself encoded
 // (feed/tests/vectors/fyers_tbt.txt).
 #pragma once
@@ -149,6 +153,7 @@ struct LevelDelta {
     std::optional<std::int64_t> price;
     std::optional<std::int64_t> qty;
     std::optional<std::uint32_t> orders;
+    std::optional<std::uint32_t> num;    ///< the level's position, 0..49
 };
 
 [[nodiscard]] inline bool level(const std::uint8_t* p, std::size_t n, LevelDelta& out) {
@@ -156,14 +161,15 @@ struct LevelDelta {
     while (!r.done()) {
         std::uint32_t f = 0, w = 0;
         if (!r.tag(f, w)) return false;
-        if (w == 2 && f >= 1 && f <= 3) {
+        if (w == 2 && f >= 1 && f <= 4) {
             const std::uint8_t* at = nullptr;
             std::size_t len = 0;
             std::uint64_t v = 0;
             if (!r.bytes(at, len) || !wrapper(at, len, v)) return false;
             if (f == 1) out.price = static_cast<std::int64_t>(v);   // int64 on the wire: two's complement
             else if (f == 2) out.qty = static_cast<std::int64_t>(static_cast<std::uint32_t>(v));
-            else out.orders = static_cast<std::uint32_t>(v);
+            else if (f == 3) out.orders = static_cast<std::uint32_t>(v);
+            else out.num = static_cast<std::uint32_t>(v);
         } else if (!r.skip(w)) {
             return false;
         }
@@ -240,10 +246,12 @@ struct FeedDelta {
 
 inline void apply_side(const std::vector<LevelDelta>& d, std::array<std::int64_t, kTbtLevels>& px,
                        std::array<std::int64_t, kTbtLevels>& qty, std::array<std::uint32_t, kTbtLevels>& ord) {
-    for (std::size_t i = 0; i < d.size() && i < kTbtLevels; ++i) {
-        if (d[i].price) px[i] = *d[i].price;
-        if (d[i].qty) qty[i] = *d[i].qty;
-        if (d[i].orders) ord[i] = *d[i].orders;
+    for (std::size_t i = 0; i < d.size(); ++i) {
+        const std::size_t at = d[i].num ? *d[i].num : i;
+        if (at >= kTbtLevels) continue;   // RULE 11: a position past 50 is dropped, never wrapped
+        if (d[i].price) px[at] = *d[i].price;
+        if (d[i].qty) qty[at] = *d[i].qty;
+        if (d[i].orders) ord[at] = *d[i].orders;
     }
 }
 

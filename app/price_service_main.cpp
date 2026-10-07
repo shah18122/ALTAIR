@@ -459,6 +459,43 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
     }
 }
 
+/// FYERS's cash symbol masters, cached under `live_dir`/fyers_masters and
+/// fetched again when older than 20 hours (live/fyers_names.hpp says why the
+/// names are looked up, not built). Public files: no login, no credential. A
+/// download that does not work keeps the copy on disk; with none, the names
+/// are guessed and the feed names any FYERS refuses.
+[[nodiscard]] altair::live::FyersCashNames fyers_cash_names(const std::string& live_dir, bool fetch) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(live_dir) / "fyers_masters";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    for (const char* seg : {"NSE_CM", "BSE_CM"}) {
+        if (!fetch) break;
+        const fs::path path = dir / (std::string(seg) + ".csv");
+        const auto stamp = fs::last_write_time(path, ec);
+        if (!ec && fs::file_time_type::clock::now() - stamp < std::chrono::hours(20)) continue;
+        const auto r = altair::https_get_auth("public.fyers.in", std::string("/sym_details/") + seg + ".csv", "", "",
+                                              std::chrono::seconds{30});
+        if (!r || r->status != 200 || r->body.size() < 1000) {
+            std::printf("  FYERS %s master: download did not work (%s); %s\n", seg,
+                        r ? ("HTTP " + std::to_string(r->status)).c_str() : "transport",
+                        fs::exists(path, ec) ? "using the copy on disk" : "names are guessed");
+            continue;
+        }
+        const fs::path tmp = path.string() + ".tmp";
+        {
+            std::ofstream f(tmp, std::ios::binary);
+            f.write(r->body.data(), static_cast<std::streamsize>(r->body.size()));
+            if (!f) continue;
+        }
+        fs::rename(tmp, path, ec);
+    }
+    altair::live::FyersCashNames names;
+    const std::size_t n = names.load(dir.string());
+    std::printf("FYERS cash names: %zu scrip(s) from %s\n", n, dir.string().c_str());
+    return names;
+}
+
 /// Stream the universe from FYERS until `deadline_unix` or Ctrl+C.
 /// Returned by run_fyers/run_kite when the market watch added scrips: the
 /// caller rebuilds the universe and reconnects with them.
@@ -552,6 +589,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         }
         for (const auto& bad : invalid) {
             ++st.unknown_symbols;
+            st.unknown.push_back(bad);
             std::printf("    FYERS does not know %s -- not streamed\n", bad.c_str());
         }
         for (const auto& [symbol, fytoken] : valid) {
@@ -603,6 +641,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     struct Looked { altair::live::LiveInstrument in; std::string fytoken; };
     std::mutex looked_mu;
     std::vector<Looked> looked;
+    std::vector<std::string> refused;   // names FYERS did not know, for the status file
     std::vector<std::thread> lookups;
     altair::fyers_frames::Frames f;
     bool auth_rejected = false;
@@ -626,6 +665,8 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         {
             const std::lock_guard<std::mutex> lock(looked_mu);
             ready.swap(looked);
+            for (auto& bad : refused) { ++st.unknown_symbols; st.unknown.push_back(std::move(bad)); }
+            refused.clear();
         }
         if (ready.empty()) { return; }
         std::vector<std::string> fresh;
@@ -664,6 +705,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
             if (!why.empty()) { std::printf("  could not add scrips: %s\n", why.c_str()); return; }
             for (const auto& bad : invalid) std::printf("    FYERS does not know %s -- not streamed\n", bad.c_str());
             const std::lock_guard<std::mutex> lock(looked_mu);
+            refused.insert(refused.end(), invalid.begin(), invalid.end());
             for (const auto& [symbol, fytoken] : valid)
                 for (auto& in : added)
                     if (in.fyers == symbol) { looked.push_back({in, fytoken}); break; }
@@ -1091,9 +1133,12 @@ int main(int argc, char** argv) {
             rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);
         const std::string live_dir = live_dir_arg.empty() ? src + "/data/live" : live_dir_arg;
         const std::string watch_path = live_dir + "/watchlist.csv";
+        // FYERS's own names for cash scrips (fetched for a FYERS feed; a SIM
+        // only reads the copy on disk, if any).
+        const auto cash_names = fyers_cash_names(live_dir, mode == "fyers" || mode == "fyers-dry");
         // The market watch's added scrips (data/live/watchlist.csv).
         std::vector<std::uint32_t> watched = altair::live::read_watchlist(watch_path);
-        altair::live::add_watchlist(uni.instruments, rows, watched, uni.notes);
+        altair::live::add_watchlist(uni.instruments, rows, watched, uni.notes, &cash_names);
         for (const auto& n : uni.notes) { std::printf("  note: %s\n", n.c_str()); }
         std::size_t depth_n = 0;
         for (const auto& i : uni.instruments) { depth_n += i.depth ? 1 : 0; }
@@ -1164,7 +1209,7 @@ int main(int argc, char** argv) {
                 if (std::find(wanted.begin(), wanted.end(), t) == wanted.end()) wanted.push_back(t);
             const std::size_t before = known.size();
             std::vector<std::string> notes;
-            altair::live::add_watchlist(known, rows, wanted, notes);
+            altair::live::add_watchlist(known, rows, wanted, notes, &cash_names);
             for (const auto& n : notes) { std::printf("  note: %s\n", n.c_str()); }
             std::vector<altair::live::LiveInstrument> added(known.begin() + static_cast<std::ptrdiff_t>(before), known.end());
             if (!added.empty()) {

@@ -46,6 +46,8 @@
 #include <QComboBox>
 #include <QCompleter>
 #include <QDateEdit>
+#include <QDialog>
+#include <QFormLayout>
 #include <QDir>
 #include <QEvent>
 #include <QKeyEvent>
@@ -64,6 +66,7 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -1032,39 +1035,69 @@ public:
         loader_->on_add = [this](quint32 tok) { add_scrip(tok); };
         v->addWidget(loader_);
 
-        // ---- row 2: watchlists, find, the live feed, the simulator ---------
+        // ---- row 2: find, and the SIMULATION dialog ------------------------
+        // The live feed has no button: it runs by itself from 09:00 to 15:45
+        // IST on weekdays (market_tick). Watchlists live in a dialog (Ctrl+S)
+        // and the simulator in another, so the watch keeps its height.
         auto* bar = new QHBoxLayout;
-        list_ = new QComboBox(this);
-        list_->setObjectName(QStringLiteral("watchlistName"));
-        list_->setToolTip(QStringLiteral("Load a saved watchlist"));
-        list_->setMinimumWidth(130);
-        save_ = new QPushButton(QStringLiteral("Save"), this);
-        save_->setObjectName(QStringLiteral("watchlistSave"));
-        save_as_ = new QPushButton(QStringLiteral("Save as…"), this);
-        save_as_->setObjectName(QStringLiteral("watchlistSaveAs"));
-        delete_list_ = new QPushButton(QStringLiteral("Delete"), this);
-        delete_list_->setObjectName(QStringLiteral("watchlistDelete"));
-        auto* more = new QPushButton(QStringLiteral("⋯"), this);
-        more->setToolTip(QStringLiteral("Import a watchlist from a file, or export this one"));
-        auto* more_menu = new QMenu(more);
-        connect(more_menu->addAction(QStringLiteral("Import from file…")), &QAction::triggered, this, [this] { import_list(); });
-        connect(more_menu->addAction(QStringLiteral("Export to file…")), &QAction::triggered, this, [this] { export_list(); });
-        more->setMenu(more_menu);
         search_ = new QLineEdit(this);
         search_->setObjectName(QStringLiteral("watchFind"));
         search_->setPlaceholderText(QStringLiteral("Find in watch  (Ctrl+F)"));
         search_->setClearButtonEnabled(true);
         search_->setMaximumWidth(180);
-        start_live_ = new QPushButton(QStringLiteral("▶ Start live feed"), this);
-        start_live_->setObjectName(QStringLiteral("startLiveFeed"));
-        start_live_->setToolTip(QStringLiteral(
-            "Run altair_price_service --live --go on FYERS: live ticks, quotes and depth for the indices, near futures, "
-            "both index chains (ATM ±20), the NIFTY 50, your watchlists and any chain you open."));
-        stop_ = new QPushButton(QStringLiteral("■ Stop"), this);
-        stop_->setEnabled(false);
-        auto_start_ = new QCheckBox(QStringLiteral("Live on open"), this);
-        auto_start_->setToolTip(QStringLiteral("Start the live feed by itself when the Terminal opens and nothing is streaming"));
-        sim_date_ = new QDateEdit(QDate::currentDate(), this);
+        sim_btn_ = new QPushButton(QStringLiteral("SIMULATION"), this);
+        sim_btn_->setObjectName(QStringLiteral("simulationButton"));
+        sim_btn_->setToolTip(QStringLiteral("Replay a chosen day through the simulator: date, start time, speed, start and stop"));
+        bar->addWidget(search_);
+        bar->addStretch();
+        bar->addWidget(sim_btn_);
+        v->addLayout(bar);
+
+        // ---- the watchlist dialog (Ctrl+S) ---------------------------------
+        lists_dialog_ = new QDialog(this);
+        lists_dialog_->setObjectName(QStringLiteral("watchlistDialog"));
+        lists_dialog_->setWindowTitle(QStringLiteral("Watchlists (Ctrl+S)"));
+        {
+            auto* lv = new QVBoxLayout(lists_dialog_);
+            auto* hint = new QLabel(QStringLiteral(
+                "The watch shows the active list; whatever it holds streams. Load one, save the watch under its name "
+                "or a new one, or delete one (Default stays)."), lists_dialog_);
+            hint->setWordWrap(true);
+            lv->addWidget(hint);
+            auto* lrow = new QHBoxLayout;
+            list_ = new QComboBox(lists_dialog_);
+            list_->setObjectName(QStringLiteral("watchlistName"));
+            list_->setToolTip(QStringLiteral("Load a saved watchlist"));
+            list_->setMinimumWidth(200);
+            lrow->addWidget(new QLabel(QStringLiteral("Watchlist"), lists_dialog_));
+            lrow->addWidget(list_, 1);
+            lv->addLayout(lrow);
+            auto* brow = new QHBoxLayout;
+            save_ = new QPushButton(QStringLiteral("Save"), lists_dialog_);
+            save_->setObjectName(QStringLiteral("watchlistSave"));
+            save_as_ = new QPushButton(QStringLiteral("Save as…"), lists_dialog_);
+            save_as_->setObjectName(QStringLiteral("watchlistSaveAs"));
+            delete_list_ = new QPushButton(QStringLiteral("Delete"), lists_dialog_);
+            delete_list_->setObjectName(QStringLiteral("watchlistDelete"));
+            auto* imp = new QPushButton(QStringLiteral("Import…"), lists_dialog_);
+            imp->setToolTip(QStringLiteral("Import a watchlist from a file"));
+            auto* exp = new QPushButton(QStringLiteral("Export…"), lists_dialog_);
+            exp->setToolTip(QStringLiteral("Export this watchlist to a file"));
+            connect(imp, &QPushButton::clicked, this, [this] { import_list(); });
+            connect(exp, &QPushButton::clicked, this, [this] { export_list(); });
+            auto* close = new QPushButton(QStringLiteral("Close"), lists_dialog_);
+            connect(close, &QPushButton::clicked, lists_dialog_, &QDialog::hide);
+            for (QPushButton* b : {save_, save_as_, delete_list_, imp, exp}) brow->addWidget(b);
+            brow->addStretch();
+            brow->addWidget(close);
+            lv->addLayout(brow);
+        }
+
+        // ---- the SIMULATION dialog ---------------------------------------------
+        sim_dialog_ = new QDialog(this);
+        sim_dialog_->setObjectName(QStringLiteral("simulationDialog"));
+        sim_dialog_->setWindowTitle(QStringLiteral("SIMULATION"));
+        sim_date_ = new QDateEdit(QDate::currentDate(), sim_dialog_);
         sim_date_->setObjectName(QStringLiteral("simDate"));
         sim_date_->setCalendarPopup(true);
         sim_date_->setDisplayFormat(QStringLiteral("dd-MMM-yyyy"));
@@ -1072,35 +1105,40 @@ public:
         sim_date_->setToolTip(QStringLiteral(
             "The day to simulate. The previous closes are the session before it; when dataset/ has that day's "
             "1-minute bars, NIFTY, BANKNIFTY and INDIA VIX follow them minute by minute."));
-        sim_from_ = new QTimeEdit(QTime(9, 15), this);
+        sim_from_ = new QTimeEdit(QTime(9, 15), sim_dialog_);
         sim_from_->setDisplayFormat(QStringLiteral("HH:mm"));
         sim_from_->setTimeRange(QTime(9, 15), QTime(15, 29));
-        sim_speed_ = new QComboBox(this);
+        sim_speed_ = new QComboBox(sim_dialog_);
         for (int x : {1, 5, 10, 30, 60, 120, 300})
             sim_speed_->addItem(QStringLiteral("%1×").arg(x), x);
-        start_sim_ = new QPushButton(QStringLiteral("Start SIM"), this);
+        start_sim_ = new QPushButton(QStringLiteral("Start SIM"), sim_dialog_);
         start_sim_->setObjectName(QStringLiteral("startSimFeed"));
         start_sim_->setToolTip(QStringLiteral("Run altair_price_service --sim for the chosen day, time and speed. Every price "
-                                              "it shows is marked SIM."));
-        bar->addWidget(new QLabel(QStringLiteral("Watchlist"), this));
-        bar->addWidget(list_);
-        bar->addWidget(save_);
-        bar->addWidget(save_as_);
-        bar->addWidget(delete_list_);
-        bar->addWidget(more);
-        bar->addSpacing(10);
-        bar->addWidget(search_);
-        bar->addStretch();
-        bar->addWidget(start_live_);
-        bar->addWidget(stop_);
-        bar->addWidget(auto_start_);
-        bar->addSpacing(10);
-        bar->addWidget(new QLabel(QStringLiteral("SIM"), this));
-        bar->addWidget(sim_date_);
-        bar->addWidget(sim_from_);
-        bar->addWidget(sim_speed_);
-        bar->addWidget(start_sim_);
-        v->addLayout(bar);
+                                              "it shows is marked SIM. A live feed running is stopped first and comes back "
+                                              "by itself when the SIM stops (market hours)."));
+        stop_ = new QPushButton(QStringLiteral("■ Stop SIM"), sim_dialog_);
+        stop_->setObjectName(QStringLiteral("stopSimFeed"));
+        stop_->setEnabled(false);
+        {
+            auto* form = new QFormLayout(sim_dialog_);
+            auto* hint = new QLabel(QStringLiteral(
+                "Simulated prices, marked SIM everywhere; the models paper-trade them. The live feed runs by itself "
+                "09:00–15:45 IST on weekdays and pauses while a SIM runs."), sim_dialog_);
+            hint->setWordWrap(true);
+            form->addRow(hint);
+            form->addRow(QStringLiteral("Day"), sim_date_);
+            form->addRow(QStringLiteral("From (IST)"), sim_from_);
+            form->addRow(QStringLiteral("Speed"), sim_speed_);
+            auto* srow = new QHBoxLayout;
+            srow->addWidget(start_sim_);
+            srow->addWidget(stop_);
+            auto* close = new QPushButton(QStringLiteral("Close"), sim_dialog_);
+            connect(close, &QPushButton::clicked, sim_dialog_, &QDialog::hide);
+            srow->addStretch();
+            srow->addWidget(close);
+            form->addRow(srow);
+        }
+        connect(sim_btn_, &QPushButton::clicked, this, [this] { show_simulation(); });
 
         status_ = new QLabel(this);
         status_->setTextFormat(Qt::RichText);
@@ -1156,15 +1194,32 @@ public:
         auto* depth_title = new QLabel(QStringLiteral("MARKET DEPTH — every level the feed sends (50 from FYERS)"), side_);
         depth_title->setObjectName(QStringLiteral("sectionKicker"));
         dv->addWidget(depth_title);
+        // Depth over Time & Sales in a splitter: drag the handle down (or
+        // double-click the depth's title) and the book takes the full height,
+        // all 50 levels at once in compact rows.
+        side_split_ = new QSplitter(Qt::Vertical, side_);
+        side_split_->setObjectName(QStringLiteral("depthSplit"));
+        side_split_->setChildrenCollapsible(true);
         depth_ = make_live_table(6, {QStringLiteral("Orders"), QStringLiteral("Bid Qty"), QStringLiteral("Bid"),
-                                     QStringLiteral("Ask"), QStringLiteral("Ask Qty"), QStringLiteral("Orders")}, side_);
-        depth_->setMaximumHeight(160);
-        dv->addWidget(depth_);
-        auto* tape_title = new QLabel(QStringLiteral("TIME & SALES — every trade, newest first"), side_);
+                                     QStringLiteral("Ask"), QStringLiteral("Ask Qty"), QStringLiteral("Orders")}, side_split_);
+        depth_->setObjectName(QStringLiteral("liveDepth"));
+        depth_->verticalHeader()->setDefaultSectionSize(16);
+        depth_->verticalHeader()->setMinimumSectionSize(14);
+        side_split_->addWidget(depth_);
+        auto* tape_box = new QWidget(side_split_);
+        auto* tv = new QVBoxLayout(tape_box);
+        tv->setContentsMargins(0, 4, 0, 0);
+        auto* tape_title = new QLabel(QStringLiteral("TIME & SALES — every trade, newest first"), tape_box);
         tape_title->setObjectName(QStringLiteral("sectionKicker"));
-        dv->addWidget(tape_title);
-        tape_ = make_live_table(3, {QStringLiteral("Time (IST)"), QStringLiteral("Price"), QStringLiteral("Qty")}, side_);
-        dv->addWidget(tape_, 1);
+        tv->addWidget(tape_title);
+        tape_ = make_live_table(3, {QStringLiteral("Time (IST)"), QStringLiteral("Price"), QStringLiteral("Qty")}, tape_box);
+        tv->addWidget(tape_, 1);
+        side_split_->addWidget(tape_box);
+        side_split_->setStretchFactor(0, 3);
+        side_split_->setStretchFactor(1, 1);
+        dv->addWidget(side_split_, 1);
+        depth_title->installEventFilter(this);
+        depth_title_ = depth_title;
 
         auto* split = new QSplitter(Qt::Horizontal, this);
         split->addWidget(main_);
@@ -1204,9 +1259,11 @@ public:
             connect(client_, &PriceClient::statusChanged, this, [this] { labelled_ = false; });
             connect(client_, &PriceClient::statusChanged, this, [this] { refresh_status(); });
         }
-        connect(start_live_, &QPushButton::clicked, this, [this] { start_feed(false); });
-        connect(start_sim_, &QPushButton::clicked, this, [this] { start_feed(true); });
+        connect(start_sim_, &QPushButton::clicked, this, [this] { start_sim(); });
         connect(stop_, &QPushButton::clicked, this, [this] { stop_feed(); });
+        // The live feed's own clock: every 30 s, on during market hours.
+        market_timer_.setInterval(30'000);
+        connect(&market_timer_, &QTimer::timeout, this, [this] { market_tick(); });
 
         side_timer_.setInterval(250);
         connect(&side_timer_, &QTimer::timeout, this, [this] {
@@ -1407,20 +1464,82 @@ public:
         return true;
     }
 
-    /// Start the live feed by itself (once) when nothing is streaming a few
-    /// seconds after the Terminal opens.
+    /// Run the live feed by itself on market hours (off for scripted runs
+    /// and tests): checked a few seconds after the Terminal opens, then
+    /// every 30 s.
     void set_autostart(bool on) {
-        auto_start_->setChecked(on);
-        if (!on || autostart_armed_) return;
-        autostart_armed_ = true;
-        QTimer::singleShot(3500, this, [this] {
-            if (auto_start_->isChecked() && feed_ == nullptr && (client_ == nullptr || !client_->connected())) {
-                auto_started_ = true;
-                start_feed(false);
-            }
-        });
+        autostart_ = on;
+        if (!on) { market_timer_.stop(); return; }
+        market_timer_.start();
+        QTimer::singleShot(3500, this, [this] { market_tick(); });
     }
-    [[nodiscard]] QCheckBox* autostart_box() const noexcept { return auto_start_; }
+    [[nodiscard]] bool autostart() const noexcept { return autostart_; }
+
+    /// The live feed's schedule: on from 09:00 to 15:45 IST, Monday to
+    /// Friday, unless a SIM runs, a feed already streams, or FYERS refused it
+    /// in the last five minutes (no login today, a holiday) -- then it is
+    /// tried again after five. At 15:45 a live feed is stopped (the service
+    /// also stops itself then: --until 15:45). True when this tick started it.
+    bool market_tick() {
+        if (!autostart_) return false;
+        const QDateTime ist = now_ist ? now_ist() : QDateTime::currentDateTimeUtc().addSecs(19800);
+        if (!in_market_hours(ist)) {
+            if (feed_ != nullptr && !sim_running_) stop_feed();
+            return false;
+        }
+        if (feed_ != nullptr || sim_running_) return false;
+        if (client_ != nullptr && client_->connected()) return false;   // something else already streams
+        if (refused_at_.isValid() && refused_at_.secsTo(ist) < 300) return false;
+        auto_started_ = true;
+        start_feed(false);
+        return true;
+    }
+    /// IST now (UTC + 5:30 as a UTC QDateTime); tests set a clock.
+    std::function<QDateTime()> now_ist;
+    static constexpr int kFeedOnMinute = 9 * 60, kFeedOffMinute = 15 * 60 + 45;
+    /// 09:00 to 15:45 IST, Monday to Friday (exchange holidays: the feed says so).
+    [[nodiscard]] static bool in_market_hours(const QDateTime& ist) {
+        const int dow = ist.date().dayOfWeek();
+        const int minute = ist.time().hour() * 60 + ist.time().minute();
+        return dow >= 1 && dow <= 5 && minute >= kFeedOnMinute && minute < kFeedOffMinute;
+    }
+    [[nodiscard]] bool feed_running() const noexcept { return feed_ != nullptr; }
+    [[nodiscard]] bool sim_running() const noexcept { return sim_running_; }
+
+    /// Ctrl+S: the watchlists (load, save, save as, delete, import, export).
+    void show_watchlists() {
+        refresh_lists();
+        lists_dialog_->show();
+        lists_dialog_->raise();
+        lists_dialog_->activateWindow();
+        list_->setFocus();
+    }
+    [[nodiscard]] QDialog* watchlist_dialog() const noexcept { return lists_dialog_; }
+    /// The SIMULATION dialog: day, start, speed, start and stop.
+    void show_simulation() {
+        sim_dialog_->show();
+        sim_dialog_->raise();
+        sim_dialog_->activateWindow();
+    }
+    [[nodiscard]] QDialog* simulation_dialog() const noexcept { return sim_dialog_; }
+    /// Start SIM: a live feed running is stopped first (one bus, one port);
+    /// the schedule brings it back once the SIM stops.
+    void start_sim() {
+        if (feed_ != nullptr && !sim_running_) stop_feed();
+        start_feed(true);
+    }
+    /// Shift+S: the scrip selection, Exchange first with its list open; Tab
+    /// and Shift+Tab walk the dropdowns, Enter adds.
+    void focus_scrip_selection() { ensure_master(); loader_->open_selection(); }
+    /// The depth/trades splitter, for tests: depth at full height or shared.
+    [[nodiscard]] QSplitter* depth_split() const noexcept { return side_split_; }
+    void toggle_full_depth() {
+        const QList<int> sz = side_split_->sizes();
+        if (sz.size() != 2) return;
+        const int total = sz[0] + sz[1];
+        if (sz[1] == 0) side_split_->setSizes({total * 3 / 4, total - total * 3 / 4});
+        else side_split_->setSizes({total, 0});
+    }
 
     /// + and − on the watch or the chain.
     std::function<void(bool buy)> on_order_key;
@@ -1428,6 +1547,7 @@ public:
 
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override {
+        if (obj == depth_title_ && e->type() == QEvent::MouseButtonDblClick) { toggle_full_depth(); return true; }
         if (e->type() == QEvent::KeyPress) {
             const auto* k = static_cast<QKeyEvent*>(e);
             if (k->key() == Qt::Key_Plus || (k->key() == Qt::Key_Equal && (k->modifiers() & Qt::ShiftModifier))) {
@@ -1480,8 +1600,12 @@ private:
         LiveRow r;
         r.token = m.token;
         r.symbol = m.symbol;
-        // FYERS names: NSE equity "-EQ", BSE equity group A (live/universe.hpp), F&O as Kite names them.
-        r.fyers = m.exchange == QLatin1String("NSE") ? QStringLiteral("NSE:%1-EQ").arg(m.symbol)
+        // FYERS names until the feed's universe.csv brings the real ones (live/fyers_names.hpp):
+        // NSE equity "-EQ" unless the symbol carries a two-letter series, BSE group A, F&O as Kite names them.
+        r.fyers = m.exchange == QLatin1String("NSE")
+                      ? (m.symbol.size() > 3 && m.symbol.lastIndexOf(QLatin1Char('-')) == m.symbol.size() - 3
+                             ? QStringLiteral("NSE:%1").arg(m.symbol)
+                             : QStringLiteral("NSE:%1-EQ").arg(m.symbol))
                 : m.exchange == QLatin1String("BSE") ? QStringLiteral("BSE:%1-A").arg(m.symbol)
                 : m.exchange == QLatin1String("BFO") ? QStringLiteral("BSE:%1").arg(m.symbol)
                                                      : QStringLiteral("NSE:%1").arg(m.symbol);
@@ -1673,7 +1797,8 @@ private:
             stream = QStringLiteral("<span style='color:%1'>● NOT CONNECTED</span> <span style='color:%2'>%3</span>")
                          .arg(QStringLiteral("#8A93A2"), muted,
                               feed_ != nullptr ? QStringLiteral("starting the feed…")
-                                               : QStringLiteral("no feed running — Start live feed, or Start SIM for a chosen day."));
+                                               : QStringLiteral("no feed running — the live feed starts by itself 09:00–15:45 IST on "
+                                                                "weekdays; SIMULATION replays a chosen day."));
         } else {
             const LivePrice* n = client_->price(256265u);
             const bool sim = n != nullptr && n->simulated, rep = n != nullptr && n->replay;
@@ -1696,12 +1821,24 @@ private:
                                 o.value(QStringLiteral("state")).toString())
                            .arg(o.value(QStringLiteral("error")).toString().isEmpty()
                                     ? QString() : QStringLiteral(" · ") + o.value(QStringLiteral("error")).toString().toHtmlEscaped());
+            // Scrips FYERS refused by name: their rows stay empty, so say which.
+            const QJsonArray unknown = o.value(QStringLiteral("unknown")).toArray();
+            if (age < 120 && !unknown.isEmpty()) {
+                QStringList names;
+                for (int i = 0; i < unknown.size() && i < 5; ++i) names << unknown.at(i).toString().toHtmlEscaped();
+                const int more = o.value(QStringLiteral("unknown_symbols")).toInt() - static_cast<int>(names.size());
+                feed += QStringLiteral(" &nbsp; <span style='color:#E3B341'>FYERS does not know %1%2 — no data for them</span>")
+                            .arg(names.join(QStringLiteral(", ")),
+                                 more > 0 ? QStringLiteral(" (+%1)").arg(more) : QString());
+            }
         }
         const QString uni = from_file_ ? QString()
             : QStringLiteral(" &nbsp; <span style='color:%1'>(indices only until a feed writes data/live/universe.csv)</span>").arg(muted);
         const QString note = note_.isEmpty() ? QString()
             : QStringLiteral(" &nbsp; <span style='color:#E3B341'>%1</span>").arg(note_);
-        status_->setText(stream + feed + uni + note);
+        const QString list = QStringLiteral(" &nbsp; <span style='color:%1'>watchlist <b>%2</b> (Ctrl+S)</span>")
+                                 .arg(muted, list_name_.toHtmlEscaped());
+        status_->setText(stream + list + feed + uni + note);
     }
 
     void start_feed(bool sim) {
@@ -1719,11 +1856,16 @@ private:
             const QString out = QString::fromLocal8Bit(feed_->readAll()).trimmed();
             feed_->deleteLater();
             feed_ = nullptr;
-            start_live_->setEnabled(true);
+            const bool was_sim = sim_running_;
+            sim_running_ = false;
             start_sim_->setEnabled(true);
             stop_->setEnabled(false);
+            // A live feed that exits with an error is not restarted for five
+            // minutes (market_tick): no login, a holiday, a refused session.
+            if (!was_sim && code != 0)
+                refused_at_ = now_ist ? now_ist() : QDateTime::currentDateTimeUtc().addSecs(19800);
             if (code == 2 && out.contains(QStringLiteral("no live source today"))) {
-                note_ = QStringLiteral("No live feed: %1 — log in to FYERS on the Brokers page, or Start SIM.")
+                note_ = QStringLiteral("No live feed: %1 — log in to FYERS on the Brokers page; it is tried again in 5 minutes.")
                             .arg(out.section(QStringLiteral("no live source today."), 1).simplified().toHtmlEscaped());
             } else if (code != 0) {
                 note_ = QStringLiteral("feed exited %1: %2").arg(code).arg(out.section(QChar('\n'), -2).toHtmlEscaped());
@@ -1742,14 +1884,15 @@ private:
                                                                  sim_from_->time().toString(QStringLiteral("HH:mm")),
                                                                  sim_speed_->currentText());
         } else {
-            args << QStringLiteral("--live") << QStringLiteral("--go");
-            note_ = auto_started_ ? QStringLiteral("Starting the FYERS live feed by itself…")
+            // Until 15:45 IST: the market's day, as the schedule runs it.
+            args << QStringLiteral("--live") << QStringLiteral("--go") << QStringLiteral("--until") << QStringLiteral("15:45");
+            note_ = auto_started_ ? QStringLiteral("Starting the FYERS live feed by itself (market hours)…")
                                   : QStringLiteral("Starting the FYERS live feed…");
         }
+        sim_running_ = sim;
         feed_->start(exe, args);
-        start_live_->setEnabled(false);
         start_sim_->setEnabled(false);
-        stop_->setEnabled(true);
+        stop_->setEnabled(sim);
         refresh_status();
         // Connect once it has had a moment to bind; the Terminal also retries.
         QTimer::singleShot(1500, this, [this] {
@@ -1780,10 +1923,17 @@ private:
     QPushButton* save_as_ = nullptr;
     QPushButton* delete_list_ = nullptr;
     QLineEdit* search_ = nullptr;
-    QPushButton* start_live_ = nullptr;
+    QPushButton* sim_btn_ = nullptr;
+    QDialog* sim_dialog_ = nullptr;
+    QDialog* lists_dialog_ = nullptr;
+    QSplitter* side_split_ = nullptr;
+    QLabel* depth_title_ = nullptr;
+    QTimer market_timer_;
+    bool autostart_ = false;
+    bool sim_running_ = false;
+    QDateTime refused_at_;
     QPushButton* start_sim_ = nullptr;
     QPushButton* stop_ = nullptr;
-    QCheckBox* auto_start_ = nullptr;
     QDateEdit* sim_date_ = nullptr;
     QTimeEdit* sim_from_ = nullptr;
     QComboBox* sim_speed_ = nullptr;
@@ -1802,7 +1952,6 @@ private:
     bool labelled_ = false;
     bool from_file_ = false;
     bool master_loaded_ = false;
-    bool autostart_armed_ = false;
     bool auto_started_ = false;
     qint64 universe_stamp_ = -1;
     int chain_tick_ = 0;

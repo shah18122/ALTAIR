@@ -35,6 +35,40 @@ std::vector<std::vector<std::uint8_t>> vectors() {
     return out;
 }
 
+// A tiny protobuf writer for hand-built messages: a sparse diff the SDK's
+// vectors do not have (they never set `num`).
+using Bytes = std::vector<std::uint8_t>;
+void varint(Bytes& o, std::uint64_t v) {
+    while (v >= 0x80) { o.push_back(static_cast<std::uint8_t>(v | 0x80)); v >>= 7; }
+    o.push_back(static_cast<std::uint8_t>(v));
+}
+void field(Bytes& o, std::uint32_t f, const Bytes& body) {
+    varint(o, (f << 3) | 2);
+    varint(o, body.size());
+    o.insert(o.end(), body.begin(), body.end());
+}
+Bytes wrapped(std::uint64_t v) { Bytes w; if (v != 0) { varint(w, 1 << 3); varint(w, v); } return w; }
+/// One level: price (paise) and quantity, at position `num`.
+Bytes level_at(std::uint32_t num, std::int64_t px, std::uint32_t qty) {
+    Bytes l;
+    field(l, 1, wrapped(static_cast<std::uint64_t>(px)));
+    field(l, 2, wrapped(qty));
+    field(l, 4, wrapped(num));
+    return l;
+}
+/// A diff for `ticker`: the bid levels given, nothing else.
+Bytes bid_diff(const std::string& ticker, const std::vector<Bytes>& bids, std::uint64_t seq) {
+    Bytes depth, feed, entry, msg;
+    for (const auto& l : bids) field(depth, 4, l);
+    field(feed, 5, depth);
+    varint(feed, (9 << 3) | 0); varint(feed, seq);
+    field(feed, 11, Bytes(ticker.begin(), ticker.end()));
+    field(entry, 1, Bytes(ticker.begin(), ticker.end()));
+    field(entry, 2, feed);
+    field(msg, 2, entry);
+    return msg;
+}
+
 } // namespace
 
 int main() {
@@ -65,6 +99,20 @@ int main() {
     check(b->ask_px[2] == 2500025 && b->ask_qty[2] == 150, "a changed price at level 3 changes; its quantity stays");
     check(b->bid_qty[3] == 0 && b->bid_px[3] == 2499970, "an empty wrapper is a change to zero");
     check(b->bid_qty[1] == 150 && b->ask_px[49] == 2500500 && b->sequence == 43, "every other level is untouched");
+
+    // A SPARSE DIFF: FYERS sends only the levels that moved, each with its
+    // position in `num`. Levels 7 and 38 change; 0..6 and the rest must not.
+    {
+        const std::int64_t top = b->bid_px[0], l1 = b->bid_px[1], l37 = b->bid_px[37], l39 = b->bid_px[39];
+        const auto d = bid_diff("NSE:NIFTY26OCTFUT", {level_at(7, 2499925, 999), level_at(38, 2499615, 777)}, 44);
+        check(books.on_message(d.data(), d.size(), m) && m.updated.size() == 1, "a sparse diff decodes");
+        check(b->bid_px[7] == 2499925 && b->bid_qty[7] == 999 && b->bid_px[38] == 2499615 && b->bid_qty[38] == 777,
+              "each level lands at its num (7 and 38), not at 0 and 1");
+        check(b->bid_px[0] == top && b->bid_px[1] == l1 && b->bid_px[37] == l37 && b->bid_px[39] == l39 && b->depth() == 50,
+              "the levels it skipped keep their prices: no corruption past the top");
+        const auto far = bid_diff("NSE:NIFTY26OCTFUT", {level_at(50, 1, 1)}, 45);
+        check(books.on_message(far.data(), far.size(), m) && b->bid_px[0] == top, "a position past 49 is dropped, not wrapped");
+    }
 
     check(books.on_message(v[2].data(), v[2].size(), m) && m.error && m.text == "invalid symbol NSE:XYZ" && m.updated.empty(),
           "an error carries the server's reason and changes no book");

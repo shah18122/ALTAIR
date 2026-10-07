@@ -20,6 +20,7 @@
 #include <core/types/units.hpp>
 
 #include <QApplication>
+#include <QShortcut>
 #include <QCheckBox>
 #include <QDateTime>
 #include <QFile>
@@ -596,6 +597,31 @@ int main(int argc, char** argv)
               "Greek Watch takes the option with its future and its stock to value it on");
         check(!term.open_greek(779521), "an equity is not an option: Greek Watch refuses it");
         term.greek_watch()->hide();
+
+        // GETS keys: Shift+S (scrip selection) and Ctrl+S (watchlists).
+        bool shift_s = false, ctrl_s = false;
+        for (auto* sc : term.findChildren<QShortcut*>()) {
+            shift_s = shift_s || sc->key() == QKeySequence(Qt::SHIFT | Qt::Key_S);
+            ctrl_s = ctrl_s || sc->key() == QKeySequence(Qt::CTRL | Qt::Key_S);
+        }
+        check(shift_s && ctrl_s, "Shift+S opens the scrip selection and Ctrl+S the watchlists");
+        auto* bar = term.market_watch()->loader();
+        bar->set_popups(false);
+        term.show();                       // focus needs a window on screen
+        term.activateWindow();
+        QApplication::processEvents();
+        bar->choose(QStringLiteral("NSE"), QStringLiteral("E"), QStringLiteral("SBIN"));
+        term.market_watch()->focus_scrip_selection();
+        QApplication::processEvents();
+        bar->step(false);
+        bar->step(false);
+        bar->step(false);
+        check(bar->focused_field() == QStringLiteral("addScripButton"),
+              "NSE, E, SBIN by Tab: Expiry, Type and Strike are skipped for equity and Add takes the focus");
+
+        // The message bar carries the order log.
+        check(term.message_bar() != nullptr && term.message_bar()->toPlainText().contains(QStringLiteral("LIVE")),
+              "the message bar shows the order log (the LIVE switch lines above)");
     }
 
     std::printf("\n%s -- %d failing check(s)\n",

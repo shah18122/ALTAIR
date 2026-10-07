@@ -311,7 +311,8 @@ public:
         }
     }
 
-    /// Start the live feed by itself when the Terminal opens and nothing streams.
+    /// Run the live feed by itself during market hours (09:00-15:45 IST,
+    /// weekdays); off for scripted runs.
     void set_live_feed_on_open(bool on) {
         if (terminal_ != nullptr) terminal_->set_autostart_feed(on);
     }

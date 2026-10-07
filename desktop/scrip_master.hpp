@@ -12,6 +12,7 @@
 // and token -- before Add (or Enter) puts it in the watch.
 #pragma once
 
+#include <QApplication>
 #include <QComboBox>
 #include <QDate>
 #include <QCompleter>
@@ -30,6 +31,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <cmath>
 #include <map>
@@ -164,7 +166,11 @@ public:
         connect(expiry_, &QComboBox::currentIndexChanged, this, [this](int) { fill_strikes(); });
         connect(strike_, &QComboBox::currentTextChanged, this, [this](const QString&) { resolve(); });
         connect(add_, &QPushButton::clicked, this, [this] { fire(); });
-        for (QComboBox* c : {exchange_, segment_, symbol_, expiry_, type_, strike_}) c->installEventFilter(this);
+        for (QComboBox* c : {exchange_, segment_, symbol_, expiry_, type_, strike_}) {
+            c->installEventFilter(this);
+            c->view()->installEventFilter(this);   // Tab while a list is open
+        }
+        add_->installEventFilter(this);            // Tab from Add goes round to Exchange
         fill_symbols();
     }
 
@@ -177,6 +183,51 @@ public:
     [[nodiscard]] quint32 token() const noexcept { return token_; }
     [[nodiscard]] QString resolved_text() const { return resolved_->text(); }
     void focus() { symbol_->setFocus(); symbol_->lineEdit()->selectAll(); }
+    /// Shift+S: Exchange focused with its list open, as GETS opens the scrip
+    /// selection. Tab / Shift+Tab then walk Exchange > Segment > Symbol >
+    /// Expiry > Type > Strike > Add, opening each list; Enter adds.
+    void open_selection() {
+        exchange_->setFocus(Qt::ShortcutFocusReason);
+        if (popups_) exchange_->showPopup();
+    }
+    /// Tab to the next (or, `back`, the previous) enabled field and open its
+    /// list. What a list had highlighted is taken first, as Enter would.
+    void step(bool back) {
+        const std::array<QWidget*, 7> chain{exchange_, segment_, symbol_, expiry_, type_, strike_, add_};
+        QWidget* now = QApplication::focusWidget();
+        int at = -1;
+        for (int i = 0; i < 7; ++i)
+            if (chain[static_cast<std::size_t>(i)] == now
+                || (now != nullptr && chain[static_cast<std::size_t>(i)]->isAncestorOf(now))) at = i;
+        if (auto* c = at >= 0 && at < 6 ? static_cast<QComboBox*>(chain[static_cast<std::size_t>(at)]) : nullptr;
+            c != nullptr && c->view()->isVisible()) {
+            const QModelIndex cur = c->view()->currentIndex();
+            if (cur.isValid()) c->setCurrentIndex(cur.row());
+            c->hidePopup();
+        }
+        for (int k = 1; k <= 7; ++k) {
+            const int i = ((at < 0 ? (back ? 7 : -1) : at) + (back ? -k : k) + 14) % 7;
+            QWidget* w = chain[static_cast<std::size_t>(i)];
+            if (!w->isEnabled()) continue;
+            w->setFocus(back ? Qt::BacktabFocusReason : Qt::TabFocusReason);
+            if (auto* c = qobject_cast<QComboBox*>(w)) {
+                if (c->isEditable()) c->lineEdit()->selectAll();
+                if (popups_ && c->count() > 0) c->showPopup();
+            }
+            return;
+        }
+    }
+    /// Lists open as fields take focus (on by default; tests run without).
+    void set_popups(bool on) { popups_ = on; }
+    /// The field that has focus, by object name (tests).
+    [[nodiscard]] QString focused_field() const {
+        QWidget* f = QApplication::focusWidget();
+        for (QWidget* w : {static_cast<QWidget*>(exchange_), static_cast<QWidget*>(segment_), static_cast<QWidget*>(symbol_),
+                           static_cast<QWidget*>(expiry_), static_cast<QWidget*>(type_), static_cast<QWidget*>(strike_),
+                           static_cast<QWidget*>(add_)})
+            if (f != nullptr && (w == f || w->isAncestorOf(f))) return w->objectName();
+        return {};
+    }
 
     /// Drive the choices without a keyboard (tests; a pre-filled bar). An
     /// empty `type` leaves the default (FUT, or CE where there is no future).
@@ -209,7 +260,13 @@ protected:
     bool eventFilter(QObject* obj, QEvent* e) override {
         if (e->type() == QEvent::KeyPress) {
             const auto* k = static_cast<QKeyEvent*>(e);
+            if (k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab) {
+                step(k->key() == Qt::Key_Backtab || (k->modifiers() & Qt::ShiftModifier));
+                return true;
+            }
             if (k->key() == Qt::Key_Return || k->key() == Qt::Key_Enter) {
+                for (QComboBox* l : {exchange_, segment_, symbol_, expiry_, type_, strike_})
+                    if (obj == l->view()) return false;                                  // Enter in an open list chooses
                 auto* c = qobject_cast<QComboBox*>(obj);
                 if (c != nullptr && c->view() != nullptr && c->view()->isVisible()) return false;   // choosing in a list
                 fire();
@@ -350,6 +407,7 @@ private:
     QLabel* resolved_ = nullptr;
     QPushButton* add_ = nullptr;
     quint32 token_ = 0;
+    bool popups_ = true;
     QString today_ = QDate::currentDate().toString(Qt::ISODate);
 };
 

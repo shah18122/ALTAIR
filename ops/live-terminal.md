@@ -23,14 +23,15 @@ Terminal (LIVE on) ──► data/order_intents.jsonl ──► altair_order_rou
    If a login can't start, the reason appears under the button. For example,
    "app credentials are not saved yet" puts the cursor in the form that fixes
    it, and the login link is shown with a **Copy** button.
-2. **Open Terminal.** If nothing is streaming after a few seconds, the Terminal
-   runs `altair_price_service --live --go` itself:
+2. **Open Terminal.** The live feed has no button: from **09:00 to 15:45 IST,
+   Monday to Friday**, the Terminal runs `altair_price_service --live --go
+   --until 15:45` by itself whenever nothing streams (checked every 30 s), and
+   stops it at 15:45:
    - FYERS only: the feed needs today's FYERS session. Kite is legacy, kept
      in the collapsed **Legacy: Kite** corner of Brokers, and is never used in
      FYERS's place (`altair_price_service --kite` still runs it by hand).
-
-   **Start live feed** does the same by hand; **Live on open** turns the
-   automatic start off.
+   - A feed that exits with an error (no FYERS login today, a holiday) is
+     tried again five minutes later; the status line says why.
 3. **The models start by themselves** once the feed streams. There is no
    Start or Stop button and no start time: `altair_live_engine` paper-trades
    every model all session (09:15 to 15:10 for entries, square-off at 15:20,
@@ -41,8 +42,10 @@ Terminal (LIVE on) ──► data/order_intents.jsonl ──► altair_order_rou
      `config/charges.toml` is unverified (the engine restarts with it). Every
      figure is then marked UNVERIFIED. The paper orders follow the same tick box.
    - Unticked, expenses are refused, as in every demo, and P&L is gross.
-4. **When the market is shut,** pick a day, a start time and a speed next to
-   **Start SIM**. The previous closes are the session before that day. When
+4. **When the market is shut,** open **SIMULATION** (beside Find) and pick a
+   day, a start time and a speed, then **Start SIM** (**Stop SIM** ends it). A
+   live feed running is stopped first and the schedule brings it back once the
+   SIM stops. The previous closes are the session before that day. When
    `dataset/` holds that day's 1-minute bars, NIFTY, BANKNIFTY and INDIA VIX
    follow them minute by minute: a Brownian bridge lands on every real close.
    Every price is marked **SIM**, and nothing learned from it is evidence about
@@ -74,9 +77,35 @@ Credentials:
 
 ## The Terminal
 
-- **Views:** **Market Watch** (F4) or **Option Chain** (Ctrl+O) in the main area,
-  with depth and time & sales of the selected scrip beside it. **Models** is
-  Ctrl+M.
+- **Views:** the market watch (F4) in the main area, Enter on a scrip for its
+  option chain, with depth and time & sales of the selected scrip beside it.
+  **Models** is Ctrl+M.
+- **The book at full height:** depth and time & sales share a splitter. Drag
+  the handle down, or double-click *MARKET DEPTH*, and the book takes the
+  whole height: all fifty levels at once in compact rows. Double-click again
+  for the trades.
+- **Equity prices.** NSE and BSE cash scrips stream under FYERS's own names,
+  looked up by exchange token in FYERS's public symbol masters
+  (`public.fyers.in/sym_details/NSE_CM.csv`, `BSE_CM.csv`, cached in
+  `data/live/fyers_masters/` once a day). Building the names ("-EQ", "-A") was
+  wrong for scrips outside the NSE EQ series and BSE group A, about 18,500 of
+  21,800: FYERS refused them and their rows stayed empty. A name FYERS still
+  refuses is named on the status line ("FYERS does not know …").
+- **Watchlists are a dialog: Ctrl+S.** Load, Save, Save as, Delete, Import,
+  Export. The status line names the active list.
+- **The message bar** (bottom, four lines, newest last) carries every order
+  log: paper orders placed, executed, rejected and cancelled; LIVE requests
+  and what FYERS made of them; the order router's lines (its limit refusals);
+  HALT/RESUME; every **DEMO** fill the models take (from
+  `data/live/paper/fills.csv`, netted arbitrage legs marked); and every **RMS**
+  refusal by the engine's risk gate (position, per-model, gross notional,
+  margin and daily-loss limits, a halt, a stale feed) and the engine's own
+  square-off and roll notes (from `decisions.csv`). F10 opens the full log.
+- **Adding a scrip by keyboard: Shift+S** opens the scrip selection on
+  **Exchange** with its list dropped. **Tab** / **Shift+Tab** walk Exchange →
+  Segment → Symbol → Expiry → Type → Strike → Add, dropping each list (a greyed
+  field is skipped: for equity, Expiry, Type and Strike); Tab on a list takes
+  what is highlighted; **Enter** adds.
 - **Adding a scrip:** **Insert** (or **＋ Add scrip**) opens the GETS Add Scrip
   window. It narrows the way GETS does: **Exchange** (NSE, BSE, NFO) →
   **Instrument** (EQ; FUTIDX, FUTSTK, OPTIDX, OPTSTK) → **Symbol** → **Expiry**
@@ -96,8 +125,8 @@ Credentials:
 
   These are priced live from the stream. The account snapshot is fetched by
   itself every minute while the window is open; there is no Refresh button.
-- **Halt controls** (toolbar) opens the Operations window: halt, the intent
-  queue and the gated ticket.
+- **F11+F12** halts at once (again, with a reason, resumes); there is no halt
+  button or toolbar.
 
 ### Keys (GETS / ODIN)
 
@@ -112,6 +141,8 @@ Credentials:
 | Shift+F7 | Security information |
 | F10 | Message log |
 | Insert / Delete | Add Scrip window (Exchange → Instrument → Symbol → Expiry → Option → Strike) / remove a scrip |
+| Shift+S | Scrip selection: Exchange with its list open; Tab / Shift+Tab through the dropdowns, Enter adds |
+| Ctrl+S | Watchlists: load, save, save as, delete, import, export |
 | Ctrl+F | Find in the watch |
 
 ### Paper orders
@@ -207,6 +238,14 @@ How it sends:
   the touch**.
 - **A leg that does not fill.** The legs that did fill are sent straight back
   out and recorded as a legging loss.
+- **The arbitrage pair is two legs.** Once both legs have filled, no exit is
+  sent: the long on one exchange and the short on the other are left to the
+  clearing corporation to net, and the pair is recorded as one round trip
+  (FYERS's average buy and sell prices, the two fills' expenses). If one leg
+  filled more than the other, the difference is sent back out. **Check the
+  first day's contract note and the FYERS positions screen:** if FYERS shows
+  the two MIS legs as separate open positions at 15:20, its auto square-off
+  will add two more fills that this record does not show.
 - **Exits.** A **DAY limit 0.5 % through the touch**, for what really filled
   and is not already on its way out. Exits are never refused by the strategy's
   caps.
@@ -248,7 +287,12 @@ That is about 370 symbols, well under FYERS' 5,000 per socket.
 protobuf, decoded without a library and pinned by messages the official SDK
 encoded). The price service subscribes the instruments marked for depth,
 futures first, five to a channel (`--depth50 N` caps how many; `--depth50 off`
-keeps the 5-level book only). While an instrument's 50-level book is fresh it
+keeps the 5-level book only). A diff carries only the levels that moved, each
+with its position in `num` (0–49); the official SDK (fyers-apiv3 up to
+3.1.18) writes them by their index in the message instead, which corrupts
+every level a sparse diff skips. That was the "wrong prices after level 5":
+this decoder had copied the SDK, and now places each level at its `num`.
+While an instrument's 50-level book is fresh it
 replaces the HSM's five levels; if FYERS refuses a subscription the reason is
 printed and that instrument keeps five. Kite and the HSM socket send five
 levels; SIM sends fifty.
@@ -320,7 +364,7 @@ says so.
 | Direction AR(2), ARMA(1,1), Logistic, Ridge, GBDT, Vote | at each of 10:15, 11:15, 12:15, 13:15 and 14:15, forecast to the 15:20 square-off (each hour its own walk-forward calibration); trade one NIFTY future lot at the first hour where q·gain − (1−q)·loss − cost clears zero by `--gate-z` (1) standard errors | intraday |
 | Pairs BANKNIFTY/NIFTY | 250-day spread; every 15 minutes from 09:30 to 15:15, in at \|z\| ≥ 2, out at ≤ 0.5, stop at 4 | carried, rolled on expiry |
 | Stat-arb NIFTY 50 | Avellaneda-Lee s-scores with today's return as the last day; every 15 minutes from 09:30 to 15:15, open at ±1.25; one lot of each stock future | carried, rolled, out after 60 sessions |
-| Cross-exchange arbitrage | on every quote: when one exchange's bid beats the other's ask (NSE vs BSE, same stock) by the four fills' expenses, both spreads and 2 bp, buy the cheap listing and sell the dear one, Rs 2 lakh a leg (no more than both touches show); out when the mids meet, after 30 minutes, or at 15:15 | intraday |
+| Cross-exchange arbitrage | on every quote: when one exchange's bid beats the other's ask (NSE vs BSE, same stock) by the two fills' expenses (each exchange's own charges) and 2 bp, sell at the dear bid and buy at the cheap ask, for the lower of the two visible quantities; the clearing corporation nets the pair (no exit, no exit expenses), so each pair is one round trip; the same stock again only after 5 s and fresh quotes on both | netted at once |
 | OHL | at 09:15:00 plus one second, on every near future: open = high → sell one lot, stop at high + 0.5 %; open = low → buy one lot, stop at low − 0.5 %; from 1.5 % in profit a stop trails 0.25 % behind the best price (`live/threshold.hpp`) | intraday, out at 15:20 |
 | Option arbitrage | on every quote: put-call parity against the same-expiry future (conversion / reversal) and box spreads, entered when the lock beats every leg's expenses and spreads in and out plus 3 bp; the order book's imbalance orders the legs (the one about to move first) and holds back a lock its book leans against; unwound when under 0.5 bp is left (`live/option_arb.hpp`) | carried (NRML) until the gap closes |
 

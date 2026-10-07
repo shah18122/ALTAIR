@@ -485,7 +485,8 @@ https_get_auth(std::string_view host, std::string_view target,
                                              std::string{target}, 11};
         req.set(http::field::host, host_s);
         req.set(http::field::user_agent, "altair/0.1");
-        req.set(http::field::authorization, std::string{authorization});
+        if (!authorization.empty())   // a public file (the FYERS symbol masters) takes none
+            req.set(http::field::authorization, std::string{authorization});
         if (!api_version.empty())
             req.set("X-Kite-Version", std::string{api_version});
         req.prepare_payload();

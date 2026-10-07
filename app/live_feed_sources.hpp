@@ -245,6 +245,7 @@ struct FeedStatus {
     std::size_t instruments = 0, unknown_symbols = 0, clients = 0;
     std::uint64_t trades = 0, quotes = 0, books = 0, reconnects = 0;
     std::int64_t engine_ns = 0;
+    std::vector<std::string> unknown;   ///< names the feed refused (the first 40 are written)
 };
 
 inline void write_status(const std::string& path, const FeedStatus& s) {
@@ -260,7 +261,13 @@ inline void write_status(const std::string& path, const FeedStatus& s) {
           << "\",\n  \"error\": \"" << s.error << "\",\n  \"instruments\": " << s.instruments
           << ",\n  \"unknown_symbols\": " << s.unknown_symbols << ",\n  \"clients\": " << s.clients
           << ",\n  \"trades\": " << s.trades << ",\n  \"quotes\": " << s.quotes << ",\n  \"books\": " << s.books
-          << ",\n  \"reconnects\": " << s.reconnects << ",\n  \"engine_ns\": " << s.engine_ns << "\n}\n";
+          << ",\n  \"reconnects\": " << s.reconnects << ",\n  \"engine_ns\": " << s.engine_ns << ",\n  \"unknown\": [";
+        for (std::size_t i = 0; i < s.unknown.size() && i < 40; ++i) {
+            f << (i ? ", \"" : "\"");
+            for (const char c : s.unknown[i]) if (c != '"' && c != '\\' && static_cast<unsigned char>(c) >= 0x20) f << c;
+            f << '"';
+        }
+        f << "]\n}\n";
     }
     // Replaces in one step (std::filesystem::rename overwrites on every
     // platform): never deleted first, so a reader sees the old file or the new.

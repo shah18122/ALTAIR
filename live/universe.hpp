@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "fyers_names.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -140,6 +142,7 @@ inline constexpr std::uint32_t kLiveVixToken = 264969u;
 /// One row of the Kite master, the fields this file reads.
 struct LiveKiteRow {
     std::uint32_t token = 0;
+    std::uint32_t exchange_token = 0;   ///< the exchange's own token (BSE: scrip code); 0 if absent
     std::string symbol, name, type, segment, exchange;
     std::int64_t expiry_day = 0;
     double strike = 0.0, tick = 0.0;
@@ -159,7 +162,8 @@ struct LiveKiteRow {
     };
     const int c_tok = col("instrument_token"), c_sym = col("tradingsymbol"), c_name = col("name"),
               c_exp = col("expiry"), c_str = col("strike"), c_tick = col("tick_size"), c_lot = col("lot_size"),
-              c_type = col("instrument_type"), c_seg = col("segment"), c_ex = col("exchange");
+              c_type = col("instrument_type"), c_seg = col("segment"), c_ex = col("exchange"),
+              c_xtok = col("exchange_token");   // optional
     if (c_tok < 0 || c_sym < 0 || c_name < 0 || c_exp < 0 || c_str < 0 || c_tick < 0 || c_lot < 0
         || c_type < 0 || c_seg < 0 || c_ex < 0) {
         error = path + " is not a Kite instrument master (missing columns)";
@@ -175,6 +179,8 @@ struct LiveKiteRow {
         const unsigned long long tok = std::strtoull(at(f, c_tok).c_str(), nullptr, 10);
         if (tok == 0 || tok > 0xFFFFFFFFull) continue;
         r.token = static_cast<std::uint32_t>(tok);
+        const unsigned long long xtok = std::strtoull(at(f, c_xtok).c_str(), nullptr, 10);
+        r.exchange_token = xtok <= 0xFFFFFFFFull ? static_cast<std::uint32_t>(xtok) : 0;
         r.symbol = at(f, c_sym);
         r.name = at(f, c_name);
         r.type = at(f, c_type);
@@ -504,11 +510,13 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
 }
 
 /// One row of the Kite master as a streamable instrument: what the market
-/// watch's scrip search adds. NSE equity -> "NSE:<SYM>-EQ"; NSE F&O ->
-/// "NSE:<SYM>" (FYERS and Kite share the derivative trading symbol), and a
-/// BSE equity "BSE:<SYM>-A". Other
-/// exchanges and segments are not streamed; nullopt says so.
-[[nodiscard]] inline std::optional<LiveInstrument> instrument_from_master(const LiveKiteRow& r) {
+/// watch's scrip search adds. NSE and BSE equity take FYERS's own name, looked
+/// up by exchange token in `names` (live/fyers_names.hpp; guessed without it:
+/// "NSE:<SYM>-EQ", "BSE:<SYM>-A"); NSE F&O -> "NSE:<SYM>" (FYERS and Kite
+/// share the derivative trading symbol). Other exchanges and segments are not
+/// streamed; nullopt says so.
+[[nodiscard]] inline std::optional<LiveInstrument> instrument_from_master(const LiveKiteRow& r,
+                                                                         const FyersCashNames* names = nullptr) {
     LiveInstrument in;
     in.token = r.token;
     in.symbol = r.symbol;
@@ -518,15 +526,14 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
     in.depth = true;
     if (r.exchange == "NSE" && r.segment == "NSE" && r.type == "EQ") {
         in.kind = LiveKind::Equity;
-        in.fyers = "NSE:" + r.symbol + "-EQ";
+        in.fyers = fyers_cash_name(false, r.symbol, r.exchange_token, names);
         in.underlying = r.symbol;
         return in;
     }
     if (r.exchange == "BSE" && r.segment == "BSE" && r.type == "EQ") {
-        // Group A assumed: the Kite master does not carry the BSE group, and
-        // FYERS refuses (and the feed names) a symbol in any other.
+        // The Kite master does not carry the BSE group: FYERS's master does.
         in.kind = LiveKind::Equity;
-        in.fyers = "BSE:" + r.symbol + "-A";
+        in.fyers = fyers_cash_name(true, r.symbol, r.exchange_token, names);
         in.underlying = r.symbol;
         in.depth = false;
         return in;
@@ -570,12 +577,13 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
 /// The universe plus the watchlist's additions (tokens already present or
 /// not streamable are skipped and named in `notes`).
 inline void add_watchlist(std::vector<LiveInstrument>& u, const std::vector<LiveKiteRow>& master,
-                          const std::vector<std::uint32_t>& tokens, std::vector<std::string>& notes) {
+                          const std::vector<std::uint32_t>& tokens, std::vector<std::string>& notes,
+                          const FyersCashNames* names = nullptr) {
     for (std::uint32_t t : tokens) {
         if (std::any_of(u.begin(), u.end(), [t](const LiveInstrument& i) { return i.token == t; })) continue;
         const auto row = std::find_if(master.begin(), master.end(), [t](const LiveKiteRow& r) { return r.token == t; });
         if (row == master.end()) { notes.push_back("watchlist token " + std::to_string(t) + " is not in the master"); continue; }
-        auto in = instrument_from_master(*row);
+        auto in = instrument_from_master(*row, names);
         if (!in) { notes.push_back("watchlist " + row->symbol + ": only NSE and BSE equity and F&O stream"); continue; }
         u.push_back(std::move(*in));
     }

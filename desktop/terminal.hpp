@@ -59,6 +59,7 @@
 #include "live_market.hpp"
 #include "live_models.hpp"
 #include "live_trading.hpp"
+#include "message_bar.hpp"
 #include "paper_oms.hpp"
 #include "paper_windows.hpp"
 #include "position_table.hpp"
@@ -533,6 +534,10 @@ public:
         // A TERMINAL OPENS ON THE MARKET.
         surface_->setCurrentWidget(live_);
         v->addWidget(surface_, 1);
+        // The message bar: every order log -- paper, LIVE, the router, the
+        // models' DEMO fills, RMS refusals -- a few lines, newest last.
+        msg_bar_ = new MessageBar(this);
+        v->addWidget(msg_bar_);
         connect(models_btn_, &QPushButton::clicked, this, [this](bool on) {
             show_view(on ? QStringLiteral("models") : QStringLiteral("watch"));
         });
@@ -634,6 +639,11 @@ public:
         key(QKeySequence(Qt::SHIFT | Qt::Key_F3), [this] { cancel_all_orders(); });
         key(QKeySequence(Qt::CTRL | Qt::Key_F), [this] { show_view(QStringLiteral("watch")); live_->focus_find(); });
         key(QKeySequence(Qt::Key_Insert), [this] { show_view(QStringLiteral("watch")); live_->focus_add(); });
+        // GETS: Shift+S opens the scrip selection (Tab / Shift+Tab walk its
+        // dropdowns); Ctrl+S the watchlists. A text field typing a capital S
+        // keeps it: line edits take printable keys before shortcuts.
+        key(QKeySequence(Qt::SHIFT | Qt::Key_S), [this] { show_view(QStringLiteral("watch")); live_->focus_scrip_selection(); });
+        key(QKeySequence(Qt::CTRL | Qt::Key_S), [this] { show_view(QStringLiteral("watch")); live_->show_watchlists(); });
 
         seed_strip_from_disk();
         refresh_stream();
@@ -664,6 +674,7 @@ public:
     [[nodiscard]] OptionChainPanel* chain() const noexcept { return chain_; }
     [[nodiscard]] LiveMarketWatch* market_watch() const noexcept { return live_; }
     [[nodiscard]] LiveModelsPanel* live_models() const noexcept { return models_; }
+    [[nodiscard]] MessageBar* message_bar() const noexcept { return msg_bar_; }
     /// Show a view by name: watch, chain, models; positions opens the net
     /// position window (Alt+F6) and operations the operations window.
     bool show_view(const QString& v) {
@@ -748,13 +759,13 @@ public:
             toast(QStringLiteral("LIVE not switched on: %1 could not be written").arg(path), false);
             return false;
         }
-        log_text_->appendPlainText(QStringLiteral("%1  LIVE ON by %2: up to %3 lot(s) and Rs %4 per order, %5 orders, stop at a Rs %6 loss")
+        log_line(QStringLiteral("%1  LIVE ON by %2: up to %3 lot(s) and Rs %4 per order, %5 orders, stop at a Rs %6 loss")
                                        .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), live_user())
                                        .arg(l.max_lots)
                                        .arg(paper_ui::money(l.max_order_value))
                                        .arg(l.max_orders_per_day)
                                        .arg(paper_ui::money(l.max_daily_loss)));
-        log_text_->appendPlainText(QStringLiteral("%1  %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
+        log_line(QStringLiteral("%1  %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
                                                                 live_strategies_text(l)));
         ensure_router();
         refresh_live();
@@ -768,7 +779,7 @@ public:
             toast(QStringLiteral("LIVE NOT switched off: %1 could not be written. Use the kill switch.").arg(path), false);
             return false;
         }
-        log_text_->appendPlainText(QStringLiteral("%1  LIVE OFF").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss"))));
+        log_line(QStringLiteral("%1  LIVE OFF").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss"))));
         refresh_live();
         toast(QStringLiteral("LIVE off: orders are paper again. Orders already at FYERS stay there; cancel them in Live orders."), true);
         return true;
@@ -803,7 +814,7 @@ public:
         const bool was_live = live_on_;
         if (was_live) (void)disarm_live();
         if (was_live || router_ != nullptr) ensure_router();   // the router is what cancels at FYERS
-        log_text_->appendPlainText(QStringLiteral("%1  HALT by %2 (%3)%4")
+        log_line(QStringLiteral("%1  HALT by %2 (%3)%4")
                                        .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), by, reason,
                                             wrote ? QString() : QStringLiteral(" — REQUEST FILE NOT WRITTEN")));
         refresh_live();
@@ -817,7 +828,7 @@ public:
         const KillRequest k = read_kill_request(kill_path());
         if (k.state == HaltFileState::Absent) return true;
         const ClearRequestResult r = clear_kill_request(kill_path(), k, by, reason.trimmed());
-        log_text_->appendPlainText(QStringLiteral("%1  RESUME by %2 (%3): %4")
+        log_line(QStringLiteral("%1  RESUME by %2 (%3): %4")
                                        .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), by, reason,
                                             r == ClearRequestResult::Cleared ? QStringLiteral("cleared") : QStringLiteral("NOT cleared")));
         refresh_live();
@@ -869,7 +880,7 @@ public:
         const QString path = live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingIntentFile);
         if (append_intent(path, stamped) != AppendResult::Ok)
             return std::unexpected(QStringLiteral("The order was NOT sent: %1 could not be written").arg(path));
-        log_text_->appendPlainText(QStringLiteral("%1  LIVE REQUEST %2 %3 lot(s) %4 %5 %6 (%7)")
+        log_line(QStringLiteral("%1  LIVE REQUEST %2 %3 lot(s) %4 %5 %6 (%7)")
                                        .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
                                             d.buy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
                                        .arg(d.lots)
@@ -1243,6 +1254,17 @@ private:
         toast_timer_.setSingleShot(true);
         connect(&toast_timer_, &QTimer::timeout, this, [this] { toast_->clear(); });
         refresh_books();
+        // DEMO fills and RMS refusals as the engine appends them.
+        msg_timer_.setInterval(1000);
+        connect(&msg_timer_, &QTimer::timeout, this, [this] { msg_bar_->poll(paper_dir_); });
+        msg_timer_.start();
+        msg_bar_->poll(paper_dir_);
+    }
+
+    /// One line to the message log (F10) and the message bar.
+    void log_line(const QString& line) {
+        if (log_text_ != nullptr) log_text_->appendPlainText(line);
+        if (msg_bar_ != nullptr) msg_bar_->add(line);
     }
 
     void books_dirty() { if (!books_timer_.isActive()) books_timer_.start(); }
@@ -1300,7 +1322,7 @@ private:
         connect(router_, &QProcess::readyRead, this, [this] {
             const QStringList lines = QString::fromLocal8Bit(router_->readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
             for (const QString& l : lines)
-                log_text_->appendPlainText(QStringLiteral("%1  ROUTER %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), l.trimmed()));
+                log_line(QStringLiteral("%1  ROUTER %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), l.trimmed()));
         });
         connect(router_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
             router_note_ = code == 3 ? QString() : QStringLiteral("the order router exited (%1); see the message log (F10)").arg(code);
@@ -1343,7 +1365,7 @@ private:
             const bool first = it == live_seen_.constEnd() && !live_seen_loaded_;
             live_seen_.insert(o.intent, o.status);
             if (first) continue;
-            log_text_->appendPlainText(QStringLiteral("%1  LIVE %2 %3 %4 %5: %6%7")
+            log_line(QStringLiteral("%1  LIVE %2 %3 %4 %5: %6%7")
                                            .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), o.side)
                                            .arg(o.qty)
                                            .arg(o.symbol, o.status, o.message,
@@ -1358,7 +1380,7 @@ private:
 
     void refresh_books() {
         for (const QString& m : oms_.take_messages()) {
-            log_text_->appendPlainText(QStringLiteral("%1  %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), m));
+            log_line(QStringLiteral("%1  %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), m));
             const bool bad = m.startsWith(QLatin1String("REJECTED"));
             if (m.startsWith(QLatin1String("EXECUTED")) || bad || m.startsWith(QLatin1String("placed"))
                 || m.startsWith(QLatin1String("cancelled")))
@@ -1578,7 +1600,7 @@ private:
     MarketPictureWindow* picture_ = nullptr;
     void paper_write_failed(const QString& path) {
         if (paper_write_error_.isEmpty())
-            log_text_->appendPlainText(QStringLiteral("PAPER BOOK NOT WRITTEN: %1. New orders are refused until Altair restarts.").arg(path));
+            log_line(QStringLiteral("PAPER BOOK NOT WRITTEN: %1. New orders are refused until Altair restarts.").arg(path));
         paper_write_error_ = QStringLiteral("The paper book could not be written (%1); new orders are refused.").arg(path);
         toast(paper_write_error_, false);
     }
@@ -1588,7 +1610,8 @@ private:
     std::unique_ptr<QLockFile> paper_lock_;
     QString paper_lock_path_, paper_write_error_;
     bool paper_locked_ = false;
-    QTimer books_timer_, toast_timer_;
+    QTimer books_timer_, toast_timer_, msg_timer_;
+    MessageBar* msg_bar_ = nullptr;
 #if ALTAIR_HAVE_CHARGES_TOML
     std::vector<ChargeSchedule> schedules_;
     bool charges_verified_ = false;

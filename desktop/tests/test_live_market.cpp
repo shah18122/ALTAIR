@@ -13,7 +13,10 @@
 #include <server/price_bus.hpp>
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QDateEdit>
 #include <QElapsedTimer>
+#include <QPushButton>
 
 #include <boost/asio/io_context.hpp>
 
@@ -121,9 +124,18 @@ int main(int argc, char** argv) {
         const LivePrice* p = client.price(1002);
         return p != nullptr && p->trades >= 1 && client.price(12468226) != nullptr && client.price(12468226)->levels == 5;
     });
-    pump(bus, 400, [] { return false; });   // let the 100 ms painter and the 250 ms side panel run
-
+    // Let the 100 ms painter and the 250 ms side panel run. The uptick's
+    // highlight lasts 450 ms from the paint: watch for it while waiting rather
+    // than look once afterwards (a loaded machine can be late by more).
     auto* m = page.model();
+    bool lit = false;
+    pump(bus, 1500, [&] {
+        const int r = m->row_of(12468226);
+        lit = lit || (r >= 0 && m->data(m->index(r, LiveWatchModel::Ltp), Qt::BackgroundRole).isValid());
+        return lit;
+    });
+    pump(bus, 400, [] { return false; });
+
     const int fr = m->row_of(12468226);
     check(fr == 1, "the future has its row");
     const QString ltp = m->data(m->index(fr, LiveWatchModel::Ltp), Qt::DisplayRole).toString();
@@ -135,7 +147,7 @@ int main(int argc, char** argv) {
           "best bid and ask size from the quote topic");
     check(m->data(m->index(fr, LiveWatchModel::Ltq), Qt::DisplayRole).toString() == QStringLiteral("130"),
           "last traded quantity");
-    check(m->data(m->index(fr, LiveWatchModel::Ltp), Qt::BackgroundRole).isValid(), "a moved price is lit");
+    check(lit, "a moved price is lit");
     const int ir = m->row_of(256265);
     check(m->data(m->index(ir, LiveWatchModel::Bid), Qt::DisplayRole).toString() == QStringLiteral("—")
               && m->data(m->index(ir, LiveWatchModel::Volume), Qt::DisplayRole).toString() == QStringLiteral("—"),
@@ -224,6 +236,85 @@ int main(int argc, char** argv) {
         trade(12468226, 2401350, 65, t0 + 8'000'000);
         pump(bus, 2000, [&] { return model->last_flush_rows() > 0; });
         check(model->last_flush_rows() == 1, "on screen, the one row that ticked repaints, and only it");
+    }
+
+    // THE LIVE FEED RUNS ON MARKET HOURS, NOT A BUTTON.
+    {
+        const auto at = [](int y, int mo, int d, int h, int mi) { return QDateTime(QDate(y, mo, d), QTime(h, mi), Qt::UTC); };
+        check(!LiveMarketWatch::in_market_hours(at(2026, 10, 7, 8, 59)) && LiveMarketWatch::in_market_hours(at(2026, 10, 7, 9, 0))
+                  && LiveMarketWatch::in_market_hours(at(2026, 10, 7, 15, 44)) && !LiveMarketWatch::in_market_hours(at(2026, 10, 7, 15, 45)),
+              "the feed's hours are 09:00 to 15:45 IST");
+        check(!LiveMarketWatch::in_market_hours(at(2026, 10, 10, 11, 0)) && !LiveMarketWatch::in_market_hours(at(2026, 10, 11, 11, 0)),
+              "and not on a Saturday or a Sunday");
+        page.now_ist = [&] { return at(2026, 10, 10, 11, 0); };
+        check(!page.market_tick(), "with the schedule off (tests, scripts) nothing starts");
+        page.set_autostart(true);
+        check(!page.market_tick() && !page.feed_running(), "on a Saturday the schedule starts nothing");
+        page.set_autostart(false);
+        page.now_ist = {};
+        check(page.findChild<QPushButton*>(QStringLiteral("startLiveFeed")) == nullptr
+                  && page.findChild<QCheckBox*>() == nullptr,
+              "no Start live feed button and no Live-on-open box");
+    }
+
+    // ONE SIMULATION DIALOG, ONE WATCHLIST DIALOG (Ctrl+S).
+    {
+        auto* sim = page.findChild<QPushButton*>(QStringLiteral("simulationButton"));
+        auto* start = page.findChild<QPushButton*>(QStringLiteral("startSimFeed"));
+        auto* date = page.findChild<QDateEdit*>(QStringLiteral("simDate"));
+        check(sim != nullptr && start != nullptr && date != nullptr && start->window() == page.simulation_dialog()
+                  && date->window() == page.simulation_dialog(),
+              "the SIM controls sit in the SIMULATION dialog, behind one button");
+        sim->click();
+        QApplication::processEvents();
+        check(page.simulation_dialog()->isVisible(), "SIMULATION opens it");
+        page.simulation_dialog()->hide();
+        auto* name = page.findChild<QComboBox*>(QStringLiteral("watchlistName"));
+        check(name != nullptr && name->window() == page.watchlist_dialog() && !page.watchlist_dialog()->isVisible(),
+              "the watchlist controls are off the watch, in a dialog");
+        page.show_watchlists();
+        QApplication::processEvents();
+        check(page.watchlist_dialog()->isVisible() && name->count() >= 1, "Ctrl+S opens it with the saved lists");
+        page.watchlist_dialog()->hide();
+    }
+
+    // THE BOOK AT FULL HEIGHT: fifty rows, and the trades folded away.
+    {
+        LivePrice p;
+        p.levels = 50;
+        for (std::size_t k = 0; k < 50; ++k) {
+            p.bids[k] = {2400000 - static_cast<std::int64_t>(k) * 5, 65, 1, 0};
+            p.asks[k] = {2400005 + static_cast<std::int64_t>(k) * 5, 65, 1, 0};
+        }
+        show_live_depth(page.depth(), &p);
+        check(page.depth()->rowCount() == 51 && page.depth()->item(49, 2)->text() == QStringLiteral("23997.55")
+                  && page.depth()->item(49, 3)->text() == QStringLiteral("24002.50"),
+              "fifty levels a side, each at its own price, and the total");
+        page.toggle_full_depth();
+        check(page.depth_split()->sizes().value(1) == 0, "a double-click on its title gives the book the full height");
+        page.toggle_full_depth();
+        check(page.depth_split()->sizes().value(1) > 0, "and again gives the trades their share back");
+    }
+
+    // SHIFT+S AND TAB: the scrip selection by keyboard, a list at each step.
+    {
+        auto* bar = page.loader();
+        bar->set_popups(false);
+        page.activateWindow();
+        QApplication::processEvents();
+        bar->choose(QStringLiteral("NSE"), QStringLiteral("E"), QString());
+        page.focus_scrip_selection();
+        QApplication::processEvents();
+        check(bar->focused_field() == QStringLiteral("addExchange"), "Shift+S lands on Exchange");
+        bar->step(false);
+        bar->step(false);
+        check(bar->focused_field() == QStringLiteral("addSymbol"), "Tab, Tab: Segment, then Symbol");
+        bar->step(false);
+        check(bar->focused_field() == QStringLiteral("addExchange"),
+              "for equity, Tab skips the greyed Expiry, Type and Strike -- and Add, greyed until a contract is named -- "
+              "and goes round to Exchange");
+        bar->step(true);
+        check(bar->focused_field() == QStringLiteral("addSymbol"), "Shift+Tab goes back to Symbol");
     }
 
     check(page.status_text().contains(QStringLiteral("SIM")), "a simulated stream is labelled SIM, never LIVE");
