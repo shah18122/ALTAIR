@@ -102,16 +102,17 @@ inline Grid cross(std::string key, std::string model, const std::vector<std::pai
 }
 } // namespace detail
 
-/// The arbitrage: the margin over costs to enter, and how long a pair may wait to meet.
+/// The arbitrage: the margin over the two fills' expenses, and how long before
+/// the same stock is entered again.
 [[nodiscard]] inline Grid arbitrage_grid() {
     const live::LiveCrossArbRule d;
     return detail::cross("arbitrage", "Cross-exchange arbitrage",
-                         {{"min_profit_bps", {0.5, 1.0, 2.0, 3.0, 5.0}}, {"max_hold_min", {5.0, 15.0, 30.0}}},
-                         {{"min_profit_bps", d.min_profit_bps}, {"max_hold_min", static_cast<double>(d.max_hold_ns) / 60e9}},
+                         {{"min_profit_bps", {0.5, 1.0, 2.0, 3.0, 5.0}}, {"cooldown_s", {1.0, 5.0, 15.0}}},
+                         {{"min_profit_bps", d.min_profit_bps}, {"cooldown_s", static_cast<double>(d.cooldown_ns) / 1e9}},
                          [](const Params& p) {
                              live::LiveCrossArbRule r;
                              r.min_profit_bps = p.at("min_profit_bps");
-                             r.max_hold_ns = static_cast<std::int64_t>(p.at("max_hold_min") * 60e9);
+                             r.cooldown_ns = static_cast<std::int64_t>(p.at("cooldown_s") * 1e9);
                              return std::make_unique<live::LiveCrossArbModel>(r);
                          });
 }

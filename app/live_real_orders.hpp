@@ -33,6 +33,13 @@
 // whose legs did not all fill is flattened at once: what filled is sent back
 // out, and the round trip is recorded as a legging loss.
 //
+// NETTED PAIRS. The cross-exchange arbitrage is TWO legs: once both have
+// filled at FYERS, the long in one listing and the short in the other are the
+// clearing corporation's to settle against each other -- no exit order is
+// sent. The pair is recorded as ONE round trip: FYERS's average buy price,
+// its average sell price, the matched quantity, the two fills' expenses. A
+// leg that filled more than the other has the difference sent back out.
+//
 // THE RECORD. Every real round trip -- entry and exit both filled at FYERS --
 // is appended to data/live_orders/strategy_trades.csv with FYERS's average
 // prices, the gross P&L, the expenses (the engine's own expense function)
@@ -141,6 +148,9 @@ public:
     void attach(live::LiveEngine& e) {
         engine_ = &e;
         e.book().on_order = [this](const live::LiveOrderEvent& ev) { on_order(ev); };
+        e.book().on_net = [this](const live::LiveNetEvent& ev) {
+            if (!strategy_key(ev.model).empty()) netted_.insert({ev.model, ev.decided_ns});
+        };
         e.after_event = [this] { flush(); };
     }
     [[nodiscard]] const std::vector<RealLeg>& legs() const noexcept { return legs_; }
@@ -413,6 +423,14 @@ private:
     }
 
     void record(const RealLeg& l, std::int64_t qty, int side, const RealHolding& h, double exit_px, double gross, double expenses) {
+        write_row(l.model, l.symbol, l.token, side > 0 ? "long" : "short", qty, h.entry_ns, h.entry, wall_ns(), exit_px, gross,
+                  expenses, "real entry", l.reason.empty() ? std::string("real exit") : l.reason);
+    }
+
+    /// One row of data/live_orders/strategy_trades.csv (the demo record's columns).
+    void write_row(const std::string& model, const std::string& symbol, std::uint32_t token, const std::string& side,
+                   std::int64_t qty, std::int64_t entry_ns, double entry, std::int64_t exit_ns, double exit_px, double gross,
+                   double expenses, std::string why_in, std::string why_out) {
         const fs::path path = root_ / oms::kRouterDir / "strategy_trades.csv";
         std::error_code ec;
         fs::create_directories(path.parent_path(), ec);
@@ -426,9 +444,8 @@ private:
                           static_cast<long long>(s / 60 % 60), static_cast<long long>(s % 60));
             return std::string(b);
         };
-        const std::int64_t now = wall_ns();
-        std::string why_out = l.reason.empty() ? std::string("real exit") : l.reason;
-        for (char& c : why_out) if (c == '"' || c == '\n' || c == '\r') c = '\'';
+        for (std::string* t : {&why_in, &why_out})
+            for (char& c : *t) if (c == '"' || c == '\n' || c == '\r') c = '\'';
         const auto num = [](double v) {
             if (!std::isfinite(v)) return std::string();   // unpriced: blank, as in the demo record
             char b[48];
@@ -437,11 +454,68 @@ private:
         };
         char line[1024];
         std::snprintf(line, sizeof line, "%s,\"%s\",%s,%u,%s,%lld,%s,%.2f,%s,%.2f,%.2f,%s,%s,\"%s\",\"%s\",REAL,%s\n",
-                      utc_text(now).substr(0, 10).c_str(), l.model.c_str(), l.symbol.c_str(), l.token, side > 0 ? "long" : "short",
-                      static_cast<long long>(qty), ist(h.entry_ns).c_str(), h.entry, ist(now).c_str(), exit_px, gross,
-                      num(expenses).c_str(), num(gross - expenses).c_str(), "real entry", why_out.c_str(),
+                      utc_text(exit_ns).substr(0, 10).c_str(), model.c_str(), symbol.c_str(), token, side.c_str(),
+                      static_cast<long long>(qty), ist(entry_ns).c_str(), entry, ist(exit_ns).c_str(), exit_px, gross,
+                      num(expenses).c_str(), num(gross - expenses).c_str(), why_in.c_str(), why_out.c_str(),
                       std::isfinite(expenses) ? "FYERS" : "FYERS (expenses unpriced)");
         f << line;
+    }
+
+    /// A netted pair whose legs are all final: the matched quantity is one
+    /// round trip, settled by the clearing corporation; the rest of a leg that
+    /// filled more goes back out. True when it handled the group.
+    bool settle_pair(const std::vector<RealLeg*>& ls, std::int64_t now_ns) {
+        if (ls.size() != 2) return false;
+        RealLeg* buy = ls[0]->side > 0 ? ls[0] : ls[1];
+        RealLeg* sell = ls[0]->side > 0 ? ls[1] : ls[0];
+        if (buy->side <= 0 || sell->side >= 0) return false;
+        const std::int64_t matched = std::min(buy->filled, sell->filled);
+        if (matched <= 0) return false;   // nothing to net: plain legging
+        const auto bi = insts_.find(buy->token), si = insts_.find(sell->token);
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double be = bi != insts_.end() && cost_ ? cost_(bi->second, true, static_cast<double>(matched), buy->avg, 0) : nan;
+        const double se = si != insts_.end() && cost_ ? cost_(si->second, false, static_cast<double>(matched), sell->avg, 0) : nan;
+        const double gross = (sell->avg - buy->avg) * static_cast<double>(matched);
+        const double expenses = be + se;
+        const auto venue = [this](std::uint32_t tok) {
+            const auto it = insts_.find(tok);
+            return it != insts_.end() && it->second.fyers.rfind("BSE:", 0) == 0 ? std::string("BSE") : std::string("NSE");
+        };
+        const std::int64_t when = wall_ns();
+        write_row(buy->model, buy->symbol + " " + venue(buy->token) + "->" + venue(sell->token), buy->token, "long", matched,
+                  when, buy->avg, when, sell->avg, gross, expenses, buy->reason, "netted by the clearing corporation");
+        day_net_[buy->key] += std::isfinite(expenses) ? gross - expenses : gross;
+        // The matched part is settled: out of what is really held, with its entry expenses.
+        for (RealLeg* l : {buy, sell}) {
+            auto& h = held_[{l->model, l->token}];
+            const std::int64_t n = std::min<std::int64_t>(matched, std::llabs(h.qty));
+            if (n <= 0) continue;
+            h.entry_expenses -= h.entry_expenses * static_cast<double>(n) / static_cast<double>(std::llabs(h.qty));
+            h.qty -= n * (h.qty > 0 ? 1 : -1);
+            if (h.qty == 0) h.entry_expenses = 0.0;
+        }
+        note("netted: " + buy->symbol + " bought " + std::to_string(matched) + " on " + venue(buy->token) + ", sold on "
+             + venue(sell->token) + "; the clearing corporation settles the pair");
+        // A leg that filled more than the other: the difference goes back out.
+        for (RealLeg* l : {buy, sell}) {
+            if (l->filled <= matched) continue;
+            const std::int64_t q = to_exit({l->model, l->token});
+            const auto in = insts_.find(l->token);
+            if (q == 0 || in == insts_.end() || engine_ == nullptr) continue;
+            const live::LiveTop t = engine_->top(l->token);
+            live::LiveOrderEvent ev;
+            ev.model = l->model;
+            ev.inst = in->second;
+            ev.side = q > 0 ? -1 : 1;
+            ev.qty = std::llabs(q);
+            ev.touch_paise = ev.side > 0 ? t.ask : t.bid;
+            ev.ns = now_ns;
+            ev.decided_ns = now_ns;
+            ev.exit = true;
+            ev.reason = "legging: the part the other leg did not match";
+            send(ev, l->key, true, ev.qty);
+        }
+        return true;
     }
 
     /// Legging: a decision whose entries are all final but not all filled is
@@ -458,6 +532,7 @@ private:
                 all_filled = all_filled && full;
                 any_filled = any_filled || l->filled > 0;
             }
+            if (all_final && netted_.count(g) != 0 && settle_pair(ls, now_ns)) { flattened_.insert(g); continue; }
             if (!all_final || all_filled || !any_filled) continue;
             flattened_.insert(g);
             for (const RealLeg* l : ls) {
@@ -498,6 +573,7 @@ private:
     std::map<std::pair<std::string, std::uint32_t>, RealHolding> held_;
     std::map<std::string, double> day_net_;
     std::set<std::pair<std::string, std::int64_t>> flattened_;
+    std::set<std::pair<std::string, std::int64_t>> netted_;   ///< decisions the paper book netted (cross-exchange pairs)
     std::set<std::pair<std::string, std::uint32_t>> exit_wanted_;
     std::function<std::int64_t()> wall_;
     std::uint64_t seq_ = 0;

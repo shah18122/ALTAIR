@@ -30,6 +30,14 @@
 // by the engine at 15:20; positional ones (pairs, stat-arb) are carried. Every
 // fill is an event the CLI journals, and a restart rebuilds the book by
 // replaying them (live_replay_journal).
+//
+// NETTED PAIRS (net_off): a long in one listing of a stock against an equal
+// short in its other listing (NSE and BSE) is settled by the clearing
+// corporation against itself -- no exit trade, no exit expenses. Both legs
+// close on a NETTED fill at one settlement price, journaled like any other
+// fill, and the pair is ONE round trip: bought at the ask on one exchange,
+// sold at the bid on the other, its gross the gap locked at entry, its
+// expenses the two entry fills'.
 
 #pragma once
 
@@ -154,6 +162,15 @@ struct LivePosition {
     [[nodiscard]] bool filled() const noexcept { return qty > 0; }
 };
 
+/// Two legs settled against each other by the clearing corporation (net_off).
+struct LiveNetEvent {
+    std::string model;
+    std::uint32_t buy_token = 0, sell_token = 0;
+    std::int64_t qty = 0;          ///< units netted
+    std::int64_t decided_ns = 0;   ///< the decision both legs came from
+    std::int64_t ns = 0;
+};
+
 /// An order the paper book accepted: what a strategy decided, as it decided
 /// it. The real-order bridge (app/live_real_orders.hpp) turns the ones whose
 /// strategy is switched on into requests for the order router.
@@ -174,6 +191,8 @@ public:
     using TopFn = std::function<LiveTop(std::uint32_t)>;
     /// Every order accepted (entries and exits), as it is submitted.
     std::function<void(const LiveOrderEvent&)> on_order;
+    /// Every pair netted (net_off): no order, the clearing corporation settles it.
+    std::function<void(const LiveNetEvent&)> on_net;
 
     LivePaperBook(TopFn top, LiveCostFn cost, LiveExecPolicy policy = {})
         : top_(std::move(top)), cost_(std::move(cost)), pol_(policy) {}
@@ -259,6 +278,66 @@ public:
         std::vector<std::pair<std::string, std::uint32_t>> keys;
         for (const auto& [k, p] : positions_) if (p.state != LivePosState::Closing && pred(p)) keys.push_back(k);
         for (const auto& k : keys) (void)close(k.first, k.second, ns, reason);
+    }
+
+    /// Settle `model`'s long in `buy_token` against its short in `sell_token`
+    /// (the two listings of one stock): both close on a netted fill at one
+    /// settlement price with no expenses, and the pair becomes one round trip,
+    /// bought at the long's entry and sold at the short's. Nets the smaller of
+    /// the two quantities; the rest stays held. False unless both legs are
+    /// filled, open (not entering or exiting) and opposite.
+    bool net_off(const std::string& model, std::uint32_t buy_token, std::uint32_t sell_token, std::int64_t ns,
+                 const std::string& reason) {
+        const auto bi = positions_.find(std::make_pair(model, buy_token));
+        const auto si = positions_.find(std::make_pair(model, sell_token));
+        if (bi == positions_.end() || si == positions_.end()) return false;
+        LivePosition& b = bi->second;
+        LivePosition& s = si->second;
+        if (!b.filled() || !s.filled() || b.state != LivePosState::Open || s.state != LivePosState::Open || b.side <= 0
+            || s.side >= 0)
+            return false;
+        const std::int64_t q = std::min(b.qty, s.qty);
+        const double settle = (b.entry + s.entry) / 2.0;   // either price nets the same pair P&L
+        const double b_share = static_cast<double>(q) / static_cast<double>(b.qty);
+        const double s_share = static_cast<double>(q) / static_cast<double>(s.qty);
+        const double b_exp = b.entry_expenses * b_share, s_exp = s.entry_expenses * s_share;
+        for (LivePosition* p : {&b, &s}) {
+            LivePaperFill f;
+            f.model = model; f.token = p->inst.token; f.symbol = p->inst.symbol; f.side = -p->side; f.qty = q;
+            f.price = settle; f.expenses = 0.0; f.ns = ns; f.submit_ns = p->decided_ns;
+            f.reason = "netted: " + reason; f.role = LiveFillRole::Close; f.carry = p->carry;
+            fills_.push_back(f);
+        }
+        const auto venue = [](const LiveInstrument& in) { return in.fyers.rfind("BSE:", 0) == 0 ? std::string("BSE") : std::string("NSE"); };
+        LivePaperTrade tr;
+        tr.model = model;
+        tr.symbol = b.inst.symbol + " " + venue(b.inst) + "->" + venue(s.inst);
+        tr.token = b.inst.token;
+        tr.side = 1;
+        tr.qty = q;
+        tr.entry_ns = std::min(b.entry_ns, s.entry_ns);
+        tr.exit_ns = ns;
+        tr.entry = b.entry;
+        tr.exit = s.entry;
+        tr.gross = (s.entry - b.entry) * static_cast<double>(q);
+        tr.expenses = b_exp + s_exp;   // NaN when either entry was unpriced
+        tr.net = tr.gross - tr.expenses;
+        tr.why_in = b.why_in;
+        tr.why_out = reason;
+        trades_.push_back(tr);
+        const LiveNetEvent ev{model, buy_token, sell_token, q, b.decided_ns, ns};
+        const auto shrink = [&](std::map<std::pair<std::string, std::uint32_t>, LivePosition>::iterator it, double share) {
+            LivePosition& p = it->second;
+            if (p.qty == q) { positions_.erase(it); return; }
+            p.qty -= q;
+            p.want_qty = p.qty;
+            p.entry_expenses *= 1.0 - share;
+        };
+        shrink(bi, b_share);
+        shrink(si, s_share);
+        ++version_;
+        if (on_net) on_net(ev);
+        return true;
     }
 
     /// The market moved for `token` at `ns`: work its due orders.

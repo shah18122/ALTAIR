@@ -183,9 +183,11 @@ public:
         auto* title = new QLabel(QStringLiteral("<h3>Arbitrage — the same stock on NSE and BSE</h3>"), this);
         layout->addWidget(title);
         auto* note = new QLabel(QStringLiteral(
-            "Cross-exchange only: when one exchange's bid beats the other's ask by the expenses of four fills, both "
-            "spreads and a margin, the model buys the cheap listing and sells the dear one, and unwinds when the "
-            "prices meet. Demo trading (paper) is on by default; nothing here reaches a broker."), this);
+            "Cross-exchange only, two legs: when one exchange's BID beats the other's ASK by the two fills' expenses "
+            "(each exchange's own charges) and a margin, the model sells at the dear bid and buys at the cheap ask, "
+            "for the lower of the two visible quantities so both legs fill. The clearing corporation nets the pair: "
+            "no exit, no exit expenses. Demo trading (paper) is on by default; real orders only with LIVE on and "
+            "Auto: Arbitrage ticked."), this);
         note->setWordWrap(true);
         layout->addWidget(note);
 

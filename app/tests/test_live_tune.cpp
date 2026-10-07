@@ -47,7 +47,7 @@ std::vector<std::uint8_t> frame(std::uint32_t topic, std::uint64_t seq, std::int
     return f;
 }
 
-/// One session tape: two RELIANCE listings, a gap of 10.5 bp at 10:00:01 that
+/// One session tape: two RELIANCE listings, a gap of 5.5 bp at 10:00:01 that
 /// closes at 10:00:30.
 void write_tape(const fs::path& path, const std::string& day, bool sim) {
     live::TapeWriter w(path.string());
@@ -78,7 +78,7 @@ void write_tape(const fs::path& path, const std::string& day, bool sim) {
     trade(1, 100000, t0);
     trade(2, 100000, t0);
     quote(1, 100000, 100010, t0 + kSec);
-    quote(2, 99885, 99895, t0 + kSec);        // NSE bid 1000.00 over BSE ask 998.95: 10.5 bp
+    quote(2, 99935, 99945, t0 + kSec);        // NSE bid 1000.00 over BSE ask 999.45: 5.5 bp
     trade(1, 100000, t0 + 30 * kSec);
     quote(2, 99945, 99955, t0 + 30 * kSec);   // they meet
     quote(1, 99945, 99955, t0 + 30 * kSec);
@@ -102,8 +102,8 @@ int main() {
     const auto ohl = tn::ohl_grid();
     const auto oa = tn::option_arb_grid();
     check(arb.points.size() == 15 && arb.points[arb.defaults].at("min_profit_bps") == 2.0
-              && arb.points[arb.defaults].at("max_hold_min") == 30.0,
-          "the arbitrage grid holds today's settings (2 bp, 30 minutes) among its 15");
+              && arb.points[arb.defaults].at("cooldown_s") == 5.0,
+          "the arbitrage grid holds today's settings (2 bp, 5 s) among its 15");
     check(ohl.points.size() == 36 && ohl.points[ohl.defaults].at("stop_pct") == 0.5 && ohl.points[ohl.defaults].at("trail_pct") == 0.25,
           "the OHL grid holds 0.5 % / 1.5 % / 0.25 % among its 36");
     check(oa.points.size() == 15 && oa.points[oa.defaults].at("margin_bp") == 3.0, "the option arbitrage grid holds 3 bp");
@@ -116,7 +116,7 @@ int main() {
         f << "# tuned\nmin_profit_bps = 1   # a comment\nunknown = 3\n";
     }
     const auto p = tn::tuned_or_default(arb, root);
-    check(p.at("min_profit_bps") == 1.0 && p.at("max_hold_min") == 30.0 && p.count("unknown") == 0,
+    check(p.at("min_profit_bps") == 1.0 && p.at("cooldown_s") == 5.0 && p.count("unknown") == 0,
           "a settings file overrides its own keys only; the rest stay the defaults");
     check(tn::tuned_or_default(ohl, root) == ohl.points[ohl.defaults], "a strategy with no file runs on its defaults");
 
@@ -130,13 +130,13 @@ int main() {
           "a tape replays through every point of the grid in one pass");
     std::size_t in1 = 0, in3 = 0;
     for (std::size_t i = 0; i < arb.points.size(); ++i) {
-        if (arb.points[i].at("max_hold_min") != 30.0) continue;
+        if (arb.points[i].at("cooldown_s") != 5.0) continue;
         if (arb.points[i].at("min_profit_bps") == 1.0) in1 = i;
         if (arb.points[i].at("min_profit_bps") == 3.0) in3 = i;
     }
-    check(d.trips[in1] == 2 && d.net[in1] > 0.0 && d.trips[in3] == 0 && d.net[in3] == 0.0,
-          "10.5 bp clears 6 (expenses) + 2 (spreads) + 1, not + 3: each point trades as its rule says");
-    check(d.trips[arb.defaults] == 2, "the defaults (2 bp) take it too");
+    check(d.trips[in1] == 1 && d.net[in1] > 0.0 && d.trips[in3] == 0 && d.net[in3] == 0.0,
+          "5.5 bp clears the two fills' 3 bp + 1, not + 3: each point trades as its rule says (one netted pair)");
+    check(d.trips[arb.defaults] == 1, "the defaults (2 bp) take it too");
     write_tape(root / "sim.tape", "2026-10-06", true);
     tn::DayRun s;
     check(tn::run_tape(root / "sim.tape", arb, cost, s, err) && s.simulated, "a SIM tape says so (and is left out unless asked)");
