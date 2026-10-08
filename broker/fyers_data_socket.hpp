@@ -99,6 +99,17 @@ struct FyersSocketStats {
 
 using FyersFrame = std::vector<std::uint8_t>;
 
+/// Where and how to connect. The defaults are the HSM feed; the 50-level
+/// book (feed/fyers_tbt.hpp) is another host, an `authorization` header on
+/// the upgrade, and JSON text frames out.
+struct FyersSocketOptions {
+    std::string host = kFyersDataSocketHost;
+    std::string path = kFyersDataSocketPath;
+    std::string authorization;             ///< "appid:token"; never logged
+    bool text = false;                     ///< frames sent are text, not binary
+    std::function<bool()> stop;            ///< checked every second: true ends the session
+};
+
 /// Connect, send `opening`, then pump. For every binary message
 /// `on_frame(data, size, replies)` runs on this thread; frames it appends to
 /// `replies` are sent in order, and returning false ends the session cleanly.
@@ -110,7 +121,8 @@ fyers_data_socket_run(
     const FyersFrame& ping,
     std::chrono::seconds ping_every,
     std::chrono::seconds run_for,
-    std::chrono::seconds idle_limit = std::chrono::seconds{30})
+    std::chrono::seconds idle_limit = std::chrono::seconds{30},
+    const FyersSocketOptions& options = {})
 {
     namespace beast = boost::beast;
     namespace websocket = beast::websocket;
@@ -133,7 +145,7 @@ fyers_data_socket_run(
 
         tcp::resolver resolver{ioc};
         websocket::stream<beast::ssl_stream<beast::tcp_stream>> ws{ioc, ctx};
-        const std::string host{kFyersDataSocketHost};
+        const std::string host{options.host};
         if (!SSL_set_tlsext_host_name(ws.next_layer().native_handle(), host.c_str()))
             return std::unexpected(FyersSocketError::TlsFailed);
         ws.next_layer().set_verify_callback(ssl::host_name_verification(host));
@@ -149,8 +161,14 @@ fyers_data_socket_run(
         if (ec) return std::unexpected(FyersSocketError::TlsFailed);
         beast::get_lowest_layer(ws).expires_never();
         ws.set_option(websocket::stream_base::timeout::suggested(beast::role_type::client));
-        ws.binary(true);
-        ws.handshake(host, kFyersDataSocketPath, ec);
+        ws.binary(!options.text);
+        if (!options.authorization.empty()) {
+            const std::string auth = options.authorization;
+            ws.set_option(websocket::stream_base::decorator([auth](websocket::request_type& req) {
+                req.set(beast::http::field::authorization, auth);
+            }));
+        }
+        ws.handshake(host, options.path, ec);
         if (ec) return std::unexpected(FyersSocketError::UpgradeFailed);
 
         FyersSocketStats st{};
@@ -246,7 +264,7 @@ fyers_data_socket_run(
             timer.async_wait([&](boost::system::error_code e) {
                 if (e || closing) return;
                 const auto now = clock::now();
-                if (now >= deadline) { request_close(); return; }
+                if (now >= deadline || (options.stop && options.stop())) { request_close(); return; }
                 if (st.binary_frames == 0 && now - start >= idle_limit) {
                     failure = FyersSocketError::Idle;
                     request_close();

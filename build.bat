@@ -19,20 +19,50 @@ REM baffling "\Microsoft was unexpected at this time".
 
 setlocal
 
-set "VSROOT=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools"
+REM Run from the folder this script is in, wherever the project now lives
+REM (it moved from C: to D:\altair once, and nothing below may assume a path).
+set "SRCDIR=%~dp0"
+if "%SRCDIR:~-1%"=="\" set "SRCDIR=%SRCDIR:~0,-1%"
+pushd "%SRCDIR%"
+
+set "PRESET=%~1"
+if "%PRESET%"=="" set "PRESET=default"
+
+REM Visual Studio Build Tools: ask vswhere first, then the usual folder.
+set "VSROOT="
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSROOT=%%i"
+if not defined VSROOT set "VSROOT=%ProgramFiles(x86)%\Microsoft Visual Studio\18\BuildTools"
 set "VCVARS=%VSROOT%\VC\Auxiliary\Build\vcvars64.bat"
 set "CMAKEDIR=%VSROOT%\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
 set "NINJADIR=%VSROOT%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja"
 
 if not exist "%VCVARS%" goto no_vcvars
 
-REM From P0-08b the `vcpkg` preset needs VCPKG_ROOT. Point it at the tree
-REM bootstrap created, so the preset works with no extra setup.
-if "%VCPKG_ROOT%"=="" if exist "C:\PycharmProjects\vcpkg\vcpkg.exe" set "VCPKG_ROOT=C:\PycharmProjects\vcpkg"
+REM vcpkg, for the `vcpkg` and `net` presets: VCPKG_ROOT when it points at a
+REM real tree, else the first of the usual places that has vcpkg.exe.
+if defined VCPKG_ROOT if not exist "%VCPKG_ROOT%\vcpkg.exe" set "VCPKG_ROOT="
+for %%d in ("%SRCDIR%\vcpkg" "%SRCDIR%\..\vcpkg" "D:\vcpkg" "C:\vcpkg" "C:\PycharmProjects\vcpkg" "C:\src\vcpkg" "%USERPROFILE%\vcpkg") do if not defined VCPKG_ROOT if exist "%%~d\vcpkg.exe" set "VCPKG_ROOT=%%~fd"
 set "VCPKG_DISABLE_METRICS=1"
+set "NEEDS_VCPKG="
+if /I "%PRESET%"=="vcpkg" set "NEEDS_VCPKG=1"
+if /I "%PRESET%"=="net" set "NEEDS_VCPKG=1"
+if defined NEEDS_VCPKG if not defined VCPKG_ROOT goto no_vcpkg
+if defined NEEDS_VCPKG echo vcpkg: %VCPKG_ROOT%
 
-set "PRESET=%~1"
-if "%PRESET%"=="" set "PRESET=default"
+REM A build tree configured from another folder is refused by CMake ("does not
+REM match the source ... used to generate cache"): a copied or moved project
+REM carries one. Its cache is dropped so the preset configures afresh; the
+REM compiled objects stay and are reused where they still match.
+set "SRCFWD=%SRCDIR:\=/%"
+set "CACHE=%SRCDIR%\build\%PRESET%\CMakeCache.txt"
+if not exist "%CACHE%" goto cache_ok
+findstr /X /I /L /C:"CMAKE_HOME_DIRECTORY:INTERNAL=%SRCFWD%" "%CACHE%" >nul
+if not errorlevel 1 goto cache_ok
+echo NOTE: build\%PRESET% was configured from another folder; configuring it afresh for %SRCDIR%.
+del /q "%CACHE%"
+if exist "%SRCDIR%\build\%PRESET%\CMakeFiles" rmdir /s /q "%SRCDIR%\build\%PRESET%\CMakeFiles"
+:cache_ok
 
 call "%VCVARS%" >nul 2>&1
 
@@ -51,7 +81,7 @@ REM then "passed" tests for code that had never been compiled. NEQ 0 reads the
 REM actual value and catches both signs.
 echo === configure [%PRESET%] ===
 cmake --preset %PRESET%
-if %ERRORLEVEL% NEQ 0 exit /b 1
+if %ERRORLEVEL% NEQ 0 goto configure_failed
 
 echo.
 echo === build [%PRESET%] ===
@@ -80,8 +110,28 @@ if %CTEST_RC% NEQ 0 (
 exit /b %CTEST_RC%
 
 :no_vcvars
-echo ERROR: vcvars64.bat not found. Edit VSROOT at the top of this script.
+echo ERROR: Visual Studio Build Tools (C++ workload) not found.
 echo   looked for: "%VCVARS%"
+echo   Install "Desktop development with C++" from the Visual Studio Installer.
+exit /b 1
+
+:no_vcpkg
+echo ERROR: the "%PRESET%" preset needs vcpkg, and none was found.
+echo   Looked in: %%VCPKG_ROOT%%, .\vcpkg, ..\vcpkg, D:\vcpkg, C:\vcpkg, C:\PycharmProjects\vcpkg, C:\src\vcpkg, %%USERPROFILE%%\vcpkg
+echo   Install it once, on an NTFS drive (C: is fine):
+echo     git clone https://github.com/microsoft/vcpkg C:\vcpkg
+echo     C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+echo   or point at a copy you have:  set VCPKG_ROOT=X:\path\to\vcpkg
+exit /b 1
+
+:configure_failed
+echo.
+echo CMake configure failed for preset "%PRESET%" in %SRCDIR%.
+echo   - The first "CMake Error" lines above say why.
+echo   - To start a build tree completely afresh: rmdir /s /q build\%PRESET%
+if not defined NEEDS_VCPKG exit /b 1
+echo   - vcpkg (%VCPKG_ROOT%) on a drive that records no file owners (exFAT/FAT32) fails
+echo     inside git with "dubious ownership": git config --global --add safe.directory "%VCPKG_ROOT:\=/%"
 exit /b 1
 
 :no_cmake

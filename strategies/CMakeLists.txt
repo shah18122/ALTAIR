@@ -58,6 +58,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_band_option_fade_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_band_option_fade COMMAND altair_band_option_fade_test)
 
+    add_executable(altair_threshold_test tests/test_threshold.cpp)
+    target_link_libraries(altair_threshold_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_threshold COMMAND altair_threshold_test)
+
     add_executable(altair_pairs_futures_test tests/test_pairs_futures.cpp)
     target_link_libraries(altair_pairs_futures_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_pairs_futures COMMAND altair_pairs_futures_test)

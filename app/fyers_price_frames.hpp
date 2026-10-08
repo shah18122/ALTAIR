@@ -69,8 +69,13 @@ inline bool count(const fyers_hsm::HsmUpdate& u, std::size_t i, std::int64_t& ou
     if (u.value == nullptr) return false;
 
     if (u.topic == HsmTopic::Depth) {
+        // FIVE levels: the HSM depth topic's 30 fields are five bid prices,
+        // five ask prices, five of each size and five of each order count.
+        // Looping to kMaxDepthLevels (50, the TBT book's size) read field 5+i
+        // as "level 6" -- ask price 1 shown as a bid, bid size 1 as an ask
+        // price -- which is the garbage below level 5 the Terminal showed.
         std::uint16_t levels = 0;
-        for (std::size_t i = 0; i < kMaxDepthLevels; ++i) {
+        for (std::size_t i = 0; i < altair::kDepthLevels; ++i) {
             std::int64_t bp = 0, ap = 0, bq = 0, aq = 0;
             if (!detail::paise(u, i, bp) || !detail::paise(u, 5 + i, ap) || !detail::count(u, 10 + i, bq)
                 || !detail::count(u, 15 + i, aq))

@@ -74,13 +74,15 @@ inline constexpr const char* kSellColour = "#DA3633";
 
 } // namespace paper_ui
 
-/// The paper instrument for a market-watch row: NSE for an equity, NFO for
-/// F&O; an index is shown but cannot be traded.
+/// The paper instrument for a market-watch row: NSE or BSE for an equity (by
+/// its FYERS symbol), NFO for F&O; an index is shown but cannot be traded.
 [[nodiscard]] inline PaperInstrument paper_instrument_of(const LiveRow& r) {
     PaperInstrument i;
     i.token = r.token;
     i.symbol = r.symbol;
-    i.exchange = r.kind == QLatin1String("equity") ? QStringLiteral("NSE") : QStringLiteral("NFO");
+    i.exchange = r.fyers.startsWith(QLatin1String("BSE:")) ? QStringLiteral("BSE")
+               : r.kind == QLatin1String("equity")         ? QStringLiteral("NSE")
+                                                            : QStringLiteral("NFO");
     i.lot = std::max<qint64>(1, r.lot);
     i.tick_paise = std::max<qint64>(1, std::llround(r.tick * 100.0));
     i.tradable = r.kind != QLatin1String("index");
@@ -129,6 +131,10 @@ inline void tool_window(QDialog* d, const QString& title, QSize size) {
 // Order entry: the blue buy and red sell windows
 // ---------------------------------------------------------------------------
 
+inline constexpr const char* kPaperNote =
+    "PAPER ORDER · market fills at the live ask (buy) or bid (sell); a limit rests until the book "
+    "crosses it · nothing reaches a broker · F1/F2 switch side · Enter submits · Esc closes";
+
 class PaperOrderWindow final : public QDialog {
 public:
     PaperOrderWindow(PaperSide side, const PaperInstrument& inst, const PriceClient* client,
@@ -158,7 +164,7 @@ public:
         auto* exch = new QLabel(inst_.exchange, this);
         auto* sym = new QLabel(QStringLiteral("<b>%1</b>").arg(inst_.symbol.toHtmlEscaped()), this);
         product_ = new QComboBox(this);
-        product_->addItems(inst_.exchange == QLatin1String("NSE")
+        product_->addItems(inst_.exchange == QLatin1String("NSE") || inst_.exchange == QLatin1String("BSE")
                                ? QStringList{QStringLiteral("CNC"), QStringLiteral("MIS")}
                                : QStringList{QStringLiteral("NRML"), QStringLiteral("MIS")});
         type_ = new QComboBox(this);
@@ -187,13 +193,11 @@ public:
         market_->setTextFormat(Qt::RichText);
         market_->setContentsMargins(12, 0, 12, 0);
         v->addWidget(market_);
-        auto* note = new QLabel(QStringLiteral(
-            "PAPER ORDER · market fills at the live ask (buy) or bid (sell); a limit rests until the book "
-            "crosses it · nothing reaches a broker · F1/F2 switch side · Enter submits · Esc closes"), this);
-        note->setWordWrap(true);
-        note->setContentsMargins(12, 0, 12, 0);
-        note->setStyleSheet(QStringLiteral("color:#8B949E;font-size:11px;"));
-        v->addWidget(note);
+        note_ = new QLabel(QString::fromUtf8(kPaperNote), this);
+        note_->setWordWrap(true);
+        note_->setContentsMargins(12, 0, 12, 0);
+        note_->setStyleSheet(QStringLiteral("color:#8B949E;font-size:11px;"));
+        v->addWidget(note_);
 
         auto* buttons = new QHBoxLayout;
         buttons->setContentsMargins(12, 0, 12, 0);
@@ -238,6 +242,17 @@ public:
         lots_->selectAll();
     }
 
+    /// LIVE: the order goes to FYERS through the order router (live_trading.hpp).
+    void set_live(bool on) {
+        live_ = on;
+        note_->setText(on ? QStringLiteral("LIVE ORDER · sent to FYERS with real money after you confirm it · the order router "
+                                           "checks your limits and the last price first · F1/F2 switch side · Esc closes")
+                          : QString::fromUtf8(kPaperNote));
+        note_->setStyleSheet(on ? QStringLiteral("color:#FF7B72;font-size:11px;font-weight:700;")
+                                : QStringLiteral("color:#8B949E;font-size:11px;"));
+        set_side(side_);
+    }
+    [[nodiscard]] bool live() const noexcept { return live_; }
     [[nodiscard]] PaperSide side() const noexcept { return side_; }
     [[nodiscard]] int modifying() const noexcept { return modify_id_; }
     [[nodiscard]] qint64 qty() const { return static_cast<qint64>(lots_->value()) * std::max<qint64>(1, inst_.lot); }
@@ -269,14 +284,17 @@ private:
         const char* colour = buy ? paper_ui::kBuyColour : paper_ui::kSellColour;
         header_->setStyleSheet(QStringLiteral("background:%1;color:#FFFFFF;padding:9px 12px;font-weight:700;font-size:14px;")
                                    .arg(QString::fromLatin1(colour)));
-        header_->setText(QStringLiteral("%1 ORDER ENTRY &nbsp;·&nbsp; PAPER%2")
+        header_->setText(QStringLiteral("%1 ORDER ENTRY &nbsp;·&nbsp; %3%2")
                              .arg(buy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
-                             .arg(modify_id_ > 0 ? QStringLiteral(" &nbsp;·&nbsp; MODIFY #%1").arg(modify_id_) : QString()));
+                             .arg(modify_id_ > 0 ? QStringLiteral(" &nbsp;·&nbsp; MODIFY #%1").arg(modify_id_) : QString(),
+                                  live_ ? QStringLiteral("<span style='background:#FFFFFF;color:#DA3633;padding:0 6px'>LIVE · FYERS</span>")
+                                        : QStringLiteral("PAPER")));
         submit_->setText(modify_id_ > 0 ? QStringLiteral("Modify (Enter)")
                                         : buy ? QStringLiteral("Buy (Enter)") : QStringLiteral("Sell (Enter)"));
         submit_->setStyleSheet(QStringLiteral("background:%1;color:#FFFFFF;border:0;border-radius:5px;padding:7px 18px;font-weight:700;")
                                    .arg(QString::fromLatin1(colour)));
-        setWindowTitle(buy ? QStringLiteral("Buy order entry (paper)") : QStringLiteral("Sell order entry (paper)"));
+        setWindowTitle(QStringLiteral("%1 order entry (%2)").arg(buy ? QStringLiteral("Buy") : QStringLiteral("Sell"),
+                                                                 live_ ? QStringLiteral("LIVE, FYERS") : QStringLiteral("paper")));
         refresh_fields();
     }
 
@@ -300,7 +318,9 @@ private:
     const PriceClient* client_;
     PaperSide side_;
     int modify_id_ = 0;
+    bool live_ = false;
     QLabel* header_ = nullptr;
+    QLabel* note_ = nullptr;
     QComboBox* product_ = nullptr;
     QComboBox* type_ = nullptr;
     QSpinBox* lots_ = nullptr;
@@ -645,34 +665,6 @@ private:
                  ? QStringLiteral("%1 – %2").arg(live_detail::px(q->lower_circuit), live_detail::px(q->upper_circuit))
                  : QStringLiteral("not sent by the feed"))
         .arg(r.group);
-}
-
-[[nodiscard]] inline QString shortcut_help_html() {
-    struct K { const char* key; const char* what; };
-    static const K keys[] = {
-        {"+  or  F1", "Buy order entry for the selected scrip (paper)"},
-        {"−  or  F2", "Sell order entry for the selected scrip (paper)"},
-        {"F3", "Order book"},
-        {"Shift+F1 / Shift+F2 / Shift+F3", "Cancel / modify the selected pending order · cancel all pending"},
-        {"F4", "Market watch"},
-        {"Ctrl+O", "Option chain"},
-        {"F5 / F6 / Shift+F9", "Market picture (best five) · snap quote of the selected scrip"},
-        {"Shift+F7", "Security information"},
-        {"F8", "Trade book"},
-        {"Alt+F6", "Net position, with the broker account and GETS tabs"},
-        {"F10", "Message log"},
-        {"Insert", "Add a scrip (search the instrument master)"},
-        {"Delete", "Remove the selected scrip from the market watch"},
-        {"Ctrl+F", "Find in the market watch"},
-        {"Ctrl+M", "Live models"},
-        {"F12  or  Ctrl+/", "This list"},
-        {"Esc", "Close the window in front"},
-    };
-    QString html = QStringLiteral("<table cellspacing=5>");
-    for (const auto& k : keys)
-        html += QStringLiteral("<tr><td style='color:#F4C95D;font-family:Consolas,monospace'><b>%1</b></td><td>%2</td></tr>")
-                    .arg(QString::fromUtf8(k.key).toHtmlEscaped(), QString::fromUtf8(k.what).toHtmlEscaped());
-    return html + QStringLiteral("</table>");
 }
 
 } // namespace altair::ui

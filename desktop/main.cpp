@@ -411,9 +411,11 @@ int main(int argc, char** argv) {
     // skips login entirely and would otherwise leave the splash on top of the
     // window. finish() ties it to the widget that replaces it, which is the
     // one thing a splash should be tied to.
-    // Show a normal window first so the shell remains responsive on Windows.
+    // Full screen: the workstation owns the display (minimise and close are
+    // beside the ALTAIR name). Scripted captures keep a sized window.
     window.resize(1400, 900);
-    window.show();
+    if (scripted) window.show();
+    else window.showFullScreen();
     window.raise();
     window.activateWindow();
 

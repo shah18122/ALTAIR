@@ -1,7 +1,7 @@
 # Demo trading: band-fade short options and futures pairs
 
-Paper trades only. Nothing here reaches a broker, and live order submission
-stays disabled. Two research CLIs write CSVs under `data/verified/`, and the
+Paper trades only. Nothing here reaches a broker (real orders go only through
+the Terminal's LIVE switch: ops/live-terminal.md). Two research CLIs write CSVs under `data/verified/`, and the
 desktop's **Strategies → Demo Trading** page runs them and shows the results.
 
 | What | Code | CLI | Output |
@@ -14,6 +14,7 @@ desktop's **Strategies → Demo Trading** page runs them and shows the results.
 | Cross-sectional stat-arb | `strategies/residual_reversion.hpp` | `altair_resid_reversion` | `data/verified/resid_reversion/{trades,daily}_<variant>.csv`, `summary.csv`, `meta.csv` |
 | Stock universe | `config/universe_nifty50.csv` | `ops/fetch_universe.ps1` | `data/pairs/<symbol>/1d/fyers.csv` (git-ignored, shared with the pairs) |
 | Order-book study | `book/depth_study.hpp` | `altair_depth_study` (record with `ops/record_depth.ps1`) | `data/verified/depth_study/summary.csv`; recordings in `data/ticks/` (git-ignored) |
+| One model over every model's output | `models/meta_trader.hpp` | `altair_trader` (reads the curriculum's `data/verified/forecast_log/`) | `data/verified/altair_trader/{trades,days,weights}.csv`, `summary.txt` |
 
 Every CLI here needs tomlplusplus, which provides the charges schedule.
 Without it they are not built. On the desktop page, pick one in the Run
@@ -21,9 +22,11 @@ selector and press **Run**.
 
 ## Expenses are refused until the charges are verified
 
-Expenses come only from `config/charges.toml`, through `risk/cost.hpp`. That
-file is UNVERIFIED, so by default both CLIs price gross P&L and leave the
-expense and net columns empty, marked `refused`.
+Expenses come only from `config/charges.toml`, through `risk/cost.hpp`. The
+file is marked verified (2026-10-07, on the owner's instruction; the rates
+were not re-checked against the circulars then). While a schedule is
+UNVERIFIED, the CLIs price gross P&L only and leave the expense and net
+columns empty, marked `refused`.
 
 `--unverified-costs` (or the page's **Price UNVERIFIED expenses** box) prices
 them anyway. Every expense and net figure is then stamped `UNVERIFIED`, and the
@@ -41,7 +44,7 @@ bought back by 15:20, and every trade records the model that placed it:
 
 | Rule | What it does |
 |---|---|
-| `touch` | Wait for the first touch of an edge. Sell the option at the first strike past it. |
+| `touch` (dropped) | Waited for the first touch of an edge and sold the option past it: it sold after the move, and was the one rule that lost. It is no longer run, and the page hides an older output's touch trades. |
 | `strangle` | At 09:20, before any touch: sell the call at the first strike ≥ the upper edge and the put at the first ≤ the lower edge. |
 | `strangle-stop2x` | The same, but a leg is bought back at the first 5-minute close where its premium has doubled. |
 | `strangle-hedged` | The same, with a futures delta hedge in whole lots, reset every 5 minutes. |
@@ -380,3 +383,171 @@ It drifted from 0.61 in 2000 to its 2019 high, so it is not stationary, and a
 fixed cap on a drifting level is not a signal. The pairs model trades the
 cointegration residual instead, re-estimated every window
 (`ratio.csv` has the numbers).
+
+## Every trade, its expenses, and the ratios
+
+Every trades file carries gross, each expense head (brokerage, STT, exchange
+transaction charge, SEBI fee, stamp duty, IPFT, GST), their total and net, so
+net = gross − expenses can be checked row by row. Under the table the page
+shows, for the trades on show: trips, win rate, profit factor, expectancy,
+average win and loss, Sharpe and Sortino (daily net, annualised by √252) and
+the maximum drawdown of cumulative daily net. Double-click a row: every
+column, gross walked from its parts, expenses head by head, and net.
+
+## altair_trader: one model over every model
+
+`altair_trader` (`app/trader_main.cpp`, `models/meta_trader.hpp`) takes
+every base model's out-of-sample call as its inputs and nothing else. That
+covers 161 inputs across 7 daily tracks: NIFTY, BANKNIFTY, NIFTY futures and
+INDIA VIX, each also with the VIX forecast fed in. Each input is the model's
+conviction, 2·p_up − 1, or ±1 for a bare call.
+
+**The model.** It is ridge regression of the next session's move, in bp,
+with older days fading (half-life 250 sessions). Four penalties run side by
+side, each scored on the calls it made before the outcome; the one with the
+least recent error makes the call. It needs 250 outcomes before its first
+call.
+
+**Day by day, to the last close in the data:**
+- yesterday's outcome is learned and the model refitted;
+- today's call comes from weights that never saw today;
+- it trades one lot of the index future:
+  - it enters only when the expected move beats the round trip's expenses
+    (both fills priced from `config/charges.toml`);
+  - it holds while the call points the held way, and exits when the call
+    turns;
+  - a month end inside a holding pays a roll.
+
+No threshold is tuned.
+
+Walk-forward, 2016-02-08 to 2026-09-24, one lot, expenses priced. Net is in
+₹ lakh:
+
+| | Trips | Net | Longs | Shorts | Sharpe | Direction right | Buy and hold, net |
+|---|---|---|---|---|---|---|---|
+| NIFTY | 675 | 5.65 | +6.98 | −1.33 | 0.73 | 52.5 % | 9.74 |
+| BANKNIFTY | 468 | 3.48 | +6.08 | −2.60 | 0.38 | 51.8 % | 11.65 |
+
+It calls direction better than a coin and makes money after expenses, but
+less than holding the future over a decade that rose. Its short calls lose.
+
+Ways to improve it, each a run of the same walk-forward, not a tuning on
+the result:
+1. Predict the move over the trailing drift, so a short needs the model to
+   expect less than the trend.
+2. Add the vol-band and regime models' outputs as inputs, to learn *when*
+   the calls work.
+3. Use the hourly tracks for intraday entries.
+4. Size by conviction instead of one lot.
+5. Refit the base models daily; the curriculum refits them in doubling
+   stages.
+
+Run it after `altair_forecast_curriculum` has brought the logs up to the
+latest close. It replays the whole walk-forward, which is deterministic and
+takes about 10 s, so each new session is one more day traded. Limits:
+- futures are priced on the index close, without the basis;
+- a trip open at the end of the data is closed at the last close.
+
+## Threshold strategies (your `threshold_strategy/` folder)
+
+Strategies → **Threshold**. Paper only: nothing here can place an order.
+**Run altair_threshold** (`app/threshold_main.cpp`, rules in
+`strategies/threshold.hpp`) re-runs both on the dataset in about a second.
+It writes `data/verified/threshold/`.
+
+Rupees use one lot at today's lot sizes (BANKNIFTY 30, NIFTY 65, from
+`data/instruments.csv`):
+- Index levels stand in for the near future, since the dataset has no
+  continuous futures series; the basis is left out.
+- Every fill pays the expenses of `config/charges.toml`.
+- A holding across a month end pays a roll.
+
+### 2-day high / low breakout, BANKNIFTY (`2D-H-L.xlsx`)
+
+The rules, from the workbook's Assumptions sheet:
+- **Entry:** long above the higher of the previous two highs, short below the
+  lower of the previous two lows. It fills at that level, or at the open on a
+  gap.
+- **Stops:** a stop is fixed at entry at the previous day's low (long) or high
+  (short). A trailing stop sits at each previous day's low or high from the
+  day after entry. Whichever stop is nearer fills.
+- **Flip:** on an exit day the opposite breakout reverses the position.
+
+**Checked against the workbook's own trade log**, trade by trade.
+`research/tools/threshold_extract.py` exports the log to
+`threshold_strategy/extracted/`.
+- On the workbook's own sessions, 1,454 of its 1,467 trades enter on the same
+  day and side.
+- 1,438 of those also leave on the same day for the same reason.
+- The rest differ where the bars differ: our daily candles against the
+  workbook's source, and special sessions or missing days that only one of
+  the two has.
+
+2007-09-17 to 2026-09-24, one lot:
+
+| Trades | Gross | Expenses | Net | Net win rate | Profit factor | Break-even slippage |
+|---|---|---|---|---|---|---|
+| 1,534 | ₹15.49 lakh (51,620 pts) | ₹4.50 lakh | ₹10.98 lakh | 39.6 % | 1.15 | 11.9 pts a fill |
+
+Two things to read before trusting the net:
+- **The workbook's own cost turns it negative.** At 0.15 % of turnover a round
+  trip, its after-cost result is −65,176 points. Real futures expenses are
+  about a seventh of that.
+- **Slippage would take the net away.** Stops here fill exactly at their
+  level. Slippage of about 12 points a fill, on entry and exit, would take the
+  whole net.
+
+### BANKNIFTY / NIFTY ratio z-score (`BNFNF`)
+
+The rules, from the note:
+- **Signal:** the ratio's z-score over 120 sessions.
+- **Positions:** short the ratio (short BANKNIFTY, long NIFTY) above +1; buy
+  it below −1; flat inside 0.25.
+- **Timing:** a position formed at a close earns to the next close.
+
+The table compares the note's own figures with this run over the same
+period. Both use the note's measure: equal notional, net of 6 bps a change.
+
+| To 2026-06-08 | Total | Sharpe | Max drawdown | In market | Trades | Won |
+|---|---|---|---|---|---|---|
+| The note | −2.3 % | 0.04 | −31.0 % | 71 % | 71 | 72 % |
+| This run | +9.1 % | 0.10 | −27.8 % | 71 % | 77 | 74 % |
+
+The note used Yahoo Finance closes, and ours differ from them.
+
+In rupees, to the last session (one lot of BANKNIFTY against the NIFTY lots
+nearest equal notional):
+- 79 trades;
+- net ₹0.95 lakh after ₹1.26 lakh of expenses.
+
+The note's own conclusion stands: there is no systematic edge worth pressing.
+
+### TradingView backtests (`BACKTEST/`)
+
+These are shown as TradingView wrote them, from
+`threshold_strategy/extracted/tradingview_backtests.csv`. They are not
+re-run here.
+
+Read them with care:
+- **Most trades start and finish inside one bar.** 17,775 of the 19,994
+  trades (89 %) across the 36 exports enter and leave inside one 15-minute
+  bar.
+- **Those trades rest on TradingView's guess.** Bar magnifier is off, so
+  TradingView does not know whether a bar's high or low came first.
+- **No slippage.** Slippage is set to 0 ticks.
+
+Re-run them with the bar magnifier on and slippage set before relying on the
+71–86 % win rates.
+
+### Waiting for rules
+
+These are not in the folder yet; send the rules (or the Pine scripts) and
+they are built the same way:
+- Short Straddle
+- Nifty CE Buy on High Close
+- BNF CE Buy
+- Monthly SIP with Expiry
+- BNF
+- Wed + Mon Both
+- Tue + Thursday Both
+- Delta Hedge using Option

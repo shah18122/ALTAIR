@@ -96,6 +96,19 @@ int main() {
     (void)cc::parse_note("order_id,date,symbol\n", errors);
     check(!errors.empty(), "a note without the charge columns is refused whole");
 
+    // The venue: a BSE fill pays BSE's transaction charge; intraday equity
+    // brokerage is Rs 20 or 0.03 %, whichever is lower.
+    {
+        const std::int64_t at = live::parse_day("2026-09-24") * 86400 + 11 * 3600;
+        const auto n = demo_costs::fill(Segment::Cash, Side::Buy, 100, 1000.0, at, sch);
+        const auto b = demo_costs::fill(Segment::Cash, Side::Buy, 100, 1000.0, at, sch, Exchange::BSE);
+        check(n.priced && b.priced && std::fabs(n.exchange - 100000.0 * 0.0000297) < 0.01
+                  && std::fabs(b.exchange - 100000.0 * 0.0000375) < 0.01 && b.total > n.total,
+              "a BSE equity fill pays BSE's 0.00375 %, an NSE one NSE's 0.00297 %");
+        const auto small = demo_costs::fill(Segment::Cash, Side::Buy, 10, 812.35, at, sch);
+        check(std::fabs(n.brokerage - 20.0) < 1e-9 && std::fabs(small.brokerage - 8123.5 * 0.0003) < 0.01,
+              "intraday equity brokerage: Rs 20 on Rs 1 lakh, 0.03 % on Rs 8,123.50");
+    }
     std::printf("%s\n", failures == 0 ? "all charges check checks passed" : "charges check checks did not pass");
     return failures == 0 ? 0 : 1;
 }

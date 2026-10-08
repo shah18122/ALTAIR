@@ -1,0 +1,145 @@
+// The FYERS 50-level book decoder against messages the official SDK encoded
+// (feed/tests/vectors/fyers_tbt.txt): a full snapshot gives fifty levels a
+// side; an update changes only the fields whose wrappers are present, an empty
+// wrapper meaning zero; an error carries the server's reason; truncated or
+// malformed bytes are refused whole. Plus what the client sends.
+//
+// No check description here may contain the substring "F" "AIL" joined.
+
+#include <feed/fyers_tbt.hpp>
+
+#include <cstdio>
+#include <fstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+int failures = 0;
+
+void check(bool ok, const char* what) {
+    std::printf("  %s: %s\n", ok ? "ok  " : "BAD ", what);
+    if (!ok) ++failures;
+}
+
+std::vector<std::vector<std::uint8_t>> vectors() {
+    std::vector<std::vector<std::uint8_t>> out;
+    std::ifstream in(ALTAIR_TBT_VECTORS);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<std::uint8_t> b;
+        for (std::size_t i = 0; i + 1 < line.size(); i += 2) b.push_back(static_cast<std::uint8_t>(std::stoul(line.substr(i, 2), nullptr, 16)));
+        out.push_back(std::move(b));
+    }
+    return out;
+}
+
+// A tiny protobuf writer for hand-built messages: a sparse diff the SDK's
+// vectors do not have (they never set `num`).
+using Bytes = std::vector<std::uint8_t>;
+void varint(Bytes& o, std::uint64_t v) {
+    while (v >= 0x80) { o.push_back(static_cast<std::uint8_t>(v | 0x80)); v >>= 7; }
+    o.push_back(static_cast<std::uint8_t>(v));
+}
+void field(Bytes& o, std::uint32_t f, const Bytes& body) {
+    varint(o, (f << 3) | 2);
+    varint(o, body.size());
+    o.insert(o.end(), body.begin(), body.end());
+}
+Bytes wrapped(std::uint64_t v) { Bytes w; if (v != 0) { varint(w, 1 << 3); varint(w, v); } return w; }
+/// One level: price (paise) and quantity, at position `num`.
+Bytes level_at(std::uint32_t num, std::int64_t px, std::uint32_t qty) {
+    Bytes l;
+    field(l, 1, wrapped(static_cast<std::uint64_t>(px)));
+    field(l, 2, wrapped(qty));
+    field(l, 4, wrapped(num));
+    return l;
+}
+/// A diff for `ticker`: the bid levels given, nothing else.
+Bytes bid_diff(const std::string& ticker, const std::vector<Bytes>& bids, std::uint64_t seq) {
+    Bytes depth, feed, entry, msg;
+    for (const auto& l : bids) field(depth, 4, l);
+    field(feed, 5, depth);
+    varint(feed, (9 << 3) | 0); varint(feed, seq);
+    field(feed, 11, Bytes(ticker.begin(), ticker.end()));
+    field(entry, 1, Bytes(ticker.begin(), ticker.end()));
+    field(entry, 2, feed);
+    field(msg, 2, entry);
+    return msg;
+}
+
+} // namespace
+
+int main() {
+    using namespace altair::fyers_tbt;
+    std::printf("FYERS 50-level book\n");
+    const auto v = vectors();
+    check(v.size() == 3, "three vectors: a snapshot, an update, an error");
+    if (v.size() != 3) return 1;
+
+    TbtBooks books;
+    TbtMessage m;
+    check(books.on_message(v[0].data(), v[0].size(), m) && !m.error && m.updated.size() == 1
+              && m.updated[0] == "NSE:NIFTY26OCTFUT",
+          "the snapshot decodes, for its ticker");
+    const TbtBook* b = books.book("NSE:NIFTY26OCTFUT");
+    check(b != nullptr && b->depth() == 50, "fifty levels a side");
+    if (b == nullptr) return 1;
+    check(b->bid_px[0] == 2500000 && b->bid_px[49] == 2499510 && b->ask_px[0] == 2500010 && b->ask_px[49] == 2500500,
+          "prices in paise, best first, to the fiftieth level");
+    check(b->bid_qty[0] == 75 && b->bid_qty[49] == 3750 && b->bid_orders[49] == 50 && b->ask_qty[10] == 150
+              && b->ask_orders[10] == 2,
+          "quantities and order counts by level");
+    check(b->total_bid_qty == 123456 && b->total_ask_qty == 654321 && b->sequence == 42 && b->feed_time == 1791200000123ULL,
+          "totals, sequence and feed time");
+
+    check(books.on_message(v[1].data(), v[1].size(), m) && m.updated.size() == 1, "the update decodes");
+    check(b->bid_qty[0] == 300 && b->bid_px[0] == 2500000, "a changed quantity changes; its price, absent, stays");
+    check(b->ask_px[2] == 2500025 && b->ask_qty[2] == 150, "a changed price at level 3 changes; its quantity stays");
+    check(b->bid_qty[3] == 0 && b->bid_px[3] == 2499970, "an empty wrapper is a change to zero");
+    check(b->bid_qty[1] == 150 && b->ask_px[49] == 2500500 && b->sequence == 43, "every other level is untouched");
+
+    // A SPARSE DIFF: FYERS sends only the levels that moved, each with its
+    // position in `num`. Levels 7 and 38 change; 0..6 and the rest must not.
+    {
+        const std::int64_t top = b->bid_px[0], l1 = b->bid_px[1], l37 = b->bid_px[37], l39 = b->bid_px[39];
+        const auto d = bid_diff("NSE:NIFTY26OCTFUT", {level_at(7, 2499925, 999), level_at(38, 2499615, 777)}, 44);
+        check(books.on_message(d.data(), d.size(), m) && m.updated.size() == 1, "a sparse diff decodes");
+        check(b->bid_px[7] == 2499925 && b->bid_qty[7] == 999 && b->bid_px[38] == 2499615 && b->bid_qty[38] == 777,
+              "each level lands at its num (7 and 38), not at 0 and 1");
+        check(b->bid_px[0] == top && b->bid_px[1] == l1 && b->bid_px[37] == l37 && b->bid_px[39] == l39 && b->depth() == 50,
+              "the levels it skipped keep their prices: no corruption past the top");
+        const auto far = bid_diff("NSE:NIFTY26OCTFUT", {level_at(50, 1, 1)}, 45);
+        check(books.on_message(far.data(), far.size(), m) && b->bid_px[0] == top, "a position past 49 is dropped, not wrapped");
+    }
+
+    check(books.on_message(v[2].data(), v[2].size(), m) && m.error && m.text == "invalid symbol NSE:XYZ" && m.updated.empty(),
+          "an error carries the server's reason and changes no book");
+
+    std::vector<std::uint8_t> cut(v[0].begin(), v[0].begin() + static_cast<std::ptrdiff_t>(v[0].size() / 2));
+    TbtBooks fresh;
+    check(!fresh.on_message(cut.data(), cut.size(), m) && fresh.book("NSE:NIFTY26OCTFUT") == nullptr,
+          "a message cut in half is refused whole");
+    const std::uint8_t junk[] = {0x12, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F};
+    check(!fresh.on_message(junk, sizeof junk, m), "a length past the end is refused");
+
+    // ---- what the client sends --------------------------------------------------------
+    check(tbt_subscribe_text({"NSE:NIFTY26OCTFUT", "NSE:SBIN-EQ"}, 3)
+              == R"({"type":1,"data":{"subs":1,"symbols":["NSE:NIFTY26OCTFUT","NSE:SBIN-EQ"],"mode":"depth","channel":"3"}})",
+          "a subscription names the symbols, depth mode and the channel");
+    check(tbt_resume_text(2) == R"({"type":2,"data":{"resumeChannels":["1","2"],"pauseChannels":[]}})",
+          "and the channels are resumed");
+    std::vector<std::string> many;
+    for (int i = 0; i < 260; ++i) many.push_back("S" + std::to_string(i));
+    std::vector<std::string> left;
+    const auto ch = tbt_channels(many, &left);
+    check(ch.size() == 50 && ch[0].size() == 5 && ch[49].back() == "S249" && left.size() == 10 && left[0] == "S250",
+          "symbols go five to a channel, fifty channels; the rest are reported, not dropped");
+    const auto url = tbt_socket_url(R"({"s":"ok","data":{"socket_url":"wss://rtsocket-api.fyers.in/versova"}})");
+    check(url && url->first == "rtsocket-api.fyers.in" && url->second == "/versova", "the socket URL splits into host and path");
+    check(!tbt_socket_url(R"({"data":{"socket_url":"http://x/y"}})"), "a URL that is not wss is not used");
+
+    std::printf("%s\n", failures == 0 ? "all FYERS 50-level checks passed" : "FYERS 50-level checks did not pass");
+    return failures == 0 ? 0 : 1;
+}

@@ -19,7 +19,7 @@ inline constexpr std::array<NavigationGroup, 7> kNavigationGroups{{
 }};
 /// The order groups appear in: trading and the brokers that feed it first.
 inline constexpr std::array<int, 7> kNavigationGroupOrder{{0, 5, 1, 2, 3, 4, 6}};
-inline constexpr std::array<NavigationPage, 36> kNavigationPages{{
+inline constexpr std::array<NavigationPage, 38> kNavigationPages{{
     {"market.grid", "Live Grid", 0},
     {"market.chart", "Chart", 0},
     {"market.terminal", "Terminal", 0},
@@ -56,12 +56,23 @@ inline constexpr std::array<NavigationPage, 36> kNavigationPages{{
     {"accounts.fyers", "FYERS Primary", 5},
     {"accounts.brokers", "Brokers", 5},
     {"strategies.demo-trading", "Demo Trading", 2},
+    {"strategies.threshold", "Threshold", 2},
+    {"system.about", "About", 6},
 }};
 // Traversal order is NOT a legacy page index.
-// Within a group: what is used most comes first (Demo Trading, Forecast).
-inline constexpr std::array<int, 31> kNavigationOrder{{
-    2, 24, 34, 12, 21, 13, 7, 35, 19, 8, 22, 31, 26, 20, 18, 32, 3, 17, 16, 29, 10, 30, 27, 9, 15, 14, 25, 6, 4, 23, 11
+// Within a group: what is used most comes first (Demo Trading, Threshold).
+// The model pages (DCF, Aggregator, ML Trees, Regimes, Forecast, Memory,
+// Neural, Features, Volatility, Analytics, Microstructure, Cointegration,
+// Sizing, Flagging) are not listed: they open from the Model Atlas, which has
+// the way back. Their routes stay so saved links and the Atlas still work.
+inline constexpr std::array<int, 19> kNavigationOrder{{
+    2, 34, 12, 21, 35, 36, 31, 19, 8, 22, 20, 32, 3, 15, 14, 6, 4, 11, 37
 }};
+/// A page the sidebar lists (the rest open from the Model Atlas or search).
+[[nodiscard]] constexpr bool nav_listed(int index) noexcept {
+    for (const int i : kNavigationOrder) if (i == index) return true;
+    return false;
+}
 /// Resolve old routes without renumbering model/page-stack references.
 [[nodiscard]] constexpr int nav_destination(int index) noexcept {
     if (index < 0 || index >= static_cast<int>(kNavigationPages.size())) return -1;

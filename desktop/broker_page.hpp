@@ -7,10 +7,10 @@
 // providers separate, gives FYERS primary priority, and never loads a token
 // into the desktop process.
 //
-// Both brokers sit side by side with their login on the card itself, and the
-// Overview reads both read-only snapshots into one combined book. The live
-// feed takes FYERS when its session is good and Kite otherwise
-// (altair_price_service --live), so the two work as one.
+// FYERS is the broker: its card, login and account come first, and the live
+// feed is FYERS only (altair_price_service --live). Kite is LEGACY: its card
+// and tabs sit in a collapsed "Legacy: Kite" corner, kept so it can be revived,
+// and it is never used as a fall-back.
 //
 // The layout takes the useful shape from the Greeksoft reference terminal:
 // a broker/account strip first, then positions/holdings/orders and linking
@@ -38,6 +38,7 @@
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QTabWidget>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -141,20 +142,31 @@ public:
         cards->setHorizontalSpacing(12);
         cards->setVerticalSpacing(12);
         cards->addWidget(make_fyers_card(), 0, 0);
-        cards->addWidget(make_kite_card(), 0, 1);
-        cards->setColumnStretch(0, 6);
-        cards->setColumnStretch(1, 5);
         ov->addLayout(cards);
+        // Kite, stashed in a corner: collapsed until asked for.
+        auto* legacy_row = new QHBoxLayout;
+        legacy_row->addStretch(1);
+        legacy_ = new QToolButton(overview);
+        legacy_->setObjectName(QStringLiteral("legacyKiteToggle"));
+        legacy_->setCheckable(true);
+        legacy_->setText(QStringLiteral("\u25B8 Legacy: Kite"));
+        legacy_->setToolTip(QStringLiteral("Zerodha Kite is legacy: not used for the feed or orders. Open to log in or "
+                                           "read its account."));
+        legacy_row->addWidget(legacy_);
+        ov->addLayout(legacy_row);
+        kite_card_ = make_kite_card();
+        kite_card_->setVisible(false);
+        ov->addWidget(kite_card_);
 
         auto* metrics = new QFrame(overview);
         metrics->setObjectName(QStringLiteral("routeRail"));
         auto* metric_row = new QHBoxLayout(metrics);
         metric_row->setContentsMargins(14, 9, 14, 9);
         metric_row->setSpacing(26);
-        metric_row->addLayout(metric(QStringLiteral("LIVE FEED"), QStringLiteral("FYERS, ELSE KITE")));
-        metric_row->addLayout(metric(QStringLiteral("ACCOUNTS"), QStringLiteral("BOTH · READ ONLY")));
-        metric_row->addLayout(metric(QStringLiteral("ORDERS"), QStringLiteral("PAPER ONLY")));
-        metric_row->addLayout(metric(QStringLiteral("FAILOVER"), QStringLiteral("AT FEED START")));
+        metric_row->addLayout(metric(QStringLiteral("LIVE FEED"), QStringLiteral("FYERS ONLY")));
+        metric_row->addLayout(metric(QStringLiteral("ACCOUNT"), QStringLiteral("FYERS · READ ONLY")));
+        metric_row->addLayout(metric(QStringLiteral("ORDERS"), QStringLiteral("PAPER · FYERS WHEN LIVE")));
+        metric_row->addLayout(metric(QStringLiteral("KITE"), QStringLiteral("LEGACY · NO FAILOVER")));
         metric_row->addStretch(1);
         ov->addWidget(metrics);
 
@@ -182,7 +194,7 @@ public:
                 return QString{};
             },
             tabs_);
-        tabs_->addTab(kite_link_, QStringLiteral("Log in · Kite"));
+        tabs_->addTab(kite_link_, QStringLiteral("Legacy · Kite login"));
         fyers_account_ = new FyersAccountPanel(
             fyers_account_path(), [this] {
                 refresh();
@@ -190,7 +202,16 @@ public:
             }, tabs_);
         tabs_->addTab(fyers_account_, QStringLiteral("FYERS account"));
         kite_account_ = new KitePanel(kite_account_path(), kite_session_path(), tabs_);
-        tabs_->addTab(kite_account_, QStringLiteral("Zerodha account"));
+        tabs_->addTab(kite_account_, QStringLiteral("Legacy · Zerodha account"));
+        // The legacy tabs show only while the corner is open.
+        const auto show_legacy = [this](bool on) {
+            legacy_->setText(on ? QStringLiteral("\u25BE Legacy: Kite") : QStringLiteral("\u25B8 Legacy: Kite"));
+            kite_card_->setVisible(on);
+            tabs_->setTabVisible(tabs_->indexOf(kite_link_), on);
+            tabs_->setTabVisible(tabs_->indexOf(kite_account_), on);
+        };
+        connect(legacy_, &QToolButton::toggled, this, show_legacy);
+        show_legacy(false);
         tabs_->addTab(new BrokerActivityPanel(activity_projection_path(), tabs_),
                       QStringLiteral("Activity && routes"));
         // A login outcome is repeated on its card, so the Overview says what
@@ -242,9 +263,9 @@ public:
         const bool fyers_ready = fyers_service.has_value() || fyers.link == FyersLink::SessionSaved;
         const bool kite_ready = kite_service.has_value()
             || kite.link == BrokerLink::Unverified || kite.link == BrokerLink::Authenticated;
-        route_label_->setText(fyers_ready ? QStringLiteral("FYERS  ·  Kite on standby")
-                              : kite_ready ? QStringLiteral("ZERODHA KITE  ·  FYERS not logged in")
-                                           : QStringLiteral("NONE  ·  log in to FYERS or Kite"));
+        (void)kite_ready;   // legacy: shown on its own card, never a route
+        route_label_->setText(fyers_ready ? QStringLiteral("FYERS")
+                                          : QStringLiteral("NONE  ·  log in to FYERS (Kite is legacy, not a fall-back)"));
         if (fyers_snapshot && kite_snapshot) {
             route_hint_->setText(QStringLiteral(
                 "Read-only FYERS and Zerodha snapshots are available; each tab shows its own age."));
@@ -400,7 +421,7 @@ private:
         names->setSpacing(0);
         auto* name = new QLabel(QStringLiteral("Zerodha Kite"), box);
         name->setObjectName(QStringLiteral("brokerCardTitle"));
-        auto* role = new QLabel(QStringLiteral("MARKET DATA (STANDBY) · ACCOUNT"), box);
+        auto* role = new QLabel(QStringLiteral("LEGACY · ACCOUNT ONLY"), box);
         role->setObjectName(QStringLiteral("brokerCardRole"));
         names->addWidget(name); names->addWidget(role);
         header->addLayout(names, 1);
@@ -451,6 +472,8 @@ private:
     FyersLinkPanel* fyers_link_ = nullptr;
     KiteLinkPanel* kite_link_ = nullptr;
     CombinedAccountView* combined_ = nullptr;
+    QToolButton* legacy_ = nullptr;
+    QFrame* kite_card_ = nullptr;
     QLabel* fyers_note_ = nullptr;
     QLabel* kite_note_ = nullptr;
 };

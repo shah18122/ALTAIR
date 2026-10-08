@@ -26,6 +26,7 @@
 #pragma once
 
 #include "atlas_data.hpp"
+#include "atlas_info.hpp"
 
 #include <QCheckBox>
 #include <QColor>
@@ -98,6 +99,11 @@ public:
         auto* collapse = new QPushButton(QStringLiteral("Collapse"), this);
         row->addWidget(expand);
         row->addWidget(collapse);
+        info_ = new QPushButton(QStringLiteral("\u24D8  About this model"), this);
+        info_->setObjectName(QStringLiteral("atlasInfoButton"));
+        info_->setToolTip(QStringLiteral("What the selected model is for, how it was trained, on what data, and what it does in the real market"));
+        info_->setEnabled(false);
+        row->addWidget(info_);
         v->addLayout(row);
 
         tree_ = new QTreeWidget(this);
@@ -129,6 +135,12 @@ public:
         connect(expand, &QPushButton::clicked, tree_, &QTreeWidget::expandAll);
         connect(collapse, &QPushButton::clicked, tree_,
                 &QTreeWidget::collapseAll);
+        connect(tree_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* item, QTreeWidgetItem*) {
+            info_->setEnabled(row_of(item) != nullptr);
+        });
+        connect(info_, &QPushButton::clicked, this, [this] {
+            if (const AtlasRow* r = row_of(tree_->currentItem())) show_atlas_info(this, *r);
+        });
         connect(tree_, &QTreeWidget::itemDoubleClicked, this,
                 [this](QTreeWidgetItem* item, int) {
                     if (item == nullptr) { return; }
@@ -166,7 +178,16 @@ public:
         return n;
     }
 
+    [[nodiscard]] QPushButton* info_button() const noexcept { return info_; }
+    [[nodiscard]] QTreeWidget* tree() const noexcept { return tree_; }
+
 private:
+    [[nodiscard]] static const AtlasRow* row_of(const QTreeWidgetItem* item) {
+        if (item == nullptr || !item->data(0, Qt::UserRole + 1).isValid()) return nullptr;
+        const qulonglong id = item->data(0, Qt::UserRole + 1).toULongLong();
+        for (const auto& r : kAtlasRows) if (atlas_model_id(r) == id) return &r;
+        return nullptr;
+    }
     void build_tree() {
         QTreeWidgetItem* fam = nullptr;
         QString current;
@@ -251,6 +272,7 @@ private:
     }
 
     std::function<void(QString)> open_model_;
+    QPushButton* info_ = nullptr;
     QLineEdit* find_ = nullptr;
     QCheckBox* hide_absent_ = nullptr;
     QTreeWidget* tree_ = nullptr;

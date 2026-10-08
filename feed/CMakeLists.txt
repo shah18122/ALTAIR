@@ -24,6 +24,13 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_tick_test PRIVATE altair_feed altair_flags)
     add_test(NAME tick COMMAND altair_tick_test)
 
+    # The FYERS 50-level book: vectors encoded by the official SDK.
+    add_executable(altair_fyers_tbt_test tests/test_fyers_tbt.cpp)
+    target_link_libraries(altair_fyers_tbt_test PRIVATE altair_feed altair_flags)
+    target_compile_definitions(altair_fyers_tbt_test PRIVATE
+        ALTAIR_TBT_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/fyers_tbt.txt")
+    add_test(NAME fyers_tbt COMMAND altair_fyers_tbt_test)
+
     add_executable(altair_kite_decoder_test tests/test_kite_decoder.cpp)
     target_link_libraries(altair_kite_decoder_test PRIVATE altair_feed altair_flags)
     add_test(NAME kite_decoder COMMAND altair_kite_decoder_test)

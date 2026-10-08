@@ -64,11 +64,12 @@ int main() {
     check(rep->schedules >= 2, "at least two effective-dated schedules");
     check(rep->segment_tables >= 12, "segment tables were actually read");
 
-    // D7. The file says UNVERIFIED today, and that must propagate rather than
-    // being something a caller can override.
-    check(!rep->verified,
-          "last_verified is UNVERIFIED, so verified=false — if this FAILS, "
-          "someone set the date and that is good news");
+    // D7. The file's verification state must propagate rather than being
+    // something a caller can override. It carries a date and a verifier since
+    // 2026-10-07 (the owner's instruction); below, an unverified copy of its
+    // schedule is refused and in-memory files without a date or a verifier
+    // stay unverified.
+    check(rep->verified, "last_verified carries a date and verified_by a name, so verified=true");
     bool all_unverified = true;
     for (const auto& s : sch) {
         if (s.verified != rep->verified) { all_unverified = false; }
@@ -126,7 +127,7 @@ int main() {
               "delivery STT is BOTH sides");
     }
 
-    // ---- the real, unverified file refuses to price ----------------------
+    // ---- the real file prices; the same schedule unverified does not ------
     if (apr01 != nullptr) {
         altair::Trade t{};
         t.segment = altair::Segment::Opt;
@@ -142,8 +143,12 @@ int main() {
         br.take_lower = true;
 
         const auto cb = altair::compute_cost(t, *apr01, br);
-        check(!cb && cb.error() == altair::CostError::UnverifiedSchedule,
-              "the real UNVERIFIED charges.toml schedule cannot price a trade");
+        check(cb.has_value() && cb->total.raw() > 0, "the real, verified charges.toml schedule prices a trade");
+        altair::ChargeSchedule unverified = *apr01;
+        unverified.verified = false;
+        const auto cu = altair::compute_cost(t, unverified, br);
+        check(!cu && cu.error() == altair::CostError::UnverifiedSchedule,
+              "the same schedule, unverified, cannot price a trade");
     }
 
     // ---- mandatory policy refusals ---------------------------------------

@@ -30,8 +30,8 @@ void registry_contract() {
         "Forecast", "Strategies", "Overnight Gap", "Options", "Basis", "Flagging",
         "Microstructure", "Sizing & Limits", "Cointegration", "Memory", "Link Kite",
         "Neural", "Features", "Arbitrage", "Model Atlas", "FYERS Primary", "Brokers",
-        "Demo Trading"};
-    check(nav_page_names() == expected, "all legacy labels plus FYERS, Brokers and Demo Trading are registered");
+        "Demo Trading", "Threshold", "About"};
+    check(nav_page_names() == expected, "all legacy labels plus Brokers, Demo Trading, Threshold and About are registered");
     QSet<QString> ids;
     QSet<int> order;
     for (int i = 0; i < expected.size(); ++i) {
@@ -40,8 +40,13 @@ void registry_contract() {
               "label and stable ID resolve to the same legacy page");
     }
     for (const int i : kNavigationOrder) order.insert(i);
-    check(ids.size() == 36 && order.size() == 31 && !ids.contains(QString{}),
-          "36 legacy identities and 31 visible destinations");
+    check(ids.size() == 38 && order.size() == 19 && !ids.contains(QString{}),
+          "38 legacy identities and 19 sidebar destinations");
+    // The model pages open from the Model Atlas, not the sidebar.
+    for (const int model_page : {9, 10, 16, 17, 18, 27, 29, 30, 13, 7, 24, 26, 25, 23})
+        check(!nav_listed(model_page) && nav_visible(model_page), "a model page is off the sidebar but still a route");
+    for (const int kept : {2, 34, 12, 21, 35, 36, 31, 32, 15, 14, 4, 37})
+        check(nav_listed(kept), "trading, risk, Atlas, Threshold and About stay in the sidebar");
     for (const int hidden : {0, 1, 5, 28, 33})
         check(!order.contains(hidden) && !nav_visible(hidden), "removed routes never appear in traversal");
     check(nav_page_index(QStringLiteral("  MODEL   ATLAS ")) == 32 &&
@@ -52,7 +57,7 @@ void registry_contract() {
           nav_page_index(QStringLiteral("accounts.brokers")) == 34 &&
           nav_page_index(QStringLiteral("strategies.demo-trading")) == 35 &&
           nav_page_index(QStringLiteral("not a page")) == -1 &&
-          nav_page_id(-1).isEmpty() && nav_page_id(36).isEmpty(), "lookup boundary behavior");
+          nav_page_id(-1).isEmpty() && nav_page_id(38).isEmpty(), "lookup boundary behavior");
 }
 void tree_and_menu() {
     WorkspaceNavigation nav;
@@ -69,7 +74,7 @@ void tree_and_menu() {
     check(tree->topLevelItem(1)->isExpanded() && calls == 0, "native right arrow expands group without routing");
     key(tree, Qt::Key_Left);
     check(!tree->topLevelItem(1)->isExpanded(), "native left arrow collapses group");
-    for (int g = 1; g < tree->topLevelItemCount(); ++g) {
+    for (int g = 0; g < tree->topLevelItemCount(); ++g) {
         auto* group = tree->topLevelItem(g);
         group->setExpanded(true);
         for (int j = 0; j < group->childCount(); ++j) {
@@ -82,7 +87,7 @@ void tree_and_menu() {
     nav.populate_menu(&menu);
     QList<QAction*> actions;
     routes(&menu, actions);
-    check(actions.size() == 31 + nav.recent_pages().size(), "seven native submenus and recent routes expose visible pages");
+    check(actions.size() == 19 + nav.recent_pages().size(), "seven native submenus and recent routes expose sidebar pages");
     int checked = 0;
     for (auto* action : actions) checked += action->isChecked() ? 1 : 0;
     check(checked >= 1, "workspace menus visibly mark the current route");
@@ -105,7 +110,7 @@ void tree_and_menu() {
             check(invoked == entry->data().toInt(), "compact popup retains page mapping");
         }
     }
-    check(compact_routes == 31, "all visible pages reachable in compact mode");
+    check(compact_routes == 19, "all sidebar pages reachable in compact mode");
     int compact_checked = 0;
     for (auto* button : buttons)
         for (auto* entry : button->menu()->actions())
@@ -196,7 +201,7 @@ void search_keyboard() {
     search.show();
     auto* query = search.findChild<QLineEdit*>();
     auto* results = search.findChild<QListWidget*>();
-    check(results->count() == 31, "search exposes only canonical visible destinations");
+    check(results->count() == 33, "search exposes every canonical destination, model pages included");
     for (const auto& alias : {QStringLiteral("Kite"), QStringLiteral("FYERS"), QStringLiteral("Link Kite")}) {
         query->setText(alias);
         check(results->count() == 1 && results->item(0)->data(Qt::UserRole).toInt() == 34,
@@ -267,18 +272,18 @@ void schema_migration_and_layout() {
 }
 void recent_route_order() {
     WorkspaceNavigation nav;
-    for (int i = 0; i < 36; ++i) nav.select_page(i);
+    for (int i = 0; i < 38; ++i) nav.select_page(i);
     nav.select_page(2);
     nav.select_page(32);
     const auto recent = nav.recent_pages();
-    check(recent.size() == 31 && recent[0] == "models.atlas" && recent[1] == "market.terminal",
-          "recent history contains 31 canonical identities without duplicates");
+    check(recent.size() == 33 && recent[0] == "models.atlas" && recent[1] == "market.terminal",
+          "recent history contains 33 canonical identities without duplicates");
     QMenu menu;
     nav.populate_menu(&menu);
     QMenu* recent_menu = nullptr;
     for (auto* action : menu.actions())
         if (action->text() == "Recent pages") recent_menu = action->menu();
-    check(recent_menu && recent_menu->actions().size() == 31, "recent submenu contains full bounded visible history");
+    check(recent_menu && recent_menu->actions().size() == 33, "recent submenu contains full bounded visible history");
     int activated = -1;
     nav.activate = [&](int index) { activated = index; };
     if (recent_menu) for (auto* action : recent_menu->actions()) {
@@ -344,31 +349,27 @@ void mouse_resize() {
     check(nav.expanded_width() == 258, "double click restores default width");
 }
 void atlas_catalogue_routes() {
+    // The Atlas's models are not listed in the sidebar or its menus: they
+    // open from the Model Atlas page, which has the way back.
     WorkspaceNavigation nav;
     QMenu menu;
     nav.populate_menu(&menu);
-    QString selected;
-    nav.open_atlas_model = [&](QString model) { selected = model; };
-    int entries = 0, absent = 0;
-    const auto menus = menu.findChildren<QMenu*>();
-    for (auto* child : menus) for (auto* action : child->actions()) {
-        if (!action->property("atlasModel").isValid()) continue;
-        ++entries;
-        const QString raw_model = action->property("atlasModel").toString();
-        check(raw_model.startsWith(QStringLiteral("atlas.")),
-              "Atlas menu item carries a stable model identity");
-        if (raw_model.contains('&'))
-            check(action->text().contains("&&") && action->toolTip().size() > 20,
-                  "model mnemonics are escaped while stable model names remain available");
-        if (action->text().contains("[ABSENT]")) ++absent;
-        action->trigger();
-        check(nav.current_page() == 32 && selected == raw_model,
-              "catalogue item opens its exact Atlas description");
+    int entries = 0;
+    for (auto* child : menu.findChildren<QMenu*>())
+        for (auto* action : child->actions()) entries += action->property("atlasModel").isValid() ? 1 : 0;
+    auto* tree = nav.findChild<QTreeWidget*>();
+    int tree_models = 0;
+    QList<QTreeWidgetItem*> stack;
+    for (int i = 0; i < tree->topLevelItemCount(); ++i) stack << tree->topLevelItem(i);
+    while (!stack.isEmpty()) {
+        auto* it = stack.takeLast();
+        if (it->data(0, Qt::UserRole + 2).isValid()) ++tree_models;
+        for (int j = 0; j < it->childCount(); ++j) stack << it->child(j);
     }
-    int expected_absent = 0;
-    for (const auto& row : kAtlasRows) if (row.status == AtlasStatus::Absent) ++expected_absent;
-    check(entries == static_cast<int>(kAtlasCount) && absent == expected_absent,
-          "all Atlas models including absent entries exposed in navigation");
+    check(entries == 0 && tree_models == 0, "no Atlas model is listed in the sidebar or its menus");
+    nav.select_page(18);   // Forecast, opened from the Atlas
+    check(tree->currentItem() != nullptr && tree->currentItem()->data(0, Qt::UserRole).toInt() == 32,
+          "a model page opened from the Atlas highlights the Model Atlas");
 }
 } // namespace
 int main(int argc, char** argv) {

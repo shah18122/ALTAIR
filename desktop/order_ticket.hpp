@@ -277,8 +277,9 @@ struct IntentDraft {
                "%5<br>"
                "product <b>%6</b> &middot; validity <b>%7</b><br><br>"
                "to <code>" ALTAIR_INTENT_FILE "</code>.<br><br>"
-               "It does <b>not</b> place an order. <code>oms/</code> validates "
-               "it and may refuse.<br><br>"
+               "While the Terminal's LIVE switch is on, the order router "
+               "(<code>oms/</code>) sends it to FYERS if it passes every limit; "
+               "otherwise it is refused and nothing is sent.<br><br>"
                "Type <b>%8</b> to confirm:")
         .arg(d.buy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
         .arg(d.lots)
@@ -479,11 +480,11 @@ public:
 
         auto* head = new QLabel(
             QStringLiteral(
-                "<b>These buttons do not place an order.</b><br>"
+                "<b>These buttons append a request, not an order.</b><br>"
                 "They append a REQUEST to <code>" ALTAIR_INTENT_FILE
-                "</code>. <code>oms/</code> drains that file, re-derives every "
-                "field from the point-in-time spec store, checks it against "
-                "risk limits, and decides. This window links neither "
+                "</code>. The order router (<code>oms/</code>) drains that file "
+                "and, only while the Terminal's LIVE switch is on, sends it to "
+                "FYERS when it passes every limit. This window links neither "
                 "<code>oms/</code> nor <code>broker/</code> and cannot reach "
                 "an exchange.<br><br>"
                 "A request that has not been drained is <b>PENDING</b>. It is "

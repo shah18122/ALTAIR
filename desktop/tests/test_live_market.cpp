@@ -7,12 +7,16 @@
 //
 // No check description here may contain the substring "F" "AIL" joined.
 
+#include "../greek_watch.hpp"
 #include "../live_market.hpp"
 
 #include <server/price_bus.hpp>
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QDateEdit>
 #include <QElapsedTimer>
+#include <QPushButton>
 
 #include <boost/asio/io_context.hpp>
 
@@ -109,7 +113,7 @@ int main(int argc, char** argv) {
     PricePayload book;
     book.token = 12468226;
     book.flags = kPriceHasBook | kPriceSimulated;
-    book.depth_levels = kMaxDepthLevels;
+    book.depth_levels = 5;   // the HSM and Kite books; the FYERS 50-level book is below
     PriceLevel bids[kMaxDepthLevels]{}, asks[kMaxDepthLevels]{};
     for (std::size_t i = 0; i < kMaxDepthLevels; ++i) {
         bids[i] = PriceLevel{2401230 - 10 * static_cast<std::int64_t>(i), 650 * static_cast<std::int64_t>(i + 1), static_cast<std::uint32_t>(i + 1), 0};
@@ -120,9 +124,18 @@ int main(int argc, char** argv) {
         const LivePrice* p = client.price(1002);
         return p != nullptr && p->trades >= 1 && client.price(12468226) != nullptr && client.price(12468226)->levels == 5;
     });
-    pump(bus, 400, [] { return false; });   // let the 100 ms painter and the 250 ms side panel run
-
+    // Let the 100 ms painter and the 250 ms side panel run. The uptick's
+    // highlight lasts 450 ms from the paint: watch for it while waiting rather
+    // than look once afterwards (a loaded machine can be late by more).
     auto* m = page.model();
+    bool lit = false;
+    pump(bus, 1500, [&] {
+        const int r = m->row_of(12468226);
+        lit = lit || (r >= 0 && m->data(m->index(r, LiveWatchModel::Ltp), Qt::BackgroundRole).isValid());
+        return lit;
+    });
+    pump(bus, 400, [] { return false; });
+
     const int fr = m->row_of(12468226);
     check(fr == 1, "the future has its row");
     const QString ltp = m->data(m->index(fr, LiveWatchModel::Ltp), Qt::DisplayRole).toString();
@@ -134,7 +147,7 @@ int main(int argc, char** argv) {
           "best bid and ask size from the quote topic");
     check(m->data(m->index(fr, LiveWatchModel::Ltq), Qt::DisplayRole).toString() == QStringLiteral("130"),
           "last traded quantity");
-    check(m->data(m->index(fr, LiveWatchModel::Ltp), Qt::BackgroundRole).isValid(), "a moved price is lit");
+    check(lit, "a moved price is lit");
     const int ir = m->row_of(256265);
     check(m->data(m->index(ir, LiveWatchModel::Bid), Qt::DisplayRole).toString() == QStringLiteral("—")
               && m->data(m->index(ir, LiveWatchModel::Volume), Qt::DisplayRole).toString() == QStringLiteral("—"),
@@ -149,6 +162,18 @@ int main(int argc, char** argv) {
               && depth->item(4, 3) && depth->item(4, 3)->text() == QStringLiteral("24012.90"),
           "depth shows five levels a side");
     check(depth->item(5, 1) && depth->item(5, 1)->text() == QStringLiteral("9,750"), "and the bid total");
+    {
+        // The FYERS 50-level book: every level shows, the total under them.
+        PricePayload deep = book;
+        deep.depth_levels = static_cast<std::uint16_t>(kMaxDepthLevels);
+        bus.publish(kTopicBook, deep, bids, asks, t0 + 6'000'000);
+        pump(bus, 3000, [&] { return client.price(12468226) != nullptr && client.price(12468226)->levels == kMaxDepthLevels; });
+        pump(bus, 400, [] { return false; });
+        check(depth->rowCount() == 51 && depth->item(49, 2) && depth->item(49, 2)->text() == QStringLiteral("24007.40")
+                  && depth->item(49, 3) && depth->item(49, 3)->text() == QStringLiteral("24017.40"),
+              "a 50-level book shows all fifty levels a side");
+        check(depth->item(50, 0) && depth->item(50, 0)->text() == QStringLiteral("Total"), "with the totals under the fiftieth");
+    }
     auto* tape = page.tape();
     check(tape->rowCount() == 2 && tape->item(0, 1) && tape->item(0, 1)->text() == QStringLiteral("24012.50")
               && tape->item(1, 1)->text() == QStringLiteral("24012.00"),
@@ -168,6 +193,129 @@ int main(int argc, char** argv) {
           "and a call and put at one strike agree, off the forward carried to the options' expiry");
     const QString cd = g->item(0, LiveChainView::CDelta) ? g->item(0, LiveChainView::CDelta)->text() : QString();
     check(cd.toDouble() > 0.4 && cd.toDouble() < 0.6, "an at-the-money call's delta is near one half");
+
+    // GREEK WATCH: the 24000 call from the chain, every column from the stream.
+    {
+        GreekWatchWindow gw(&client);
+        GreekLeg leg;
+        leg.c.token = 1001; leg.c.symbol = QStringLiteral("NIFTY26O0624000CE"); leg.c.strike = 24000;
+        leg.c.expiry_day = opt_exp; leg.c.lot = 65; leg.c.call = true;
+        leg.under = QStringLiteral("NIFTY"); leg.fut = 12468226; leg.fut_expiry = fut_exp; leg.spot = 256265;
+        GreekLeg put = leg;
+        put.c.token = 1002; put.c.symbol = QStringLiteral("NIFTY26O0624000PE"); put.c.call = false;
+        check(gw.add(leg) && gw.add(put) && !gw.add(leg), "a strike joins Greek Watch once");
+        gw.refresh();
+        const GreekRow r = greek_row(&client, gw.legs()[0], 0.065);
+        std::printf("    Greek Watch CE: IV %.2f %%, delta %.3f, gamma %.6f, vega %.2f, theta %.2f\n",
+                    r.iv * 100.0, r.delta, r.gamma, r.vega, r.theta);
+        check(std::fabs(r.iv - 0.13) < 0.01 && r.delta > 0.4 && r.delta < 0.6 && r.gamma > 0 && r.vega > 0 && r.theta < 0,
+              "IV, delta, gamma, vega and theta fill from the live prices");
+        check(gw.grid()->item(0, GreekWatchWindow::Units)->text() == QStringLiteral("65")
+                  && gw.grid()->item(0, GreekWatchWindow::DVal)->text().toDouble() > 20.0,
+              "one lot by default, and the value columns use it");
+        gw.grid()->item(1, GreekWatchWindow::Units)->setText(QStringLiteral("-65"));
+        gw.refresh();
+        auto* sum = gw.summary();
+        check(sum->rowCount() == 1 && sum->item(0, GreekWatchWindow::SLegs)->text() == QStringLiteral("2")
+                  && sum->item(0, GreekWatchWindow::SUnits)->text() == QStringLiteral("0"),
+              "the summary adds the legs up per underlying and expiry (long call, short put)");
+        const double dval = sum->item(0, GreekWatchWindow::SDVal)->text().toDouble();
+        check(dval > 50.0 && dval < 75.0, "long call + short put is about one lot of delta: a synthetic future");
+    }
+
+    // ONLY ROWS ON SCREEN REPAINT. Hide the watch: a tick repaints nothing.
+    {
+        auto* model = page.model();
+        page.set_view(LiveMarketWatch::View::Chain);
+        QApplication::processEvents();
+        trade(12468226, 2401300, 65, t0 + 7'000'000);
+        pump(bus, 600, [] { return false; });
+        check(model->last_flush_rows() == 0, "with the watch off screen a tick repaints no row");
+        page.set_view(LiveMarketWatch::View::Watch);
+        QApplication::processEvents();
+        trade(12468226, 2401350, 65, t0 + 8'000'000);
+        pump(bus, 2000, [&] { return model->last_flush_rows() > 0; });
+        check(model->last_flush_rows() == 1, "on screen, the one row that ticked repaints, and only it");
+    }
+
+    // THE LIVE FEED RUNS ON MARKET HOURS, NOT A BUTTON.
+    {
+        const auto at = [](int y, int mo, int d, int h, int mi) { return QDateTime(QDate(y, mo, d), QTime(h, mi), Qt::UTC); };
+        check(!LiveMarketWatch::in_market_hours(at(2026, 10, 7, 8, 59)) && LiveMarketWatch::in_market_hours(at(2026, 10, 7, 9, 0))
+                  && LiveMarketWatch::in_market_hours(at(2026, 10, 7, 15, 44)) && !LiveMarketWatch::in_market_hours(at(2026, 10, 7, 15, 45)),
+              "the feed's hours are 09:00 to 15:45 IST");
+        check(!LiveMarketWatch::in_market_hours(at(2026, 10, 10, 11, 0)) && !LiveMarketWatch::in_market_hours(at(2026, 10, 11, 11, 0)),
+              "and not on a Saturday or a Sunday");
+        page.now_ist = [&] { return at(2026, 10, 10, 11, 0); };
+        check(!page.market_tick(), "with the schedule off (tests, scripts) nothing starts");
+        page.set_autostart(true);
+        check(!page.market_tick() && !page.feed_running(), "on a Saturday the schedule starts nothing");
+        page.set_autostart(false);
+        page.now_ist = {};
+        check(page.findChild<QPushButton*>(QStringLiteral("startLiveFeed")) == nullptr
+                  && page.findChild<QCheckBox*>() == nullptr,
+              "no Start live feed button and no Live-on-open box");
+    }
+
+    // ONE SIMULATION DIALOG, ONE WATCHLIST DIALOG (Ctrl+S).
+    {
+        auto* sim = page.findChild<QPushButton*>(QStringLiteral("simulationButton"));
+        auto* start = page.findChild<QPushButton*>(QStringLiteral("startSimFeed"));
+        auto* date = page.findChild<QDateEdit*>(QStringLiteral("simDate"));
+        check(sim != nullptr && start != nullptr && date != nullptr && start->window() == page.simulation_dialog()
+                  && date->window() == page.simulation_dialog(),
+              "the SIM controls sit in the SIMULATION dialog, behind one button");
+        sim->click();
+        QApplication::processEvents();
+        check(page.simulation_dialog()->isVisible(), "SIMULATION opens it");
+        page.simulation_dialog()->hide();
+        auto* name = page.findChild<QComboBox*>(QStringLiteral("watchlistName"));
+        check(name != nullptr && name->window() == page.watchlist_dialog() && !page.watchlist_dialog()->isVisible(),
+              "the watchlist controls are off the watch, in a dialog");
+        page.show_watchlists();
+        QApplication::processEvents();
+        check(page.watchlist_dialog()->isVisible() && name->count() >= 1, "Ctrl+S opens it with the saved lists");
+        page.watchlist_dialog()->hide();
+    }
+
+    // THE BOOK AT FULL HEIGHT: fifty rows, and the trades folded away.
+    {
+        LivePrice p;
+        p.levels = 50;
+        for (std::size_t k = 0; k < 50; ++k) {
+            p.bids[k] = {2400000 - static_cast<std::int64_t>(k) * 5, 65, 1, 0};
+            p.asks[k] = {2400005 + static_cast<std::int64_t>(k) * 5, 65, 1, 0};
+        }
+        show_live_depth(page.depth(), &p);
+        check(page.depth()->rowCount() == 51 && page.depth()->item(49, 2)->text() == QStringLiteral("23997.55")
+                  && page.depth()->item(49, 3)->text() == QStringLiteral("24002.50"),
+              "fifty levels a side, each at its own price, and the total");
+        page.toggle_full_depth();
+        check(page.depth_split()->sizes().value(1) == 0, "a double-click on its title gives the book the full height");
+        page.toggle_full_depth();
+        check(page.depth_split()->sizes().value(1) > 0, "and again gives the trades their share back");
+    }
+
+    // SHIFT+S AND TAB: the scrip selection by keyboard, a list at each step.
+    {
+        auto* bar = page.loader();
+        bar->set_popups(false);
+        page.activateWindow();
+        QApplication::processEvents();
+        bar->choose(QStringLiteral("NSE"), QStringLiteral("E"), QString());
+        page.focus_scrip_selection();
+        QApplication::processEvents();
+        check(bar->focused_field() == QStringLiteral("addExchange"), "Shift+S lands on Exchange");
+        bar->step(false);
+        bar->step(false);
+        check(bar->focused_field() == QStringLiteral("addSymbol"), "Tab, Tab: Segment, then Symbol");
+        bar->step(false);
+        check(bar->focused_field() == QStringLiteral("addExchange"),
+              "for equity, Tab skips the greyed Expiry, Type and Strike -- and Add, greyed until a contract is named -- "
+              "and goes round to Exchange");
+        bar->step(true);
+        check(bar->focused_field() == QStringLiteral("addSymbol"), "Shift+Tab goes back to Symbol");
+    }
 
     check(page.status_text().contains(QStringLiteral("SIM")), "a simulated stream is labelled SIM, never LIVE");
     check(!page.status_text().contains(QStringLiteral("● LIVE")), "and not LIVE");

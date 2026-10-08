@@ -35,6 +35,9 @@
 #include "chart/chart_widget.hpp"
 #include "analytics_panel.hpp"
 #include "atlas.hpp"
+#include "atlas_info.hpp"
+#include "shell_pages.hpp"
+#include "strategy_record.hpp"
 #include "audit_panel.hpp"
 #include "cost_panel.hpp"
 #include "depth_ladder.hpp"
@@ -63,6 +66,7 @@
 #include "fyers_link.hpp"
 #include "broker_page.hpp"
 #include "demo_trading_page.hpp"
+#include "threshold_page.hpp"
 #include "arbitrage_workspace.hpp"
 #include "panels.hpp"
 #include "filter.hpp"
@@ -165,7 +169,7 @@ public:
         // means the pill cannot claim otherwise.
         feed_.set_source(FeedSource::Replay);
         feed_.set_transport_up(true);
-        setWindowTitle(QStringLiteral("Altair"));
+        setWindowTitle(QString::fromUtf8(kShellTitle));
 
         build_nav();
         build_watchlist();
@@ -197,11 +201,11 @@ public:
         connect(status_timer_, &QTimer::timeout, this, &MainWindow::refresh_status);
         status_timer_->start();
 
-        auto* full = new QAction(this);
-        // Escape belongs to focused widgets/dialogs and the Terminal chain.
-        full->setShortcut(QKeySequence(Qt::Key_F11));
-        connect(full, &QAction::triggered, this, &MainWindow::toggle_fullscreen);
-        addAction(full);
+        // F11 + F12 together: halt everything; again while halted: resume.
+        // The whole application is watched, so it works from any window.
+        chord_ = new HaltChord(this);
+        chord_->fired = [this] { halt_chord(); };
+        qApp->installEventFilter(chord_);
 
         refresh_status();
     }
@@ -215,6 +219,7 @@ public:
         index = nav_destination(index);
         if (index >= 0 && index < pages_->count()) {
             const bool changed = pages_->currentIndex() != index;
+            if (index != atlas_target_page_) set_atlas_origin(QString(), -1);
             pages_->setCurrentIndex(index);
             nav_->select_page(index);
             if (changed && index == 1) rebuild_chart();
@@ -307,7 +312,8 @@ public:
         }
     }
 
-    /// Start the live feed by itself when the Terminal opens and nothing streams.
+    /// Run the live feed by itself during market hours (09:00-15:45 IST,
+    /// weekdays); off for scripted runs.
     void set_live_feed_on_open(bool on) {
         if (terminal_ != nullptr) terminal_->set_autostart_feed(on);
     }
@@ -344,9 +350,62 @@ public:
                 return false;
             }
         }
+        atlas_target_page_ = page;
         show_page(page);
+        set_atlas_origin(id, page);
         return true;
     }
+
+    /// Back to the Model Atlas from a model page (the bar's button, Backspace).
+    bool atlas_back() {
+        if (atlas_origin_.isEmpty()) return false;
+        const QString id = atlas_origin_;
+        set_atlas_origin(QString(), -1);
+        show_page(32);
+        if (auto* atlas = qobject_cast<QWidget*>(pages_->widget(32)); atlas != nullptr) {
+            if (auto* panel = dynamic_cast<AtlasPanel*>(atlas); panel != nullptr) {
+                if (const AtlasRow* row = atlas_row_by_id(id)) panel->focus_model(QString::fromUtf8(row->model));
+            }
+        }
+        return true;
+    }
+    [[nodiscard]] QWidget* atlas_bar() const noexcept { return atlas_bar_; }
+    [[nodiscard]] QString atlas_origin() const { return atlas_origin_; }
+
+    // ---- halt (F11 + F12) ----------------------------------------------------
+    /// The chord: halt when trading runs, offer resume when it is halted.
+    void halt_chord() {
+        if (terminal_ == nullptr) return;
+        if (!terminal_->halted()) { (void)halt_now(); return; }
+        HaltResumeDialog d(terminal_->halt_summary(), this);
+        if (resume_answer_) {                       // tests answer for the dialog
+            const QString why = resume_answer_();
+            if (!why.isEmpty()) (void)resume(why);
+            return;
+        }
+        if (d.exec() == QDialog::Accepted) (void)resume(d.reason());
+    }
+    bool halt_now() {
+        const bool ok = terminal_ != nullptr && terminal_->halt_trading(user_, QStringLiteral("F11+F12 on the desktop"));
+        statusBar()->showMessage(ok ? QStringLiteral("HALTED: no new orders or entries. F11+F12 again to resume.")
+                                    : QStringLiteral("HALT NOT WRITTEN: data/kill_request.json could not be written."), 15000);
+        refresh_status();
+        return ok;
+    }
+    bool resume(const QString& reason) {
+        if (role_ != Role::Admin) {
+            statusBar()->showMessage(QStringLiteral("Only an admin can resume after a halt."), 15000);
+            return false;
+        }
+        const bool ok = terminal_ != nullptr && terminal_->resume_trading(user_, reason);
+        statusBar()->showMessage(ok ? QStringLiteral("Resumed. LIVE is off; switch it on in the Terminal for real orders.")
+                                    : QStringLiteral("Not resumed: the halt request changed or could not be cleared."), 15000);
+        refresh_status();
+        return ok;
+    }
+    /// Tests: answer the resume dialog with this reason ("" = stay halted).
+    void set_resume_answer(std::function<QString()> f) { resume_answer_ = std::move(f); }
+    [[nodiscard]] HaltChord* halt_chord_filter() const noexcept { return chord_; }
 
     /// Select a chart data source by index. Same reason as `show_page`:
     /// starting where the work is, without simulating a click.
@@ -410,13 +469,28 @@ public:
         instrument_->addItem(symbol, token);
     }
 
-private Q_SLOTS:
-    void toggle_fullscreen() {
-        if (isFullScreen()) {
-            showMaximized();
-        } else {
-            showFullScreen();
+protected:
+    void keyPressEvent(QKeyEvent* event) override {
+        // Backspace reaches the window only when nothing focused used it (a
+        // text field keeps its own Backspace), so typing never navigates.
+        if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier && atlas_back()) {
+            event->accept();
+            return;
         }
+        QMainWindow::keyPressEvent(event);
+    }
+
+private:
+    void set_atlas_origin(const QString& id, int page) {
+        atlas_origin_ = id;
+        atlas_target_page_ = id.isEmpty() ? -1 : page;
+        if (atlas_bar_ == nullptr) return;
+        const AtlasRow* row = id.isEmpty() ? nullptr : atlas_row_by_id(id);
+        atlas_bar_->setVisible(row != nullptr);
+        if (row != nullptr)
+            atlas_title_->setText(QStringLiteral("<b>%1</b> <span style='color:#8FA3AE'>· %2</span>")
+                                      .arg(QString::fromUtf8(row->model).toHtmlEscaped(),
+                                           QString::fromUtf8(row->family).toHtmlEscaped()));
     }
 
     void restart() {
@@ -530,56 +604,62 @@ private:
             viewport->verticalScrollBar()->setValue(0);
         });
 
+        // A model page opened from the Model Atlas carries a bar: back to the
+        // Atlas (Backspace) and the model's ⓘ.
+        atlas_bar_ = new QWidget;
+        atlas_bar_->setObjectName(QStringLiteral("atlasBackBar"));
+        atlas_bar_->setStyleSheet(QStringLiteral(
+            "#atlasBackBar{background:#141D23;border-bottom:1px solid #24323B;}"
+            "#atlasBackBar QPushButton{color:#F0B765;background:#1A262E;border:1px solid #2F4A5A;border-radius:6px;padding:4px 10px;}"
+            "#atlasBackBar QPushButton:hover{border-color:#B47A3A;}"));
+        auto* bar = new QHBoxLayout(atlas_bar_);
+        bar->setContentsMargins(10, 4, 10, 4);
+        auto* back = new QPushButton(QStringLiteral("\u2190  Model Atlas"), atlas_bar_);
+        back->setObjectName(QStringLiteral("atlasBackButton"));
+        back->setToolTip(QStringLiteral("Back to the Model Atlas  ·  Backspace"));
+        bar->addWidget(back);
+        atlas_title_ = new QLabel(atlas_bar_);
+        atlas_title_->setTextFormat(Qt::RichText);
+        bar->addWidget(atlas_title_, 1);
+        auto* info = new QPushButton(QStringLiteral("\u24D8"), atlas_bar_);
+        info->setObjectName(QStringLiteral("atlasPageInfo"));
+        info->setToolTip(QStringLiteral("What this model is for, how it was trained, on what data, and what it does in the real market"));
+        bar->addWidget(info);
+        connect(back, &QPushButton::clicked, this, [this] { (void)atlas_back(); });
+        connect(info, &QPushButton::clicked, this, [this] {
+            if (const AtlasRow* row = atlas_row_by_id(atlas_origin_)) show_atlas_info(this, *row);
+        });
+        atlas_bar_->hide();
+        auto* right = new QWidget;
+        auto* rv = new QVBoxLayout(right);
+        rv->setContentsMargins(0, 0, 0, 0);
+        rv->setSpacing(0);
+        rv->addWidget(atlas_bar_);
+        rv->addWidget(viewport, 1);
+
         auto* split = new QWidget;
         auto* h = new QHBoxLayout(split);
         h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(0);
         h->addWidget(nav_);
-        h->addWidget(viewport, 1);
+        h->addWidget(right, 1);
         setCentralWidget(split);
     }
 
-    void refresh_workspace_controls() {
-        if (!nav_toggle_) return;
-        const auto label = nav_->mode() == NavigationMode::Hidden
-            ? QStringLiteral("Show navigation") : QStringLiteral("Hide navigation");
-        nav_toggle_->setText(label);
-        nav_toggle_->setToolTip(label + QStringLiteral("  Ctrl+Shift+B"));
-        nav_favourite_->setText(nav_->is_favourite()
-            ? QStringLiteral("★ Saved") : QStringLiteral("☆ Save page"));
-        const auto& page = kNavigationPages[static_cast<std::size_t>(nav_->current_page())];
-        nav_location_->setText(QStringLiteral("  %1  /  %2  ")
-            .arg(QString::fromUtf8(kNavigationGroups[static_cast<std::size_t>(page.group)].label),
-                 QString::fromUtf8(page.label)));
-    }
+    void refresh_workspace_controls() {}
 
     void build_workspace_controls() {
-        // Per-user presentation state. Hex encoding prevents settings path injection.
+        // Full screen: no toolbar, no menu bar. Per-user presentation state
+        // stays (sidebar width and groups, the terminal's pane sizes, the GETS
+        // settings). Hex encoding prevents settings path injection.
         nav_settings_ = new QSettings(QSettings::defaultFormat(), QSettings::UserScope,
                                      QStringLiteral("Altair"), QStringLiteral("Desktop"), this);
         nav_settings_->beginGroup(QStringLiteral("workspace/v1/") +
                                   QString::fromLatin1(user_.toUtf8().toHex()));
         nav_->restore_state(*nav_settings_);
-        auto* bar = new QToolBar(QStringLiteral("Workspaces"), this);
-        bar->setObjectName(QStringLiteral("workspaceToolbar"));
-        bar->setMovable(false);
-        bar->setFloatable(false);
-        // Recovery controls must not be hidden through the toolbar context menu.
-        bar->toggleViewAction()->setEnabled(false);
-        addToolBar(bar);
-        nav_toggle_ = bar->addAction(QStringLiteral("Hide navigation"));
-        nav_toggle_->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")));
-        connect(nav_toggle_, &QAction::triggered, this, [this] { nav_->toggle_visibility(); });
-        // Resizing is on the sidebar edge. Keep presentation actions in the
-        // existing Workspaces menu so they remain reachable with navigation hidden.
-        auto* layout = new QMenu(QStringLiteral("Navigation appearance"), this);
-        for (const auto& entry : {std::pair{QStringLiteral("Expanded"), NavigationMode::Expanded},
-                                 std::pair{QStringLiteral("Compact"), NavigationMode::Compact},
-                                 std::pair{QStringLiteral("Hidden"), NavigationMode::Hidden}}) {
-            connect(layout->addAction(entry.first), &QAction::triggered, this,
-                    [this, value = entry.second] { nav_->set_mode(value); });
-        }
-        // GETS workspace: per-user watch list, user IVs, RMS thresholds.
+        // The sidebar is always shown: a hidden-navigation state saved by an
+        // older build would otherwise leave no way back.
+        if (nav_->mode() == NavigationMode::Hidden) nav_->set_mode(NavigationMode::Expanded);
         if (terminal_->gets() != nullptr) terminal_->gets()->set_settings(nav_settings_);
         auto* terminal_split = terminal_->findChild<QSplitter*>(QString{}, Qt::FindDirectChildrenOnly);
         if (terminal_split) {
@@ -591,65 +671,12 @@ private:
                     statusBar()->showMessage(QStringLiteral("Terminal layout could not be saved."), 15000);
             });
         }
-        layout->addSeparator();
-        connect(layout->addAction(QStringLiteral("Reset layout only")), &QAction::triggered, this,
-                [this, terminal_split] {
-            nav_->set_expanded_width(258);
-            nav_->set_mode(NavigationMode::Expanded);
-            nav_settings_->remove(QStringLiteral("terminalLayout"));
-            if (terminal_split) terminal_split->setSizes({240, 500, 260});
-        });
-        // Keep the safety control next to the navigation toggle. The
-        // breadcrumb is allowed to elide on narrow laptop widths; placing
-        // Halt after it made the action fall into the toolbar overflow menu.
-        auto* halt = bar->addAction(QStringLiteral("Halt controls"));
-        connect(halt, &QAction::triggered, this, [this] {
-            show_page(2);
-            auto* panel = terminal_->halt();
-            terminal_->show_halt_controls();
-            panel->setFocus(Qt::ShortcutFocusReason);
-            QTimer::singleShot(0, this, [this, panel] {
-                if (pages_->currentIndex() != 2) return;
-                if (auto* viewport = findChild<QScrollArea*>(QStringLiteral("workspaceViewport")))
-                    viewport->ensureWidgetVisible(panel, 8, 8);
-            });
-        });
-        // Search has one visible home in the sidebar. Its shortcut remains
-        // global so hiding navigation never makes search unreachable.
+        // Search has one visible home in the sidebar; Ctrl+K reaches it too.
         auto* search = new QAction(QStringLiteral("Find workspace"), this);
         search->setShortcut(QKeySequence(QStringLiteral("Ctrl+K")));
         connect(search, &QAction::triggered, this, [this] { nav_->show_search(); });
         addAction(search);
-        nav_favourite_ = bar->addAction(QStringLiteral("☆ Save page"));
-        connect(nav_favourite_, &QAction::triggered, this, [this] { nav_->toggle_favourite(); });
-        auto* menu = menuBar()->addMenu(QStringLiteral("Workspaces"));
-        connect(menu, &QMenu::aboutToShow, this, [this, menu, layout] {
-            nav_->populate_menu(menu);
-            menu->addSeparator();
-            menu->addMenu(layout);
-        });
-        nav_location_ = new QLabel(bar);
-        nav_location_->setMinimumWidth(0);
-        nav_location_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-        nav_location_->setMaximumWidth(360);
-        nav_location_->setStyleSheet(QStringLiteral("color:#E3A34A;font-weight:600;padding:0 6px;"));
-        bar->addWidget(nav_location_);
-        auto* toolbar_spacer = new QWidget(bar);
-        toolbar_spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-        bar->addWidget(toolbar_spacer);
-        mode_badge_ = new QLabel(QStringLiteral("  PAPER  "), bar);
-        mode_badge_->setObjectName(QStringLiteral("tradingModeBadge"));
-        mode_badge_->setAccessibleName(QStringLiteral("Trading mode: paper"));
-        mode_badge_->setToolTip(QStringLiteral(
-            "Paper mode. This desktop has no broker order transport linked."));
-        mode_badge_->setStyleSheet(QStringLiteral(
-            "color:#D9EAF2;background:#1C2B36;border:1px solid #2F4A5A;"
-            "border-radius:11px;font-weight:700;padding:3px 10px;"));
-        bar->addWidget(mode_badge_);
-        nav_->on_state_changed = [this] {
-            refresh_workspace_controls();
-            nav_->save_state(*nav_settings_);
-        };
+        nav_->on_state_changed = [this] { nav_->save_state(*nav_settings_); };
         show_page(nav_->current_page());
         nav_->save_state(*nav_settings_);
         nav_settings_->sync();
@@ -657,25 +684,7 @@ private:
             statusBar()->showMessage(nav_->recovery_notice(), 15000);
         if (nav_settings_->status() != QSettings::NoError)
             statusBar()->showMessage(QStringLiteral("Navigation preferences could not be saved."), 15000);
-        // Scope chrome colours here; do not restyle Atlas or trading-widget internals.
-        const auto chrome = QStringLiteral(
-            "QToolBar,QMenuBar{background:#0D1117;color:#E6EDF3;border:0;border-bottom:1px solid #21262D;}"
-            "QMenu{background:#161B22;color:#E6EDF3;border:1px solid #30363D;border-radius:8px;padding:6px;}"
-            "QToolBar{spacing:6px;padding:6px 10px;}"
-            "QToolButton{color:#C9D1D9;background:transparent;border:1px solid transparent;border-radius:6px;padding:5px 10px;}"
-            "QToolButton:hover,QMenuBar::item:selected,QMenu::item:selected{background:#21262D;color:#F0B765;}"
-            "QToolButton:checked{background:#2D333B;color:#F0B765;}"
-            "QToolButton:focus{border:1px solid #E3A34A;}"
-            "QToolButton:disabled{color:#6E7681;}"
-            "QMenuBar::item{padding:6px 10px;border-radius:6px;}"
-            "QMenu::item{padding:7px 24px 7px 12px;border-radius:6px;}"
-            "QComboBox,QPushButton{color:#E6EDF3;background:#161B22;border:1px solid #30363D;border-radius:6px;padding:5px 10px;}"
-            "QComboBox:hover,QPushButton:hover{border-color:#484F58;}"
-            "QLabel{color:#E6EDF3;}");
-        bar->setStyleSheet(chrome);
-        menuBar()->setStyleSheet(chrome);
-        menu->setStyleSheet(chrome);
-        layout->setStyleSheet(chrome);
+        menuBar()->hide();
     }
 
     void build_watchlist() {
@@ -708,7 +717,7 @@ private:
         auto* v = new QVBoxLayout(page);
         auto* hint = new QLabel(QStringLiteral(
             "Click a header to sort · double-click or right-click a header to "
-            "filter · F11 toggles full screen"));
+            "filter"));
         hint->setStyleSheet(QStringLiteral("color:#7F8C8D;padding:2px 4px;"));
         v->addWidget(hint);
 
@@ -1017,15 +1026,18 @@ private:
             auto* page = new QWidget;
             auto* v = new QVBoxLayout(page);
             v->addWidget(new QLabel(QStringLiteral(
-                "<h3>Data flow — feed to broker</h3>")));
-            auto* note = new QLabel(QStringLiteral(
-                "Drawn from the same table the Broker Wiring page reads, so "
-                "the picture and the facts cannot drift apart. A stage past "
-                "the wall is hollow: a tick cannot reach it today."));
-            note->setWordWrap(true);
-            note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
-            v->addWidget(note);
-            v->addWidget(new DataflowWidget(feed_.source()), 1);
+                "<h3>Data flow — FYERS to the models and back to FYERS</h3>")));
+#ifdef ALTAIR_SOURCE_DIR
+            const QString flow_root = QStringLiteral(ALTAIR_SOURCE_DIR);
+#else
+            const QString flow_root = QDir::currentPath();
+#endif
+            v->addWidget(new LiveDataflowWidget(flow_root));
+            auto* flow_notes = new QLabel(live_flow_notes_html());
+            flow_notes->setWordWrap(true);
+            flow_notes->setTextFormat(Qt::RichText);
+            flow_notes->setStyleSheet(QStringLiteral("color:#C9D1D9;padding:4px;"));
+            v->addWidget(flow_notes);
 
             // P30-03. THE DIAGRAM SHOWS THE PIPE AND SAID NOTHING ABOUT WHAT
             // IS IN IT.
@@ -1044,6 +1056,7 @@ private:
                 "background:#11171C;padding:8px;"));
             inv->setText(dataset_inventory());
             v->addWidget(inv);
+            v->addStretch();
 
             pages_->addWidget(page);
         }
@@ -1432,6 +1445,35 @@ private:
         connect(parity_page->button(), &QPushButton::clicked, parity_page,
                 [parity_page] { parity_page->set_text(arbitrage_scans_report()); });
         arb_page->addTab(parity_page, QStringLiteral("Parity & calendar"));
+        {
+            // Each strategy's round trips, demo and real, before and after expenses.
+#ifdef ALTAIR_SOURCE_DIR
+            const QString root = QStringLiteral(ALTAIR_SOURCE_DIR);
+#else
+            const QString root = QDir::currentPath();
+#endif
+            const auto record_tab = [&](const QString& model, const QString& name, const QString& text) {
+                auto* w = new QWidget(arb_page);
+                w->setObjectName(QStringLiteral("arbRecord_") + name);
+                auto* v = new QVBoxLayout(w);
+                auto* head = new QLabel(text, w);
+                head->setWordWrap(true);
+                head->setTextFormat(Qt::RichText);
+                v->addWidget(head);
+                v->addWidget(new StrategyRecordPanel(model, root, w), 1);
+                arb_page->addTab(w, name);
+            };
+            record_tab(QStringLiteral("Cross-exchange arbitrage"), QStringLiteral("NSE \u2194 BSE record"),
+                       QStringLiteral("<b>NSE \u2194 BSE arbitrage.</b> Demo trades always; real orders only while LIVE is on "
+                                      "<b>and</b> Auto: Arbitrage is ticked in the LIVE switch, within its caps. Both legs go "
+                                      "as IOC limits at the touch; a leg that does not fill has the other flattened at once "
+                                      "(a legging loss). Every round trip, gross and net of expenses."));
+            record_tab(QStringLiteral("Option arbitrage"), QStringLiteral("Option arbitrage record"),
+                       QStringLiteral("<b>Option arbitrage.</b> Put-call parity (conversion / reversal against the future) and "
+                                      "box spreads, entered when the lock beats every leg's expenses and spreads in and out; "
+                                      "the order book's imbalance orders the legs and stops a lock the book says is about to "
+                                      "vanish. Demo by default; real only with LIVE on and Auto: Option arb ticked."));
+        }
         pages_->addWidget(arb_page);
 
         // P36-01. THE MODEL ATLAS.
@@ -1465,6 +1507,18 @@ private:
         // It runs the two research CLIs and reads what they wrote; it never
         // reaches a broker.
         pages_->addWidget(new DemoTradingPage);
+
+        // Threshold strategies: the OHL rule's live record, and the owner's
+        // threshold_strategy/ demos and TradingView results (paper only).
+        {
+#ifdef ALTAIR_SOURCE_DIR
+            const QString root = QStringLiteral(ALTAIR_SOURCE_DIR);
+#else
+            const QString root = QDir::currentPath();
+#endif
+            pages_->addWidget(new ThresholdPage(root));
+        }
+        pages_->addWidget(new AboutPage);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
@@ -1538,6 +1592,12 @@ private:
         // talk to the broker"): independent questions, so two separate items.
         statusBar()->addWidget(pill_);
         statusBar()->addWidget(broker_status_);
+        halt_badge_ = new QLabel;
+        halt_badge_->setObjectName(QStringLiteral("haltBadge"));
+        halt_badge_->setStyleSheet(QStringLiteral("color:#FFFFFF;background:#DA3633;font-weight:700;padding:1px 8px;border-radius:3px;"));
+        halt_badge_->setText(QStringLiteral("■ HALTED · F11+F12 to resume"));
+        halt_badge_->hide();
+        statusBar()->addPermanentWidget(halt_badge_);
         statusBar()->addPermanentWidget(who_);
         statusBar()->addPermanentWidget(phase_);
         statusBar()->addPermanentWidget(engine_clock_);
@@ -1624,6 +1684,7 @@ private:
             since_broker_ = 10;
             refresh_broker_pill();
         }
+        if (halt_badge_ != nullptr && terminal_ != nullptr) halt_badge_->setVisible(terminal_->halted());
         who_->setText(QStringLiteral(" %1 (%2) ").arg(user_, role_name(role_)));
 
         // THE LIVE FEED, as the Terminal's stream sees it. SIM and REPLAY are
@@ -1691,9 +1752,13 @@ private:
     QStackedWidget* pages_ = nullptr;
     BrokerPage* broker_page_ = nullptr;
     QSettings* nav_settings_ = nullptr;
-    QAction* nav_toggle_ = nullptr;
-    QAction* nav_favourite_ = nullptr;
-    QLabel* nav_location_ = nullptr;
+    QWidget* atlas_bar_ = nullptr;
+    QLabel* atlas_title_ = nullptr;
+    QString atlas_origin_;
+    int atlas_target_page_ = -1;
+    HaltChord* chord_ = nullptr;
+    std::function<QString()> resume_answer_;
+    QLabel* halt_badge_ = nullptr;
 
     ChartWidget* chart_ = nullptr;
     QComboBox* source_ = nullptr;
@@ -1703,7 +1768,6 @@ private:
 
     QLabel* pill_ = nullptr;
     QLabel* broker_status_ = nullptr;
-    QLabel* mode_badge_ = nullptr;
     int since_broker_ = 0;
     QLabel* who_ = nullptr;
     QLabel* phase_ = nullptr;

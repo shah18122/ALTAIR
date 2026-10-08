@@ -9,7 +9,10 @@
 #include "../paper_windows.hpp"
 
 #include <QApplication>
+#include <QCompleter>
+#include <QComboBox>
 #include <QFile>
+#include <QKeyEvent>
 #include <QTemporaryDir>
 #include <QTextStream>
 
@@ -266,9 +269,128 @@ int main(int argc, char** argv) {
         QFile g(root.filePath(QStringLiteral("data/live/watchlist.csv")));
         const QString after = g.open(QIODevice::ReadOnly | QIODevice::Text) ? QTextStream(&g).readAll() : QString();
         check(!after.contains(QStringLiteral("779521")), "removing takes it out of the feed's list");
+
+        // The GETS Add Scrip window: Exchange -> Instrument -> Symbol -> Expiry -> Option -> Strike.
+        const auto row = [](quint32 tok, const char* sym, const char* ex, const char* seg, const char* name, const char* type,
+                            const char* expiry, double strike, qint64 lot) {
+            MasterScrip m;
+            m.token = tok; m.symbol = QString::fromLatin1(sym); m.exchange = QString::fromLatin1(ex); m.segment = QString::fromLatin1(seg);
+            m.name = QString::fromLatin1(name); m.type = QString::fromLatin1(type); m.expiry = QString::fromLatin1(expiry);
+            m.strike = strike; m.lot = lot; m.display = m.symbol;
+            return m;
+        };
+        const std::vector<MasterScrip> master{
+            row(779521, "SBIN", "NSE", "NSE", "STATE BANK OF INDIA", "EQ", "", 0, 1),
+            row(128028676, "SBIN", "BSE", "BSE", "STATE BANK OF INDIA", "EQ", "", 0, 1),
+            row(9001, "NIFTY26OCTFUT", "NFO", "NFO-FUT", "NIFTY", "FUT", "2026-10-27", 0, 75),
+            row(9002, "NIFTY26NOVFUT", "NFO", "NFO-FUT", "NIFTY", "FUT", "2026-11-24", 0, 75),
+            row(9003, "SBIN26OCTFUT", "NFO", "NFO-FUT", "SBIN", "FUT", "2026-10-27", 0, 750),
+            row(9010, "NIFTY26OCT25000CE", "NFO", "NFO-OPT", "NIFTY", "CE", "2026-10-27", 25000, 75),
+            row(9011, "NIFTY26OCT25000PE", "NFO", "NFO-OPT", "NIFTY", "PE", "2026-10-27", 25000, 75),
+            row(9012, "NIFTY26OCT25100CE", "NFO", "NFO-OPT", "NIFTY", "CE", "2026-10-27", 25100, 75),
+        };
+        // The loader: Exchange (NSE/BSE) -> Segment (E/FO) -> Symbol -> Expiry -> Type (FUT unless an option) -> Strike.
+        std::vector<MasterScrip> full = master;
+        full.push_back(row(9020, "SENSEX26O0880000CE", "BFO", "BFO-OPT", "SENSEX", "CE", "2026-10-08", 80000, 20));
+        full.push_back(row(9021, "SENSEX26O0880000PE", "BFO", "BFO-OPT", "SENSEX", "PE", "2026-10-08", 80000, 20));
+        AddScripBar add;
+        add.set_master(&full);
+        add.set_today(QStringLiteral("2026-10-01"));
+        add.choose(QStringLiteral("NSE"), QStringLiteral("FO"), QStringLiteral("NIFTY"));
+        check(add.type() == QStringLiteral("FUT") && add.token() == 9001 && add.expiries().size() == 2,
+              "NSE FO NIFTY with nothing else chosen is the near future: FUT is the default");
+        add.choose(QStringLiteral("NSE"), QStringLiteral("FO"), QStringLiteral("NIFTY"), QStringLiteral("2026-10-27"),
+                   QStringLiteral("PE"), QStringLiteral("25000"));
+        check(add.token() == 9011 && add.strikes() == QStringList({QStringLiteral("25000")}),
+              "NIFTY 27-Oct PE 25000 names one contract; only the strikes that exist for PE are offered");
+        add.choose(QStringLiteral("NSE"), QStringLiteral("FO"), QStringLiteral("NIFTY"), QStringLiteral("2026-11-24"), QStringLiteral("FUT"));
+        check(add.token() == 9002, "FUT NIFTY November is the November future");
+        add.set_today(QStringLiteral("2026-10-28"));
+        check(add.expiries() == QStringList({QStringLiteral("2026-11-24")}), "an expiry that has passed is not offered");
+        add.set_today(QStringLiteral("2026-10-01"));
+        add.choose(QStringLiteral("NSE"), QStringLiteral("FO"), QStringLiteral("SBIN"), QStringLiteral("2026-10-27"), QStringLiteral("FUT"));
+        check(add.token() == 9003, "a stock's future is under the same NSE FO segment");
+        add.choose(QStringLiteral("BSE"), QStringLiteral("E"), QStringLiteral("SBIN"));
+        check(add.token() == 128028676 && add.resolved_text().contains(QStringLiteral("BSE")), "BSE E SBIN is the BSE listing");
+        add.choose(QStringLiteral("BSE"), QStringLiteral("FO"), QStringLiteral("SENSEX"));
+        check(add.type() == QStringLiteral("CE") && !add.type_enabled(QStringLiteral("FUT")) && add.token() == 9020,
+              "BSE FO lists SENSEX options; with no SENSEX future FUT is greyed out and CE is chosen");
+        add.choose(QStringLiteral("NSE"), QStringLiteral("FO"), QStringLiteral("NIFTY"), QStringLiteral("2026-10-27"),
+                   QStringLiteral("CE"), QStringLiteral("99999"));
+        check(add.token() == 0, "choices naming no contract cannot be added");
+        // Search: an equity by its company, any symbol by any part of it.
+        auto* symbol_box = add.findChild<QComboBox*>(QStringLiteral("addSymbol"));
+        add.choose(QStringLiteral("NSE"), QStringLiteral("E"), QStringLiteral("SBIN"));
+        QCompleter* comp = symbol_box->completer();
+        comp->setCompletionPrefix(QStringLiteral("bank of"));
+        check(comp->completionCount() == 1 && comp->currentCompletion() == QStringLiteral("SBIN"),
+              "typing the company ('bank of') offers SBIN, and choosing it types the symbol alone");
+        add.choose(QStringLiteral("NSE"), QStringLiteral("FO"), QStringLiteral("NIFTY"));
+        comp = symbol_box->completer();
+        comp->setCompletionPrefix(QStringLiteral("ifty"));
+        check(comp->completionCount() == 1 && comp->currentCompletion() == QStringLiteral("NIFTY"),
+              "a symbol matches on any part of it, not only its start");
+        quint32 added = 0;
+        add.on_add = [&added](quint32 t) { added = t; };
+        add.choose(QStringLiteral("NSE"), QStringLiteral("E"), QStringLiteral("SBIN"));
+        add.findChild<QPushButton*>(QStringLiteral("addScripButton"))->click();
+        check(added == 779521, "Add hands the contract to the watch");
+        watch.set_master_for_test(master);
+        check(watch.add_scrip(128028676), "the BSE listing joins the watch");
+        const LiveRow* bse = watch.row_of_token(128028676);
+        check(bse != nullptr && bse->fyers == QStringLiteral("BSE:SBIN-A") && paper_instrument_of(*bse).exchange == QStringLiteral("BSE"),
+              "streamed as BSE:SBIN-A and ordered as a BSE equity");
+        check(watch.add_scrip(9010) && watch.row_of_token(9010) != nullptr && watch.row_of_token(9010)->kind == QStringLiteral("call")
+                  && watch.row_of_token(9010)->lot == 75,
+              "an option joins as a call, with its lot");
         const LiveRow* r = watch.row_of_token(779521);
         const PaperInstrument pi = r != nullptr ? paper_instrument_of(*r) : PaperInstrument{};
         check(pi.exchange == QStringLiteral("NSE") && pi.tradable, "an added equity trades on NSE");
+
+        // Watchlists: what is added joins the active list; Save as makes a new
+        // one; loading a list shows only its scrips.
+        check(watch.list_name() == QStringLiteral("Default") && watch.filter()->members().contains(9010),
+              "an added scrip joins the active watchlist (Default)");
+        check(watch.save_list_as(QStringLiteral("Options desk")) && watch.list_names().contains(QStringLiteral("Options desk")),
+              "Save as keeps the list under a name of its own");
+        watch.remove_scrip(9010);
+        check(!watch.filter()->members().contains(9010), "Delete takes it off the list on screen");
+        check(watch.load_list(QStringLiteral("Default")) && watch.filter()->members().contains(9010),
+              "loading Default brings back its own scrips");
+        check(watch.load_list(QStringLiteral("Options desk")) && !watch.filter()->members().contains(9010),
+              "and Options desk its own: lists are saved and loaded by name");
+        check(!watch.delete_list(QStringLiteral("Default")) && watch.delete_list(QStringLiteral("Options desk"))
+                  && watch.list_name() == QStringLiteral("Default"),
+              "Default cannot be deleted; deleting the open list goes back to Default");
+
+        // Enter on a scrip opens the chain of its underlying, from the master.
+        std::vector<MasterScrip> chain_master = full;
+        chain_master.push_back(row(9030, "SBIN26OCT800CE", "NFO", "NFO-OPT", "SBIN", "CE", "2026-10-27", 800, 750));
+        chain_master.push_back(row(9031, "SBIN26OCT800PE", "NFO", "NFO-OPT", "SBIN", "PE", "2026-10-27", 800, 750));
+        chain_master.push_back(row(9032, "SBIN26OCT820CE", "NFO", "NFO-OPT", "SBIN", "CE", "2026-10-27", 820, 750));
+        watch.chain()->set_today(QStringLiteral("2026-10-01"));
+        watch.set_master_for_test(chain_master);
+        (void)watch.add_scrip(779521);
+        watch.select_token(779521);
+        QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(watch.view(), &enter);
+        check(watch.view_mode() == LiveMarketWatch::View::Chain && watch.chain()->underlying() == QStringLiteral("SBIN")
+                  && watch.chain()->grid()->rowCount() == 2,
+              "Enter on SBIN (a stock, not an index) opens the SBIN option chain: two strikes");
+        bool asked = false;
+        for (const auto& [t, sym] : watch.chain()->requested()) asked = asked || t == 9030;
+        QFile req(root.filePath(QStringLiteral("data/live/chain_request.csv")));
+        const QString req_text = req.open(QIODevice::ReadOnly | QIODevice::Text) ? QTextStream(&req).readAll() : QString();
+        check(asked && req_text.contains(QStringLiteral("9030,SBIN26OCT800CE")) && req_text.contains(QStringLiteral("9003,future")),
+              "the chain asks the feed for its strikes and the stock's future (chain_request.csv)");
+        quint32 greek = 0;
+        watch.on_greek = [&greek](quint32 t) { greek = t; };
+        watch.chain()->grid()->setCurrentCell(0, LiveChainView::CLtp);
+        QApplication::sendEvent(watch.chain()->grid(), &enter);
+        check(greek == 9030, "Enter on a CE cell opens Greek Watch for that call");
+        QKeyEvent back(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
+        QApplication::sendEvent(watch.chain()->grid(), &back);
+        check(watch.view_mode() == LiveMarketWatch::View::Watch, "Backspace in the chain goes back to the watch");
     }
 
     std::printf("\n%s\n", failures == 0 ? "all paper book checks passed" : "paper book checks did not pass");

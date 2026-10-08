@@ -1,8 +1,22 @@
 // desktop/arbitrage_workspace.hpp
 // P7-05. Read-only opportunity workspace fed by an independent scanner.
+//
+// CROSS-EXCHANGE ONLY: the same stock on NSE and on BSE. The live model
+// (live/arbitrage.hpp, "Cross-exchange arbitrage") demo-trades it in paper on
+// every quote; this page shows what it sees and holds, from the engine's
+// data/live/engine_state.json. Nothing here places an order.
 #pragma once
 
 #include "format.hpp"
+
+#include <QDateTime>
+#include <QFile>
+#include <QFileInfo>
+#include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QTableWidget>
 
 #include <QAbstractTableModel>
 #include <QComboBox>
@@ -28,6 +42,8 @@
 namespace altair::ui {
 
 inline constexpr std::size_t kArbitrageUiCapacity = 256;
+/// The live model's name (live/arbitrage.hpp): its rows in engine_state.json.
+inline constexpr const char* kArbitrageModel = "Cross-exchange arbitrage";
 
 /// One already-classified observation. The scanner owns pricing and policy;
 /// this DTO cannot turn a refusal into an order or recompute an edge.
@@ -164,27 +180,52 @@ public:
 
     explicit ArbitrageWorkspace(QWidget* parent = nullptr) : QWidget(parent) {
         auto* layout = new QVBoxLayout(this);
-        auto* title = new QLabel(QStringLiteral("<h3>Arbitrage — observable universe</h3>"), this);
+        auto* title = new QLabel(QStringLiteral("<h3>Arbitrage — the same stock on NSE and BSE</h3>"), this);
         layout->addWidget(title);
         auto* note = new QLabel(QStringLiteral(
-            "Event-driven scans run outside this refresh. Every row carries executable quotes, "
-            "post-cost edge, quote age and refusal; a futures discount is not called profit."), this);
+            "Cross-exchange only, two legs: when one exchange's BID beats the other's ASK by the two fills' expenses "
+            "(each exchange's own charges) and a margin, the model sells at the dear bid and buys at the cheap ask, "
+            "for the lower of the two visible quantities so both legs fill. The clearing corporation nets the pair: "
+            "no exit, no exit expenses. Demo trading (paper) is on by default; real orders only with LIVE on and "
+            "Auto: Arbitrage ticked."), this);
         note->setWordWrap(true);
         layout->addWidget(note);
 
+        demo_state_ = new QLabel(this);
+        demo_state_->setObjectName(QStringLiteral("arbitrageDemoState"));
+        demo_state_->setTextFormat(Qt::RichText);
+        demo_state_->setWordWrap(true);
+        layout->addWidget(demo_state_);
+        auto* demo_split = new QHBoxLayout;
+        pairs_ = new QTableWidget(0, 2, this);
+        pairs_->setObjectName(QStringLiteral("arbitragePairs"));
+        pairs_->setHorizontalHeaderLabels({QStringLiteral("Stock"), QStringLiteral("NSE · BSE now, and the edge it needs")});
+        held_ = new QTableWidget(0, 5, this);
+        held_->setObjectName(QStringLiteral("arbitrageHeld"));
+        held_->setHorizontalHeaderLabels({QStringLiteral("Stock"), QStringLiteral("B/S"), QStringLiteral("Qty"),
+                                          QStringLiteral("Entry"), QStringLiteral("Why")});
+        for (QTableWidget* t : {pairs_, held_}) {
+            t->verticalHeader()->hide();
+            t->setEditTriggers(QAbstractItemView::NoEditTriggers);
+            t->setSelectionBehavior(QAbstractItemView::SelectRows);
+            t->horizontalHeader()->setStretchLastSection(true);
+            t->setMaximumHeight(220);
+        }
+        demo_split->addWidget(pairs_, 3);
+        demo_split->addWidget(held_, 2);
+        layout->addLayout(demo_split);
+
         auto* manual = new QHBoxLayout;
-        manual_a_ = new QLineEdit(QStringLiteral("NIFTY"), this);
+        manual_a_ = new QLineEdit(QStringLiteral("RELIANCE"), this);
         manual_a_->setObjectName(QStringLiteral("arbitrageLegA"));
         manual_a_->setPlaceholderText(QStringLiteral("instrument / contract A"));
         venue_a_ = new QComboBox(this);
-        venue_a_->addItems({QStringLiteral("NSE CASH"), QStringLiteral("BSE CASH"),
-                            QStringLiteral("NSE FUTURE")});
-        manual_b_ = new QLineEdit(QStringLiteral("NIFTY"), this);
+        venue_a_->addItems({QStringLiteral("NSE CASH"), QStringLiteral("BSE CASH")});
+        manual_b_ = new QLineEdit(QStringLiteral("RELIANCE"), this);
         manual_b_->setObjectName(QStringLiteral("arbitrageLegB"));
         manual_b_->setPlaceholderText(QStringLiteral("instrument / contract B"));
         venue_b_ = new QComboBox(this);
-        venue_b_->addItems({QStringLiteral("NSE CASH"), QStringLiteral("BSE CASH"),
-                            QStringLiteral("NSE FUTURE")});
+        venue_b_->addItems({QStringLiteral("NSE CASH"), QStringLiteral("BSE CASH")});
         venue_b_->setCurrentIndex(1);
         manual->addWidget(new QLabel(QStringLiteral("Manual pair"), this));
         manual->addWidget(manual_a_, 1);
@@ -239,17 +280,78 @@ public:
             if (open_broker_diagnostics) open_broker_diagnostics();
         });
         refresh_.setInterval(250);
-        connect(&refresh_, &QTimer::timeout, this, [this] { drain(); });
+        connect(&refresh_, &QTimer::timeout, this, [this] {
+            drain();
+            if (++ticks_ % 8 == 0) refresh_demo();   // every two seconds
+        });
         refresh_.start();
+#ifdef ALTAIR_SOURCE_DIR
+        root_ = QStringLiteral(ALTAIR_SOURCE_DIR);
+#endif
+        refresh_demo();
     }
+
+    /// Where data/live/engine_state.json is (tests: a temp dir).
+    void set_root(const QString& root) { root_ = root; refresh_demo(); }
+
+    /// The arbitrage model's reading and positions, from the engine's state file.
+    void refresh_demo() {
+        QFile f(root_ + QStringLiteral("/data/live/engine_state.json"));
+        const QJsonObject st = f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll()).object() : QJsonObject{};
+        QJsonObject arb;
+        for (const QJsonValue m : st.value(QStringLiteral("models")).toArray())
+            if (m.toObject().value(QStringLiteral("name")).toString() == QLatin1String(kArbitrageModel)) arb = m.toObject();
+        const bool fresh = QFileInfo(f).exists() && QFileInfo(f).lastModified().secsTo(QDateTime::currentDateTime()) < 30;
+        if (arb.isEmpty()) {
+            demo_state_->setText(QStringLiteral(
+                "<span style='color:#E3B341'>Demo trading is waiting: the models engine has not reported the cross-exchange "
+                "arbitrage yet. It starts by itself once the live feed (or SIM) streams — Terminal → Models.</span>"));
+        } else {
+            const QString src = st.value(QStringLiteral("source")).toString();
+            demo_state_->setText(QStringLiteral("<b style='color:%1'>DEMO TRADING %2</b> · %3 · <b>%4</b> — %5<br>%6")
+                                     .arg(fresh ? QStringLiteral("#7EE787") : QStringLiteral("#E3B341"),
+                                          fresh ? QStringLiteral("ON") : QStringLiteral("(engine not updating)"),
+                                          src == QLatin1String("SIM") ? QStringLiteral("SIM prices") : QStringLiteral("live prices"),
+                                          arb.value(QStringLiteral("state")).toString().toHtmlEscaped(),
+                                          arb.value(QStringLiteral("reason")).toString().toHtmlEscaped(),
+                                          arb.value(QStringLiteral("signal")).toString().toHtmlEscaped()));
+        }
+        int r = 0;
+        pairs_->setRowCount(0);
+        for (const QJsonValue fv : arb.value(QStringLiteral("fields")).toArray()) {
+            const QJsonArray kv = fv.toArray();
+            if (kv.size() != 2 || kv.at(0).toString() != QLatin1String("pair")) continue;
+            const QString text = kv.at(1).toString();
+            pairs_->insertRow(r);
+            pairs_->setItem(r, 0, new QTableWidgetItem(text.section(QStringLiteral(": "), 0, 0)));
+            pairs_->setItem(r, 1, new QTableWidgetItem(text.section(QStringLiteral(": "), 1)));
+            ++r;
+        }
+        r = 0;
+        held_->setRowCount(0);
+        for (const QJsonValue pv : st.value(QStringLiteral("positions")).toArray()) {
+            const QJsonObject p = pv.toObject();
+            if (p.value(QStringLiteral("model")).toString() != QLatin1String(kArbitrageModel)) continue;
+            held_->insertRow(r);
+            held_->setItem(r, 0, new QTableWidgetItem(p.value(QStringLiteral("symbol")).toString()));
+            held_->setItem(r, 1, new QTableWidgetItem(p.value(QStringLiteral("side")).toInt() > 0 ? QStringLiteral("B") : QStringLiteral("S")));
+            held_->setItem(r, 2, new QTableWidgetItem(QString::number(p.value(QStringLiteral("qty")).toInt())));
+            held_->setItem(r, 3, new QTableWidgetItem(QString::number(p.value(QStringLiteral("entry")).toDouble(), 'f', 2)));
+            held_->setItem(r, 4, new QTableWidgetItem(p.value(QStringLiteral("why_in")).toString()));
+            ++r;
+        }
+    }
+    [[nodiscard]] QTableWidget* pairs_table() const noexcept { return pairs_; }
+    [[nodiscard]] QTableWidget* held_table() const noexcept { return held_; }
+    [[nodiscard]] QString demo_state() const { return demo_state_->text(); }
 
     ArbitrageInbox& inbox() noexcept { return inbox_; }
     ArbitrageTableModel* model() const noexcept { return model_; }
+    /// Cross-exchange only: the same stock, one leg on each exchange.
     [[nodiscard]] bool manual_pair_valid() const {
         const QString a = manual_a_->text().trimmed().toUpper();
         const QString b = manual_b_->text().trimmed().toUpper();
-        return !a.isEmpty() && !b.isEmpty()
-            && !(a == b && venue_a_->currentText() == venue_b_->currentText());
+        return !a.isEmpty() && a == b && venue_a_->currentText() != venue_b_->currentText();
     }
     [[nodiscard]] QString manual_pair_status() const {
         return manual_status_ != nullptr ? manual_status_->text() : QString{};
@@ -276,8 +378,7 @@ private:
     void update_manual_status() {
         if (!manual_pair_valid()) {
             manual_status_->setText(QStringLiteral(
-                "REFUSED — both legs must be named and an identical instrument/venue "
-                "cannot be compared with itself."));
+                "REFUSED — arbitrage here is cross-exchange: the same stock, one leg on NSE and one on BSE."));
             return;
         }
         manual_status_->setText(QStringLiteral(
@@ -301,6 +402,11 @@ private:
     QComboBox* venue_b_ = nullptr;
     QLabel* manual_status_ = nullptr;
     QLabel* dropped_ = nullptr;
+    QLabel* demo_state_ = nullptr;
+    QTableWidget* pairs_ = nullptr;
+    QTableWidget* held_ = nullptr;
+    QString root_;
+    int ticks_ = 0;
     QTimer refresh_;
 };
 
