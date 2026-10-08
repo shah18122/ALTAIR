@@ -315,7 +315,9 @@ private:
         }
     }
 
-    void send(const live::LiveOrderEvent& ev, const std::string& key, bool exit, std::int64_t qty) {
+    /// `key` is taken by value: callers pass a leg's own key, and the leg this
+    /// appends can move every leg (legs_ reallocates).
+    void send(const live::LiveOrderEvent& ev, std::string key, bool exit, std::int64_t qty) {
         const std::int64_t lot = ev.inst.lot > 0 ? ev.inst.lot : 1;
         const std::int64_t lots = qty / lot;
         if (lots <= 0) return;
@@ -351,9 +353,13 @@ private:
         if (!j) return;
         const oms::RouterJson* orders = j->get("orders");
         if (orders == nullptr || orders->kind != oms::RouterJson::Kind::Array) return;
+        // Exits that follow a fill are sent after the scan: a send appends a
+        // leg, which can move every leg under a loop still walking them.
+        std::vector<std::size_t> follow;
         for (const auto& o : orders->items) {
             const std::string id = o.str("intent");
-            for (auto& l : legs_) {
+            for (std::size_t i = 0; i < legs_.size(); ++i) {
+                RealLeg& l = legs_[i];
                 if (l.intent != id || l.final) continue;
                 const std::string st = o.str("status");
                 const auto filled = static_cast<std::int64_t>(o.num("filled"));
@@ -361,7 +367,7 @@ private:
                 if (filled > l.filled) {
                     apply_fill(l, filled - l.filled, avg > 0.0 ? avg : 0.0);
                     l.filled = filled;
-                    follow_out(l);
+                    follow.push_back(i);
                 }
                 if (avg > 0.0) l.avg = avg;
                 l.status = st;
@@ -369,6 +375,7 @@ private:
                 l.final = rs && oms::router_final(*rs);
             }
         }
+        for (const std::size_t i : follow) follow_out(legs_[i]);
     }
 
     /// An entry filled after its strategy already left the trade: out at once.
@@ -464,7 +471,31 @@ private:
     /// A netted pair whose legs are all final: the matched quantity is one
     /// round trip, settled by the clearing corporation; the rest of a leg that
     /// filled more goes back out. True when it handled the group.
-    bool settle_pair(const std::vector<RealLeg*>& ls, std::int64_t now_ns) {
+    /// An exit decided while legs are being walked: sent once the walk is done,
+    /// its quantity worked out again then (never more than is held by then).
+    struct QueuedExit { std::string model, key, reason; std::uint32_t token = 0; };
+
+    void send_queued(const std::vector<QueuedExit>& q, std::int64_t now_ns) {
+        for (const QueuedExit& x : q) {
+            const std::int64_t held = to_exit({x.model, x.token});
+            const auto in = insts_.find(x.token);
+            if (held == 0 || in == insts_.end() || engine_ == nullptr) continue;
+            const live::LiveTop t = engine_->top(x.token);
+            live::LiveOrderEvent ev;
+            ev.model = x.model;
+            ev.inst = in->second;
+            ev.side = held > 0 ? -1 : 1;
+            ev.qty = std::llabs(held);
+            ev.touch_paise = ev.side > 0 ? t.ask : t.bid;
+            ev.ns = now_ns;
+            ev.decided_ns = now_ns;
+            ev.exit = true;
+            ev.reason = x.reason;
+            send(ev, x.key, true, ev.qty);
+        }
+    }
+
+    bool settle_pair(const std::vector<RealLeg*>& ls, std::vector<QueuedExit>& out) {
         if (ls.size() != 2) return false;
         RealLeg* buy = ls[0]->side > 0 ? ls[0] : ls[1];
         RealLeg* sell = ls[0]->side > 0 ? ls[1] : ls[0];
@@ -497,30 +528,15 @@ private:
         note("netted: " + buy->symbol + " bought " + std::to_string(matched) + " on " + venue(buy->token) + ", sold on "
              + venue(sell->token) + "; the clearing corporation settles the pair");
         // A leg that filled more than the other: the difference goes back out.
-        for (RealLeg* l : {buy, sell}) {
-            if (l->filled <= matched) continue;
-            const std::int64_t q = to_exit({l->model, l->token});
-            const auto in = insts_.find(l->token);
-            if (q == 0 || in == insts_.end() || engine_ == nullptr) continue;
-            const live::LiveTop t = engine_->top(l->token);
-            live::LiveOrderEvent ev;
-            ev.model = l->model;
-            ev.inst = in->second;
-            ev.side = q > 0 ? -1 : 1;
-            ev.qty = std::llabs(q);
-            ev.touch_paise = ev.side > 0 ? t.ask : t.bid;
-            ev.ns = now_ns;
-            ev.decided_ns = now_ns;
-            ev.exit = true;
-            ev.reason = "legging: the part the other leg did not match";
-            send(ev, l->key, true, ev.qty);
-        }
+        for (RealLeg* l : {buy, sell})
+            if (l->filled > matched) out.push_back({l->model, l->key, "legging: the part the other leg did not match", l->token});
         return true;
     }
 
     /// Legging: a decision whose entries are all final but not all filled is
     /// flattened -- what filled goes back out at once.
     void settle(std::int64_t now_ns) {
+        std::vector<QueuedExit> out;   // sent after the walk: `groups` points into legs_
         std::map<std::pair<std::string, std::int64_t>, std::vector<RealLeg*>> groups;
         for (auto& l : legs_) if (!l.exit) groups[{l.model, l.decided_ns}].push_back(&l);
         for (auto& [g, ls] : groups) {
@@ -532,28 +548,13 @@ private:
                 all_filled = all_filled && full;
                 any_filled = any_filled || l->filled > 0;
             }
-            if (all_final && netted_.count(g) != 0 && settle_pair(ls, now_ns)) { flattened_.insert(g); continue; }
+            if (all_final && netted_.count(g) != 0 && settle_pair(ls, out)) { flattened_.insert(g); continue; }
             if (!all_final || all_filled || !any_filled) continue;
             flattened_.insert(g);
-            for (const RealLeg* l : ls) {
-                const std::int64_t q = to_exit({l->model, l->token});
-                const auto in = insts_.find(l->token);
-                if (q == 0 || in == insts_.end() || engine_ == nullptr) continue;
-                const live::LiveTop t = engine_->top(l->token);
-                live::LiveOrderEvent ev;
-                ev.model = l->model;
-                ev.inst = in->second;
-                ev.side = q > 0 ? -1 : 1;
-                ev.qty = std::llabs(q);
-                ev.touch_paise = ev.side > 0 ? t.ask : t.bid;
-                ev.ns = now_ns;
-                ev.decided_ns = now_ns;
-                ev.exit = true;
-                ev.reason = "legging: the other leg did not fill";
-                send(ev, l->key, true, ev.qty);
-            }
-            note("legging: " + g.first + "'s legs did not all fill; what filled was sent back out");
+            for (const RealLeg* l : ls) out.push_back({l->model, l->key, "legging: the other leg did not fill", l->token});
+            note("legging: " + g.first + "'s legs did not all fill; what filled is sent back out");
         }
+        send_queued(out, now_ns);
     }
 
     void note(const std::string& s) {
