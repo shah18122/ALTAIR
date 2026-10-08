@@ -21,10 +21,12 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QStandardItemModel>
+#include <QStyledItemDelegate>
 #include <QFile>
 #include <QGridLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QStringList>
 #include <QTextStream>
@@ -118,6 +120,33 @@ struct MasterScrip {
     return exchange;
 }
 
+/// Matches on a search text (symbol and company) but puts the symbol alone in
+/// the field: the popup lists "TATASTEEL  ·  TATA STEEL LIMITED", choosing it
+/// types TATASTEEL.
+class SymbolCompleter final : public QCompleter {
+public:
+    using QCompleter::QCompleter;
+    [[nodiscard]] QString pathFromIndex(const QModelIndex& index) const override {
+        return index.data(Qt::DisplayRole).toString();
+    }
+};
+
+/// Shows a row's search text (symbol and company) in the completer's list.
+class SearchTextDelegate final : public QStyledItemDelegate {
+public:
+    SearchTextDelegate(int role, QObject* parent) : QStyledItemDelegate(parent), role_(role) {}
+
+protected:
+    void initStyleOption(QStyleOptionViewItem* o, const QModelIndex& i) const override {
+        QStyledItemDelegate::initStyleOption(o, i);
+        const QString s = i.data(role_).toString();
+        if (!s.isEmpty()) o->text = s;
+    }
+
+private:
+    int role_;
+};
+
 /// The GETS loader: one row of dropdowns over a master.
 class AddScripBar final : public QWidget {
 public:
@@ -174,8 +203,20 @@ public:
         fill_symbols();
     }
 
-    /// The master to choose from (read once by the watch).
-    void set_master(const std::vector<MasterScrip>* master) { master_ = master; fill_symbols(); }
+    /// The master to choose from (read once by the watch). It is indexed here
+    /// by exchange, segment and symbol, so a keystroke in Symbol looks at that
+    /// symbol's contracts only -- not every row of the ~120k-row master.
+    void set_master(const std::vector<MasterScrip>* master) {
+        master_ = master;
+        index_.clear();
+        if (master_ != nullptr)
+            for (std::size_t i = 0; i < master_->size(); ++i) {
+                const MasterScrip& m = (*master_)[i];
+                const bool eq = m.type == QLatin1String("EQ");
+                index_[group_key(m.exchange, !eq)][eq ? m.symbol : m.name].push_back(i);
+            }
+        fill_symbols();
+    }
     /// Expiries before this day (YYYY-MM-DD) are not offered; today by default.
     void set_today(const QString& iso) { today_ = iso; fill_expiries(); }
 
@@ -283,31 +324,62 @@ private:
     }
     [[nodiscard]] bool fo() const { return segment_->currentText() == QLatin1String("FO"); }
     [[nodiscard]] QString mex() const { return master_exchange(exchange_->currentText(), segment_->currentText()); }
-    [[nodiscard]] bool in_segment(const MasterScrip& m) const {
-        if (m.exchange != mex()) return false;
-        return fo() ? m.type != QLatin1String("EQ") : m.type == QLatin1String("EQ");
-    }
-    [[nodiscard]] QString key_of(const MasterScrip& m) const { return fo() ? m.name : m.symbol; }
     [[nodiscard]] QString sym() const { return symbol_->currentText().trimmed().toUpper(); }
+    [[nodiscard]] static QString group_key(const QString& master_exchange, bool fo) {
+        return master_exchange + (fo ? QStringLiteral("|FO") : QStringLiteral("|E"));
+    }
+    /// Every symbol of the chosen exchange and segment, with its rows.
+    using SymbolRows = std::map<QString, std::vector<std::size_t>>;
+    [[nodiscard]] const SymbolRows* group() const {
+        const auto it = index_.find(group_key(mex(), fo()));
+        return it == index_.end() ? nullptr : &it->second;
+    }
+    /// The master rows of the chosen symbol (none while it names nothing).
+    template <class F> void each_row(F&& f) const {
+        if (master_ == nullptr) return;
+        const SymbolRows* g = group();
+        if (g == nullptr) return;
+        const auto it = g->find(sym());
+        if (it == g->end()) return;
+        for (const std::size_t i : it->second) f((*master_)[i]);
+    }
 
     void fire() {
         resolve();
         if (token_ != 0 && on_add) on_add(token_);
     }
     void fill_symbols() {
-        std::set<QString> names;
-        if (master_ != nullptr)
-            for (const auto& m : *master_) if (in_segment(m) && (m.expiry.isEmpty() || m.expiry >= today_)) names.insert(key_of(m));
-        QStringList list(names.begin(), names.end());
+        // An equity is found by its symbol or its company ("tata" finds
+        // TATAMOTORS and TATASTEEL; "reliance ind" finds RELIANCE); a symbol
+        // matches anywhere in it, not only from the start ("nifty" finds
+        // BANKNIFTY and FINNIFTY too). The list shows what each one is.
+        QStringList list, search;
+        if (const SymbolRows* g = group())
+            for (const auto& [key, rows] : *g) {
+                const MasterScrip* live = nullptr;
+                for (const std::size_t i : rows) {
+                    const MasterScrip& m = (*master_)[i];
+                    if (m.expiry.isEmpty() || m.expiry >= today_) { live = &m; break; }
+                }
+                if (live == nullptr) continue;
+                list << key;
+                search << (fo() || live->name.isEmpty() || live->name == key ? key : key + QStringLiteral("  ·  ") + live->name);
+            }
         const QString keep = symbol_->currentText();
         {
             const QSignalBlocker b(symbol_);
             symbol_->clear();
             symbol_->addItems(list);
-            auto* c = new QCompleter(list, symbol_);
+            for (int i = 0; i < list.size(); ++i) symbol_->setItemData(i, search[i], SearchRole);
+            auto* c = new SymbolCompleter(symbol_->model(), symbol_);
+            c->setCompletionRole(SearchRole);
             c->setCaseSensitivity(Qt::CaseInsensitive);
-            c->setFilterMode(Qt::MatchStartsWith);
+            c->setFilterMode(Qt::MatchContains);
+            c->setMaxVisibleItems(16);
+            c->popup()->setItemDelegate(new SearchTextDelegate(SearchRole, c->popup()));
             symbol_->setCompleter(c);
+            if (completer_ != nullptr) completer_->deleteLater();   // the one this replaced (a QPointer: Qt may have)
+            completer_ = c;
             const QString fallback = fo() ? (list.contains(QStringLiteral("NIFTY")) ? QStringLiteral("NIFTY")
                                              : list.contains(QStringLiteral("SENSEX")) ? QStringLiteral("SENSEX") : QString())
                                           : QString();
@@ -319,11 +391,10 @@ private:
         // FUT is the default; where the symbol has no future (BSE F&O lists
         // options only) FUT is greyed out and CE is chosen.
         bool has_fut = false, has_opt = false;
-        if (master_ != nullptr && fo())
-            for (const auto& m : *master_) {
-                if (!in_segment(m) || key_of(m) != sym() || m.expiry < today_) continue;
-                (m.type == QLatin1String("FUT") ? has_fut : has_opt) = true;
-            }
+        if (fo())
+            each_row([&](const MasterScrip& m) {
+                if (m.expiry >= today_) (m.type == QLatin1String("FUT") ? has_fut : has_opt) = true;
+            });
         {
             const QSignalBlocker b(type_);
             type_->setEnabled(fo());
@@ -342,11 +413,12 @@ private:
         std::set<QString> ex;
         const QString t = type_->currentText();
         // A master a few days old still lists contracts that have expired: not offered.
-        if (master_ != nullptr && fo())
-            for (const auto& m : *master_)
-                if (in_segment(m) && key_of(m) == sym() && !m.expiry.isEmpty() && m.expiry >= today_
+        if (fo())
+            each_row([&](const MasterScrip& m) {
+                if (!m.expiry.isEmpty() && m.expiry >= today_
                     && (t == QLatin1String("FUT") ? m.type == QLatin1String("FUT") : m.type != QLatin1String("FUT")))
                     ex.insert(m.expiry);
+            });
         const QString keep = expiry_->currentText();
         {
             const QSignalBlocker b(expiry_);
@@ -360,10 +432,10 @@ private:
     void fill_strikes() {
         std::set<double> st;
         const bool opt = fo() && type_->currentText() != QLatin1String("FUT");
-        if (master_ != nullptr && opt)
-            for (const auto& m : *master_)
-                if (in_segment(m) && key_of(m) == sym() && m.expiry == expiry_->currentText() && m.type == type_->currentText())
-                    st.insert(m.strike);
+        if (opt) {
+            const QString e = expiry_->currentText(), t = type_->currentText();
+            each_row([&](const MasterScrip& m) { if (m.expiry == e && m.type == t) st.insert(m.strike); });
+        }
         const QString keep = strike_->currentText();
         {
             const QSignalBlocker b(strike_);
@@ -377,27 +449,34 @@ private:
     }
     void resolve() {
         token_ = 0;
-        const bool opt = fo() && type_->currentText() != QLatin1String("FUT");
-        if (master_ != nullptr)
-            for (const auto& m : *master_) {
-                if (!in_segment(m) || key_of(m) != sym()) continue;
-                if (fo() && (m.expiry != expiry_->currentText() || m.type != type_->currentText())) continue;
-                if (opt && strike_text(m.strike) != strike_->currentText()) continue;
-                token_ = m.token;
-                resolved_->setText(QStringLiteral("<b>%1</b> <span style='color:#8B949E'>%2 · lot %3 · tick %4</span>")
-                                       .arg(m.symbol.toHtmlEscaped(), m.exchange)
-                                       .arg(m.lot)
-                                       .arg(QString::number(m.tick, 'f', 2)));
-                add_->setEnabled(true);
-                return;
-            }
+        const bool f = fo(), opt = f && type_->currentText() != QLatin1String("FUT");
+        const QString e = expiry_->currentText(), t = type_->currentText(), k = strike_->currentText();
+        const MasterScrip* hit = nullptr;
+        each_row([&](const MasterScrip& m) {
+            if (hit != nullptr) return;
+            if (f && (m.expiry != e || m.type != t)) return;
+            if (opt && strike_text(m.strike) != k) return;
+            hit = &m;
+        });
+        if (hit != nullptr) {
+            token_ = hit->token;
+            resolved_->setText(QStringLiteral("<b>%1</b> <span style='color:#8B949E'>%2 · lot %3 · tick %4</span>")
+                                   .arg(hit->symbol.toHtmlEscaped(), hit->exchange)
+                                   .arg(hit->lot)
+                                   .arg(QString::number(hit->tick, 'f', 2)));
+            add_->setEnabled(true);
+            return;
+        }
         resolved_->setText(master_ == nullptr || master_->empty()
                                ? QStringLiteral("<span style='color:#E3B341'>No instrument master (data/instruments.csv).</span>")
                                : QStringLiteral("<span style='color:#E3B341'>No such contract.</span>"));
         add_->setEnabled(false);
     }
 
+    static constexpr int SearchRole = Qt::UserRole + 7;
     const std::vector<MasterScrip>* master_ = nullptr;
+    std::map<QString, SymbolRows> index_;   ///< "NSE|E", "NFO|FO", ... -> symbol -> master rows
+    QPointer<QCompleter> completer_;
     QComboBox* exchange_ = nullptr;
     QComboBox* segment_ = nullptr;
     QComboBox* symbol_ = nullptr;

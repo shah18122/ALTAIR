@@ -756,7 +756,8 @@ public:
         under_->addItems(list);
         auto* c = new QCompleter(list, under_);
         c->setCaseSensitivity(Qt::CaseInsensitive);
-        c->setFilterMode(Qt::MatchStartsWith);
+        c->setFilterMode(Qt::MatchContains);   // "nifty" offers BANKNIFTY, FINNIFTY too
+        c->setMaxVisibleItems(16);
         under_->setCompleter(c);
         under_->setCurrentText(list.contains(keep) ? keep : QStringLiteral("NIFTY"));
     }
@@ -1821,6 +1822,22 @@ private:
                                 o.value(QStringLiteral("state")).toString())
                            .arg(o.value(QStringLiteral("error")).toString().isEmpty()
                                     ? QString() : QStringLiteral(" · ") + o.value(QStringLiteral("error")).toString().toHtmlEscaped());
+            // How much of what is subscribed has prices and books (every 30 s).
+            const int subs = o.value(QStringLiteral("subscribed")).toInt();
+            if (age < 120 && subs > 0) {
+                const int priced = o.value(QStringLiteral("priced")).toInt();
+                feed += QStringLiteral(" &nbsp; <span style='color:%1'>prices %2/%3 · 50-level books %4</span>")
+                            .arg(priced < subs ? QStringLiteral("#E3B341") : muted)
+                            .arg(priced).arg(subs).arg(o.value(QStringLiteral("depth50")).toInt());
+                const QJsonArray none = o.value(QStringLiteral("no_price")).toArray();
+                if (!none.isEmpty()) {
+                    QStringList names;
+                    for (int i = 0; i < none.size() && i < 4; ++i) names << none.at(i).toString().toHtmlEscaped();
+                    feed += QStringLiteral(" <span style='color:#E3B341'>no price yet: %1%2 (data/live/price_service.log)</span>")
+                                .arg(names.join(QStringLiteral(", ")),
+                                     subs - priced > 4 ? QStringLiteral(" +%1").arg(subs - priced - 4) : QString());
+                }
+            }
             // Scrips FYERS refused by name: their rows stay empty, so say which.
             const QJsonArray unknown = o.value(QStringLiteral("unknown")).toArray();
             if (age < 120 && !unknown.isEmpty()) {
@@ -1852,8 +1869,24 @@ private:
         feed_ = new QProcess(this);
         feed_->setWorkingDirectory(root_);
         feed_->setProcessChannelMode(QProcess::MergedChannels);
-        connect(feed_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
-            const QString out = QString::fromLocal8Bit(feed_->readAll()).trimmed();
+        // Everything the feed says goes to data/live/price_service.log (the
+        // previous run's to price_service.prev.log), not into memory for the
+        // whole day: what it subscribed, what FYERS refused, the 30-second
+        // price report. Send that file when prices are missing.
+        const QString log = live_path("price_service.log");
+        QDir().mkpath(QFileInfo(log).absolutePath());
+        QFile::remove(live_path("price_service.prev.log"));
+        QFile::rename(log, live_path("price_service.prev.log"));
+        feed_->setStandardOutputFile(log, QIODevice::Truncate);
+        connect(feed_, &QProcess::finished, this, [this, log](int code, QProcess::ExitStatus) {
+            QString out;
+            {
+                QFile f(log);
+                if (f.open(QIODevice::ReadOnly)) {
+                    if (f.size() > 8192) f.seek(f.size() - 8192);
+                    out = QString::fromLocal8Bit(f.readAll()).trimmed();
+                }
+            }
             feed_->deleteLater();
             feed_ = nullptr;
             const bool was_sim = sim_running_;

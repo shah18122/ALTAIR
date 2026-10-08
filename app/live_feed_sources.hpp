@@ -246,6 +246,10 @@ struct FeedStatus {
     std::uint64_t trades = 0, quotes = 0, books = 0, reconnects = 0;
     std::int64_t engine_ns = 0;
     std::vector<std::string> unknown;   ///< names the feed refused (the first 40 are written)
+    /// Every 30 s: instruments subscribed, with a price, with a book, with a
+    /// fresh 50-level book; and the first ones with no price yet.
+    std::size_t subscribed = 0, priced = 0, booked = 0, depth50 = 0;
+    std::vector<std::string> no_price;
 };
 
 inline void write_status(const std::string& path, const FeedStatus& s) {
@@ -265,6 +269,13 @@ inline void write_status(const std::string& path, const FeedStatus& s) {
         for (std::size_t i = 0; i < s.unknown.size() && i < 40; ++i) {
             f << (i ? ", \"" : "\"");
             for (const char c : s.unknown[i]) if (c != '"' && c != '\\' && static_cast<unsigned char>(c) >= 0x20) f << c;
+            f << '"';
+        }
+        f << "],\n  \"subscribed\": " << s.subscribed << ",\n  \"priced\": " << s.priced << ",\n  \"booked\": " << s.booked
+          << ",\n  \"depth50\": " << s.depth50 << ",\n  \"no_price\": [";
+        for (std::size_t i = 0; i < s.no_price.size() && i < 20; ++i) {
+            f << (i ? ", \"" : "\"");
+            for (const char c : s.no_price[i]) if (c != '"' && c != '\\' && static_cast<unsigned char>(c) >= 0x20) f << c;
             f << '"';
         }
         f << "]\n}\n";

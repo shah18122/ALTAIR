@@ -572,7 +572,14 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     std::unordered_map<std::string, std::size_t> index_of;
     for (std::size_t i = 0; i < u.size(); ++i) { index_of.emplace(u[i].fyers, i); }
     hsm::HsmSession decoder{false};
-    std::vector<std::string> topics;
+    // Symbol (sf/if) and depth (dp) topics are subscribed in SEPARATE frames,
+    // symbols first and depth a second later -- as the official SDK does (one
+    // data type per subscribe call, half a second apart). Mixing a scrip's sf
+    // and dp topics in one frame is something the SDK never does, and with it
+    // futures and stocks showed a book but no price on a live FYERS feed; the
+    // 30-second report below names any instrument that still has no price.
+    std::vector<std::string> sym_topics, depth_topics;
+    std::vector<std::uint8_t> subscribed(u.size(), 0);   // cookie -> 1 when it has a topic
     {
         std::vector<std::string> symbols;
         symbols.reserve(u.size());
@@ -601,11 +608,12 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
                 auto topic = hsm::topic_for(symbol, fytoken, type);
                 if (topic.empty()) { continue; }
                 decoder.map_topic(topic, symbol, cookie);
-                topics.push_back(std::move(topic));
+                (pass == 0 ? sym_topics : depth_topics).push_back(std::move(topic));
+                subscribed[it->second] = 1;
             }
         }
     }
-    if (topics.empty()) {
+    if (sym_topics.empty() && depth_topics.empty()) {
         st.state = "refused";
         st.error = "nothing subscribable";
         altair::live_sources::write_status(status_path, st);
@@ -613,17 +621,24 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         return 3;
     }
     const std::string source{hsm::kDefaultSource};
-    std::vector<hsm::Bytes> subscribe;
-    for (std::size_t i = 0; i < topics.size(); i += hsm::kSubscribeChunk) {
-        // RULE 11: chunking, not truncation -- every topic is sent, kSubscribeChunk at a time.
-        const std::size_t n = topics.size() - i < hsm::kSubscribeChunk ? topics.size() - i : hsm::kSubscribeChunk;
-        const auto frame = hsm::topics_frame(true, std::span<const std::string>{topics.data() + i, n},
-                                             hsm::kDefaultChannel, session.client.size() + 1 + session.access.size(),
-                                             source.size());
-        if (!frame) { std::printf("  %s\n", hsm::error_text(frame.error())); return 3; }
-        subscribe.push_back(*frame);
-    }
-    std::printf("  subscribing %zu topic(s) for %zu instrument(s)\n", topics.size(), u.size());
+    // RULE 11: chunking, not truncation -- every topic is sent, kSubscribeChunk at a time.
+    const auto make_frames = [&](const std::vector<std::string>& t, std::vector<hsm::Bytes>& out) -> bool {
+        for (std::size_t i = 0; i < t.size(); i += hsm::kSubscribeChunk) {
+            const std::size_t n = t.size() - i < hsm::kSubscribeChunk ? t.size() - i : hsm::kSubscribeChunk;
+            const auto frame = hsm::topics_frame(true, std::span<const std::string>{t.data() + i, n},
+                                                 hsm::kDefaultChannel, session.client.size() + 1 + session.access.size(),
+                                                 source.size());
+            if (!frame) { std::printf("  %s\n", hsm::error_text(frame.error())); return false; }
+            out.push_back(*frame);
+        }
+        return true;
+    };
+    std::vector<hsm::Bytes> subscribe, subscribe_depth;   // all of them again after a reconnect
+    if (!make_frames(sym_topics, subscribe) || !make_frames(depth_topics, subscribe_depth)) return 3;
+    std::vector<hsm::Bytes> depth_queue;                  // depth frames waiting for their second
+    auto depth_due = std::chrono::steady_clock::now();
+    std::printf("  subscribing %zu symbol and %zu depth topic(s) for %zu instrument(s)\n", sym_topics.size(),
+                depth_topics.size(), u.size());
     std::fflush(stdout);
 
     TbtFeed tbt(u.size());
@@ -637,6 +652,12 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     // reference handed to the decoder's callback never moves.
     std::deque<altair::live::LiveInstrument> extra;
     std::deque<altair::fyers_frames::LastTrade> extra_last;
+    // What each instrument has had: bit 0 a price (trade or quote), bit 1 a book.
+    std::vector<std::uint8_t> seen(u.size(), 0);
+    std::deque<std::uint8_t> extra_seen;
+    std::uint64_t n_sym = 0, n_depth = 0;   // HSM updates by kind
+    auto streaming_since = std::chrono::steady_clock::time_point{};
+    auto last_report = std::chrono::steady_clock::now();
     // Symbol-token lookups for them, done off the socket thread.
     struct Looked { altair::live::LiveInstrument in; std::string fytoken; };
     std::mutex looked_mu;
@@ -654,6 +675,10 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         const std::int64_t recv = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         if (!altair::fyers_frames::to_frames(up, token, lt, recv, f)) { return; }
+        auto& sn = base ? seen[up.cookie] : extra_seen[up.cookie - u.size()];
+        if (f.quote || f.trade) sn |= 1u;
+        if (f.book) sn |= 2u;
+        ++(up.topic == hsm::HsmTopic::Depth ? n_depth : n_sym);
         if (f.quote) { bus.quote(f.quote_p, f.quote_ns); }
         if (f.trade) { bus.trade(f.price, f.trade_ns); st.engine_ns = f.trade_ns; }
         // The 50-level book wins while it is fresh: no flicker back to five levels.
@@ -669,7 +694,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
             refused.clear();
         }
         if (ready.empty()) { return; }
-        std::vector<std::string> fresh;
+        std::vector<std::string> fresh_sym, fresh_depth;
         for (auto& l : ready) {
             const auto cookie = static_cast<std::uint32_t>(u.size() + extra.size());
             for (int pass = 0; pass < (l.in.depth ? 2 : 1); ++pass) {
@@ -677,20 +702,20 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
                 auto topic = hsm::topic_for(l.in.fyers, l.fytoken, type);
                 if (topic.empty()) { continue; }
                 decoder.map_topic(topic, l.in.fyers, cookie);
-                fresh.push_back(std::move(topic));
+                (pass == 0 ? fresh_sym : fresh_depth).push_back(std::move(topic));
             }
             std::printf("  streaming %s (added while running)\n", l.in.symbol.c_str());
             extra.push_back(std::move(l.in));
             extra_last.emplace_back();
+            extra_seen.push_back(0);
         }
-        for (std::size_t i = 0; i < fresh.size(); i += hsm::kSubscribeChunk) {
-            const std::size_t n = fresh.size() - i < hsm::kSubscribeChunk ? fresh.size() - i : hsm::kSubscribeChunk;
-            const auto frame = hsm::topics_frame(true, std::span<const std::string>{fresh.data() + i, n},
-                                                 hsm::kDefaultChannel, session.client.size() + 1 + session.access.size(),
-                                                 hsm::kDefaultSource.size());
-            if (!frame) { continue; }
-            replies.push_back(*frame);
-            subscribe.push_back(*frame);   // and again after any reconnect
+        // Symbols now, depth a second later (see sym_topics); both again after any reconnect.
+        std::vector<hsm::Bytes> fs, fd;
+        if (make_frames(fresh_sym, fs))
+            for (auto& fr : fs) { replies.push_back(fr); subscribe.push_back(std::move(fr)); }
+        if (make_frames(fresh_depth, fd)) {
+            for (auto& fr : fd) { depth_queue.push_back(fr); subscribe_depth.push_back(std::move(fr)); }
+            depth_due = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         }
         st.instruments = u.size() + extra.size();
         std::fflush(stdout);
@@ -716,9 +741,12 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         const auto r = decoder.on_frame(p, n, emit);
         if (r.ack) { replies.push_back(r.ack_bytes); }
         if (r.event == hsm::HsmEvent::AuthOk) {
-            std::printf("  authenticated; subscribing\n");
+            std::printf("  authenticated; subscribing symbols, then depth a second later\n");
             std::fflush(stdout);
             for (const auto& fr : subscribe) { replies.push_back(fr); }
+            depth_queue = subscribe_depth;
+            depth_due = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            streaming_since = std::chrono::steady_clock::now();
             st.state = "streaming";
         } else if (r.event == hsm::HsmEvent::AuthFailed) {
             auth_rejected = true;
@@ -726,6 +754,38 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
         }
         if (st.state == "streaming") { subscribe_looked(replies); }
         const auto now = std::chrono::steady_clock::now();
+        if (!depth_queue.empty() && now >= depth_due) {
+            for (auto& fr : depth_queue) replies.push_back(std::move(fr));
+            depth_queue.clear();
+        }
+        // Every 30 s: which instruments have prices and books, and which have
+        // none yet (named, so a blank row has a reason in the log and status).
+        if (st.state == "streaming" && now - last_report > std::chrono::seconds(30)
+            && now - streaming_since > std::chrono::seconds(20)) {
+            last_report = now;
+            std::size_t subs = 0, priced = 0, want_book = 0, booked = 0, fresh50 = 0;
+            st.no_price.clear();
+            const auto look = [&](const altair::live::LiveInstrument& in, std::uint8_t sn, bool sub, bool tbt_fresh) {
+                if (!sub) return;
+                ++subs;
+                if (sn & 1u) ++priced;
+                else if (st.no_price.size() < 20) st.no_price.push_back(in.fyers);
+                if (in.depth) { ++want_book; if (sn & 2u) ++booked; if (tbt_fresh) ++fresh50; }
+            };
+            for (std::size_t i = 0; i < u.size(); ++i) look(u[i], seen[i], subscribed[i] != 0, tbt.fresh(i));
+            for (std::size_t i = 0; i < extra.size(); ++i) look(extra[i], extra_seen[i], true, false);
+            st.subscribed = subs; st.priced = priced; st.booked = booked; st.depth50 = fresh50;
+            std::printf("  prices for %zu of %zu instrument(s); books %zu of %zu (50-level fresh: %zu); "
+                        "updates: symbol %llu, depth %llu\n", priced, subs, booked, want_book, fresh50,
+                        static_cast<unsigned long long>(n_sym), static_cast<unsigned long long>(n_depth));
+            if (!st.no_price.empty()) {
+                std::string names;
+                for (std::size_t k = 0; k < st.no_price.size() && k < 8; ++k) names += (k ? ", " : "") + st.no_price[k];
+                std::printf("    no price yet: %s%s\n", names.c_str(),
+                            subs - priced > 8 ? (" (+" + std::to_string(subs - priced - 8) + ")").c_str() : "");
+            }
+            std::fflush(stdout);
+        }
         if (now - last_status > std::chrono::seconds(2)) {
             last_status = now;
             st.clients = bus.clients();

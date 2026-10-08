@@ -91,6 +91,24 @@ Credentials:
   wrong for scrips outside the NSE EQ series and BSE group A, about 18,500 of
   21,800: FYERS refused them and their rows stayed empty. A name FYERS still
   refuses is named on the status line ("FYERS does not know …").
+- **The book shows five levels from the quote feed and fifty from TBT.**
+  FYERS's depth topic carries exactly five levels (30 fields). The service
+  once read it as if it had fifty, so levels six onward showed ask prices as
+  bids and sizes as prices; it now reads five, and levels 6–50 come only from
+  the 50-level (TBT) feed while that is fresh.
+- **Prices and books, every 30 s.** The price service subscribes each
+  instrument's price topic first and its depth topic a second later, in
+  separate frames, as FYERS's own SDK does. Every 30 s it logs how many
+  instruments have a price, how many have a book and how many have a fresh
+  50-level book, and names the first ones with no price yet. The status line
+  shows the same ("prices 182/190 · 50-level books 6", then "no price yet:
+  …"). Everything the service prints goes to `data/live/price_service.log`
+  (the previous run's to `price_service.prev.log`): send it when prices are
+  missing.
+- **Symbol search** matches anywhere in a symbol ("nifty" offers BANKNIFTY and
+  FINNIFTY too) and, for equities, the company name ("tata" offers TATAMOTORS
+  and TATASTEEL; the list shows both). The loader looks only at the chosen
+  symbol's contracts, not the whole master, so typing does not stall.
 - **Watchlists are a dialog: Ctrl+S.** Load, Save, Save as, Delete, Import,
   Export. The status line names the active list.
 - **The message bar** (bottom, four lines, newest last) carries every order
@@ -484,7 +502,8 @@ holds:
 | File | Written by | What |
 |---|---|---|
 | `universe.csv` | price service | what streams, and under which token |
-| `feed_status.json` | price service | source (fyers, kite or sim), state, counts, last error |
+| `feed_status.json` | price service | source (fyers, kite or sim), state, counts, last error; every 30 s instruments subscribed, priced, booked, with a fresh 50-level book, and the first with no price |
+| `price_service.log` | Terminal (the feed's output) | everything the price service prints this run; `price_service.prev.log` the run before |
 | `watchlist.csv` | Terminal (Insert / ＋ Add scrip) | scrips added to the watch, by Kite token; the price service streams them |
 | `watch_removed.csv` | Terminal (Delete) | scrips removed from the watch |
 | `paper/manual_orders.csv` | Terminal | every paper order and each change of state (+ / − orders) |

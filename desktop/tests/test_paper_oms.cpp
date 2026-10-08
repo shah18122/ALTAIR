@@ -9,6 +9,8 @@
 #include "../paper_windows.hpp"
 
 #include <QApplication>
+#include <QCompleter>
+#include <QComboBox>
 #include <QFile>
 #include <QKeyEvent>
 #include <QTemporaryDir>
@@ -316,6 +318,18 @@ int main(int argc, char** argv) {
         add.choose(QStringLiteral("NSE"), QStringLiteral("FO"), QStringLiteral("NIFTY"), QStringLiteral("2026-10-27"),
                    QStringLiteral("CE"), QStringLiteral("99999"));
         check(add.token() == 0, "choices naming no contract cannot be added");
+        // Search: an equity by its company, any symbol by any part of it.
+        auto* symbol_box = add.findChild<QComboBox*>(QStringLiteral("addSymbol"));
+        add.choose(QStringLiteral("NSE"), QStringLiteral("E"), QStringLiteral("SBIN"));
+        QCompleter* comp = symbol_box->completer();
+        comp->setCompletionPrefix(QStringLiteral("bank of"));
+        check(comp->completionCount() == 1 && comp->currentCompletion() == QStringLiteral("SBIN"),
+              "typing the company ('bank of') offers SBIN, and choosing it types the symbol alone");
+        add.choose(QStringLiteral("NSE"), QStringLiteral("FO"), QStringLiteral("NIFTY"));
+        comp = symbol_box->completer();
+        comp->setCompletionPrefix(QStringLiteral("ifty"));
+        check(comp->completionCount() == 1 && comp->currentCompletion() == QStringLiteral("NIFTY"),
+              "a symbol matches on any part of it, not only its start");
         quint32 added = 0;
         add.on_add = [&added](quint32 t) { added = t; };
         add.choose(QStringLiteral("NSE"), QStringLiteral("E"), QStringLiteral("SBIN"));

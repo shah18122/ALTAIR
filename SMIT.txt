@@ -1057,3 +1057,27 @@ THRESHOLD
   Your "threshold" folder is not in the repository or on GitHub: push it (or
   copy it into the project and commit) and its demo P&L is built the same
   way -- paper only, never real orders.
+
+26. ORDER BOOK, FYERS SUBSCRIPTIONS, PRICE REPORT, SEARCH -- 2026-10-08
+
+ORDER BOOK (fixed)
+  FYERS's depth topic carries five levels. The service read it as fifty, so
+  levels 6 onward showed ask prices as bids and sizes as prices -- the
+  garbage under the top five. It reads five now; levels 6-50 come from the
+  50-level (TBT) feed only, while it is fresh.
+
+F&O AND STOCK PRICES (changed; your next live run confirms it)
+  Price topics are subscribed first, depth a second later, in separate
+  frames, as FYERS's own SDK does; before, both went in one frame and
+  futures and stocks showed a book with no price. Every 30 s the service
+  logs "prices for X of Y instrument(s); books ...; 50-level fresh: N" and
+  names the first instruments with no price. The status line shows the same.
+  Everything it prints goes to data/live/price_service.log -- send that file
+  if a row still has no price. The models trade on these prices: a scrip
+  with no price gives its model nothing to act on.
+
+SEARCH
+  Symbol search matches anywhere ("nifty" offers BANKNIFTY, FINNIFTY) and,
+  for equities, the company ("tata" offers TATAMOTORS, TATASTEEL). The
+  loader looks at the chosen symbol's contracts only, not all ~120,000 rows
+  of the master, on every keystroke.
