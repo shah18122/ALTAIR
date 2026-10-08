@@ -76,6 +76,7 @@ qt_add_executable(altair_desktop
     fyers_link.hpp
     broker_page.hpp
     demo_trading_page.hpp
+    threshold_page.hpp
     arbitrage_workspace.hpp
     model_status.hpp
     watchlist.hpp
@@ -974,6 +975,8 @@ if(ALTAIR_BUILD_TESTS)
     qt_add_executable(altair_demo_trading_test
         tests/test_demo_trading.cpp
         demo_trading_page.hpp
+        threshold_page.hpp
+        strategy_record.hpp
         helper_process.hpp
         theme.hpp)
     target_link_libraries(altair_demo_trading_test PRIVATE

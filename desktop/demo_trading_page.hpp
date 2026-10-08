@@ -460,6 +460,9 @@ public:
     [[nodiscard]] QComboBox* rule_filter() const { return rule_; }
     [[nodiscard]] int shown_summary_rows() const { return summary_filter_->rowCount(); }
     [[nodiscard]] int vol_premium_trades() const { return vrp_trades_->rowCount(); }
+    /// What a double-click on a trade shows: every column, the expense heads
+    /// summed, gross walked to net (the Threshold page uses it too).
+    [[nodiscard]] static QString trade_detail_html(const QAbstractItemModel* m, int row) { return row_detail_html(m, row); }
     [[nodiscard]] int stat_arb_trades() const { return sa_trades_->rowCount(); }
 
 private:

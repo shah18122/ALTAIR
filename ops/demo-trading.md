@@ -447,3 +447,107 @@ latest close. It replays the whole walk-forward, which is deterministic and
 takes about 10 s, so each new session is one more day traded. Limits:
 - futures are priced on the index close, without the basis;
 - a trip open at the end of the data is closed at the last close.
+
+## Threshold strategies (your `threshold_strategy/` folder)
+
+Strategies → **Threshold**. Paper only: nothing here can place an order.
+**Run altair_threshold** (`app/threshold_main.cpp`, rules in
+`strategies/threshold.hpp`) re-runs both on the dataset in about a second.
+It writes `data/verified/threshold/`.
+
+Rupees use one lot at today's lot sizes (BANKNIFTY 30, NIFTY 65, from
+`data/instruments.csv`):
+- Index levels stand in for the near future, since the dataset has no
+  continuous futures series; the basis is left out.
+- Every fill pays the expenses of `config/charges.toml`.
+- A holding across a month end pays a roll.
+
+### 2-day high / low breakout, BANKNIFTY (`2D-H-L.xlsx`)
+
+The rules, from the workbook's Assumptions sheet:
+- **Entry:** long above the higher of the previous two highs, short below the
+  lower of the previous two lows. It fills at that level, or at the open on a
+  gap.
+- **Stops:** a stop is fixed at entry at the previous day's low (long) or high
+  (short). A trailing stop sits at each previous day's low or high from the
+  day after entry. Whichever stop is nearer fills.
+- **Flip:** on an exit day the opposite breakout reverses the position.
+
+**Checked against the workbook's own trade log**, trade by trade.
+`research/tools/threshold_extract.py` exports the log to
+`threshold_strategy/extracted/`.
+- On the workbook's own sessions, 1,454 of its 1,467 trades enter on the same
+  day and side.
+- 1,438 of those also leave on the same day for the same reason.
+- The rest differ where the bars differ: our daily candles against the
+  workbook's source, and special sessions or missing days that only one of
+  the two has.
+
+2007-09-17 to 2026-09-24, one lot:
+
+| Trades | Gross | Expenses | Net | Net win rate | Profit factor | Break-even slippage |
+|---|---|---|---|---|---|---|
+| 1,534 | ₹15.49 lakh (51,620 pts) | ₹4.50 lakh | ₹10.98 lakh | 39.6 % | 1.15 | 11.9 pts a fill |
+
+Two things to read before trusting the net:
+- **The workbook's own cost turns it negative.** At 0.15 % of turnover a round
+  trip, its after-cost result is −65,176 points. Real futures expenses are
+  about a seventh of that.
+- **Slippage would take the net away.** Stops here fill exactly at their
+  level. Slippage of about 12 points a fill, on entry and exit, would take the
+  whole net.
+
+### BANKNIFTY / NIFTY ratio z-score (`BNFNF`)
+
+The rules, from the note:
+- **Signal:** the ratio's z-score over 120 sessions.
+- **Positions:** short the ratio (short BANKNIFTY, long NIFTY) above +1; buy
+  it below −1; flat inside 0.25.
+- **Timing:** a position formed at a close earns to the next close.
+
+The table compares the note's own figures with this run over the same
+period. Both use the note's measure: equal notional, net of 6 bps a change.
+
+| To 2026-06-08 | Total | Sharpe | Max drawdown | In market | Trades | Won |
+|---|---|---|---|---|---|---|
+| The note | −2.3 % | 0.04 | −31.0 % | 71 % | 71 | 72 % |
+| This run | +9.1 % | 0.10 | −27.8 % | 71 % | 77 | 74 % |
+
+The note used Yahoo Finance closes, and ours differ from them.
+
+In rupees, to the last session (one lot of BANKNIFTY against the NIFTY lots
+nearest equal notional):
+- 79 trades;
+- net ₹0.95 lakh after ₹1.26 lakh of expenses.
+
+The note's own conclusion stands: there is no systematic edge worth pressing.
+
+### TradingView backtests (`BACKTEST/`)
+
+These are shown as TradingView wrote them, from
+`threshold_strategy/extracted/tradingview_backtests.csv`. They are not
+re-run here.
+
+Read them with care:
+- **Most trades start and finish inside one bar.** 17,775 of the 19,994
+  trades (89 %) across the 36 exports enter and leave inside one 15-minute
+  bar.
+- **Those trades rest on TradingView's guess.** Bar magnifier is off, so
+  TradingView does not know whether a bar's high or low came first.
+- **No slippage.** Slippage is set to 0 ticks.
+
+Re-run them with the bar magnifier on and slippage set before relying on the
+71–86 % win rates.
+
+### Waiting for rules
+
+These are not in the folder yet; send the rules (or the Pine scripts) and
+they are built the same way:
+- Short Straddle
+- Nifty CE Buy on High Close
+- BNF CE Buy
+- Monthly SIP with Expiry
+- BNF
+- Wed + Mon Both
+- Tue + Thursday Both
+- Delta Hedge using Option

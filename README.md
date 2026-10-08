@@ -257,6 +257,14 @@ Demo Trading** page runs both and shows trades, per-model totals and equity.
   - Walk-forward 2016-2026 it nets ₹5.65 lakh on NIFTY. That is less than
     buy and hold (₹9.74 lakh): the longs earn and the shorts lose.
   - See `ops/demo-trading.md`.
+- `altair_threshold`: your `threshold_strategy/` strategies, on paper (Strategies → Threshold).
+  - The 2-day high/low BANKNIFTY breakout matches the workbook's own trade log on 1,454 of its 1,467 trades.
+  - It nets ₹10.98 lakh over 2007-2026 on one lot with real futures expenses. Slippage of about 12 points
+    a fill would take that away.
+  - The BANKNIFTY/NIFTY ratio z-score is close to its note: no real edge.
+  - Your TradingView results are shown as they are, with a warning: 89 % of their trades open and close
+    inside one bar.
+  - See `ops/demo-trading.md`.
 - `altair_depth_study`: the HFT question asked honestly. It tests whether
   order flow imbalance, imbalance and microprice in recorded FYERS depth
   (`ops/record_depth.ps1`, `altair_fyers_ticker --stamp`) predict the next

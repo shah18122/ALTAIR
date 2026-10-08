@@ -1,8 +1,10 @@
 // Tests for desktop/demo_trading_page.hpp -- fixtures only; no CLI is run.
 
 #include "../demo_trading_page.hpp"
+#include "../threshold_page.hpp"
 
 #include <QApplication>
+#include <QTableView>
 #include <QTextBrowser>
 #include <QDir>
 #include <QFile>
@@ -164,6 +166,40 @@ void test_empty(const QString& root) {
           "no output yet: says how to make it rather than showing zeros");
 }
 
+void test_threshold(const QString& root) {
+    const QString o = root + QStringLiteral("/data/verified/threshold/");
+    write(o + "breakout_trades.csv",
+          "n,side,entry_date,exit_date,days,entry,stop,exit,exit_reason,flip,mfe_pts,mae_pts,points,qty,rolls,gross_pnl,"
+          "brokerage,stt,exchange_txn,sebi,stamp,ipft,gst,expenses,net_pnl,workbook_cost_pts,workbook_net_pts\n"
+          "1,Long,2024-01-02,2024-01-04,2,47000.00,46800.00,47300.00,Reversal,,400.00,50.00,300.00,30,0,9000.00,"
+          "40.00,282.00,25.00,1.00,21.00,1.00,12.00,382.00,8618.00,141.45,158.55\n"
+          "2,Short,2024-01-04,2024-01-05,1,47300.00,47500.00,47450.00,Stop,Yes,10.00,160.00,-150.00,30,0,-4500.00,"
+          "40.00,284.00,25.00,1.00,21.00,1.00,12.00,384.00,-4884.00,142.13,-292.13\n");
+    write(o + "ratio_trades.csv",
+          "n,side,entry_date,exit_date,days,gross_pnl,expenses,net_pnl,open\n"
+          "1,Short ratio (short BANKNIFTY; long NIFTY),2024-02-01,2024-03-15,30,12000.00,900.00,11100.00,\n");
+    write(o + "summary.txt", "THRESHOLD STRATEGIES -- paper only\n1. PREV-2-DAY BREAKOUT\n");
+    write(root + "/threshold_strategy/extracted/tradingview_backtests.csv",
+          "symbol,timeframe,total_trades,net_profit_inr,trades_listed,same_bar_trades,file\n"
+          "NSE:SBIN1!,15 minutes,472,3512831.33,472,447,x.xlsx\n");
+    ThresholdPage page(root);
+    check(page.breakout_trades() == 2 && page.ratio_trades() == 1 && page.tradingview_rows() == 1,
+          "Threshold: the breakout and ratio trades and the TradingView results load");
+    check(page.how_text().contains(QStringLiteral("PREV-2-DAY BREAKOUT")) && page.how_text().contains(QStringLiteral("Waiting for rules")),
+          "how they work: the rules, the latest run, and what waits for rules");
+    auto* tv_note = page.findChild<QLabel*>(QStringLiteral("tradingviewNote"));
+    check(tv_note != nullptr && tv_note->text().contains(QStringLiteral("447 of 472 trades (95 %)")),
+          "the TradingView tab says how many trades open and close inside one bar");
+    page.tabs()->setCurrentIndex(1);
+    check(page.stats_text().contains(QStringLiteral("Sharpe")) && page.stats_text().contains(QStringLiteral("2 trip")),
+          "the breakout tab's ratios: win rate, Sharpe, Sortino over its trades");
+    check(DemoTradingPage::trade_detail_html(
+              qobject_cast<QTableView*>(page.tabs()->widget(1))->model(), 0).contains(QStringLiteral("Expenses</b> = brokerage")),
+          "double-click detail walks a breakout trade's expense heads, gross to net");
+    page.tabs()->setCurrentIndex(0);
+    check(page.stats_text().isEmpty(), "no trade ratios over the OHL record tab");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -173,6 +209,8 @@ int main(int argc, char** argv) {
     QTemporaryDir full, empty;
     test_page(full.path());
     test_empty(empty.path());
+    QTemporaryDir thr;
+    test_threshold(thr.path());
     std::printf("Demo trading page: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

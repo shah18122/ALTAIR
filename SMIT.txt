@@ -1081,3 +1081,37 @@ SEARCH
   for equities, the company ("tata" offers TATAMOTORS, TATASTEEL). The
   loader looks at the chosen symbol's contracts only, not all ~120,000 rows
   of the master, on every keystroke.
+
+27. THRESHOLD STRATEGIES, ON PAPER -- 2026-10-08
+  (Your threshold_strategy/ folder is in now; this replaces the note at the
+  end of section 25.)
+  Strategies -> Threshold -> Run altair_threshold. Paper only. One lot at
+  today's lot sizes, every fill and month-end roll paying real futures
+  expenses (config/charges.toml); index levels stand in for the future.
+
+  2-DAY HIGH / LOW BREAKOUT, BANKNIFTY (2D-H-L.xlsx), exactly its rules
+    Checked against your workbook's own trade log: on its sessions 1,454 of
+    its 1,467 trades enter the same day and side, 1,438 also leave the same
+    day for the same reason; the rest differ where the data differs.
+    2007-09-17 to 2026-09-24: 1,534 trades, gross Rs 15.49 lakh, expenses
+    Rs 4.50 lakh, NET Rs 10.98 lakh, win rate 39.6 %, profit factor 1.15.
+    Stops fill exactly at their level here: about 12 points of slippage a
+    fill would take the whole net away. Your workbook's own 0.15 % cost
+    makes it -65,176 points; real futures expenses are about a seventh of
+    that.
+
+  BANKNIFTY / NIFTY RATIO Z-SCORE (BNFNF)
+    Close to the note (77 trades vs 71, Sharpe 0.10 vs 0.04, in the market
+    71 %); in rupees 79 trades, net Rs 0.95 lakh. No real edge, as the note
+    says.
+
+  TRADINGVIEW BACKTESTS -- shown as they are, with a warning
+    17,775 of their 19,994 trades (89 %) enter and leave inside one
+    15-minute bar, with bar magnifier off and slippage 0: inside a bar
+    TradingView guesses whether the high or the low came first, so the
+    71-86 % win rates are likely flattered. Re-run them with bar magnifier
+    on and slippage set.
+
+  WAITING FOR RULES: Short Straddle, Nifty CE Buy on High Close, BNF CE Buy,
+  Monthly SIP with Expiry, BNF, Wed + Mon Both, Tue + Thursday Both, Delta
+  Hedge using Option. Send the rules or Pine scripts.

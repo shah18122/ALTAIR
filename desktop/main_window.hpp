@@ -66,6 +66,7 @@
 #include "fyers_link.hpp"
 #include "broker_page.hpp"
 #include "demo_trading_page.hpp"
+#include "threshold_page.hpp"
 #include "arbitrage_workspace.hpp"
 #include "panels.hpp"
 #include "filter.hpp"
@@ -1507,30 +1508,15 @@ private:
         // reaches a broker.
         pages_->addWidget(new DemoTradingPage);
 
-        // Threshold strategies: the OHL rule first (open == high: sell, open
-        // == low: buy, at 09:15), its reading, positions and P&L record.
+        // Threshold strategies: the OHL rule's live record, and the owner's
+        // threshold_strategy/ demos and TradingView results (paper only).
         {
 #ifdef ALTAIR_SOURCE_DIR
             const QString root = QStringLiteral(ALTAIR_SOURCE_DIR);
 #else
             const QString root = QDir::currentPath();
 #endif
-            auto* page = new QWidget;
-            page->setObjectName(QStringLiteral("thresholdPage"));
-            auto* v = new QVBoxLayout(page);
-            auto* head = new QLabel(QStringLiteral(
-                "<h3>Threshold strategies</h3>"
-                "<b>OHL (open = high / open = low)</b> on futures. At 09:15:00 the open set in the pre-open is compared "
-                "with the first second of trading: <b>open = high</b> → SELL one lot, stop-loss at high + 0.5 %; "
-                "<b>open = low</b> → BUY one lot, stop-loss at low − 0.5 %. Once the trade is 1.5 % in profit a "
-                "trailing stop follows 0.25 % behind the best price. Anything still open is squared off at 15:20.<br>"
-                "Demo by default. Real orders only while LIVE is on <b>and</b> its own switch (Auto: OHL) is on, "
-                "within its caps."));
-            head->setWordWrap(true);
-            head->setTextFormat(Qt::RichText);
-            v->addWidget(head);
-            v->addWidget(new StrategyRecordPanel(QStringLiteral("OHL"), root, page), 1);
-            pages_->addWidget(page);
+            pages_->addWidget(new ThresholdPage(root));
         }
         pages_->addWidget(new AboutPage);
 

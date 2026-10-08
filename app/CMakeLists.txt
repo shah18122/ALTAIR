@@ -415,6 +415,14 @@ if(TARGET altair_charges_toml)
     target_link_libraries(altair_trader PRIVATE altair_models altair_charges_toml altair_flags)
     target_include_directories(altair_trader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+    # The owner's threshold strategies (threshold_strategy/), on paper.
+    add_executable(altair_threshold threshold_main.cpp)
+    target_link_libraries(altair_threshold PRIVATE altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_threshold PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    if(ALTAIR_BUILD_TESTS)
+        add_test(NAME threshold_help COMMAND altair_threshold --help)
+    endif()
+
     # Pairs hedged with futures, walked forward over config/pairs.csv.
     add_executable(altair_pairs_futures pairs_futures_main.cpp)
     target_link_libraries(altair_pairs_futures PRIVATE altair_strategies altair_charges_toml altair_flags)
