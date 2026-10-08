@@ -166,3 +166,10 @@ GETSClient_5.0.191022_64bit_040924/
 # Live terminal runtime state: universe, feed status, live-engine state and
 # paper trades. Written at run time from broker data; never committed.
 data/live/
+
+# macOS and LibreOffice leave these beside copied files: metadata and stale
+# locks, never content.
+._*
+.~lock.*#
+# The F11+F12 resume writes an audit copy next to the kill request.
+data/kill_request.json.cleared.json
