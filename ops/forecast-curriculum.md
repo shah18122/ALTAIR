@@ -322,6 +322,61 @@ Bonferroni correction.
 
 ## Results
 
+### Run of 2026-10-19: all 5 timeframes, leak-checked
+
+`altair_forecast_curriculum --leak-check --jobs 4`, on the dataset pushed on
+2026-09-29, after the leak fixes of 2026-10-19 and before the drift
+ensembles (their numbers are under "Price against the random walk" below).
+- **Scope:** 54 tracks and 4.79 million forecast bars:
+  - 20 first-pass tracks: NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d; NIFTY FUT daily; the 09:20 and 10:15 → close session tracks;
+  - 34 second-pass tracks (+ vol, + cross, + models, + all).
+- **Models:** 42 direction models (33 base, 9 ensembles) and 14 band models; 2,268 direction tests, Bonferroni-corrected by 2,268.
+- **Run:** 7,825 s with 4 parallel jobs; zero look-ahead refusals on every track.
+- **Leak check:** 108 cuts (2 per track). 4,946,800 rebuilt rows, 120,552,012 rerun calls and 40,184,004 rerun bands were compared with the full run, and **every one was identical**: no forecast saw its future (`leak_check.csv`).
+
+**Price against the random walk** (best model on ≥ 90 % of the bars; skill = 1 − RMSE / RMSE of no change):
+
+| Track | Random walk RMSE | Best model | Skill | Models beating it |
+|---|---|---|---|---|
+| NIFTY 1m | 3.8 bp | Gradient boosting | +0.12 % | 13 / 33 |
+| BANKNIFTY 1m | 5.4 bp | Seasonal AR (SARIMA) | +0.01 % | 4 / 33 |
+| INDIA VIX 1m | 30.5 bp | Ridge regression | +1.28 % | 20 / 32 |
+| NIFTY 5m | 8.4 bp | — | −0.00 % | 0 / 32 |
+| BANKNIFTY 5m | 11.9 bp | — | −0.00 % | 0 / 33 |
+| INDIA VIX 5m | 56.7 bp | Ridge regression | +0.39 % | 17 / 33 |
+| NIFTY 15m | 14.4 bp | ARMA(1,1) | +0.03 % | 3 / 34 |
+| BANKNIFTY 15m | 19.8 bp | ARMA(1,1) | +0.05 % | 3 / 34 |
+| INDIA VIX 15m | 85.0 bp | Random forest | +0.15 % | 11 / 33 |
+| NIFTY hourly | 27.9 bp | ARMA(1,1) | +0.03 % | 3 / 33 |
+| BANKNIFTY hourly | 38.1 bp | — | −0.02 % | 0 / 32 |
+| INDIA VIX hourly | 147.2 bp | Always majority | +0.11 % | 4 / 33 |
+| NIFTY daily | 102.4 bp | Markov chain | +0.08 % | 1 / 33 |
+| BANKNIFTY daily | 135.5 bp | — | −0.03 % | 0 / 32 |
+| INDIA VIX daily | 528.9 bp | Random forest | +1.96 % | 9 / 32 |
+| NIFTY FUT daily | 103.1 bp | — | −0.12 % | 0 / 31 |
+| NIFTY 09:20 → close | 80.6 bp | AR(2) | +0.21 % | 1 / 33 |
+| BANKNIFTY 09:20 → close | 110.6 bp | — | −0.02 % | 0 / 32 |
+| NIFTY 10:15 → close | 75.0 bp | ARMA(1,1) | +0.70 % | 6 / 33 |
+| BANKNIFTY 10:15 → close | 99.5 bp | ARMA(1,1) | +0.74 % | 5 / 34 |
+
+- **The second pass** (other models' forecasts as inputs) helps most on the
+  10:15 → close tracks: + vol takes NIFTY to +0.84 % and BANKNIFTY to
+  +0.98 %. On the 5m, 15m and hourly index tracks it moves the best skill
+  by at most 0.03 points, and on the daily tracks by −0.13 to +0.04.
+- **Direction:** the only ex-ante slice at or above 80 % anywhere is INDIA
+  VIX daily, Stack (confident 10 %): 81.0 % on 42 calls (Wilson low 66.7 %).
+  It is the best of every model × slice, so it was chosen after the fact.
+  The INDIA VIX 1m slices of the 2026-09-29 run (85 %) are gone: their
+  cut-offs used calls not yet made.
+- **Bands:** the 80 % bands are calibrated at every timeframe (78.6–82.0 %
+  hit rate), except NIFTY FUT daily at 76.9 %. The best band beats the
+  constant band by 11–18 % on the index tracks: Seasonal vol (time of day)
+  intraday, GJR-GARCH daily, Heston variance drift on the session tracks.
+  On INDIA VIX it beats it by 4–8 % (gradient boosting on |r| intraday, the
+  vol ensemble hourly and daily).
+
+### Run of 2026-09-29 (before the leak fixes)
+
 Run on the dataset pushed on 2026-09-29, with every model learning from every row.
 - **Scope:** 21 tracks (NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d; NIFTY FUT daily; five "+ VIX fc" tracks) and 4.13 million forecast bars, about 174 million model decisions in all.
 - **Models:** 42 direction models (33 base models and 9 ensembles) and 14 band models per track.

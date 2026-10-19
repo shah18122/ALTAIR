@@ -1115,3 +1115,35 @@ SEARCH
   WAITING FOR RULES: Short Straddle, Nifty CE Buy on High Close, BNF CE Buy,
   Monthly SIP with Expiry, BNF, Wed + Mon Both, Tue + Thursday Both, Delta
   Hedge using Option. Send the rules or Pine scripts.
+
+28. FORECASTS: NO LOOK-AHEAD, PROVEN; AGAINST THE RANDOM WALK -- 2026-10-19
+  WHY A LEAK CAN HAPPEN
+    A forecast "leaks" when anything it uses was not known at the moment it
+    was made. Seven ways it gets in: a feature built from a later bar; a
+    scaler or mean computed over the whole sample; a target that runs past
+    the split; choosing days, models or settings by how they turned out;
+    tuning on the test block; stacking on in-sample predictions; and a code
+    path that simply reads ahead. Each one makes a model look better than
+    it can ever be live.
+
+  WHAT WAS FIXED
+    Three were found and closed: models could reach the raw track; the
+    intraday tracks kept only days that later turned out complete; the
+    Frontier's "top x %" cut-offs used calls not yet made.
+
+  HOW IT IS PROVEN NOW (altair_forecast_curriculum --leak-check)
+    At two dates per track, the track is rebuilt from only the bars known
+    then, and again with a different future; every model is rerun with that
+    day's outcome changed. Everything up to the date must be bit for bit the
+    same. Full run, all 5 timeframes, 54 tracks: 120.6 million calls and
+    40.2 million bands compared, every one identical.
+
+  AGAINST THE RANDOM WALK ("price does not move")
+    On NIFTY and BANKNIFTY no model beats it by more than a fraction of a
+    percent at any timeframe (best: +0.12 % at 1 minute, +0.74 % on 10:15 to
+    the close). That is what a fair test of an index should show; a big
+    number there would mean a leak. New: Seasonal mean, Shrunk average and
+    Ridge stack (drift), which shrink a forecast toward "no change" unless the
+    past says it earns its keep. The Shrunk average is never worse than the
+    random walk by more than 0.01 %; on INDIA VIX the new models lift daily
+    skill from +1.96 % to +2.76 %. Tables: ops/forecast-curriculum.md.
