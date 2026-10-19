@@ -76,9 +76,7 @@ futures track takes its price features from the spot index plus the
 
 ## Models
 
-| Family | Models |
-|---|---|
-33 direction forecasters and 9 ensembles:
+34 direction forecasters and 11 ensembles:
 
 | Family | Models |
 |---|---|
@@ -88,9 +86,10 @@ futures track takes its price features from the spot index plus the
 | Trees | Decision tree, Random forest (depth tuned), Gradient boosting |
 | Neural | MLP, LSTM, GRU, causal Transformer and CNN (three layers of dilated causal convolution), all trained by backpropagation |
 | Reinforcement | DQN, PPO and actor-critic, each as a contextual bandit (state: the features; actions: long or short; reward: the next standardised return with the action's sign) |
-| Time series | AR(2), ARMA(1,1), Seasonal AR (SARIMA), VAR(1), Kalman filter (drift), Ornstein–Uhlenbeck, Markov chain, Hidden Markov model, Hurst regime switch |
+| Time series | AR(2), ARMA(1,1), Seasonal AR (SARIMA), VAR(1), Kalman filter (drift), Ornstein–Uhlenbeck, Markov chain, Hidden Markov model, Hurst regime switch, **Seasonal mean** (each bar of the day's — each weekday's on a daily track — mean return, shrunk toward zero by its own noise; a slot inside its standard error forecasts no change) |
 | Regime | k-means regimes |
 | Ensembles | Vote, Champion, Hedge, **Stack** (a logistic regression on every model's past out-of-sample calls), and the filters that abstain unless confident: **Stack (confident third / 10 % / 2 %)**, **Consensus 75 % / 90 %** |
+| Drift ensembles (the size of the move, for RMSE against the random walk) | **Shrunk average**: the learning models' mean expected move × a slope fitted on the finished stages, shrunk by its t-statistic and kept in [0, 1]. **Ridge stack (drift)**: a ridge regression of the move on every base model's expected move; its penalty is chosen on the last finished stage, with "no change" (the random walk) itself a candidate, then refitted on every finished stage. Each keeps its drift only if a fit made without the last finished stage beat no change on it by more than one standard error; otherwise it forecasts no change |
 
 12 band models and 2 band ensembles:
 
@@ -283,7 +282,10 @@ Bonferroni correction.
 ## Scoring
 
 * **Accuracy** = right / (right + wrong). An unchanged close is neither; a
-  call with no direction counts as wrong.
+  call with no direction counts as wrong. A forecast of exactly no change
+  with no probability (the seasonal mean on a slot it shrank away, a drift
+  ensemble that chose the random walk) is a price forecast only: it is
+  scored for RMSE and left out of the direction record ("price only").
 * **p vs coin**: two-sided, then **Bonferroni** over every model on every
   track. Twenty-one models on seven tracks will produce a few "significant"
   ones by luck alone.

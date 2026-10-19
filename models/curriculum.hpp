@@ -2275,6 +2275,60 @@ private:
     double alpha_ = 0.0, beta_ = 0.0, mean_ = 0.0, sd_ = 0.0;
 };
 
+/// The mean return of each slot of the cycle (the bar of the day; the weekday
+/// on a daily track), each shrunk toward zero by its own noise (positive-part
+/// James-Stein: a slot whose mean is within its standard error of zero
+/// forecasts no move, a price forecast only with no direction). The opening
+/// bars and the close carry a drift of their own that a model of the whole day
+/// averages away.
+class CurriculumSeasonalMean final : public CurriculumModel {
+public:
+    std::string name() const override { return "Seasonal mean"; }
+    std::string family() const override { return "statistical"; }
+    std::string fit(const CurriculumDesign& d) override {
+        const std::size_t n = d.train_rows();
+        if (!d.has_slots() || n < 50) { return "no slot profile"; }
+        std::vector<double> s, ss;
+        std::vector<std::size_t> cnt;
+        for (std::size_t j = 0; j < n; ++j) {
+            const std::size_t k = d.slot(j);
+            if (k >= s.size()) { s.resize(k + 1, 0.0); ss.resize(k + 1, 0.0); cnt.resize(k + 1, 0); }
+            const double r = d.target(j);
+            s[k] += r;
+            ss[k] += r * r;
+            ++cnt[k];
+        }
+        mean_.assign(s.size(), 0.0);
+        std::size_t moved = 0;
+        for (std::size_t k = 0; k < s.size(); ++k) {
+            if (cnt[k] < 5) { continue; }
+            const double c = static_cast<double>(cnt[k]);
+            const double m = s[k] / c;
+            const double var = std::max(0.0, (ss[k] - c * m * m) / (c - 1.0));
+            const double se2 = var / c;
+            const double keep = m * m > 0.0 ? std::max(0.0, 1.0 - se2 / (m * m)) : 0.0;
+            mean_[k] = m * keep;
+            if (mean_[k] != 0.0) { ++moved; }
+        }
+        sd_ = d.sd();
+        note_ = std::to_string(moved) + " of " + std::to_string(s.size()) + " slots keep a drift";
+        return {};
+    }
+    CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
+        const std::size_t k = d.slot(i);
+        const double mu = k < mean_.size() ? mean_[k] : 0.0;
+        CurriculumCall c = curriculum_detail::from_return(mu, sd_);
+        if (mu == 0.0) { c.p_up = curriculum_detail::nan(); }
+        return c;
+    }
+    std::string tuned() const override { return note_; }
+
+private:
+    std::vector<double> mean_;
+    double sd_ = 0.0;
+    std::string note_;
+};
+
 /// Every forecaster in the tree that can be pointed at a single series, plus
 /// the baselines they have to beat. Ensembles are added by the engine.
 [[nodiscard]] inline std::vector<std::unique_ptr<CurriculumModel>>
@@ -2313,6 +2367,7 @@ curriculum_default_models(std::uint64_t seed = 0xA17A1Au) {
     m.push_back(std::make_unique<CurriculumMomentumN>());
     m.push_back(std::make_unique<CurriculumZScore>());
     m.push_back(std::make_unique<CurriculumPairs>());
+    m.push_back(std::make_unique<CurriculumSeasonalMean>());
     return m;
 }
 
@@ -2332,9 +2387,19 @@ curriculum_default_models(std::uint64_t seed = 0xA17A1Au) {
 ///   Consensus 75%  the Vote, only when three quarters of the callers agree
 ///   Stack (confident 10% / 2%) and Consensus 90%  the same, stricter: the
 ///              ex-ante answer to "how accurate can it be if it calls rarely?"
+/// Two more forecast the SIZE of the move -- the drift -- for the price
+/// forecast and its RMSE against the random walk ("no change"). On returns
+/// this close to unpredictable, a model's own drift adds more noise than
+/// signal; these shrink toward zero by how much the past says to keep:
+///   Shrunk average   the learning models' mean drift times a slope fitted on
+///              the finished stages, shrunk by its t-statistic and kept in
+///              [0, 1] -- an average that never earned trust forecasts no move
+///   Ridge stack (drift)  a ridge regression of the move on every base
+///              model's drift; its penalty -- and "no change" itself -- chosen
+///              on the last finished stage, then refitted on all of them
 inline constexpr const char* kCurriculumEnsembles[] = {
     "Vote", "Champion", "Hedge", "Stack", "Stack (confident third)", "Consensus 75%",
-    "Stack (confident 10%)", "Stack (confident 2%)", "Consensus 90%"};
+    "Stack (confident 10%)", "Stack (confident 2%)", "Consensus 90%", "Shrunk average", "Ridge stack (drift)"};
 
 struct CurriculumOptions {
     std::int32_t first_days = 3;
@@ -2396,6 +2461,266 @@ inline void finish(CurriculumCall& c, const CurriculumDesign& d) noexcept {
     if (!(c.sigma > 0.0) || !std::isfinite(c.sigma)) { c.sigma = d.sd(); }
 }
 
+/// Whether a forecast beat "no change" on held-out rows by more than chance:
+/// the t-statistic of the paired gain in squared error, y^2 - (y - f)^2. A
+/// drift kept on a gain inside its own noise loses to the random walk next.
+struct GainVsStill {
+    double sum = 0.0, sum_sq = 0.0;
+    std::size_t n = 0;
+    void add(double y, double f) noexcept {
+        const double g = y * y - (y - f) * (y - f);
+        sum += g;
+        sum_sq += g * g;
+        ++n;
+    }
+    [[nodiscard]] double t() const noexcept {
+        if (n < 2) { return 0.0; }
+        const double nn = static_cast<double>(n);
+        const double mean = sum / nn;
+        const double var = std::max(0.0, (sum_sq - nn * mean * mean) / (nn - 1.0));
+        return var > 0.0 ? mean / std::sqrt(var / nn) : 0.0;
+    }
+};
+
+/// The drift ensembles' fits, from the finished stages only.
+struct DriftFit {
+    bool avg_ok = false, ridge_ok = false;
+    double beta = 0.0, avg_sigma = 0.0;
+    std::vector<double> w;   ///< intercept, then one weight per base model, in return units
+    double ridge_sigma = 0.0;
+    std::string avg_note, ridge_note;
+};
+
+/// `x` rows x `base`: each base model's drift on a finished row (NaN where it
+/// abstained); `y` the move that followed; `stage` the stage of each row.
+inline DriftFit fit_drift(const std::vector<float>& x, const std::vector<double>& y,
+                          const std::vector<std::uint16_t>& stage, std::size_t base,
+                          const std::vector<bool>& learning) {
+    DriftFit f;
+    const std::size_t n = y.size();
+    if (n < 100) {
+        f.avg_note = f.ridge_note = "abstained: fewer than 100 past rows";
+        return f;
+    }
+    const auto at = [&](std::size_t i, std::size_t m) {
+        const float v = x[i * base + m];
+        return std::isfinite(v) ? static_cast<double>(v) : nan();
+    };
+    // Shrunk average: a slope on the learning models' mean drift, shrunk by
+    // its t-statistic, and kept only if a slope fitted without the last
+    // finished stage beat "no change" on it by more than one standard error.
+    {
+        std::vector<double> avg(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            double s = 0.0;
+            std::size_t k = 0;
+            for (std::size_t m = 0; m < base; ++m) {
+                const double v = at(i, m);
+                if (learning[m] && std::isfinite(v)) { s += v; ++k; }
+            }
+            avg[i] = k > 0 ? s / static_cast<double>(k) : 0.0;
+        }
+        const std::uint16_t last = stage.back();
+        struct Slope { double kept = 0.0, raw = 0.0, t = 0.0; std::size_t rows = 0; };
+        const auto slope = [&](bool with_last) {
+            Slope sl;
+            double saa = 0.0, say = 0.0, syy = 0.0;
+            for (std::size_t i = 0; i < n; ++i) {
+                if (!with_last && stage[i] == last) { continue; }
+                saa += avg[i] * avg[i];
+                say += avg[i] * y[i];
+                syy += y[i] * y[i];
+                ++sl.rows;
+            }
+            if (!(saa > 0.0) || sl.rows < 2) { return sl; }
+            sl.raw = say / saa;
+            const double rss = std::max(0.0, syy - 2.0 * sl.raw * say + sl.raw * sl.raw * saa);
+            const double se = std::sqrt(rss / static_cast<double>(sl.rows - 1) / saa);
+            sl.t = se > 0.0 ? sl.raw / se : 0.0;
+            const double keep = sl.t * sl.t > 1.0 ? 1.0 - 1.0 / (sl.t * sl.t) : 0.0;
+            // RULE 11: a shrinkage, kept in [0, 1] on purpose: the average may be
+            // trusted less than as is, never inverted or amplified.
+            sl.kept = std::clamp(sl.raw * keep, 0.0, 1.0);
+            return sl;
+        };
+        const Slope all = slope(true);
+        if (all.rows > 0 && all.raw != 0.0) {
+            f.beta = all.kept;
+            f.avg_note = "slope " + trim_double(std::round(all.raw * 1000.0) / 1000.0) + " (t "
+                       + trim_double(std::round(all.t * 100.0) / 100.0) + "), kept "
+                       + trim_double(std::round(f.beta * 1000.0) / 1000.0);
+            const Slope early = slope(false);
+            if (all.rows - early.rows >= 30 && early.rows >= 60) {
+                GainVsStill gain;
+                for (std::size_t i = 0; i < n; ++i) {
+                    if (stage[i] == last) { gain.add(y[i], early.kept * avg[i]); }
+                }
+                if (!(gain.t() > 1.0)) {
+                    f.beta = 0.0;
+                    f.avg_note += "; did not beat no change on the last finished stage (t "
+                                + trim_double(std::round(gain.t() * 100.0) / 100.0) + "), so forecasts no change";
+                }
+            }
+            double rss = 0.0;
+            for (std::size_t i = 0; i < n; ++i) { rss += (y[i] - f.beta * avg[i]) * (y[i] - f.beta * avg[i]); }
+            f.avg_sigma = std::sqrt(rss / static_cast<double>(n - 1));
+            f.avg_ok = true;
+        } else {
+            f.avg_note = "abstained: no drift to average";
+        }
+    }
+    // Ridge stack: standardised columns (intercept, then every base model).
+    {
+        const std::size_t p = base + 1;
+        std::vector<double> scale(p, 0.0);
+        double sy = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            sy += y[i] * y[i];
+            for (std::size_t m = 0; m < base; ++m) {
+                const double v = at(i, m);
+                if (std::isfinite(v)) { scale[m + 1] += v * v; }
+            }
+        }
+        sy = std::sqrt(sy / static_cast<double>(n));
+        scale[0] = 1.0;
+        for (std::size_t m = 1; m < p; ++m) { scale[m] = std::sqrt(scale[m] / static_cast<double>(n)); }
+        if (!(sy > 0.0)) {
+            f.ridge_note = "abstained: no moves";
+            return f;
+        }
+        const std::uint16_t last = stage.back();
+        const auto row = [&](std::size_t i, std::vector<double>& z) {
+            z[0] = 1.0;
+            for (std::size_t m = 1; m < p; ++m) {
+                const double v = at(i, m - 1);
+                z[m] = std::isfinite(v) && scale[m] > 0.0 ? v / scale[m] : 0.0;
+            }
+        };
+        const auto gram = [&](bool want_last, bool want_rest, std::vector<double>& g, std::vector<double>& b, std::size_t& k) {
+            g.assign(p * p, 0.0);
+            b.assign(p, 0.0);
+            k = 0;
+            std::vector<double> z(p);
+            for (std::size_t i = 0; i < n; ++i) {
+                const bool is_last = stage[i] == last;
+                if ((is_last && !want_last) || (!is_last && !want_rest)) { continue; }
+                row(i, z);
+                const double t = y[i] / sy;
+                for (std::size_t a = 0; a < p; ++a) {
+                    if (z[a] == 0.0) { continue; }
+                    b[a] += z[a] * t;
+                    for (std::size_t c = 0; c < p; ++c) { g[a * p + c] += z[a] * z[c]; }
+                }
+                ++k;
+            }
+        };
+        // (G/k + lambda I) w = b/k, by Cholesky; false if it is not positive definite.
+        const auto solve = [&](const std::vector<double>& g, const std::vector<double>& b, std::size_t k, double lambda,
+                               std::vector<double>& w) {
+            std::vector<double> l(p * p);
+            for (std::size_t a = 0; a < p * p; ++a) { l[a] = g[a] / static_cast<double>(k); }
+            for (std::size_t a = 0; a < p; ++a) { l[a * p + a] += lambda; }
+            for (std::size_t j = 0; j < p; ++j) {
+                double dd = l[j * p + j];
+                for (std::size_t q = 0; q < j; ++q) { dd -= l[j * p + q] * l[j * p + q]; }
+                if (!(dd > 0.0)) { return false; }
+                dd = std::sqrt(dd);
+                l[j * p + j] = dd;
+                for (std::size_t i = j + 1; i < p; ++i) {
+                    double v = l[i * p + j];
+                    for (std::size_t q = 0; q < j; ++q) { v -= l[i * p + q] * l[j * p + q]; }
+                    l[i * p + j] = v / dd;
+                }
+            }
+            std::vector<double> zz(p);
+            for (std::size_t i = 0; i < p; ++i) {
+                double v = b[i] / static_cast<double>(k);
+                for (std::size_t q = 0; q < i; ++q) { v -= l[i * p + q] * zz[q]; }
+                zz[i] = v / l[i * p + i];
+            }
+            w.assign(p, 0.0);
+            for (std::size_t i = p; i-- > 0;) {
+                double v = zz[i];
+                for (std::size_t q = i + 1; q < p; ++q) { v -= l[q * p + i] * w[q]; }
+                w[i] = v / l[i * p + i];
+            }
+            return true;
+        };
+        std::vector<double> g_fit, b_fit, g_last, b_last;
+        std::size_t n_fit = 0, n_last = 0;
+        gram(false, true, g_fit, b_fit, n_fit);
+        gram(true, false, g_last, b_last, n_last);
+        if (n_fit < 60 || n_last < 30) {
+            f.ridge_note = "abstained: needs two finished stages";
+            return f;
+        }
+        // Holdout MSE on the last finished stage, standardised: E[t^2] - 2 w.b + w'Gw.
+        double tt = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (stage[i] == last) { tt += (y[i] / sy) * (y[i] / sy); }
+        }
+        const auto holdout = [&](const std::vector<double>& w) {
+            double wb = 0.0, wgw = 0.0;
+            for (std::size_t a = 0; a < p; ++a) {
+                wb += w[a] * b_last[a];
+                for (std::size_t c = 0; c < p; ++c) { wgw += w[a] * g_last[a * p + c] * w[c]; }
+            }
+            return (tt - 2.0 * wb + wgw) / static_cast<double>(n_last);
+        };
+        double best = tt / static_cast<double>(n_last);   // "no change": w = 0
+        double chosen = -1.0;
+        std::vector<double> chosen_w;
+        for (const double lambda : {1e-4, 1e-3, 1e-2, 1e-1, 1.0}) {
+            std::vector<double> w;
+            if (!solve(g_fit, b_fit, n_fit, lambda, w)) { continue; }
+            const double e = holdout(w);
+            if (e < best) { best = e; chosen = lambda; chosen_w = w; }
+        }
+        double gain_t = 0.0;
+        if (chosen > 0.0) {
+            GainVsStill gain;
+            std::vector<double> z(p);
+            for (std::size_t i = 0; i < n; ++i) {
+                if (stage[i] != last) { continue; }
+                row(i, z);
+                double fz = 0.0;
+                for (std::size_t a = 0; a < p; ++a) { fz += z[a] * chosen_w[a]; }
+                gain.add(y[i] / sy, fz);
+            }
+            gain_t = gain.t();
+        }
+        f.w.assign(p, 0.0);
+        if (chosen > 0.0 && !(gain_t > 1.0)) {
+            f.ridge_note = "penalty " + trim_double(chosen) + " won the last finished stage by less than its noise (t "
+                         + trim_double(std::round(gain_t * 100.0) / 100.0) + "): no change";
+        } else if (chosen > 0.0) {
+            std::vector<double> g_all(p * p), b_all(p), w;
+            for (std::size_t a = 0; a < p * p; ++a) { g_all[a] = g_fit[a] + g_last[a]; }
+            for (std::size_t a = 0; a < p; ++a) { b_all[a] = b_fit[a] + b_last[a]; }
+            if (solve(g_all, b_all, n_fit + n_last, chosen, w)) {
+                for (std::size_t a = 0; a < p; ++a) { f.w[a] = w[a] * sy / scale[a]; }
+                f.ridge_note = "penalty " + trim_double(chosen) + " won the last finished stage";
+            } else {
+                f.ridge_note = "the refit was not positive definite: no change";
+            }
+        } else {
+            f.ridge_note = "no change (the random walk) won the last finished stage";
+        }
+        double rss = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            double mu = f.w[0];
+            for (std::size_t m = 0; m < base; ++m) {
+                const double v = at(i, m);
+                if (std::isfinite(v)) { mu += f.w[m + 1] * v; }
+            }
+            rss += (y[i] - mu) * (y[i] - mu);
+        }
+        f.ridge_sigma = std::sqrt(rss / static_cast<double>(n));
+        f.ridge_ok = true;
+    }
+    return f;
+}
+
 } // namespace curriculum_detail
 
 [[nodiscard]] inline std::expected<CurriculumRun, CurriculumError>
@@ -2421,6 +2746,9 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
     const std::size_t vote = base, champ = base + 1, hedge = base + 2;
     const std::size_t stack = base + 3, confident = base + 4, consensus = base + 5;
     const std::size_t confident10 = base + 6, confident2 = base + 7, consensus90 = base + 8;
+    const std::size_t shrunk = base + 9, ridge_drift = base + 10;
+    std::vector<bool> learning(base);
+    for (std::size_t m = 0; m < base; ++m) { learning[m] = run.families[m] != "baseline"; }
 
     run.first_row = run.stages.front().test_begin;
     const std::size_t n = tr.rows() - run.first_row;
@@ -2437,6 +2765,12 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
     std::vector<double> meta_x;
     std::vector<std::uint8_t> meta_y;
     std::size_t meta_rows = 0;
+    // What the drift ensembles learn from: every base model's expected move
+    // (NaN where it abstained) on every row of the finished stages, the move
+    // that followed, and the stage it was in.
+    std::vector<float> drift_x;
+    std::vector<double> drift_y;
+    std::vector<std::uint16_t> drift_stage;
 
     for (const CurriculumStage& st : run.stages) {
         for (std::size_t i = st.test_begin; i < st.test_end; ++i) {
@@ -2524,6 +2858,11 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
                 run.notes[confident2][st.index] = "abstained: fewer than " + std::to_string(opt.stack_min) + " past calls";
         }
 
+        // The drift ensembles, fitted on the finished stages.
+        const cd::DriftFit drift = cd::fit_drift(drift_x, drift_y, drift_stage, base, learning);
+        run.notes[shrunk][st.index] = drift.avg_note;
+        run.notes[ridge_drift][st.index] = drift.ridge_note;
+
         for (std::size_t m = 0; m < base; ++m) {
             const auto t0 = std::chrono::steady_clock::now();
             d.set_now(st.train_rows);
@@ -2579,6 +2918,28 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
                 if (std::fabs(p - 0.5) >= confident2_at) { run.calls[confident2][r] = c; }
             }
             if (best >= 0) { run.calls[champ][r] = run.calls[static_cast<std::size_t>(best)][r]; }
+            if (drift.avg_ok || drift.ridge_ok) {
+                double s = 0.0, mu_r = drift.ridge_ok ? drift.w[0] : 0.0;
+                std::size_t k = 0;
+                for (std::size_t m = 0; m < base; ++m) {
+                    const CurriculumCall c = run.calls[m][r];
+                    if (!c.made || !std::isfinite(c.mu)) { continue; }
+                    if (learning[m]) { s += c.mu; ++k; }
+                    if (drift.ridge_ok) { mu_r += drift.w[m + 1] * c.mu; }
+                }
+                // A forecast of no change at all names no direction: a price
+                // forecast only, which the direction record leaves out.
+                const auto drift_call = [&d](double mu, double sigma) {
+                    CurriculumCall c = cd::from_return(mu, sigma);
+                    cd::finish(c, d);
+                    if (c.mu == 0.0) { c.p_up = cd::nan(); }
+                    return c;
+                };
+                if (drift.avg_ok) {
+                    run.calls[shrunk][r] = drift_call(drift.beta * (k > 0 ? s / static_cast<double>(k) : 0.0), drift.avg_sigma);
+                }
+                if (drift.ridge_ok) { run.calls[ridge_drift][r] = drift_call(mu_r, drift.ridge_sigma); }
+            }
             if (rounds > 0) {
                 double wu = 0.0, wall = 0.0, wmu = 0.0;
                 for (std::size_t m = 0; m < base; ++m) {
@@ -2597,6 +2958,15 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
         }
 
         // The stage is over: its outcomes join the record.
+        for (std::size_t i = st.test_begin; i < st.test_end; ++i) {
+            for (std::size_t m = 0; m < base; ++m) {
+                const CurriculumCall c = run.calls[m][i - run.first_row];
+                drift_x.push_back(c.made && std::isfinite(c.mu) ? static_cast<float>(c.mu)
+                                                                : std::numeric_limits<float>::quiet_NaN());
+            }
+            drift_y.push_back(tr.ret(i));
+            drift_stage.push_back(static_cast<std::uint16_t>(st.index));
+        }
         for (std::size_t i = st.test_begin; i < st.test_end; ++i) {
             const int out = cd::outcome(tr, i);
             if (out == 0) { continue; }
@@ -2627,6 +2997,7 @@ struct CurriculumTally {
     std::size_t flat = 0;        ///< calls on bars that closed unchanged
     std::size_t right = 0, wrong = 0;
     std::size_t no_direction = 0;   ///< calls with no direction: counted in `wrong` too
+    std::size_t price_only = 0;     ///< forecasts of no change (no direction, no probability): not direction-scored
     std::size_t ups = 0;         ///< scored bars that rose, for "always up" on the same bars
     double brier_sum = 0.0;
     std::size_t brier_n = 0;
@@ -2700,6 +3071,7 @@ curriculum_tally(const CurriculumTrack& tr, const CurriculumRun& run, std::size_
             t.edge += static_cast<double>(c.dir) * tr.ret(i);
         }
         if (out == 0) { ++t.flat; continue; }
+        if (c.dir == 0 && !std::isfinite(c.p_up)) { ++t.price_only; continue; }
         if (out > 0) { ++t.ups; }
         (c.dir == out ? t.right : t.wrong) += 1;
         (c.dir == out ? t.abs_right : t.abs_wrong) += std::fabs(tr.ret(i));

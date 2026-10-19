@@ -1304,7 +1304,9 @@ int main(int argc, char** argv) {
         for (const std::size_t m : order) {
             const auto& s = r.summary[m];
             if (s.all.scored() == 0) {
-                text << "  " << pad(r.run.models[m], 30) << "  never forecast\n";
+                text << "  " << pad(r.run.models[m], 30)
+                     << (s.all.price_only > 0 ? "  no change on every bar: the random walk itself, by its own choice\n"
+                                              : "  never forecast\n");
                 continue;
             }
             text << "  " << pad(r.run.models[m], 30) << pad(fixed(pct(s.accuracy), 2) + "%", 7)
