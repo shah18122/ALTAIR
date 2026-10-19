@@ -537,6 +537,52 @@ forecasts:
 - The earlier tables in this file predate the inner-fold fix. The
   accuracies above suggest it moves little, but they are not re-run here.
 
+### Price against the random walk (RMSE, 2026-10-19)
+
+Skill = 1 − RMSE(model) / RMSE(random walk). The random walk forecasts no
+change, and on returns this close to unpredictable it is very hard to beat:
+a model's own drift usually adds more noise than signal, so most models
+come out slightly *worse* than doing nothing.
+
+The drift ensembles and the seasonal mean were added for exactly that.
+First pass, every model learning from every row,
+`altair_forecast_curriculum --only daily|hourly|15m|5m --no-feeds --no-bands`.
+"Best" is the best model on at least 90 % of the bars.
+
+| Track | Random walk RMSE | Best before | Best now | Shrunk average | Ridge stack (drift) | Seasonal mean |
+|---|---|---|---|---|---|---|
+| NIFTY daily | 102.4 bp | Markov chain +0.08 % | Markov chain +0.08 % | -0.01 % | +0.00 % | -0.01 % |
+| BANKNIFTY daily | 135.5 bp | Markov chain -0.03 % | Shrunk average +0.00 % | +0.00 % | +0.00 % | -0.00 % |
+| INDIA VIX daily | 528.9 bp | Random forest +1.96 % | Seasonal mean +2.76 % | +0.85 % | +2.08 % | +2.76 % |
+| NIFTY FUT daily | 103.1 bp | Always majority -0.12 % | Shrunk average +0.00 % | +0.00 % | +0.00 % | -0.10 % |
+| NIFTY hourly | 27.9 bp | ARMA(1,1) +0.03 % | ARMA(1,1) +0.03 % | +0.01 % | -0.12 % | -0.04 % |
+| BANKNIFTY hourly | 38.1 bp | Seasonal AR (SARIMA) -0.02 % | Shrunk average +0.00 % | +0.00 % | +0.00 % | -0.04 % |
+| INDIA VIX hourly | 147.3 bp | Always majority +0.11 % | Seasonal mean +0.19 % | +0.05 % | -0.08 % | +0.19 % |
+| NIFTY 15m | 14.4 bp | ARMA(1,1) +0.03 % | ARMA(1,1) +0.03 % | +0.02 % | +0.00 % | -0.07 % |
+| BANKNIFTY 15m | 19.8 bp | ARMA(1,1) +0.05 % | ARMA(1,1) +0.05 % | +0.02 % | -0.15 % | -0.05 % |
+| INDIA VIX 15m | 85.0 bp | Random forest +0.15 % | Shrunk average +0.16 % | +0.16 % | +0.07 % | -0.05 % |
+| NIFTY 5m | 8.4 bp | Always majority -0.00 % | Shrunk average +0.01 % | +0.01 % | -0.00 % | -0.07 % |
+| BANKNIFTY 5m | 11.9 bp | Always majority -0.00 % | Shrunk average +0.01 % | +0.01 % | +0.01 % | -0.08 % |
+| INDIA VIX 5m | 56.7 bp | Ridge regression +0.39 % | Ridge stack (drift) +0.42 % | +0.34 % | +0.42 % | -0.06 % |
+
+- **Index tracks (NIFTY, BANKNIFTY, NIFTY FUT): the honest best is about
+  zero.** The Shrunk average stays within 0.01 % of the random walk on every
+  timeframe, and on most of them it chooses no change. The best single
+  models (Markov chain daily, ARMA(1,1) at 15 minutes) beat it by 0.03–0.08 %.
+  A large skill here would point to a leak, not a better model.
+- **INDIA VIX is where the structure is.** It mean-reverts and has a weekday
+  and time-of-day pattern. The Seasonal mean takes the daily skill from
+  +1.96 % to +2.76 %, and the Ridge stack the 5-minute skill from +0.39 % to
+  +0.42 %.
+- **The Ridge stack can still lose** (−0.12 % NIFTY hourly, −0.15 % BANKNIFTY
+  15m): with 35 weights, one finished stage is a thin test of whether its fit
+  will hold. The Shrunk average fits one slope and is the safer of the two.
+- **The Seasonal mean loses on the index intraday tracks** (−0.04 to −0.08 %):
+  the time-of-day means it keeps there do not persist.
+- **Read the gate as chosen on this data.** The "beat no change by one
+  standard error" rule was set after a first daily run that kept drifts
+  which then lost. The forward test is the clean measure.
+
 ### What would improve it next
 - **Broker-verified data:** run `ops\broker_audit.ps1`, then repeat the run.
 - **Inputs beyond price:** option-chain OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close.
