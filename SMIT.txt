@@ -1146,4 +1146,5 @@ SEARCH
     Ridge stack (drift), which shrink a forecast toward "no change" unless the
     past says it earns its keep. The Shrunk average is never worse than the
     random walk by more than 0.01 %; on INDIA VIX the new models lift daily
-    skill from +1.96 % to +2.76 %. Tables: ops/forecast-curriculum.md.
+    skill from +1.96 % to +2.76 % and 1-minute from +1.28 % to +1.63 %.
+    Tables: ops/forecast-curriculum.md.

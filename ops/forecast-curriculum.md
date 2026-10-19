@@ -601,7 +601,7 @@ come out slightly *worse* than doing nothing.
 
 The drift ensembles and the seasonal mean were added for exactly that.
 First pass, every model learning from every row,
-`altair_forecast_curriculum --only daily|hourly|15m|5m --no-feeds --no-bands`.
+`altair_forecast_curriculum --only daily|hourly|15m|5m|1m --no-feeds --no-bands`.
 "Best" is the best model on at least 90 % of the bars.
 
 | Track | Random walk RMSE | Best before | Best now | Shrunk average | Ridge stack (drift) | Seasonal mean |
@@ -619,6 +619,9 @@ First pass, every model learning from every row,
 | NIFTY 5m | 8.4 bp | Always majority -0.00 % | Shrunk average +0.01 % | +0.01 % | -0.00 % | -0.07 % |
 | BANKNIFTY 5m | 11.9 bp | Always majority -0.00 % | Shrunk average +0.01 % | +0.01 % | +0.01 % | -0.08 % |
 | INDIA VIX 5m | 56.7 bp | Ridge regression +0.39 % | Ridge stack (drift) +0.42 % | +0.34 % | +0.42 % | -0.06 % |
+| NIFTY 1m | 3.8 bp | Gradient boosting +0.12 % | Gradient boosting +0.12 % | +0.08 % | +0.12 % | -0.07 % |
+| BANKNIFTY 1m | 5.4 bp | Seasonal AR (SARIMA) +0.01 % | Seasonal AR (SARIMA) +0.01 % | +0.00 % | +0.00 % | -0.08 % |
+| INDIA VIX 1m | 30.6 bp | Ridge regression +1.28 % | Ridge stack (drift) +1.63 % | +1.08 % | +1.63 % | +0.23 % |
 
 - **Index tracks (NIFTY, BANKNIFTY, NIFTY FUT): the honest best is about
   zero.** The Shrunk average stays within 0.01 % of the random walk on every
@@ -627,8 +630,8 @@ First pass, every model learning from every row,
   A large skill here would point to a leak, not a better model.
 - **INDIA VIX is where the structure is.** It mean-reverts and has a weekday
   and time-of-day pattern. The Seasonal mean takes the daily skill from
-  +1.96 % to +2.76 %, and the Ridge stack the 5-minute skill from +0.39 % to
-  +0.42 %.
+  +1.96 % to +2.76 %, and the Ridge stack the 1-minute skill from +1.28 % to
+  +1.63 % and the 5-minute from +0.39 % to +0.42 %.
 - **The Ridge stack can still lose** (−0.12 % NIFTY hourly, −0.15 % BANKNIFTY
   15m): with 35 weights, one finished stage is a thin test of whether its fit
   will hold. The Shrunk average fits one slope and is the safer of the two.
