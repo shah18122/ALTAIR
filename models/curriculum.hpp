@@ -335,7 +335,25 @@ private:
     }
 
 public:
-    [[nodiscard]] const CurriculumTrack& track() const noexcept { return *tr_; }
+    // NO RAW TRACK. A model reaches the track only through the guarded reads
+    // below: a public `track()` would hand it every row's `actual` -- every
+    // future outcome -- past the refusal counter, and the counter would still
+    // read zero. What a model may know about the track's shape, it gets here.
+    [[nodiscard]] std::size_t season() const noexcept { return tr_->season; }
+    [[nodiscard]] std::span<const std::size_t> seq_cols() const noexcept { return tr_->seq_cols; }
+    [[nodiscard]] bool has_pair() const noexcept { return !tr_->pair.empty(); }
+    [[nodiscard]] bool has_slots() const noexcept { return tr_->slot.size() == tr_->rows(); }
+    /// Row i's decision stamp, if known at `now`; 0 otherwise.
+    [[nodiscard]] std::int64_t stamp(std::size_t i) const noexcept {
+        if (i > now_ || i >= rows_) { ++refusals_; return 0; }
+        return tr_->t[i];
+    }
+    /// Row i's place in its cycle (bar of the day, weekday), if known at `now`
+    /// and the track has one; 0 otherwise.
+    [[nodiscard]] std::uint16_t slot(std::size_t i) const noexcept {
+        if (i > now_ || i >= rows_) { ++refusals_; return 0; }
+        return i < tr_->slot.size() ? tr_->slot[i] : 0;
+    }
     [[nodiscard]] std::size_t p() const noexcept { return p_; }
     [[nodiscard]] std::size_t train_rows() const noexcept { return train_; }
     [[nodiscard]] std::size_t rows() const noexcept { return rows_; }
@@ -598,7 +616,7 @@ public:
     std::string family() const override { return "baseline"; }
     std::string fit(const CurriculumDesign&) override { return {}; }
     CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
-        const std::uint64_t h = curriculum_detail::mix(seed_ ^ (static_cast<std::uint64_t>(d.track().t[i])));
+        const std::uint64_t h = curriculum_detail::mix(seed_ ^ (static_cast<std::uint64_t>(d.stamp(i))));
         return curriculum_detail::from_direction((h & 1u) != 0 ? 1 : -1);
     }
 
@@ -1796,8 +1814,8 @@ public:
 private:
     static double exogenous(const CurriculumDesign& d, std::size_t j) {
         const auto f = d.features(j);
-        const auto& cols = d.track().seq_cols;
-        return f.empty() ? 0.0 : f[cols.back()];
+        const auto cols = d.seq_cols();
+        return f.empty() || cols.empty() ? 0.0 : f[cols.back()];
     }
     Var1Model model_{};
     double sigma_ = 0.0;
@@ -1958,7 +1976,7 @@ public:
     std::string name() const override { return "Seasonal AR (SARIMA)"; }
     std::string family() const override { return "time series"; }
     std::string fit(const CurriculumDesign& d) override {
-        const std::size_t season = d.track().season > 2 ? d.track().season : 5;   // daily: a week
+        const std::size_t season = d.season() > 2 ? d.season() : 5;   // daily: a week
         const auto h = d.history(d.train_rows());
         if (h.size() < 4 * season + 30) { return "fewer than four seasons of returns"; }
         auto m = time_series_detail::fit_lags(h, {1, 2, season}, {}, 1, 1e-8);
@@ -2223,7 +2241,7 @@ public:
     std::string name() const override { return "Pairs (cointegration)"; }
     std::string family() const override { return "statistical"; }
     std::string fit(const CurriculumDesign& d) override {
-        if (d.track().pair.empty()) { return "no paired instrument on this track"; }
+        if (!d.has_pair()) { return "no paired instrument on this track"; }
         const std::size_t n = d.train_rows();
         if (n < 60) { return "fewer than 60 rows"; }
         double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;

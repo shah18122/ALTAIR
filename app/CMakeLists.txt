@@ -444,6 +444,12 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_forecast_tracks_test PRIVATE altair_models altair_flags)
     target_include_directories(altair_forecast_tracks_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME forecast_tracks COMMAND altair_forecast_tracks_test)
+    # No forecast sees its future: every builder and every model gives the
+    # same answers up to a cut whatever happens after it; planted leaks are caught.
+    add_executable(altair_forecast_leak_test tests/test_forecast_leak.cpp)
+    target_link_libraries(altair_forecast_leak_test PRIVATE altair_models altair_flags)
+    target_include_directories(altair_forecast_leak_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME forecast_leak COMMAND altair_forecast_leak_test)
     # The live 10:15 direction models: fitted before the session, they call
     # exactly what a fit at 10:15 would; the conditional gate's inputs.
     add_executable(altair_live_direction_test tests/test_live_direction.cpp)

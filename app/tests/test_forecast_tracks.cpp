@@ -135,9 +135,12 @@ void test_hourly() {
     ft::TrackInfo info;
     const auto tr = ft::build_hourly({"T hourly", "T", &own, &vix, true, 1.3, nullptr}, info);
     check(altair::curriculum_check_track(tr).has_value(), "the hourly track passes the curriculum's checks");
-    check(info.short_days == 1 && info.warmup == 14, "a short session is excluded; two days are history only");
-    // Wednesday: 6 decisions. Friday: 6, less the 11:15 VIX gap (its bar and the next need it).
-    check(info.no_vix == 2 && tr.rows() == 10 && tr.days() == 2, "six decisions a full day; a VIX gap drops rows");
+    check(info.short_days == 1 && info.warmup == 14, "a short session is counted; two days are history only");
+    // Wednesday: 6 decisions. Thursday (four bars): 3, each with its next bar --
+    // decided before anyone knew the session would stop. Friday: 6, less the
+    // 11:15 VIX gap (its bar and the next need it).
+    check(info.no_vix == 2 && tr.rows() == 13 && tr.days() == 3,
+          "six decisions a full day, a short day forecast to where it stops; a VIX gap drops rows");
     check(tr.t[0] == (d0 + 2) * 86'400 + (555 + 60) * 60 && tr.t_out[5] == (d0 + 2) * 86'400 + ft::kCloseSec,
           "decided at the bar's close; the 14:15 bar's outcome is the 15:30 close");
     check(tr.anchor[0] == own[14].c && tr.actual[0] == own[15].c, "outcome: the next hourly close");
@@ -216,8 +219,8 @@ void test_intraday() {
     ft::TrackInfo info;
     const auto tr = ft::build_intraday({"T 5m", "T", 5, &own, &vix, true, 1.3, &pair, "P"}, info);
     check(altair::curriculum_check_track(tr).has_value(), "the 5-minute track passes the curriculum's checks");
-    check(info.short_days == 1 && info.warmup == 150 && tr.rows() == 2 * 74 && tr.days() == 2,
-          "74 decisions a full day (75 bars, none across the night); a short day and two history days skipped");
+    check(info.short_days == 1 && info.warmup == 150 && tr.rows() == 2 * 74 + 39 && tr.days() == 3,
+          "74 decisions a full day (75 bars, none across the night); a 40-bar day gets 39; two history days");
     check(tr.season == 74 && tr.slot[0] == 0 && tr.slot[73] == 73 && tr.slot[74] == 0,
           "each row knows its bar of the day");
     check(tr.t[0] == (d0 + 2) * 86'400 + (555 + 5) * 60 && tr.t_out[73] == (d0 + 2) * 86'400 + ft::kCloseSec,

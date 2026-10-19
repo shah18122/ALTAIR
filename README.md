@@ -165,8 +165,15 @@ direction, and an 80 % range band (scored on how narrow it can be). A
 Tradability sheet gives the accuracy each track needs to pay its costs.
 
 ```powershell
-build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
+build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified --leak-check
 ```
+
+`--leak-check` proves that no forecast saw its future. At two cuts per track,
+it rebuilds the track from the bars known then, and again from a different
+future after them. It also reruns every model with the cut row's outcome
+changed. Everything up to each cut must come out bit for bit the same, or the
+run exits with code 3. How leaks happen, and the doors closed: see
+[ops/forecast-curriculum.md](ops/forecast-curriculum.md#no-look-ahead-how-a-leak-gets-in-and-how-this-run-proves-there-is-none).
 
 Writes `data/verified/forecast_curriculum.xlsx` (direction summary, range
 bands, accuracy-vs-coverage frontier, learning curve per track, data
