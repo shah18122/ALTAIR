@@ -282,10 +282,12 @@ Bonferroni correction.
 ## Scoring
 
 * **Accuracy** = right / (right + wrong). An unchanged close is neither; a
-  call with no direction counts as wrong. A forecast of exactly no change
-  with no probability (the seasonal mean on a slot it shrank away, a drift
-  ensemble that chose the random walk) is a price forecast only: it is
-  scored for RMSE and left out of the direction record ("price only").
+  call with no direction counts as wrong. The one exception is a forecast
+  of no change from a model that forecasts price by design (the seasonal
+  mean on a slot it shrank away, a drift ensemble that chose the random
+  walk): it is flagged price only, scored for RMSE and left out of the
+  direction record. A rule such as Momentum that makes no call still
+  counts as wrong.
 * **p vs coin**: two-sided, then **Bonferroni** over every model on every
   track. Twenty-one models on seven tracks will produce a few "significant"
   ones by luck alone.

@@ -235,9 +235,37 @@ void test_learning_and_no_leak() {
     check(same, "an outcome cannot change any call made before it was known");
 }
 
+/// Calls every row and names no direction: a rule with nothing to say.
+class NoDirection final : public CurriculumModel {
+public:
+    std::string name() const override { return "No direction"; }
+    std::string family() const override { return "baseline"; }
+    std::string fit(const CurriculumDesign&) override { return {}; }
+    CurriculumCall predict(const CurriculumDesign&, std::size_t) const override {
+        CurriculumCall c;
+        c.made = true;
+        c.mu = 0.0;
+        return c;
+    }
+};
+
 /// The drift ensembles on a random walk, and the seasonal mean on a track with
 /// one slot that drifts.
 void test_drift_ensembles() {
+    {
+        // Only a model that forecasts price by design is exempt from the
+        // direction record: a rule's call without a direction is still wrong.
+        auto tr = ar_track(200, 0.0, 0.0, 17);
+        std::vector<std::unique_ptr<CurriculumModel>> models;
+        models.push_back(std::make_unique<NoDirection>());
+        const auto run = curriculum_run(tr, models);
+        check(run.has_value(), "a model with no direction runs");
+        if (!run) { return; }
+        const auto s = curriculum_summary(tr, *run, 0, 1);
+        check(s.all.price_only == 0 && s.all.no_direction == s.all.scored() && s.all.scored() > 0
+                  && s.all.right == 0,
+              "a call without a direction, not flagged price only, is scored as wrong");
+    }
     {
         auto tr = ar_track(600, 0.0, 0.0, 11);
         auto models = curriculum_default_models();

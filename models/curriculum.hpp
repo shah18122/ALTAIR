@@ -486,6 +486,11 @@ struct CurriculumCall {
     double mu = std::numeric_limits<double>::quiet_NaN();
     /// Error scale of `mu`, for the band. The training sd when the model has none.
     double sigma = std::numeric_limits<double>::quiet_NaN();
+    /// A forecast of the move's size only, here "no change": no direction is
+    /// claimed, so it is scored for RMSE and left out of the direction record.
+    /// Only models that forecast price by design set it (the seasonal mean,
+    /// the drift ensembles); any other call without a direction is wrong.
+    bool price_only = false;
 };
 
 /// A call as the run stores it: 16 bytes instead of 40, because a 1-minute
@@ -497,14 +502,17 @@ struct CurriculumStoredCall {
     float sigma = std::numeric_limits<float>::quiet_NaN();
     std::int8_t dir = 0;
     bool made = false;
+    bool price_only = false;
 
     CurriculumStoredCall() = default;
     CurriculumStoredCall(const CurriculumCall& c) noexcept   // NOLINT: implicit on purpose
         : p_up(static_cast<float>(c.p_up)), mu(static_cast<float>(c.mu)),
-          sigma(static_cast<float>(c.sigma)), dir(static_cast<std::int8_t>(c.dir)), made(c.made) {}
+          sigma(static_cast<float>(c.sigma)), dir(static_cast<std::int8_t>(c.dir)), made(c.made),
+          price_only(c.price_only) {}
     operator CurriculumCall() const noexcept {   // NOLINT: implicit on purpose
         CurriculumCall c;
         c.made = made;
+        c.price_only = price_only;
         c.dir = dir;
         c.p_up = static_cast<double>(p_up);
         c.mu = static_cast<double>(mu);
@@ -512,6 +520,7 @@ struct CurriculumStoredCall {
         return c;
     }
 };
+static_assert(sizeof(CurriculumStoredCall) == 16, "a stored call is 16 bytes: a 1-minute run holds tens of millions");
 
 class CurriculumModel {
 public:
@@ -2318,7 +2327,10 @@ public:
         const std::size_t k = d.slot(i);
         const double mu = k < mean_.size() ? mean_[k] : 0.0;
         CurriculumCall c = curriculum_detail::from_return(mu, sd_);
-        if (mu == 0.0) { c.p_up = curriculum_detail::nan(); }
+        if (mu == 0.0) {
+            c.p_up = curriculum_detail::nan();
+            c.price_only = true;
+        }
         return c;
     }
     std::string tuned() const override { return note_; }
@@ -2932,7 +2944,10 @@ curriculum_run(const CurriculumTrack& tr, std::vector<std::unique_ptr<Curriculum
                 const auto drift_call = [&d](double mu, double sigma) {
                     CurriculumCall c = cd::from_return(mu, sigma);
                     cd::finish(c, d);
-                    if (c.mu == 0.0) { c.p_up = cd::nan(); }
+                    if (c.mu == 0.0) {
+                        c.p_up = cd::nan();
+                        c.price_only = true;
+                    }
                     return c;
                 };
                 if (drift.avg_ok) {
@@ -2997,7 +3012,7 @@ struct CurriculumTally {
     std::size_t flat = 0;        ///< calls on bars that closed unchanged
     std::size_t right = 0, wrong = 0;
     std::size_t no_direction = 0;   ///< calls with no direction: counted in `wrong` too
-    std::size_t price_only = 0;     ///< forecasts of no change (no direction, no probability): not direction-scored
+    std::size_t price_only = 0;     ///< price-only forecasts of no change: not direction-scored
     std::size_t ups = 0;         ///< scored bars that rose, for "always up" on the same bars
     double brier_sum = 0.0;
     std::size_t brier_n = 0;
@@ -3071,7 +3086,7 @@ curriculum_tally(const CurriculumTrack& tr, const CurriculumRun& run, std::size_
             t.edge += static_cast<double>(c.dir) * tr.ret(i);
         }
         if (out == 0) { ++t.flat; continue; }
-        if (c.dir == 0 && !std::isfinite(c.p_up)) { ++t.price_only; continue; }
+        if (c.price_only) { ++t.price_only; continue; }
         if (out > 0) { ++t.ups; }
         (c.dir == out ? t.right : t.wrong) += 1;
         (c.dir == out ? t.abs_right : t.abs_wrong) += std::fabs(tr.ret(i));

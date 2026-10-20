@@ -252,8 +252,8 @@ struct BuilderCheck {
             const auto& x = a.calls[m][i - a.first_row];
             const auto& y = b.calls[m][i - b.first_row];
             ++d.compared;
-            if (x.made != y.made || x.dir != y.dir || !detail::same(x.p_up, y.p_up) || !detail::same(x.mu, y.mu)
-                || !detail::same(x.sigma, y.sigma)) {
+            if (x.made != y.made || x.dir != y.dir || x.price_only != y.price_only || !detail::same(x.p_up, y.p_up)
+                || !detail::same(x.mu, y.mu) || !detail::same(x.sigma, y.sigma)) {
                 d.note(a.models[m] + " at the row decided " + da::format_audit_time(tr.t[i], false));
                 break;
             }
