@@ -38,7 +38,10 @@ Options:
 - `--cap-days N`: stop doubling once a block would exceed N days, then walk on in N-day blocks. 0 (the default) is pure doubling.
 - `--jobs N`: how many tracks run in parallel. The default is the machine's core count.
 - `--other-cost-bp X`.
-- `--only TEXT`: run only tracks whose name contains it, e.g. `--only 5m`.
+- `--only TEXT`: run only tracks whose name contains it, e.g. `--only 5m`; `--skip TEXT` leaves them out, e.g. `--skip 1m`.
+- `--bhavcopy DIR` (default `data\bhavcopy`, fetched by `ops\fetch_bhavcopy.ps1 -Go`) and `--recorded-iv DIR`
+  (default `data\live\iv`, written by `altair_iv_record`): the implied vol of the "+ ivrv" tracks. `--no-ivrv`
+  leaves those tracks out.
 - `--no-bands`, `--no-log`.
 - `--no-feeds`: skip the second pass.
 - `--leak-check`: prove that no forecast saw its future (see "No look-ahead"). It adds about 60 % to the run
@@ -154,10 +157,11 @@ only. A second pass appends some of them to another track's features:
 | **cross** | Hedge's forecast on the next faster and next slower timeframe and on the daily track, the other index's forecast and band, and INDIA VIX's forecast. |
 | **models** | All 32 first-pass models' signed confidence: +1 sure up, −1 sure down, 0 abstained. The coin flip is left out. |
 | **all** | Everything above, about 45 more inputs. |
+| **ivrv** | Implied and realised volatility, from the data rather than from models (`app/ivrv_feed.hpp`, below). |
 
 How the groups run:
 - **Daily and horizon tracks:** every group, an ablation that shows which input helps.
-- **5m, 15m and hourly:** "all" only.
+- **5m, 15m and hourly:** "all" and "ivrv".
 - **1m:** none. No accuracy pays a 1-minute trade's costs.
 
 **The join is as-of.** A row reads, from each feed, the latest value made at
@@ -167,6 +171,34 @@ opinion"), except the band and self feeds, whose rows are dropped instead.
 `models/tests/test_curriculum_feeds.cpp` runs both passes, changes one
 outcome, and checks that none of the 8,190 second-pass calls made before it
 moves.
+
+### Implied and realised volatility ("+ ivrv")
+
+What a volatility desk watches, as inputs, all as logs of annualised vol
+(a spread is then a log ratio, 0 when implied equals realised):
+
+| Input | From | Known at |
+|---|---|---|
+| RV session, RV 5d, RV 22d | each session's realised variance: squared five-minute returns plus the overnight gap | the 15:30 close |
+| HAR next session | the HAR model's forecast of the next session's (Corsi 2009), fitted on past sessions | the 15:30 close |
+| VIX vs RV 22d, VIX vs HAR (NIFTY) | INDIA VIX, NSE's 30-day IV of NIFTY options, over realised: the variance risk premium | the 15:30 close |
+| IV 30d, its change, IV vs RV 22d, IV vs HAR, term slope | the at-the-money IV of the index's monthly options in the NSE F&O bhavcopy, total variance interpolated to 30 days (NIFTY and BANKNIFTY) | 18:00, when NSE publishes the file: a 15:30 decision reads the previous evening's |
+| RV today so far, RV today vs 22d (intraday tracks) | today's five-minute bars up to the decision, scaled to a whole session | each bar's close |
+| IV now, IV now vs RV 22d (intraday tracks) | the FYERS chain the terminal recorded (`altair_iv_record`) | each minute's end |
+
+The recorded FYERS IV joins only once it covers 60 sessions: a few weeks of
+it among years of rows would be noise to every model. Until then the run
+says how many sessions it has. **The leak check rebuilds these inputs too**:
+from only the bars, VIX closes and IV readings known at each cut, and from a
+different future after it, then attaches them to the rebuilt track.
+
+`altair_iv_record` reads the engine's session tapes (`data/live/tapes/`,
+recorded while it runs) and writes each minute's at-the-money IV per index
+to `data/live/iv/<INDEX>/<date>.csv`. The forward comes from put-call parity
+at the strike where the call and put are closest, so a weekly expiry does not
+borrow the monthly future's carry; a minute without a fresh call and put at
+one strike, or with under a day to the expiry, gives no reading. Tapes rotate
+(`--keep-tapes`, 5 days by default): run it after the close at least that often.
 
 ## Tradability
 

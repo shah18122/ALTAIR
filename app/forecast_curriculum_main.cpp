@@ -23,6 +23,7 @@
 
 #include <app/forecast_leak_check.hpp>
 #include <app/forecast_tracks.hpp>
+#include <app/ivrv_feed.hpp>
 #include <app/xlsx_writer.hpp>
 #include <models/band_curriculum.hpp>
 #include <models/curriculum.hpp>
@@ -802,7 +803,8 @@ void usage(const char* exe) {
         "  Train every Model Atlas forecaster on a doubling curriculum, for direction and for\n"
         "  80 %% range bands, on every timeframe, and keep the record.\n\n"
         "    %s [--dataset DIR] [--out DIR] [--first-days N] [--cap-days N] [--jobs N]\n"
-        "       [--other-cost-bp X] [--only TEXT] [--no-bands] [--no-feeds] [--no-log] [--leak-check]\n\n"
+        "       [--other-cost-bp X] [--only TEXT] [--skip TEXT] [--no-bands] [--no-feeds] [--no-log] [--leak-check]\n"
+        "       [--bhavcopy DIR] [--recorded-iv DIR] [--no-ivrv]\n\n"
         "    --dataset DIR      default dataset\n"
         "    --out DIR          default data/verified\n"
         "    --first-days N     days learned before the first forecast (default 3)\n"
@@ -810,9 +812,14 @@ void usage(const char* exe) {
         "    --jobs N           tracks run in parallel (default: the machine's cores)\n"
         "    --other-cost-bp X  round-trip charges besides STT, incl. one tick of slippage (default 1.3)\n"
         "    --only TEXT        run only tracks whose name contains TEXT (e.g. daily, 5m, NIFTY)\n"
+        "    --skip TEXT        leave out tracks whose name contains TEXT (e.g. 1m)\n"
         "    --no-bands         skip the range-band curriculum\n"
         "    --no-feeds         skip the second pass (other models' forecasts as inputs)\n"
         "    --no-log           skip the per-forecast CSV logs (written for daily and hourly tracks)\n"
+        "    --bhavcopy DIR     NSE F&O bhavcopy for the 30-day ATM IV of NIFTY and BANKNIFTY (default\n"
+        "                       data/bhavcopy; ops\\fetch_bhavcopy.ps1 fetches it)\n"
+        "    --recorded-iv DIR  ATM IV recorded from the FYERS chain (default data/live/iv; altair_iv_record)\n"
+        "    --no-ivrv          skip the \"+ ivrv\" tracks (implied and realised volatility as inputs)\n"
         "    --leak-check       prove no forecast saw its future: rebuild every track from the bars known\n"
         "                       at two cuts and from a different future after them, and rerun every model\n"
         "                       with the cut row's outcome changed; everything up to each cut must be\n"
@@ -849,8 +856,9 @@ int main(int argc, char** argv) {
     fs::path out = "data/verified";
     long first_days = 3, cap_days = 0, jobs = static_cast<long>(std::max(1u, std::thread::hardware_concurrency()));
     double other_cost = 1.3;
-    std::string only;
-    bool log = true, bands = true, feeds_on = true, leak_check = false;
+    std::string only, skip;
+    bool log = true, bands = true, feeds_on = true, leak_check = false, ivrv_on = true;
+    fs::path bhav_dir = "data/bhavcopy", recorded_iv_dir = "data/live/iv";
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
         const bool has = i + 1 < argc;
@@ -858,10 +866,14 @@ int main(int argc, char** argv) {
         if (a == "--dataset" && has) { root = argv[++i]; continue; }
         if (a == "--out" && has) { out = argv[++i]; continue; }
         if (a == "--only" && has) { only = argv[++i]; continue; }
+        if (a == "--skip" && has) { skip = argv[++i]; continue; }
         if (a == "--no-log") { log = false; continue; }
         if (a == "--no-bands") { bands = false; continue; }
         if (a == "--no-feeds") { feeds_on = false; continue; }
         if (a == "--leak-check") { leak_check = true; continue; }
+        if (a == "--no-ivrv") { ivrv_on = false; continue; }
+        if (a == "--bhavcopy" && has) { bhav_dir = argv[++i]; continue; }
+        if (a == "--recorded-iv" && has) { recorded_iv_dir = argv[++i]; continue; }
         if (a == "--first-days" && has) {
             if (!parse_int(argv[++i], first_days) || first_days < 1 || first_days > 1000) { usage(argv[0]); return 2; }
             continue;
@@ -904,7 +916,9 @@ int main(int argc, char** argv) {
         specs.push_back({"NIFTY " + hm + "-close", "NIFTY", "spot/nifty", 5, false, false, "spot/banknifty", "BANKNIFTY", minute});
         specs.push_back({"BANKNIFTY " + hm + "-close", "BANKNIFTY", "spot/banknifty", 5, false, false, "spot/nifty", "NIFTY", minute});
     }
-    const auto wanted = [&only](const std::string& name) { return only.empty() || name.find(only) != std::string::npos; };
+    const auto wanted = [&only, &skip](const std::string& name) {
+        return (only.empty() || name.find(only) != std::string::npos) && (skip.empty() || name.find(skip) == std::string::npos);
+    };
     std::erase_if(specs, [&](const TrackSpec& t) { return !wanted(t.name); });
 
     // Every series the tracks need, loaded and cleaned once, before any thread starts.
@@ -931,6 +945,63 @@ int main(int argc, char** argv) {
         const auto it = series.find(dir + "/" + tf_dir(tf));
         return it == series.end() ? nullptr : &it->second.bars;
     };
+    // IMPLIED AND REALISED VOLATILITY (app/ivrv_feed.hpp), for the "+ ivrv"
+    // tracks: each index's five-minute bars (realised), INDIA VIX's daily bars,
+    // the bhavcopy's 30-day ATM IV and the IV recorded from the FYERS chain.
+    struct IvInputs {
+        std::vector<da::AuditBar> five, vix;
+        altair::ivrv::IvSeries bhav, recorded;
+        std::size_t recorded_sessions = 0;
+    };
+    std::map<std::string, IvInputs> iv_inputs;   // "NIFTY", "BANKNIFTY"
+    // Recorded FYERS IV joins only once it covers this many sessions: a few
+    // days of it among years of rows would be noise to every model.
+    constexpr std::size_t kRecordedIvMinSessions = 60;
+    if (feeds_on && ivrv_on) {
+        ft::TrackInfo unused;
+        auto vix = ft::load_bars(root / "spot/indiavix/1d", da::kDailyTf, unused);
+        ft::clean_bars(vix, unused);
+        for (const auto& [inst, dir] : {std::pair<std::string, std::string>{"NIFTY", "spot/nifty"}, {"BANKNIFTY", "spot/banknifty"}}) {
+            IvInputs in;
+            ft::TrackInfo info;
+            in.five = ft::load_bars(root / dir / "5m", 5, info);
+            ft::clean_bars(in.five, info);
+            if (in.five.empty()) {
+                std::printf("  + ivrv: no five-minute bars under %s, %s skipped\n", (root / dir / "5m").string().c_str(), inst.c_str());
+                continue;
+            }
+            if (inst == "NIFTY") { in.vix = vix; }
+            altair::bhavcopy::LoadReport br;
+            in.bhav = altair::ivrv::iv_from_bhavcopy(altair::bhavcopy::load_dir(bhav_dir, inst, br));
+            in.recorded = altair::ivrv::load_recorded_iv(recorded_iv_dir, inst);
+            in.recorded_sessions = altair::ivrv::sessions_covered(in.recorded);
+            std::printf("  + ivrv %s: realised from %zu five-minute bars%s; bhavcopy IV on %zu days (%zu files under %s)%s;"
+                        " FYERS IV on %zu sessions%s\n",
+                        inst.c_str(), in.five.size(), in.vix.empty() ? "" : ", INDIA VIX", in.bhav.size(), br.files,
+                        bhav_dir.string().c_str(), in.bhav.empty() ? " -- run ops\\fetch_bhavcopy.ps1 -Go for it" : "",
+                        in.recorded_sessions,
+                        in.recorded_sessions >= kRecordedIvMinSessions ? "" : (" (joins at " + std::to_string(kRecordedIvMinSessions) + ")").c_str());
+            iv_inputs.emplace(inst, std::move(in));
+        }
+    }
+    /// The "+ ivrv" inputs of one index, from inputs passed through `x`
+    /// (identity for the run; truncated or perturbed for the leak check).
+    const auto make_ivrv = [&](const IvInputs& in, const altair::forecast_leak::Transform& x, bool intraday,
+                               const std::string& inst) {
+        const auto five = x.bars(in.five, 5);
+        const auto vix = in.vix.empty() ? std::vector<da::AuditBar>{} : x.bars(in.vix, da::kDailyTf);
+        const auto s = altair::ivrv::session_rv(five);
+        std::vector<altair::ModelFeed> out;
+        out.push_back(altair::ivrv::rv_daily_feed(inst + " RV", s, vix.empty() ? nullptr : &vix));
+        if (intraday) { out.push_back(altair::ivrv::rv_intraday_feed(inst + " RV today", five, s)); }
+        if (!in.bhav.empty()) { out.push_back(altair::ivrv::iv_daily_feed(inst + " IV (bhavcopy)", x.iv(in.bhav), s)); }
+        if (intraday && in.recorded_sessions >= kRecordedIvMinSessions) {
+            out.push_back(altair::ivrv::iv_intraday_feed(inst + " IV (FYERS)", x.iv(in.recorded), s));
+        }
+        return out;
+    };
+    const auto iv_instrument = [](const std::string& track) { return track.rfind("BANKNIFTY", 0) == 0 ? "BANKNIFTY" : "NIFTY"; };
+
     const std::string cost_text = "2 bp STT to 2026-03-31, 5 bp from 2026-04-01, + " + fixed(other_cost, 1)
                                   + " bp charges and one tick";
 
@@ -1156,6 +1227,7 @@ int main(int argc, char** argv) {
         };
         struct P2 { std::string base, variant; std::vector<const altair::ModelFeed*> feeds; };
         std::vector<P2> p2;
+        std::map<std::string, std::vector<altair::ModelFeed>> ivrv_feeds;   // base track -> its "+ ivrv" inputs
         for (const auto& b : results) {
             if (!b.ok || !b.track.tradable) { continue; }
             const std::string& n = b.track.name;
@@ -1176,6 +1248,14 @@ int main(int argc, char** argv) {
                 p2.push_back({n, "models", {&self.models}});
             }
             p2.push_back({n, "all", all});
+            const auto in = iv_inputs.find(iv_instrument(n));
+            if (in != iv_inputs.end()) {
+                auto& owned = ivrv_feeds[n];
+                owned = make_ivrv(in->second, altair::forecast_leak::identity(), b.track.horizon != "next day", in->first);
+                std::vector<const altair::ModelFeed*> ptr;
+                for (const auto& f : owned) { ptr.push_back(&f); }
+                p2.push_back({n, "ivrv", ptr});
+            }
         }
         std::erase_if(p2, [&](const P2& q) { return !wanted(q.base + " + " + q.variant); });
         const std::size_t from = results.size();
@@ -1204,6 +1284,22 @@ int main(int argc, char** argv) {
                 }
                 r.track = std::move(*tr);
                 ft::detail::finish_info(r.track, r.info);
+                if (q.variant == "ivrv" && b.rebuild) {
+                    // The leak check rebuilds the base track AND its volatility
+                    // inputs from what was known at the cut, then attaches them.
+                    const std::string inst = iv_instrument(q.base);
+                    const bool intraday = b.track.horizon != "next day";
+                    const std::int64_t start = b.track.t[b.run.first_row];
+                    r.rebuild = [&, base = b.rebuild, inst, intraday, start, name](const altair::forecast_leak::Transform& x) {
+                        const altair::CurriculumTrack bt = base(x);
+                        const auto owned = make_ivrv(iv_inputs.at(inst), x, intraday, inst);
+                        std::vector<const altair::ModelFeed*> ptr;
+                        for (const auto& f : owned) { ptr.push_back(&f); }
+                        altair::FeedAttachInfo info;
+                        auto t = altair::curriculum_attach_feeds(bt, ptr, name, start, info);
+                        return t ? std::move(*t) : altair::CurriculumTrack{};
+                    };
+                }
                 std::string src;
                 for (const auto* f : q.feeds) { src += (src.empty() ? "" : ", ") + f->source + " (" + std::to_string(f->cols()) + ")"; }
                 r.feed_note = "inputs from " + src + "; " + std::to_string(fi.before_start) + " rows before the first forecast and "

@@ -113,7 +113,7 @@ void test_page(const QString& root) {
                   && d.contains(QStringLiteral("= <b>173.37</b>")) && d.contains(QStringLiteral("= <b>17948.63</b>")),
               "a double-click on a trip walks gross, every expense head, and net");
         auto* how = page.findChild<QTextBrowser*>(QStringLiteral("traderSummary"));
-        check(how != nullptr && how->toPlainText().contains(QStringLiteral("Step by step, every day"))
+        check(how != nullptr && how->toPlainText().contains(QStringLiteral("Four candidates, every step"))
                   && how->toPlainText().contains(QStringLiteral("buy and hold one lot")),
               "how it works, with the latest run's summary under it");
         page.tabs()->setCurrentIndex(0);

@@ -42,6 +42,7 @@
 
 #include <app/data_audit.hpp>
 #include <app/forecast_tracks.hpp>
+#include <app/ivrv_feed.hpp>
 #include <models/band_curriculum.hpp>
 #include <models/curriculum.hpp>
 
@@ -93,15 +94,29 @@ using Bars = std::vector<da::AuditBar>;
     return out;
 }
 
+/// The same implied-vol readings with every one stamped after `cut` moved.
+[[nodiscard]] inline ivrv::IvSeries other_iv_future(const ivrv::IvSeries& s, std::int64_t cut) {
+    ivrv::IvSeries out = s;
+    for (std::size_t k = 0; k < out.size(); ++k) {
+        if (out[k].t <= cut) { continue; }
+        const double f = std::exp(0.05 * std::sin(0.9 * static_cast<double>(k) + 0.3));
+        out[k].iv *= f;
+        out[k].iv_next *= f;
+    }
+    return out;
+}
+
 /// How a builder's inputs are transformed: identity, known by the cut, or
 /// with another future after it.
 struct Transform {
     std::function<Bars(const Bars&, int)> bars;
     std::function<ft::VixForecast(const ft::VixForecast&)> vix_forecast;
+    std::function<ivrv::IvSeries(const ivrv::IvSeries&)> iv;
 };
 
 [[nodiscard]] inline Transform identity() {
-    return {[](const Bars& b, int) { return b; }, [](const ft::VixForecast& f) { return f; }};
+    return {[](const Bars& b, int) { return b; }, [](const ft::VixForecast& f) { return f; },
+            [](const ivrv::IvSeries& s) { return s; }};
 }
 [[nodiscard]] inline Transform truncate_at(std::int64_t cut) {
     return {[cut](const Bars& b, int tf) { return known_by(b, tf, cut); },
@@ -109,6 +124,13 @@ struct Transform {
                 ft::VixForecast out;
                 for (const auto& [day, p] : f) {
                     if (day * ft::kDaySec + ft::kCloseSec <= cut) { out.emplace(day, p); }
+                }
+                return out;
+            },
+            [cut](const ivrv::IvSeries& s) {
+                ivrv::IvSeries out;
+                for (const auto& p : s) {
+                    if (p.t <= cut) { out.push_back(p); }
                 }
                 return out;
             }};
@@ -121,7 +143,8 @@ struct Transform {
                     if (day * ft::kDaySec + ft::kCloseSec > cut) { p = 1.0 - p; }
                 }
                 return out;
-            }};
+            },
+            [cut](const ivrv::IvSeries& s) { return other_iv_future(s, cut); }};
 }
 
 /// What a comparison found: items compared, items that differed, the first.

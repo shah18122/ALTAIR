@@ -389,6 +389,8 @@ public:
         trader_trades_ = new demo_detail::CsvModel(this);
         trader_days_ = new demo_detail::CsvModel(this);
         trader_weights_ = new demo_detail::CsvModel(this);
+        trader_candidates_ = new demo_detail::CsvModel(this);
+        trader_analogs_ = new demo_detail::CsvModel(this);
         summary_filter_ = new demo_detail::ColumnFilter(this);
         summary_filter_->setSourceModel(summary_);
         summary_filter_->setSortRole(Qt::UserRole);
@@ -425,11 +427,15 @@ public:
         tabs_->addTab(view(sorted(sa_summary_)), QStringLiteral("Stat-arb · summary"));
         tabs_->addTab(view(sorted(sa_trades_)), QStringLiteral("Stat-arb · trades"));
         tabs_->addTab(ratio_, QStringLiteral("BANKNIFTY/NIFTY ratio"));
-        // altair_trader (app/trader_main.cpp): its trips, its call every day,
-        // the weight it puts on every model, and its summary.
+        // altair_trader (app/trader_main.cpp): its trips, its call every step,
+        // the weight it puts on every model, how each candidate (ridge, CNN,
+        // analogs) did against no change, the latest most similar past
+        // moments, and its summary.
         tabs_->addTab(view(sorted(trader_trades_)), QStringLiteral("altair_trader · trades"));
         tabs_->addTab(view(sorted(trader_days_)), QStringLiteral("altair_trader · days"));
         tabs_->addTab(view(sorted(trader_weights_)), QStringLiteral("altair_trader · weights"));
+        tabs_->addTab(view(sorted(trader_candidates_)), QStringLiteral("altair_trader · models"));
+        tabs_->addTab(view(sorted(trader_analogs_)), QStringLiteral("altair_trader · similar days"));
         trader_summary_ = new QTextBrowser(this);
         trader_summary_->setObjectName(QStringLiteral("traderSummary"));
         tabs_->addTab(trader_summary_, QStringLiteral("altair_trader · how it works"));
@@ -503,6 +509,8 @@ private:
             trader_trades_->set(demo_detail::read_csv(tdir + QStringLiteral("/trades.csv")));
             trader_days_->set(demo_detail::read_csv(tdir + QStringLiteral("/days.csv")));
             trader_weights_->set(demo_detail::read_csv(tdir + QStringLiteral("/weights.csv")));
+            trader_candidates_->set(demo_detail::read_csv(tdir + QStringLiteral("/candidates.csv")));
+            trader_analogs_->set(demo_detail::read_csv(tdir + QStringLiteral("/analogs.csv")));
             QFile f(tdir + QStringLiteral("/summary.txt"));
             const QString summary = f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
             trader_summary_->setHtml(trader_how_html(summary));
@@ -679,19 +687,24 @@ private:
     /// altair_trader, explained, with its latest summary under it.
     [[nodiscard]] static QString trader_how_html(const QString& summary) {
         QString h = QStringLiteral(
-            "<h3>altair_trader &mdash; one model over every model</h3>"
-            "<p><b>Inputs, model outputs only.</b> Every base model of the forecast curriculum, on every daily track "
-            "(NIFTY, BANKNIFTY, NIFTY futures, INDIA VIX, each also with the VIX forecast fed in), says at each close which "
-            "way the next close goes and how sure it is. Its conviction (2&middot;p<sub>up</sub> &minus; 1, or &plusmn;1) is one "
-            "input. No price, no indicator, no hand rule.</p>"
-            "<p><b>The model.</b> Ridge regression of the next session's move (bp) on those convictions, with old days "
-            "fading (half-life 250 sessions). Several penalties run side by side; each is scored on the calls it made "
-            "before each outcome, and the one with the least recent error makes the call.</p>"
-            "<p><b>Step by step, every day.</b> At each close: yesterday's outcome is learned and the model refitted; "
-            "today's call is made from weights that never saw today; then it trades one lot of the index future. It "
-            "enters only when the expected move beats the round trip's expenses (both fills, priced from "
-            "config/charges.toml), holds while the call points the held way, and exits when it turns. A month end inside "
-            "a holding pays a roll. Every trip lists every expense head (double-click one).</p>"
+            "<h3>altair_trader &mdash; models over every model</h3>"
+            "<p><b>Inputs.</b> Every base model of the forecast curriculum, on every daily track (NIFTY, BANKNIFTY, NIFTY "
+            "futures, INDIA VIX) and, for the intraday arms, every hourly track, says which way the next step goes and how "
+            "sure it is: its conviction (2&middot;p<sub>up</sub> &minus; 1, or &plusmn;1) is one input. Beside them, implied "
+            "and realised volatility: realised from five-minute bars, INDIA VIX, the bhavcopy's 30-day ATM IV and, once "
+            "recorded long enough, the FYERS chain's &mdash; each as of the decision.</p>"
+            "<p><b>Four candidates, every step.</b> No change; the ridge stack (ridge regression with old days fading); a "
+            "temporal CNN that mixes the models' calls into a few learned patterns and reads how they moved over the last "
+            "ten steps; and the analogs, which find the past moments whose calls looked most like now and take what "
+            "followed them (<i>similar days</i> tab). Each is scored on the calls it made before each outcome; the one with "
+            "the least recent error trades. The CNN and the analogs also check, at every refit, that they beat no change on "
+            "the newest fifth of their own past, and forecast no change if not.</p>"
+            "<p><b>Step by step.</b> The last outcome is learned and the candidates refitted; this step's call is made from "
+            "fits that never saw it; then it trades one lot of the index future. It enters only when the expected move beats "
+            "the round trip's expenses (both fills, priced from config/charges.toml), holds while the call points the held "
+            "way, and exits when it turns. Daily: a month end inside a holding pays a roll. Intraday: no entry at the "
+            "session's last hourly decision, and nothing is carried overnight. Every trip lists every expense head "
+            "(double-click one). On paper only.</p>"
             "<p><b>Read it against buy and hold</b> (in the summary): the timing has to beat simply holding the future.</p>");
         if (summary.isEmpty())
             h += QStringLiteral("<p><i>No run yet: choose <b>altair_trader</b> and press <b>Run</b> (it reads "
@@ -830,6 +843,8 @@ private:
     demo_detail::CsvModel* trader_trades_{};
     demo_detail::CsvModel* trader_days_{};
     demo_detail::CsvModel* trader_weights_{};
+    demo_detail::CsvModel* trader_candidates_{};
+    demo_detail::CsvModel* trader_analogs_{};
     QTextBrowser* trader_summary_{};
     QPushButton* run_{};
     QCheckBox* unverified_{};
