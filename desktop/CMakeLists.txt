@@ -133,6 +133,8 @@ qt_add_executable(altair_desktop
     # The Terminal's Greek Watch and the demo books' reports.
     greek_watch.hpp
     demo_reports.hpp
+    # Start here: ALTAIR in plain words.
+    start_page.hpp
 )
 
 # P34-02. THE ICON RESOURCE WAS NEVER COMPILED, AND NOTHING SAID SO.
@@ -768,6 +770,20 @@ if(ALTAIR_BUILD_TESTS)
                 PRIVATE ws2_32 mswsock)
         endif()
         add_test(NAME desktop_price_client COMMAND altair_price_client_test)
+
+        # Start here: ALTAIR in plain words -- the state from its files, the verdicts.
+        qt_add_executable(altair_start_page_test tests/test_start_page.cpp)
+        target_link_libraries(altair_start_page_test PRIVATE
+            altair_types altair_time altair_server altair_flags Boost::headers Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+        target_compile_definitions(altair_start_page_test PRIVATE ALTAIR_KILL_REQUEST_FILE="data/kill_request.json")
+        target_include_directories(altair_start_page_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        set_target_properties(altair_start_page_test PROPERTIES WIN32_EXECUTABLE OFF)
+        if(WIN32)
+            target_link_libraries(altair_start_page_test PRIVATE ws2_32 mswsock)
+        endif()
+        add_test(NAME desktop_start_page COMMAND altair_start_page_test)
+        set_tests_properties(desktop_start_page PROPERTIES TIMEOUT 60 ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
 
         # The live market watch over the real bus and client: watch rows,
         # depth, time and sales, the live chain's market IV, SIM labelling.

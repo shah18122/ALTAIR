@@ -234,6 +234,69 @@ build\net\app\altair_vol_premium.exe --source bhavcopy --unverified-costs `
 columns by name, keeps monthly expiries within ±20 % of the future, and
 prices only strikes that traded.
 
+**On NSE's own closes (2015–2026, 2,896 bhavcopy days, measured 2026-10-21).**
+One lot, slippage 1 point a fill, expenses from `config/charges.toml`:
+
+| Variant | NIFTY trades | NIFTY net | net/trade | t | BANKNIFTY net | net/trade | t |
+|---|---|---|---|---|---|---|---|
+| always | 58 | +₹91,804 | +₹1,583 | 1.49 | +₹74,820 | +₹1,268 | 0.62 |
+| har-0 | 51 | +₹78,872 | +₹1,547 | 1.18 | +₹1,28,811 | +₹2,862 | 1.45 |
+| har-2 | 32 | +₹56,160 | +₹1,755 | 1.11 | +₹6,495 | +₹232 | 0.07 |
+| har-4 | 12 | +₹64,465 | +₹5,372 | 2.06 | +₹98,114 | +₹8,919 | 2.56 |
+| har-2-stop2x | 76 | +₹1,19,384 | +₹1,571 | 0.70 | −₹47,485 | −₹719 | −0.23 |
+| har-2-unhedged | 32 | +₹4,628 | +₹145 | 0.06 | +₹1,52,753 | +₹5,455 | 1.40 |
+
+What the real closes say:
+- **The premium is real but about a quarter of the synthetic one.** NIFTY's
+  ATM straddle averaged 14.2 % implied against 12.9 % realised (synthetic:
+  priced at VIX). Selling every month made ₹1,583 a month after costs, not
+  ₹6,295.
+- **Nothing is significant yet.** The control's t is 1.5. `har-4` reaches
+  t 2.1–2.6, but on 11–12 trades and as the best of seven variants; corrected
+  for that choice it is not evidence.
+- **Still the best lead in the repository**, and the first on real prices.
+  The next test is the variant set run forward on paper, untouched.
+
+## Vol of vol: short the wings, long the money
+
+`strategies/vol_of_vol.hpp`, `altair_vol_of_vol`. Each week:
+1. Take the first monthly expiry at least 10 sessions out.
+2. Read its smile from the traded OTM closes, and find the vanna-volga
+   pillars (25-delta put, ATM, 25-delta call; `analytics/vanna_volga.hpp`).
+3. Sell `--strangle-lots` (default 5) of the 25-delta strangle.
+4. Buy the ATM straddle lots that cancel its vega.
+5. Hedge the delta with whole futures lots at every close.
+6. Roll after `--hold` closes (default 5).
+
+What is left is short **volga**. Vol-of-vol risk is priced at a premium in the
+literature (Huang, Schlag, Shaliastovich & Thimme 2018), so this sells that
+premium.
+
+The variants:
+
+| Variant | What it does |
+|---|---|
+| `short-always` | Every week. |
+| `short-rich-wings` | Only when the 25-delta butterfly is above its median of the previous 60 closes. |
+| `long-always` | The mirror. With no slippage it loses exactly what `short-always` makes, which checks the engine. |
+
+**Measured on the same bhavcopy (2026-10-21), net of expenses:**
+
+| Run | NIFTY | t | BANKNIFTY | t |
+|---|---|---|---|---|
+| short-always, no slippage | −₹3,558 (gross +₹3.06 lakh) | −0.03 | −₹3.17 lakh | −1.25 |
+| short-rich-wings, no slippage | +₹1.01 lakh | 1.09 | +₹3.57 lakh | 1.84 |
+| short-always, 1 pt a fill | −₹13.2 lakh | −9.6 | −₹9.0 lakh | −3.5 |
+| short-always, monthly hold, no slippage | −₹1.86 lakh | −1.2 | −₹2.72 lakh | −1.2 |
+
+**Verdict.** There is a small gross premium, concentrated in weeks when the
+wings are dear. It is not significant even before slippage, and four legs
+crossed at the touch cost more than it pays.
+
+**Not tradable as built.** It would need passive fills at mid, which only
+recorded 50-level tapes can test. `ops/research-ideas.md` sets out that
+experiment.
+
 ## Cross-sectional statistical arbitrage
 
 This is the quant-fund version of pairs trading (Avellaneda & Lee 2010). It

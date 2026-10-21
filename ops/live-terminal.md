@@ -77,6 +77,12 @@ Credentials:
 
 ## The Terminal
 
+- **Start here** (first in the sidebar, `desktop/start_page.hpp`) is ALTAIR in
+  plain words. It shows:
+  - what is running right now: prices, LIVE or paper, the models, a halt;
+  - the Terminal in five things;
+  - every strategy's test result in one line: what it made after costs, and
+    what to do with it.
 - **Views:** the market watch (F4) in the main area, Enter on a scrip for its
   option chain, with depth and time & sales of the selected scrip beside it.
   **Models** is Ctrl+M.
@@ -136,6 +142,29 @@ Credentials:
     and Kite reconnect with it.
   - **Delete** removes the selected scrip; right-click → *Restore removed
     scrips* brings removed ones back.
+- **MCX and currency (prices and paper orders only).** The loader's
+  Exchange list has **MCX** (segment FO: futures and options) and NSE has
+  **CD** (currency; BSE's CD appears when the master lists BSE currency, which
+  Kite's does not). They stream from FYERS with the 5-level book; real orders
+  for them are refused by the Terminal and the order router.
+  - **Lots in units.** The Kite master says lot 1 for both, so
+    `live/contract_units.hpp` holds what a lot is: CRUDEOIL 100 barrels, GOLD
+    100 (1 kg quoted per 10 g), SILVER 30 kg, NATURALGAS 1,250 mmBtu, COPPER
+    2,500 kg, and so on (96 % of the MCX contracts in the 2026-10 master). An
+    underlying not in the table does not stream. The table is from the
+    exchange specifications and is **unverified**: check "lot N" on the
+    selection line against MCX's contract page before trusting P&L.
+  - **Currency is quoted per 100 units.** INR pairs (USDINR, EURINR, GBPINR,
+    JPYINR) have four decimals and the price wire carries whole paise, so
+    they are shown per 100 of the base: USDINR at 83.4525 is **8,345.25**, a
+    strike of 83.50 is 8,350, and a lot (1,000 USD) is 10 of them. Exact, and
+    orders, books and P&L agree. Cross pairs and bond futures do not stream.
+  - **Hours.** The feed runs to 23:59 IST while the watchlist holds MCX and
+    to 17:05 for currency (otherwise 15:45).
+  - **Expenses.** MCX futures pay CTT and MCX's charge; currency its own
+    lines (`config/charges.toml`); BSE currency is charged at NSE's rates (no
+    BSE currency line). An MCX option is unpriced: there is no
+    commodity-options line.
 - **Positions are only in Alt+F6.** The net position window holds:
   - the paper book;
   - *Broker account · GETS*: positions and funds, Greek watch, portfolio
@@ -303,9 +332,17 @@ That is about 370 symbols, well under FYERS' 5,000 per socket.
 
 **The 50-level book.** FYERS sends it on a second socket (`feed/fyers_tbt.hpp`:
 protobuf, decoded without a library and pinned by messages the official SDK
-encoded). The price service subscribes the instruments marked for depth,
-futures first, five to a channel (`--depth50 N` caps how many; `--depth50 off`
-keeps the 5-level book only). A diff carries only the levels that moved, each
+encoded). FYERS sends it for **NSE equity and F&O only** (BSE, MCX and
+currency get five levels), and for few symbols at once: **one on its Standard
+plan**, five a connection on Prime. So the 50-level book follows the scrip on
+screen: the Terminal writes `data/live/depth_request.csv` when the selection
+changes, and the price service moves its slot to it within a second
+(unsubscribe the old, subscribe the new, on the open socket). With nothing
+asked, the slot holds the near futures. `--depth50 N` sets the slots (default
+1; at most 5 on one connection); `--depth50 off` keeps the 5-level book only.
+The depth title says which you are looking at: "50 levels (FYERS 50-level
+book)", "5 levels — asking FYERS for 50…" for the first seconds, then why not
+(a BSE scrip, an index, or FYERS sent none: check the plan and the log). A diff carries only the levels that moved, each
 with its position in `num` (0–49); the official SDK (fyers-apiv3 up to
 3.1.18) writes them by their index in the message instead, which corrupts
 every level a sparse diff skips. That was the "wrong prices after level 5":
@@ -364,6 +401,15 @@ Each instrument carries three frame types:
   - IV and Δ inverted from the market mid with Black-76. The forward is the near
     future's mid, carried back to the options' expiry.
   - The ATM strike is marked and in-the-money halves are shaded.
+  - **VV ±** (beside the strike): the out-of-the-money option's market IV
+    minus its vanna-volga IV, in vol points (`analytics/vanna_volga.hpp`;
+    Castagna & Mercurio 2007).
+    - The smile is priced from three of its own strikes: the 25-delta put,
+      the ATM and the 25-delta call.
+    - Red + is dear and green − is cheap, against that expiry's own smile.
+    - Greek Watch shows the same for each leg (**VV IV**, **Rich/cheap**)
+      while the chain shows that leg's underlying and expiry.
+    - It is a consistency check across one expiry, not a forecast.
 - **Status line:** LIVE, REPLAY or SIM from the frames' own flags, plus frames and
   sequence gaps. The feed's own state (`data/live/feed_status.json`) sits alongside,
   so "why is nothing ticking" has an answer.
@@ -502,6 +548,7 @@ holds:
 | File | Written by | What |
 |---|---|---|
 | `universe.csv` | price service | what streams, and under which token |
+| `depth_request.csv` | Terminal | the scrip on screen (`fyers,token`): the 50-level slot moves to it |
 | `feed_status.json` | price service | source (fyers, kite or sim), state, counts, last error; every 30 s instruments subscribed, priced, booked, with a fresh 50-level book, and the first with no price |
 | `price_service.log` | Terminal (the feed's output) | everything the price service prints this run; `price_service.prev.log` the run before |
 | `watchlist.csv` | Terminal (Insert / ＋ Add scrip) | scrips added to the watch, by Kite token; the price service streams them |
@@ -701,8 +748,9 @@ at start and print what they did (`bus: core 2, highest`).
   connection. BSE legs are charged at the NSE schedule (`app/demo_costs.hpp`
   has no BSE rates), and FYERS' BSE symbols are assumed group A (every NIFTY
   50 stock is).
-- **FYERS' limits on the 50-level book are not documented here.** The feed
-  asks for every depth instrument and prints any refusal; check the log the
+- **The 50-level book is one scrip at a time on a FYERS Standard plan.** The
+  limits (1 symbol Standard, 5 a connection Prime, NSE equity and F&O only)
+  are FYERS' published ones; the feed prints any refusal, so check the log the
   first day.
 - **LIVE orders are the router's limits, not FYERS' RMS.** The router refuses
   what breaks the limits you set; FYERS can still reject an order (margin,

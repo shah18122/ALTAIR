@@ -432,7 +432,14 @@ int main(int argc, char** argv) {
     }
 
     // ---- the universe the feed streams -----------------------------------
-    const auto universe = lv::read_universe((live_dir / "universe.csv").string());
+    // MCX and currency stream for the Terminal (prices and paper orders by
+    // hand) but no model or strategy here is built for them -- their hours,
+    // lots and quoting differ (live/contract_units.hpp) -- so the engine
+    // never sees them.
+    auto universe = lv::read_universe((live_dir / "universe.csv").string());
+    std::erase_if(universe, [](const lv::LiveInstrument& i) {
+        return i.group == lv::kCommodityGroup || i.group == lv::kCurrencyGroup;
+    });
     if (universe.empty()) {
         std::printf("no %s: start altair_price_service (--fyers --go, or --sim) first; it writes it.\n",
                     (live_dir / "universe.csv").string().c_str());

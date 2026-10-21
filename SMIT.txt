@@ -1148,3 +1148,62 @@ SEARCH
     random walk by more than 0.01 %; on INDIA VIX the new models lift daily
     skill from +1.96 % to +2.76 % and 1-minute from +1.28 % to +1.63 %.
     Tables: ops/forecast-curriculum.md.
+
+29. 50-LEVEL DEPTH, MCX AND CURRENCY, VANNA-VOLGA, START HERE -- 2026-10-21
+  50-LEVEL DEPTH FOLLOWS THE SCRIP ON SCREEN
+    FYERS sends the 50-level book for NSE equity and F&O only, and for one
+    symbol at a time on its Standard plan (five a connection on Prime). The
+    feed used to ask for 250 at once, so most got five. Now the Terminal
+    writes data/live/depth_request.csv when you select a scrip and the price
+    service moves its slot to it within a second, on the open socket. The
+    depth title says "50 levels", or why five: a BSE/MCX/currency scrip, an
+    index, or FYERS sent none (check the plan). --depth50 N sets the slots
+    (default 1, at most 5).
+
+  ALL SEGMENTS: MCX AND CURRENCY (prices and paper orders only)
+    The loader's Exchange list has MCX (FO) and NSE has CD (currency). They
+    stream from FYERS with the 5-level book. Real orders for them are refused
+    by the Terminal and by the order router.
+    - Lots: the Kite master says lot 1, so live/contract_units.hpp holds what
+      a lot is (CRUDEOIL 100 barrels, GOLD 100, SILVER 30 kg ...; 96 % of MCX
+      contracts). UNVERIFIED against the exchange: check "lot N" on the
+      selection line before trusting P&L.
+    - Currency is shown PER 100 UNITS: USDINR 83.4525 is 8,345.25, a lot is
+      10. The price wire carries whole paise and USDINR ticks 0.0025, so
+      this is the exact way to carry it. Cross pairs and bond futures do not
+      stream.
+    - The feed runs to 23:59 with MCX in the watchlist, 17:05 with currency.
+    - Expenses: MCX futures and currency futures/options have their own
+      lines; an MCX option is unpriced (no line in charges.toml).
+
+  VANNA-VOLGA SMILE (Castagna & Mercurio 2007)
+    analytics/vanna_volga.hpp prices any strike from the 25-delta put, the
+    ATM and the 25-delta call by hedging its vega, vanna and volga with them.
+    The option chain's new VV +/- column is market IV minus vanna-volga IV,
+    in vol points: + dear, - cheap against that expiry's own smile. Greek
+    Watch has VV IV and Rich/cheap. It is a consistency check, not a
+    forecast.
+
+  VOL OF VOL, BACKTESTED ON NSE CLOSES (altair_vol_of_vol)
+    Short the 25-delta strangle, long the ATM straddle, vega-neutral,
+    delta-hedged, rolled weekly, 2015-2026. A small gross premium (NIFTY
+    Rs 3.06 lakh over 562 weeks); not significant even with no slippage;
+    every variant negative at 0.5-1 point a fill. NOT TRADABLE AS BUILT.
+
+  THE VARIANCE PREMIUM ON REAL CLOSES (altair_vol_premium --source bhavcopy)
+    Selling the monthly ATM straddle, hedged: NIFTY +Rs 91,804 over 58 months
+    after costs (Rs 1,583 a month, t 1.5); BANKNIFTY +Rs 74,820 (t 0.6).
+    About a quarter of the synthetic result. Real, the best lead, not proven.
+
+  START HERE (first in the sidebar)
+    ALTAIR in plain words: what is running right now (prices, LIVE or paper,
+    the models), the Terminal in five things, and every strategy's test
+    result in one line -- what it made after costs and what to do with it.
+
+  RESEARCH IDEAS: ops/research-ideas.md
+    Physics and maths that could give an edge -- vol premia, order flow,
+    impact laws, random matrices, deflated Sharpe, Kelly -- each with its
+    source, what ALTAIR has for it, and the test that would falsify it. The
+    honest frame: SEBI found 93 % of individual F&O traders lost money in
+    FY22-24 while algorithmic firms took the profits; a small desk competes
+    on patience, capacity and execution, not on speed.

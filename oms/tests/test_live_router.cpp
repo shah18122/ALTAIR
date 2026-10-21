@@ -216,6 +216,9 @@ int main() {
         };
         check(refused(intent("b", 111, "NIFTY26OCTFUT", "NFO", 2'500'000, "NRML", 2), &f, book, 2'500'000, kMonday10, "per order"),
               "two lots over a one-lot limit");
+        const RouterInstrument crude{333u, "CRUDEOIL26NOVFUT", "MCX:CRUDEOIL26NOVFUT", "MCX", 100, 100};
+        check(refused(intent("b", 333, "CRUDEOIL26NOVFUT", "MCX", 550'000), &crude, book, 550'000, kMonday10, "paper only"),
+              "an MCX contract is never a real order: prices and paper only");
         check(refused(intent("b", 111, "NIFTY26OCTFUT", "NFO", 2'500'000, "CNC"), &f, book, 2'500'000, kMonday10, "F&O product"),
               "CNC on a future");
         check(refused(intent("b", 222, "M&M", "NSE", 300'000, "NRML"), &s, book, 300'000, kMonday10, "equity product"),

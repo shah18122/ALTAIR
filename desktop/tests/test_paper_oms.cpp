@@ -13,6 +13,7 @@
 #include <QComboBox>
 #include <QFile>
 #include <QKeyEvent>
+#include <QStandardItemModel>
 #include <QTemporaryDir>
 #include <QTextStream>
 
@@ -318,6 +319,50 @@ int main(int argc, char** argv) {
         add.choose(QStringLiteral("NSE"), QStringLiteral("FO"), QStringLiteral("NIFTY"), QStringLiteral("2026-10-27"),
                    QStringLiteral("CE"), QStringLiteral("99999"));
         check(add.token() == 0, "choices naming no contract cannot be added");
+        // MCX (FO only) and currency (CD): the same narrowing.
+        std::vector<MasterScrip> segs = full;
+        segs.push_back(row(9040, "CRUDEOIL26NOVFUT", "MCX", "MCX-FUT", "CRUDEOIL", "FUT", "2026-11-19", 0, 1));
+        segs.push_back(row(9041, "CRUDEOIL26NOV5500CE", "MCX", "MCX-OPT", "CRUDEOIL", "CE", "2026-11-17", 5500, 1));
+        segs.push_back(row(9050, "USDINR26OCTFUT", "CDS", "CDS-FUT", "USDINR", "FUT", "2026-10-28", 0, 1));
+        segs.push_back(row(9051, "USDINR26OCT83.5CE", "CDS", "CDS-OPT", "USDINR", "CE", "2026-10-28", 83.5, 1));
+        AddScripBar seg_bar;
+        seg_bar.set_master(&segs);
+        seg_bar.set_today(QStringLiteral("2026-10-01"));
+        seg_bar.choose(QStringLiteral("MCX"), QStringLiteral("FO"), QStringLiteral("CRUDEOIL"));
+        check(seg_bar.token() == 9040 && seg_bar.type() == QStringLiteral("FUT"), "MCX FO CRUDEOIL is the near crude future");
+        seg_bar.choose(QStringLiteral("NSE"), QStringLiteral("CD"), QStringLiteral("USDINR"), QStringLiteral("2026-10-28"),
+                       QStringLiteral("CE"), QStringLiteral("83.50"));
+        check(seg_bar.token() == 9051, "NSE CD USDINR 28-Oct CE 83.50 is the currency option");
+        auto* seg_box = seg_bar.findChild<QComboBox*>(QStringLiteral("addSegment"));
+        auto* seg_model = qobject_cast<QStandardItemModel*>(seg_box->model());
+        seg_bar.choose(QStringLiteral("MCX"), QStringLiteral("FO"), QStringLiteral("CRUDEOIL"));
+        const bool mcx_fo_only = seg_model != nullptr && !seg_model->item(0)->isEnabled() && !seg_model->item(2)->isEnabled();
+        seg_bar.choose(QStringLiteral("BSE"), QStringLiteral("E"), QStringLiteral("SBIN"));
+        check(mcx_fo_only && seg_model != nullptr && !seg_model->item(2)->isEnabled(),
+              "MCX offers FO only; BSE offers no CD while the master has no BSE currency");
+        LiveMarketWatch seg_watch(nullptr, root.path());
+        seg_watch.set_master_for_test(segs);
+        check(seg_watch.add_scrip(9040) && seg_watch.add_scrip(9051), "an MCX future and a currency option join the watch");
+        const LiveRow* crude = seg_watch.row_of_token(9040);
+        const LiveRow* usd = seg_watch.row_of_token(9051);
+        check(crude != nullptr && crude->fyers == QStringLiteral("MCX:CRUDEOIL26NOVFUT") && crude->lot == 100
+                  && crude->group == QStringLiteral("Commodity") && paper_instrument_of(*crude).exchange == QStringLiteral("MCX"),
+              "crude: MCX:<symbol>, a lot of 100 barrels, a paper order on MCX");
+        check(usd != nullptr && usd->group == QStringLiteral("Currency") && usd->lot == 10 && std::fabs(usd->strike - 8350.0) < 1e-9
+                  && paper_instrument_of(*usd).exchange == QStringLiteral("CDS"),
+              "USDINR: quoted per 100 USD (strike 8,350), a lot of 10, a paper order on CDS");
+        check(segment_note(*usd).contains(QStringLiteral("per 100 USD")) && segment_note(*crude).contains(QStringLiteral("paper only")),
+              "the selection line says how currency is quoted and that both are paper only");
+        check(seg_watch.feed_off_minute() == altair::live::kCommodityCloseMinute,
+              "with MCX in the watchlist the feed runs to the MCX close, not 15:45");
+        seg_watch.chain()->set_today(QStringLiteral("2026-10-01"));
+        seg_watch.select_token(9051);
+        QKeyEvent seg_enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(seg_watch.view(), &seg_enter);
+        const ChainContract* fx = seg_watch.chain()->contract(9051);
+        check(seg_watch.chain()->underlying() == QStringLiteral("USDINR") && fx != nullptr && std::fabs(fx->strike - 8350.0) < 1e-9
+                  && fx->lot == 10,
+              "the USDINR chain carries the strike per 100 USD, as its prices stream");
         // Search: an equity by its company, any symbol by any part of it.
         auto* symbol_box = add.findChild<QComboBox*>(QStringLiteral("addSymbol"));
         add.choose(QStringLiteral("NSE"), QStringLiteral("E"), QStringLiteral("SBIN"));
@@ -383,6 +428,12 @@ int main(int argc, char** argv) {
         const QString req_text = req.open(QIODevice::ReadOnly | QIODevice::Text) ? QTextStream(&req).readAll() : QString();
         check(asked && req_text.contains(QStringLiteral("9030,SBIN26OCT800CE")) && req_text.contains(QStringLiteral("9003,future")),
               "the chain asks the feed for its strikes and the stock's future (chain_request.csv)");
+        QFile dreq(root.filePath(QStringLiteral("data/live/depth_request.csv")));
+        const QString dreq_text = dreq.open(QIODevice::ReadOnly | QIODevice::Text) ? QTextStream(&dreq).readAll() : QString();
+        const LiveRow* on_screen = watch.row_of_token(779521);
+        check(on_screen != nullptr && !on_screen->fyers.isEmpty()
+                  && dreq_text == QStringLiteral("fyers,token\n%1,779521\n").arg(on_screen->fyers),
+              "the scrip on screen asks the feed for its 50-level book (depth_request.csv)");
         quint32 greek = 0;
         watch.on_greek = [&greek](quint32 t) { greek = t; };
         watch.chain()->grid()->setCurrentCell(0, LiveChainView::CLtp);

@@ -4,8 +4,10 @@
 // Opened from the option chain: Enter or double-click a CE or PE cell and the
 // strike joins the watch, every column filling from the stream -- LTP, bid,
 // ask, IV inverted from the market mid with Black-76, Δ Γ vega Θ, the
-// theoretical price (at your IV when you type one), and, for the units you
-// hold (one lot by default; negative for short), the value columns and MtoM.
+// theoretical price (at your IV when you type one), the vanna-volga IV of
+// its strike on the open chain's smile and how rich or cheap the market is
+// against it (analytics/vanna_volga.hpp), and, for the units you hold (one
+// lot by default; negative for short), the value columns and MtoM.
 // The summary below adds the value columns up per underlying and expiry: the
 // old Greek Summary, merged in.
 //
@@ -46,13 +48,17 @@ struct GreekLeg {
 struct GreekRow {
     double years = 0, forward = 0, spot = 0, ltp = 0, bid = 0, ask = 0;
     double iv = std::numeric_limits<double>::quiet_NaN();
+    double vv_iv = std::numeric_limits<double>::quiet_NaN();   ///< the smile's vanna-volga IV at this strike
     double theo = std::numeric_limits<double>::quiet_NaN();
     double delta = std::numeric_limits<double>::quiet_NaN(), gamma = std::numeric_limits<double>::quiet_NaN(),
            vega = std::numeric_limits<double>::quiet_NaN(), theta = std::numeric_limits<double>::quiet_NaN();
     double mtm = std::numeric_limits<double>::quiet_NaN();
 };
 
-[[nodiscard]] inline GreekRow greek_row(const PriceClient* client, const GreekLeg& g, double rate) {
+/// `smile`: the open chain's (LiveChainView::smile()), used when it is this
+/// leg's underlying and expiry.
+[[nodiscard]] inline GreekRow greek_row(const PriceClient* client, const GreekLeg& g, double rate,
+                                        const LiveChainView::ChainSmile* smile = nullptr) {
     GreekRow r;
     const LivePrice* p = client != nullptr ? client->price(g.c.token) : nullptr;
     const LivePrice* clock = client != nullptr ? client->price(g.spot != 0 ? g.spot : g.fut) : nullptr;
@@ -73,6 +79,9 @@ struct GreekRow {
     }
     const LiveIv iv = live_iv(g.c.call, live_mid(client, g.c.token), f.paise, g.c.strike, r.years, rate);
     r.iv = iv.iv;
+    if (smile != nullptr && smile->pillars && smile->under == g.under && smile->expiry_day == g.c.expiry_day && f.paise > 0
+        && r.years > 0)
+        r.vv_iv = vanna_volga::vol(f.paise / 100.0, g.c.strike, r.years, *smile->pillars);
     const double vol = std::isfinite(g.user_iv) && g.user_iv > 0 ? g.user_iv : r.iv;
     if (std::isfinite(vol) && vol > 0 && f.paise > 0 && r.years > 0) {
         const auto k = altair::detail::black76_unchecked(g.c.call ? OptionRight::Call : OptionRight::Put, f.paise,
@@ -89,7 +98,7 @@ struct GreekRow {
 
 class GreekWatchWindow final : public QDialog {
 public:
-    enum Col { Symbol, Under, Expiry, Strike, Type, Days, Units, TradePx, Spot, Fwd, Ltp, Bid, Ask, Iv, UserIv, Theo,
+    enum Col { Symbol, Under, Expiry, Strike, Type, Days, Units, TradePx, Spot, Fwd, Ltp, Bid, Ask, Iv, VvIv, Rich, UserIv, Theo,
                Delta, Gamma, Vega, Theta, DVal, GVal, VVal, TVal, Mtm, Cols };
     enum SumCol { SUnder, SExpiry, SLegs, SUnits, SDVal, SGVal, SVVal, STVal, SMtm, SCols };
 
@@ -102,7 +111,9 @@ public:
         auto* head = new QLabel(QStringLiteral(
             "Options join from the option chain (Enter or double-click a CE or PE). Every column fills from the stream. "
             "<b>Units</b> (one lot by default, negative for short), <b>Trade price</b> and <b>User IV %</b> are yours to "
-            "type; the value columns, MtoM and the summary follow them. Delete removes a row."), this);
+            "type; the value columns, MtoM and the summary follow them. <b>VV IV</b> is the vanna-volga IV of the strike on "
+            "the open chain's smile (25-delta put, ATM, 25-delta call); <b>Rich/cheap</b> is the market IV less it, in vol "
+            "points. Delete removes a row."), this);
         head->setWordWrap(true);
         head->setTextFormat(Qt::RichText);
         v->addWidget(head);
@@ -113,7 +124,8 @@ public:
                                           QStringLiteral("Strike"), QStringLiteral("Type"), QStringLiteral("Days"),
                                           QStringLiteral("Units"), QStringLiteral("Trade price"), QStringLiteral("Spot"),
                                           QStringLiteral("Forward"), QStringLiteral("LTP"), QStringLiteral("Bid"),
-                                          QStringLiteral("Ask"), QStringLiteral("IV %"), QStringLiteral("User IV %"),
+                                          QStringLiteral("Ask"), QStringLiteral("IV %"), QStringLiteral("VV IV %"),
+                                          QStringLiteral("Rich/cheap"), QStringLiteral("User IV %"),
                                           QStringLiteral("Theoretical"), QStringLiteral("Δ"), QStringLiteral("Γ"),
                                           QStringLiteral("Vega"), QStringLiteral("Θ/day"), QStringLiteral("ΔVal"),
                                           QStringLiteral("ΓVal"), QStringLiteral("VVal"), QStringLiteral("ΘVal"),
@@ -143,6 +155,10 @@ public:
         QObject::connect(&timer_, &QTimer::timeout, this, [this] { if (isVisible()) refresh(); });
         timer_.start();
     }
+
+    /// The open chain's smile, for the VV IV and Rich/cheap columns (the
+    /// Terminal sets it; unset: those columns show a dash).
+    std::function<const LiveChainView::ChainSmile*()> smile_of;
 
     /// Add a leg (or select it when it is already watched). True when added.
     bool add(const GreekLeg& leg) {
@@ -186,7 +202,7 @@ public:
         std::map<std::pair<QString, qint64>, Sum> sums;
         for (int i = 0; i < static_cast<int>(legs_.size()); ++i) {
             const GreekLeg& g = legs_[static_cast<std::size_t>(i)];
-            const GreekRow r = greek_row(client_, g, rate_);
+            const GreekRow r = greek_row(client_, g, rate_, smile_of ? smile_of() : nullptr);
             const auto num = [](double x, int dp) { return std::isfinite(x) && x != 0.0 ? QString::number(x, 'f', dp) : QStringLiteral("—"); };
             set(i, Days, num(r.years * 365.0, 2));
             set(i, Spot, num(r.spot, 2));
@@ -195,6 +211,9 @@ public:
             set(i, Bid, num(r.bid, 2));
             set(i, Ask, num(r.ask, 2));
             set(i, Iv, std::isfinite(r.iv) ? QString::number(r.iv * 100.0, 'f', 2) : QStringLiteral("—"));
+            set(i, VvIv, std::isfinite(r.vv_iv) ? QString::number(r.vv_iv * 100.0, 'f', 2) : QStringLiteral("—"));
+            set(i, Rich, std::isfinite(r.vv_iv) && std::isfinite(r.iv) ? QString::asprintf("%+.2f", (r.iv - r.vv_iv) * 100.0)
+                                                                         : QStringLiteral("—"));
             set(i, Theo, num(r.theo, 2));
             set(i, Delta, num(r.delta, 3));
             set(i, Gamma, num(r.gamma, 5));

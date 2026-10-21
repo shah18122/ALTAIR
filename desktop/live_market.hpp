@@ -40,6 +40,8 @@
 
 #include <analytics/greeks.hpp>
 #include <analytics/iv.hpp>
+#include <analytics/vanna_volga.hpp>
+#include <live/contract_units.hpp>
 
 #include <QAbstractTableModel>
 #include <QCheckBox>
@@ -88,6 +90,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -542,6 +545,60 @@ inline void live_set(QTableWidget* t, int r, int c, const QString& text, const Q
     if (fg.isValid()) it->setForeground(fg);
 }
 
+/// A master row as the feed streams it (live/contract_units.hpp): MCX lots
+/// in units; currency quoted per 100 units of the base, its strike, tick and
+/// lot with it. Other rows are unchanged.
+struct MasterUnits { double strike = 0.0, tick = 0.05; qint64 lot = 1; };
+[[nodiscard]] inline MasterUnits master_units(const MasterScrip& m) {
+    MasterUnits u{m.strike, m.tick, m.lot};
+    const QByteArray under = m.name.toLatin1();
+    const std::string_view uv(under.constData(), static_cast<std::size_t>(under.size()));
+    if (m.exchange == QLatin1String("MCX")) {
+        u.lot = live::mcx_lot_units(uv).value_or(m.lot);
+    } else if (m.exchange == QLatin1String("CDS") || m.exchange == QLatin1String("BCD")) {
+        const auto per = static_cast<double>(live::kCurrencyQuotePer);
+        u.strike = m.strike * per;
+        u.tick = m.tick * per;
+        u.lot = live::kCurrencyLotQuotes;
+    }
+    return u;
+}
+
+/// MCX or currency: prices and paper orders only (live/contract_units.hpp).
+[[nodiscard]] inline bool paper_only_segment(const LiveRow& r) {
+    return r.group == QLatin1String("Commodity") || r.group == QLatin1String("Currency");
+}
+
+/// What the selection line adds for MCX and currency: the lot in units and
+/// how currency is quoted, so P&L can be checked against the exchange.
+[[nodiscard]] inline QString segment_note(const LiveRow& r) {
+    if (r.group == QLatin1String("Currency")) {
+        const QString base = r.underlying.left(3);
+        return QStringLiteral(" · Rs per 100 %1 (a lot of %2 is %3 %1) · paper only")
+            .arg(base).arg(r.lot).arg(r.lot * 100);
+    }
+    if (r.group == QLatin1String("Commodity"))
+        return QStringLiteral(" · MCX · Rs %1 a lot per Rs 1 move · paper only").arg(r.lot);
+    return {};
+}
+
+/// The depth panel's title: how many levels it shows and, at five, why not
+/// fifty. FYERS sends the 50-level book for NSE equity and F&O only, for one
+/// scrip at a time on its Standard plan (five a connection on Prime); the feed
+/// moves that slot to the scrip on screen (data/live/depth_request.csv).
+/// `asked_ms` is how long ago the desktop asked for this scrip.
+[[nodiscard]] inline QString depth_title_text(const LiveRow* row, const LivePrice* p, qint64 asked_ms) {
+    const QString head = QStringLiteral("MARKET DEPTH — ");
+    if (p != nullptr && p->levels > 5) return head + QStringLiteral("%1 levels (FYERS 50-level book)").arg(p->levels);
+    if (row == nullptr || row->fyers.isEmpty()) return head + QStringLiteral("the levels the feed sends");
+    if (row->kind == QLatin1String("index")) return head + QStringLiteral("an index has no order book");
+    if (!row->fyers.startsWith(QLatin1String("NSE:")) || paper_only_segment(*row))
+        return head + QStringLiteral("5 levels (FYERS gives 50 on NSE equity and F&O only)");
+    if (asked_ms >= 0 && asked_ms < 10'000) return head + QStringLiteral("5 levels — asking FYERS for 50…");
+    return head + QStringLiteral("5 levels — no 50-level book from FYERS (its Standard plan allows one scrip; "
+                                 "see data/live/price_service.log)");
+}
+
 /// Every level the feed sends a side (five, or fifty from the FYERS 50-level
 /// book) and the totals. Never fewer than five rows, so the ladder keeps its shape.
 inline void show_live_depth(QTableWidget* t, const LivePrice* p) {
@@ -682,7 +739,7 @@ struct ChainForward { double paise = 0.0; QString from; };
 
 class LiveChainView final : public QWidget {
 public:
-    enum Col { COi, CVol, CIv, CDelta, CLtp, CBid, CAsk, Strike, PBid, PAsk, PLtp, PDelta, PIv, PVol, POi, Cols };
+    enum Col { COi, CVol, CIv, CDelta, CLtp, CBid, CAsk, Strike, Smile, PBid, PAsk, PLtp, PDelta, PIv, PVol, POi, Cols };
     /// Strikes either side of the money asked of the feed when a chain opens.
     static constexpr int kRequestStrikes = 15;
 
@@ -713,7 +770,8 @@ public:
         v->addLayout(bar);
         grid_ = make_live_table(Cols, {QStringLiteral("OI"), QStringLiteral("Vol"), QStringLiteral("IV"),
                                        QStringLiteral("Δ"), QStringLiteral("CE LTP"), QStringLiteral("Bid"),
-                                       QStringLiteral("Ask"), QStringLiteral("STRIKE"), QStringLiteral("Bid"),
+                                       QStringLiteral("Ask"), QStringLiteral("STRIKE"), QStringLiteral("VV ±"),
+                                       QStringLiteral("Bid"),
                                        QStringLiteral("Ask"), QStringLiteral("PE LTP"), QStringLiteral("Δ"),
                                        QStringLiteral("IV"), QStringLiteral("Vol"), QStringLiteral("OI")},
                                 this);
@@ -836,9 +894,10 @@ public:
                 }
                 if ((m.type != QLatin1String("CE") && m.type != QLatin1String("PE")) || m.expiry != expiry_->currentText()) continue;
                 ChainContract c;
-                c.token = m.token; c.symbol = m.symbol; c.exchange = m.exchange; c.strike = m.strike;
-                c.expiry_day = expiry_day_; c.lot = m.lot; c.tick = m.tick; c.call = m.type == QLatin1String("CE");
-                (c.call ? strikes_[m.strike].first : strikes_[m.strike].second) = c;
+                const MasterUnits mu = master_units(m);   // currency per 100 units, as it streams
+                c.token = m.token; c.symbol = m.symbol; c.exchange = m.exchange; c.strike = mu.strike;
+                c.expiry_day = expiry_day_; c.lot = mu.lot; c.tick = mu.tick; c.call = m.type == QLatin1String("CE");
+                (c.call ? strikes_[mu.strike].first : strikes_[mu.strike].second) = c;
             }
             spot_ = index_spot_token(under);
             if (spot_ == 0)
@@ -917,6 +976,7 @@ public:
         }
         const QColor itm(0x2A, 0x26, 0x18), plain(0x15, 0x18, 0x1D), atm_bg(0x3A, 0x32, 0x12);
         const QColor fg(0xD0, 0xD6, 0xDE), strike_fg(0xF4, 0xC9, 0x5D);
+        update_smile(forward, years);
         int r = 0;
         for (const auto& [k, pr] : strikes_) {
             if (r < first || r > last) { ++r; continue; }
@@ -937,9 +997,32 @@ public:
             };
             side(pr.first.token, true, COi, CVol, CIv, CDelta, CLtp, CBid, CAsk);
             if (auto* it = grid_->item(r, Strike)) it->setBackground(k == atm ? atm_bg : plain);
+            // Rich (+) or cheap (-) against the vanna-volga smile, in vol points.
+            const double rc = rich_cheap(k);
+            live_set(grid_, r, Smile, std::isfinite(rc) ? QString::asprintf("%+.1f", rc * 100.0) : QStringLiteral("—"),
+                     !std::isfinite(rc) || std::fabs(rc) < 0.005 ? fg : rc > 0 ? QColor(0xF0, 0x8A, 0x7F) : QColor(0x7F, 0xD1, 0x7F));
             side(pr.second.token, false, POi, PVol, PIv, PDelta, PLtp, PBid, PAsk);
             ++r;
         }
+    }
+
+    /// The open chain's smile (OTM market IVs) and its vanna-volga pillars, as
+    /// of the last refresh. Strikes in rupees, the forward too.
+    struct ChainSmile {
+        QString under;
+        qint64 expiry_day = 0;
+        double forward = 0.0, years = 0.0;
+        std::vector<vanna_volga::SmilePoint> points;
+        std::optional<vanna_volga::Pillars> pillars;
+    };
+    [[nodiscard]] const ChainSmile& smile() const noexcept { return smile_; }
+    /// The OTM option's market IV less its vanna-volga IV (a fraction; + rich,
+    /// - cheap); NaN without pillars or a market IV at that strike.
+    [[nodiscard]] double rich_cheap(double strike) const {
+        if (!smile_.pillars) return std::numeric_limits<double>::quiet_NaN();
+        for (const auto& pnt : smile_.points)
+            if (pnt.k == strike) return pnt.vol - vanna_volga::vol(smile_.forward, strike, smile_.years, *smile_.pillars);
+        return std::numeric_limits<double>::quiet_NaN();
     }
 
     /// Scroll the at-the-money strike to the middle of the grid.
@@ -953,6 +1036,24 @@ public:
     }
 
 private:
+    /// The smile from every strike with a price: the put below the forward,
+    /// the call above it (the liquid side), then the vanna-volga pillars.
+    void update_smile(double forward_paise, double years) {
+        smile_ = ChainSmile{};
+        smile_.under = under_->currentText();
+        smile_.expiry_day = expiry_day_;
+        smile_.forward = forward_paise / 100.0;
+        smile_.years = years;
+        if (!(forward_paise > 0.0) || !(years > 0.0)) return;
+        for (const auto& [k, pr] : strikes_) {
+            const bool call = k >= smile_.forward;
+            const quint32 tok = call ? pr.first.token : pr.second.token;
+            const LiveIv iv = live_iv(call, live_mid(client_, tok), forward_paise, k, years, rate_);
+            if (std::isfinite(iv.iv) && iv.iv > 0) smile_.points.push_back({k, iv.iv});
+        }
+        smile_.pillars = vanna_volga::pillars(smile_.forward, years, smile_.points);
+    }
+
     void fill_expiries() {
         const QString under = under_->currentText().trimmed().toUpper();
         std::set<QString> ex;
@@ -1008,6 +1109,7 @@ private:
     quint32 fut_ = 0, spot_ = 0;
     qint64 fut_expiry_ = 0, expiry_day_ = 0;
     double atm_ = 0.0, requested_center_ = 0.0;
+    ChainSmile smile_;
     double rate_ = 0.065;
     QString today_ = QDate::currentDate().toString(Qt::ISODate);
 };
@@ -1480,11 +1582,12 @@ public:
     /// Friday, unless a SIM runs, a feed already streams, or FYERS refused it
     /// in the last five minutes (no login today, a holiday) -- then it is
     /// tried again after five. At 15:45 a live feed is stopped (the service
-    /// also stops itself then: --until 15:45). True when this tick started it.
+    /// also stops itself then: --until 15:45), later with MCX or currency in
+    /// the watchlist (feed_off_minute). True when this tick started it.
     bool market_tick() {
         if (!autostart_) return false;
         const QDateTime ist = now_ist ? now_ist() : QDateTime::currentDateTimeUtc().addSecs(19800);
-        if (!in_market_hours(ist)) {
+        if (!in_market_hours(ist, feed_off_minute())) {
             if (feed_ != nullptr && !sim_running_) stop_feed();
             return false;
         }
@@ -1498,11 +1601,22 @@ public:
     /// IST now (UTC + 5:30 as a UTC QDateTime); tests set a clock.
     std::function<QDateTime()> now_ist;
     static constexpr int kFeedOnMinute = 9 * 60, kFeedOffMinute = 15 * 60 + 45;
-    /// 09:00 to 15:45 IST, Monday to Friday (exchange holidays: the feed says so).
-    [[nodiscard]] static bool in_market_hours(const QDateTime& ist) {
+    /// 09:00 to 15:45 IST (or `off_minute`), Monday to Friday (exchange holidays: the feed says so).
+    [[nodiscard]] static bool in_market_hours(const QDateTime& ist, int off_minute = kFeedOffMinute) {
         const int dow = ist.date().dayOfWeek();
         const int minute = ist.time().hour() * 60 + ist.time().minute();
-        return dow >= 1 && dow <= 5 && minute >= kFeedOnMinute && minute < kFeedOffMinute;
+        return dow >= 1 && dow <= 5 && minute >= kFeedOnMinute && minute < off_minute;
+    }
+    /// When the feed stops today: 15:45, or later while the active watchlist
+    /// holds MCX (to 23:59) or currency (to 17:05) -- live/contract_units.hpp.
+    [[nodiscard]] int feed_off_minute() const {
+        std::vector<QString> groups;
+        for (const auto& [t, sym] : members_)
+            if (const LiveRow* r = row_of_token(t)) groups.push_back(r->group);
+        return live::session_end_minute(groups, [](const QString& g) {
+            return g == QLatin1String("Commodity") ? live::kCommodityGroup
+                 : g == QLatin1String("Currency")  ? live::kCurrencyGroup : std::string_view{};
+        }, kFeedOffMinute);
     }
     [[nodiscard]] bool feed_running() const noexcept { return feed_ != nullptr; }
     [[nodiscard]] bool sim_running() const noexcept { return sim_running_; }
@@ -1580,6 +1694,22 @@ private:
         refresh_side();
     }
 
+    /// data/live/depth_request.csv: the scrip on screen, so the feed moves
+    /// its 50-level slot to it. Written when the selection's FYERS name is
+    /// known (a chain strike's comes once the feed streams it).
+    void write_depth_request(const LiveRow& row) {
+        if (row.fyers.isEmpty() || row.fyers == depth_asked_ || paper_only_segment(row)) return;
+        depth_asked_ = row.fyers;
+        depth_asked_at_ = QDateTime::currentMSecsSinceEpoch();
+        QDir().mkpath(root_ + QStringLiteral("/data/live"));
+        QSaveFile f(live_path("depth_request.csv"));
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+        QTextStream out(&f);
+        out << "fyers,token\n" << QString(row.fyers).remove(QLatin1Char(',')) << ',' << row.token << '\n';
+        out.flush();
+        (void)f.commit();
+    }
+
     void context_menu(const QPoint& at) {
         QMenu menu(this);
         auto* chain = menu.addAction(QStringLiteral("Option chain  (Enter)"));
@@ -1608,7 +1738,8 @@ private:
                              ? QStringLiteral("NSE:%1").arg(m.symbol)
                              : QStringLiteral("NSE:%1-EQ").arg(m.symbol))
                 : m.exchange == QLatin1String("BSE") ? QStringLiteral("BSE:%1-A").arg(m.symbol)
-                : m.exchange == QLatin1String("BFO") ? QStringLiteral("BSE:%1").arg(m.symbol)
+                : m.exchange == QLatin1String("BFO") || m.exchange == QLatin1String("BCD") ? QStringLiteral("BSE:%1").arg(m.symbol)
+                : m.exchange == QLatin1String("MCX") ? QStringLiteral("MCX:%1").arg(m.symbol)
                                                      : QStringLiteral("NSE:%1").arg(m.symbol);
         r.group = QStringLiteral("Watchlist");
         r.kind = m.type == QLatin1String("EQ")  ? QStringLiteral("equity")
@@ -1622,6 +1753,15 @@ private:
         r.tick = m.tick;
         r.strike = m.strike;
         r.expiry_day = live_detail::parse_day(m.expiry);
+        // MCX and currency as the feed streams them (live/contract_units.hpp).
+        const MasterUnits mu = master_units(m);
+        r.lot = mu.lot;
+        r.tick = mu.tick;
+        r.strike = mu.strike;
+        if (m.exchange == QLatin1String("MCX"))
+            r.group = QString::fromLatin1(live::kCommodityGroup.data(), static_cast<qsizetype>(live::kCommodityGroup.size()));
+        else if (m.exchange == QLatin1String("CDS") || m.exchange == QLatin1String("BCD"))
+            r.group = QString::fromLatin1(live::kCurrencyGroup.data(), static_cast<qsizetype>(live::kCurrencyGroup.size()));
         return r;
     }
 
@@ -1771,10 +1911,15 @@ private:
     void refresh_side() {
         const LivePrice* p = client_ != nullptr && selected_ != 0 ? client_->price(selected_) : nullptr;
         const int r = model_->row_of(selected_);
+        const LiveRow* shown = r >= 0 ? &model_->rows()[static_cast<std::size_t>(r)] : nullptr;
+        if (shown != nullptr) write_depth_request(*shown);
+        if (depth_title_ != nullptr)
+            depth_title_->setText(depth_title_text(shown, p, shown != nullptr && shown->fyers == depth_asked_
+                                                             ? QDateTime::currentMSecsSinceEpoch() - depth_asked_at_ : -1));
         if (r >= 0) {
             const LiveRow& row = model_->rows()[static_cast<std::size_t>(r)];
             const QuotePayload* q = p != nullptr && p->has_quote ? &p->quote : nullptr;
-            sel_->setText(QStringLiteral("<b>%1</b> <span style='color:%2'>%3 · lot %4</span>%5")
+            sel_->setText(QStringLiteral("<b>%1</b> <span style='color:%2'>%3 · lot %4%6</span>%5")
                               .arg(row.symbol, QString::fromLatin1(theme_token::kTextMuted), row.fyers)
                               .arg(row.lot)
                               .arg(q != nullptr && q->has(kQuoteHasCircuit)
@@ -1782,7 +1927,8 @@ private:
                                              .arg(QString::fromLatin1(theme_token::kTextMuted), live_detail::px(q->lower_circuit),
                                                   live_detail::px(q->upper_circuit), live_detail::qty(q->total_buy),
                                                   live_detail::qty(q->total_sell))
-                                       : QString()));
+                                       : QString())
+                              .arg(segment_note(row).toHtmlEscaped()));
         } else if (const ChainContract* c = chain_->contract(selected_)) {
             sel_->setText(QStringLiteral("<b>%1</b> <span style='color:%2'>%3 · lot %4</span>")
                               .arg(c->symbol, QString::fromLatin1(theme_token::kTextMuted), c->exchange).arg(c->lot));
@@ -1918,7 +2064,9 @@ private:
                                                                  sim_speed_->currentText());
         } else {
             // Until 15:45 IST: the market's day, as the schedule runs it.
-            args << QStringLiteral("--live") << QStringLiteral("--go") << QStringLiteral("--until") << QStringLiteral("15:45");
+            const int off = feed_off_minute();
+            args << QStringLiteral("--live") << QStringLiteral("--go") << QStringLiteral("--until")
+                 << QStringLiteral("%1:%2").arg(off / 60, 2, 10, QLatin1Char('0')).arg(off % 60, 2, 10, QLatin1Char('0'));
             note_ = auto_started_ ? QStringLiteral("Starting the FYERS live feed by itself (market hours)…")
                                   : QStringLiteral("Starting the FYERS live feed…");
         }
@@ -1961,6 +2109,8 @@ private:
     QDialog* lists_dialog_ = nullptr;
     QSplitter* side_split_ = nullptr;
     QLabel* depth_title_ = nullptr;
+    QString depth_asked_;          ///< the FYERS name last written to depth_request.csv
+    qint64 depth_asked_at_ = 0;    ///< when (ms since epoch)
     QTimer market_timer_;
     bool autostart_ = false;
     bool sim_running_ = false;

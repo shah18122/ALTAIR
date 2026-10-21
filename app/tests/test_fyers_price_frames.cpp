@@ -136,6 +136,21 @@ int main() {
               "level 5 is the fifth bid and ask; nothing is read past it");
     }
 
+    // Currency: four decimals, published per 100 USD so it is whole paise.
+    {
+        // USDINR future: ltp 83.4525, bid 83.4500, ask 83.4550 (precision 4).
+        std::array<std::int32_t, 21> cf{834525, 1200, 1790000000, 1790000001, 25, 40, 834500, 834550, 3,
+                                        5000, 4000, 834400, 0, 833000, 835000, 0, 0, 800000, 870000, 833500, 832975};
+        altair::fyers_hsm::HsmUpdate cu = update(HsmTopic::Scrip, cf.data(), cf.size());
+        cu.precision = 4;
+        LastTrade lc;
+        check(!to_frames(cu, 1u, lc, recv, f) || !f.trade, "at 1 a USDINR price is not whole paise: refused, not rounded");
+        LastTrade lc2;
+        check(to_frames(cu, 1u, lc2, recv, f, 100) && f.trade && f.price.last_paise == 834525
+                  && f.quote_p.bid == 834500 && f.quote_p.ask == 834550 && f.quote_p.prev_close == 832975,
+              "per 100 USD it is exact: 83.4525 is Rs 8,345.25, bid 8,345.00, ask 8,345.50");
+    }
+
     std::printf("%s\n", failures == 0 ? "all fyers price frame checks passed" : "fyers price frame checks did not pass");
     return failures == 0 ? 0 : 1;
 }

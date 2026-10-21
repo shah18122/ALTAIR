@@ -35,13 +35,17 @@ struct Costs {
 
 /// One fill: `ist_seconds` is the fill time, IST seconds since the epoch.
 /// Unpriced (priced = false) when no schedule covers the date or the charge
-/// engine refuses. Cash is intraday.
+/// engine refuses. Cash is intraday. `option`: a currency or commodity option
+/// (charges.toml has a currency_options line; no commodity-options one, so
+/// an MCX option is unpriced rather than charged as a future).
 [[nodiscard]] inline Costs fill(Segment seg, Side side, double qty, double price, std::int64_t ist_seconds,
-                                const std::vector<ChargeSchedule>& schedules, Exchange venue = Exchange::NSE) {
+                                const std::vector<ChargeSchedule>& schedules, Exchange venue = Exchange::NSE,
+                                bool option = false) {
     Costs c;
+    if (seg == Segment::Commodity && option) return c;
     BrokerageRule br{};
     br.flat_per_order = Notional{2'000};
-    if (seg == Segment::Fut || seg == Segment::Cash) {
+    if (seg == Segment::Fut || seg == Segment::Cash || ((seg == Segment::Currency || seg == Segment::Commodity) && !option)) {
         br.pct = rate_from(0.0003L);
         br.take_lower = true;
     } else {
@@ -55,6 +59,7 @@ struct Costs {
     tr.qty = Qty{static_cast<std::int64_t>(std::llround(qty))};
     tr.price = Price{static_cast<std::int64_t>(std::llround(price * 100.0))};
     tr.trade_ts = Timestamp{ist_seconds * 1'000'000'000LL};
+    tr.option = option;
     const auto* s = schedule_for(schedules.data(), schedules.size(), tr.trade_ts);
     if (s == nullptr) { return c; }
     const auto b = compute_cost(tr, *s, br);

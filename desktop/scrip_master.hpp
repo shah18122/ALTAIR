@@ -3,11 +3,12 @@
 //
 // GETS adds a scrip by narrowing, not by typing a contract name. Here it is a
 // row of dropdowns above the watch:
-//   Exchange (NSE, BSE) -> Segment (E = equity, FO = futures and options)
-//   -> Symbol -> Expiry -> Type (FUT, CE, PE; FUT unless you pick an option)
-//   -> Strike (options only).
+//   Exchange (NSE, BSE, MCX) -> Segment (E = equity, FO = futures and
+//   options, CD = currency; MCX is FO only) -> Symbol -> Expiry -> Type
+//   (FUT, CE, PE; FUT unless you pick an option) -> Strike (options only).
 // Each choice lists only what exists under the ones before it, read from
-// data/instruments.csv (the Kite master: NSE/BSE equity, NFO and BFO), and
+// data/instruments.csv (the Kite master: NSE/BSE equity, NFO and BFO, MCX
+// with a known lot and the INR currency pairs, live/contract_units.hpp), and
 // the bar shows the one contract they name -- its trading symbol, lot, tick
 // and token -- before Add (or Enter) puts it in the watch.
 #pragma once
@@ -31,6 +32,8 @@
 #include <QStringList>
 #include <QTextStream>
 #include <QVBoxLayout>
+
+#include <live/contract_units.hpp>
 
 #include <algorithm>
 #include <array>
@@ -60,8 +63,9 @@ struct MasterScrip {
         || n == QLatin1String("MIDCPNIFTY") || n == QLatin1String("NIFTYNXT50");
 }
 
-/// The NSE and BSE equities and the NSE and BSE F&O contracts of data/instruments.csv
-/// (the Kite master). Read on first use: it is ~9 MB.
+/// The NSE and BSE equities, the NSE and BSE F&O contracts, MCX (with a known
+/// lot) and the INR currency pairs of data/instruments.csv (the Kite master).
+/// Read on first use: it is ~9 MB.
 [[nodiscard]] inline std::vector<MasterScrip> load_master_scrips(const QString& path) {
     std::vector<MasterScrip> out;
     QFile f(path);
@@ -94,7 +98,14 @@ struct MasterScrip {
         const bool eq = (ex == QLatin1String("NSE") || ex == QLatin1String("BSE")) && seg == ex && type == QLatin1String("EQ");
         const bool fo = (ex == QLatin1String("NFO") && (seg == QLatin1String("NFO-FUT") || seg == QLatin1String("NFO-OPT")))
                      || (ex == QLatin1String("BFO") && (seg == QLatin1String("BFO-FUT") || seg == QLatin1String("BFO-OPT")));
-        if (!eq && !fo) continue;
+        const QString under = c_name >= 0 ? c[c_name] : QString();
+        const QByteArray under8 = under.toLatin1();
+        const std::string_view uv(under8.constData(), static_cast<std::size_t>(under8.size()));
+        const bool mcx = ex == QLatin1String("MCX") && (seg == QLatin1String("MCX-FUT") || seg == QLatin1String("MCX-OPT"))
+                      && live::mcx_lot_units(uv).has_value();
+        const bool cd = (ex == QLatin1String("CDS") || ex == QLatin1String("BCD")) && seg.startsWith(ex + QLatin1Char('-'))
+                     && (seg.endsWith(QLatin1String("-FUT")) || seg.endsWith(QLatin1String("-OPT"))) && live::inr_currency_pair(uv);
+        if (!eq && !fo && !mcx && !cd) continue;
         MasterScrip m;
         m.token = c[c_tok].toUInt();
         if (m.token == 0) continue;
@@ -116,6 +127,8 @@ struct MasterScrip {
 
 /// Which master exchange an Exchange + Segment choice means.
 [[nodiscard]] inline QString master_exchange(const QString& exchange, const QString& segment) {
+    if (exchange == QLatin1String("MCX")) return exchange;
+    if (segment == QLatin1String("CD")) return exchange == QLatin1String("BSE") ? QStringLiteral("BCD") : QStringLiteral("CDS");
     if (segment == QLatin1String("FO")) return exchange == QLatin1String("BSE") ? QStringLiteral("BFO") : QStringLiteral("NFO");
     return exchange;
 }
@@ -171,9 +184,10 @@ public:
             return c;
         };
         exchange_ = combo("addExchange", "Exchange", 64);
-        exchange_->addItems({QStringLiteral("NSE"), QStringLiteral("BSE")});
-        segment_ = combo("addSegment", "Segment: E = equity, FO = futures and options", 52);
-        segment_->addItems({QStringLiteral("E"), QStringLiteral("FO")});
+        exchange_->addItems({QStringLiteral("NSE"), QStringLiteral("BSE"), QStringLiteral("MCX")});
+        exchange_->setToolTip(QStringLiteral("Exchange. MCX and currency (CD) are prices and paper orders only"));
+        segment_ = combo("addSegment", "Segment: E = equity, FO = futures and options, CD = currency", 52);
+        segment_->addItems({QStringLiteral("E"), QStringLiteral("FO"), QStringLiteral("CD")});
         symbol_ = combo("addSymbol", "Symbol (type to search)", 150, true);
         expiry_ = combo("addExpiry", "Expiry", 104);
         type_ = combo("addType", "FUT unless you choose an option", 60);
@@ -188,7 +202,7 @@ public:
         resolved_->setTextFormat(Qt::RichText);
         h->addWidget(resolved_, 1);
 
-        connect(exchange_, &QComboBox::currentIndexChanged, this, [this](int) { fill_symbols(); });
+        connect(exchange_, &QComboBox::currentIndexChanged, this, [this](int) { fill_segments(); });
         connect(segment_, &QComboBox::currentIndexChanged, this, [this](int) { fill_symbols(); });
         connect(symbol_, &QComboBox::currentTextChanged, this, [this](const QString&) { fill_types(); });
         connect(type_, &QComboBox::currentIndexChanged, this, [this](int) { fill_expiries(); });
@@ -200,7 +214,7 @@ public:
             c->view()->installEventFilter(this);   // Tab while a list is open
         }
         add_->installEventFilter(this);            // Tab from Add goes round to Exchange
-        fill_symbols();
+        fill_segments();
     }
 
     /// The master to choose from (read once by the watch). It is indexed here
@@ -215,7 +229,7 @@ public:
                 const bool eq = m.type == QLatin1String("EQ");
                 index_[group_key(m.exchange, !eq)][eq ? m.symbol : m.name].push_back(i);
             }
-        fill_symbols();
+        fill_segments();
     }
     /// Expiries before this day (YYYY-MM-DD) are not offered; today by default.
     void set_today(const QString& iso) { today_ = iso; fill_expiries(); }
@@ -322,7 +336,8 @@ private:
         return std::fabs(s - std::round(s)) < 1e-9 ? QString::number(static_cast<qint64>(std::llround(s)))
                                                     : QString::number(s, 'f', 2);
     }
-    [[nodiscard]] bool fo() const { return segment_->currentText() == QLatin1String("FO"); }
+    /// A derivative segment: F&O, MCX or currency (expiry, type and strike apply).
+    [[nodiscard]] bool fo() const { return segment_->currentText() != QLatin1String("E"); }
     [[nodiscard]] QString mex() const { return master_exchange(exchange_->currentText(), segment_->currentText()); }
     [[nodiscard]] QString sym() const { return symbol_->currentText().trimmed().toUpper(); }
     [[nodiscard]] static QString group_key(const QString& master_exchange, bool fo) {
@@ -347,6 +362,24 @@ private:
     void fire() {
         resolve();
         if (token_ != 0 && on_add) on_add(token_);
+    }
+    /// The segments the chosen exchange has: MCX is FO only; CD shows where
+    /// the master has currency for that exchange (Kite's lists NSE's, CDS).
+    void fill_segments() {
+        const QString ex = exchange_->currentText();
+        auto* model = qobject_cast<QStandardItemModel*>(segment_->model());
+        if (model == nullptr) { fill_symbols(); return; }
+        const bool mcx = ex == QLatin1String("MCX");
+        const bool cd = !mcx && index_.contains(group_key(master_exchange(ex, QStringLiteral("CD")), true));
+        {
+            const QSignalBlocker b(segment_);
+            model->item(0)->setEnabled(!mcx);
+            model->item(1)->setEnabled(true);
+            model->item(2)->setEnabled(cd);
+            const int at = segment_->currentIndex();
+            if ((at == 0 && mcx) || (at == 2 && !cd)) segment_->setCurrentIndex(1);
+        }
+        fill_symbols();
     }
     void fill_symbols() {
         // An equity is found by its symbol or its company ("tata" finds
@@ -380,9 +413,10 @@ private:
             symbol_->setCompleter(c);
             if (completer_ != nullptr) completer_->deleteLater();   // the one this replaced (a QPointer: Qt may have)
             completer_ = c;
-            const QString fallback = fo() ? (list.contains(QStringLiteral("NIFTY")) ? QStringLiteral("NIFTY")
-                                             : list.contains(QStringLiteral("SENSEX")) ? QStringLiteral("SENSEX") : QString())
-                                          : QString();
+            QString fallback;
+            if (fo())
+                for (const char* name : {"NIFTY", "SENSEX", "CRUDEOIL", "USDINR"})
+                    if (list.contains(QLatin1String(name))) { fallback = QString::fromLatin1(name); break; }
             symbol_->setCurrentText(list.contains(keep) ? keep : !fallback.isEmpty() ? fallback : list.isEmpty() ? QString() : list.front());
         }
         fill_types();

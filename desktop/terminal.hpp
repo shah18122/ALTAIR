@@ -546,6 +546,7 @@ public:
         greek_ = new GreekWatchWindow(client_, this);
         paper_ui::tool_window(greek_, QStringLiteral("Greek Watch"), QSize(1320, 560));
         live_->on_greek = [this](quint32 tok) { open_greek(tok); };
+        greek_->smile_of = [this]() -> const LiveChainView::ChainSmile* { return &live_->chain()->smile(); };
 #ifdef ALTAIR_SOURCE_DIR
         greek_->set_store(QStringLiteral(ALTAIR_SOURCE_DIR "/data/live/greek_watch.csv"));
 #endif
@@ -839,6 +840,10 @@ public:
     /// Send one order to FYERS: a confirmation, then a request for the router.
     /// Returns the request's id.
     std::expected<QString, QString> place_live(const PaperOrder& o, bool ask) {
+        if (o.inst.exchange == QLatin1String("MCX") || o.inst.exchange == QLatin1String("CDS")
+            || o.inst.exchange == QLatin1String("BCD"))
+            return std::unexpected(QStringLiteral("%1: MCX and currency are prices and paper orders only, not real orders")
+                                       .arg(o.inst.symbol));
         if (!live_on_) return std::unexpected(QStringLiteral("LIVE is off: switch it on first"));
         const qint64 lot = std::max<qint64>(1, o.inst.lot);
         if (o.qty <= 0 || o.qty % lot != 0) return std::unexpected(QStringLiteral("The quantity is not a whole number of lots"));
@@ -1230,13 +1235,23 @@ private:
             if (schedules_.empty() || (!charges_verified_ && !models_->price_unverified())) return std::nullopt;
             std::vector<ChargeSchedule> s = schedules_;
             for (auto& x : s) x.verified = true;
-            const Segment seg = (t.inst.exchange == QLatin1String("NSE") || t.inst.exchange == QLatin1String("BSE")) ? Segment::Cash
-                              : t.inst.symbol.endsWith(QLatin1String("FUT")) ? Segment::Fut : Segment::Opt;
+            // MCX: the commodity line (an option is unpriced: no line for it);
+            // currency (CDS, and BCD at the same NSE rates: charges.toml has
+            // no BSE currency line): futures or options. Currency prices are
+            // per 100 units and its quantity counts those, so turnover is right.
+            const bool fut = t.inst.symbol.endsWith(QLatin1String("FUT"));
+            const bool mcx = t.inst.exchange == QLatin1String("MCX");
+            const bool fx = t.inst.exchange == QLatin1String("CDS") || t.inst.exchange == QLatin1String("BCD");
+            const Segment seg = mcx ? Segment::Commodity
+                              : fx  ? Segment::Currency
+                              : (t.inst.exchange == QLatin1String("NSE") || t.inst.exchange == QLatin1String("BSE")) ? Segment::Cash
+                              : fut ? Segment::Fut : Segment::Opt;
             const auto c = demo_costs::fill(seg, t.side == PaperSide::Buy ? Side::Buy : Side::Sell,
                                             static_cast<double>(t.qty), static_cast<double>(t.price_paise) / 100.0,
                                             (t.ns > 0 ? t.ns : now_ns()) / 1'000'000'000LL + 19800, s,
                                             t.inst.exchange == QLatin1String("BSE") || t.inst.exchange == QLatin1String("BFO")
-                                                ? Exchange::BSE : Exchange::NSE);
+                                                ? Exchange::BSE : Exchange::NSE,
+                                            (mcx || fx) && !fut);
             if (!c.priced) return std::nullopt;
             return c.total;
 #else

@@ -63,6 +63,9 @@ std::vector<oms::RouterInstrument> read_instruments(const std::string& path) {
     std::vector<oms::RouterInstrument> out;
     for (const auto& i : live::read_universe(path)) {
         if (i.kind == live::LiveKind::Index) continue;
+        // MCX and currency are prices and paper only: not in the router's
+        // universe, so a request for one is refused as unknown.
+        if (i.group == live::kCommodityGroup || i.group == live::kCurrencyGroup) continue;
         oms::RouterInstrument r;
         r.token = i.token;
         r.symbol = i.symbol;

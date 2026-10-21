@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "contract_units.hpp"
 #include "fyers_names.hpp"
 
 #include <algorithm>
@@ -513,8 +514,10 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
 /// watch's scrip search adds. NSE and BSE equity take FYERS's own name, looked
 /// up by exchange token in `names` (live/fyers_names.hpp; guessed without it:
 /// "NSE:<SYM>-EQ", "BSE:<SYM>-A"); NSE F&O -> "NSE:<SYM>" (FYERS and Kite
-/// share the derivative trading symbol). Other exchanges and segments are not
-/// streamed; nullopt says so.
+/// share the derivative trading symbol). MCX futures and options with a known
+/// lot (live/contract_units.hpp) and the INR currency pairs on NSE (CDS) and
+/// BSE (BCD) stream too, looked up the same way and quoted per 100 units for
+/// currency. Other exchanges and segments are not streamed; nullopt says so.
 [[nodiscard]] inline std::optional<LiveInstrument> instrument_from_master(const LiveKiteRow& r,
                                                                          const FyersCashNames* names = nullptr) {
     LiveInstrument in;
@@ -556,7 +559,47 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
         in.strike = in.kind == LiveKind::Future ? 0.0 : r.strike;
         return in;
     }
+    const auto named = [&](int ex, int seg, const char* prefix) {
+        if (names != nullptr && r.exchange_token != 0)
+            if (const std::string* n = names->find(ex, seg, r.exchange_token)) return *n;
+        return std::string(prefix) + r.symbol;
+    };
+    if (r.exchange == "MCX" && (r.segment == "MCX-FUT" || r.segment == "MCX-OPT")) {
+        const auto units = mcx_lot_units(r.name);
+        if (!units) return std::nullopt;
+        in.kind = r.segment == "MCX-FUT" ? LiveKind::Future : r.type == "CE" ? LiveKind::Call : LiveKind::Put;
+        in.fyers = named(FyersCashNames::kMcx, FyersCashNames::kCommodity, "MCX:");
+        in.underlying = r.name;
+        in.expiry_day = r.expiry_day;
+        in.strike = in.kind == LiveKind::Future ? 0.0 : r.strike;
+        in.lot = *units;
+        in.group = std::string(kCommodityGroup);
+        return in;
+    }
+    const bool cds = r.exchange == "CDS" && (r.segment == "CDS-FUT" || r.segment == "CDS-OPT");
+    const bool bcd = r.exchange == "BCD" && (r.segment == "BCD-FUT" || r.segment == "BCD-OPT");
+    if (cds || bcd) {
+        if (!inr_currency_pair(r.name)) return std::nullopt;
+        const bool fut = r.segment.ends_with("-FUT");
+        in.kind = fut ? LiveKind::Future : r.type == "CE" ? LiveKind::Call : LiveKind::Put;
+        in.fyers = named(bcd ? FyersCashNames::kBse : FyersCashNames::kNse, FyersCashNames::kCurrency, bcd ? "BSE:" : "NSE:");
+        in.underlying = r.name;
+        in.expiry_day = r.expiry_day;
+        // Per 100 units of the base (see live/contract_units.hpp).
+        const auto per = static_cast<double>(kCurrencyQuotePer);
+        in.strike = fut ? 0.0 : r.strike * per;
+        in.tick = (r.tick > 0.0 ? r.tick : 0.0025) * per;
+        in.lot = kCurrencyLotQuotes;
+        in.group = std::string(kCurrencyGroup);
+        return in;
+    }
     return std::nullopt;
+}
+
+/// Prices of this instrument are published per this many units: 100 for
+/// currency (live/contract_units.hpp), else 1.
+[[nodiscard]] inline std::int64_t quote_per(const LiveInstrument& in) noexcept {
+    return in.group == kCurrencyGroup ? kCurrencyQuotePer : 1;
 }
 
 /// data/live/watchlist.csv: the scrips the market watch added, by Kite token.
@@ -584,7 +627,11 @@ inline void add_watchlist(std::vector<LiveInstrument>& u, const std::vector<Live
         const auto row = std::find_if(master.begin(), master.end(), [t](const LiveKiteRow& r) { return r.token == t; });
         if (row == master.end()) { notes.push_back("watchlist token " + std::to_string(t) + " is not in the master"); continue; }
         auto in = instrument_from_master(*row, names);
-        if (!in) { notes.push_back("watchlist " + row->symbol + ": only NSE and BSE equity and F&O stream"); continue; }
+        if (!in) {
+            notes.push_back("watchlist " + row->symbol + ": not streamed (NSE and BSE equity and F&O, MCX with a known lot, "
+                            "and the INR currency pairs stream)");
+            continue;
+        }
         u.push_back(std::move(*in));
     }
 }

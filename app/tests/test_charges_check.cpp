@@ -109,6 +109,24 @@ int main() {
         check(std::fabs(n.brokerage - 20.0) < 1e-9 && std::fabs(small.brokerage - 8123.5 * 0.0003) < 0.01,
               "intraday equity brokerage: Rs 20 on Rs 1 lakh, 0.03 % on Rs 8,123.50");
     }
+
+    // MCX and currency (paper only): their own lines in charges.toml.
+    {
+        const std::int64_t at = live::parse_day("2026-09-24") * 86400 + 11 * 3600;
+        // One USDINR lot at 83.4525, per 100 USD: 10 x 8,345.25 = Rs 83,452.50 of turnover.
+        const auto fut = demo_costs::fill(Segment::Currency, Side::Sell, 10, 8345.25, at, sch);
+        const auto opt = demo_costs::fill(Segment::Currency, Side::Sell, 10, 25.0, at, sch, Exchange::NSE, true);
+        check(fut.priced && std::fabs(fut.exchange - 83452.5 * 0.0000035) < 0.01 && fut.stt == 0.0
+                  && std::fabs(fut.brokerage - 20.0) < 1e-9,
+              "a currency future: the currency line on the notional, no STT, Rs 20 (under 0.03 % of Rs 83,452.50)");
+        check(opt.priced && std::fabs(opt.exchange - 250.0 * 0.0003503) < 0.01 && std::fabs(opt.brokerage - 20.0) < 1e-9,
+              "a currency option: the currency-options line on the premium, Rs 20 an order");
+        const auto crude = demo_costs::fill(Segment::Commodity, Side::Sell, 100, 5500.0, at, sch);
+        const auto crude_opt = demo_costs::fill(Segment::Commodity, Side::Sell, 100, 120.0, at, sch, Exchange::NSE, true);
+        check(crude.priced && std::fabs(crude.stt - 550000.0 * 0.0001) < 0.01 && std::fabs(crude.exchange - 550000.0 * 0.000026) < 0.01,
+              "an MCX future pays CTT and MCX's transaction charge on the notional");
+        check(!crude_opt.priced, "an MCX option is unpriced: charges.toml has no commodity-options line");
+    }
     std::printf("%s\n", failures == 0 ? "all charges check checks passed" : "charges check checks did not pass");
     return failures == 0 ? 0 : 1;
 }

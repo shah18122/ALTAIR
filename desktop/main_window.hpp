@@ -37,6 +37,7 @@
 #include "atlas.hpp"
 #include "atlas_info.hpp"
 #include "shell_pages.hpp"
+#include "start_page.hpp"
 #include "strategy_record.hpp"
 #include "audit_panel.hpp"
 #include "cost_panel.hpp"
@@ -1519,6 +1520,13 @@ private:
             pages_->addWidget(new ThresholdPage(root));
         }
         pages_->addWidget(new AboutPage);
+        {
+#ifdef ALTAIR_SOURCE_DIR
+            pages_->addWidget(new StartPage(QStringLiteral(ALTAIR_SOURCE_DIR)));
+#else
+            pages_->addWidget(new StartPage(QDir::currentPath()));
+#endif
+        }
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

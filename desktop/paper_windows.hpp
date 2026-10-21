@@ -75,14 +75,18 @@ inline constexpr const char* kSellColour = "#DA3633";
 } // namespace paper_ui
 
 /// The paper instrument for a market-watch row: NSE or BSE for an equity (by
-/// its FYERS symbol), NFO for F&O; an index is shown but cannot be traded.
+/// its FYERS symbol), NFO for F&O, MCX for commodities and CDS or BCD for
+/// currency (prices and paper only); an index is shown but cannot be traded.
 [[nodiscard]] inline PaperInstrument paper_instrument_of(const LiveRow& r) {
     PaperInstrument i;
     i.token = r.token;
     i.symbol = r.symbol;
-    i.exchange = r.fyers.startsWith(QLatin1String("BSE:")) ? QStringLiteral("BSE")
-               : r.kind == QLatin1String("equity")         ? QStringLiteral("NSE")
-                                                            : QStringLiteral("NFO");
+    const bool bse = r.fyers.startsWith(QLatin1String("BSE:"));
+    i.exchange = r.group == QLatin1String("Commodity") ? QStringLiteral("MCX")
+               : r.group == QLatin1String("Currency")  ? (bse ? QStringLiteral("BCD") : QStringLiteral("CDS"))
+               : bse                                   ? QStringLiteral("BSE")
+               : r.kind == QLatin1String("equity")     ? QStringLiteral("NSE")
+                                                       : QStringLiteral("NFO");
     i.lot = std::max<qint64>(1, r.lot);
     i.tick_paise = std::max<qint64>(1, std::llround(r.tick * 100.0));
     i.tradable = r.kind != QLatin1String("index");

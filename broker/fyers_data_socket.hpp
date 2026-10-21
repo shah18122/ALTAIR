@@ -108,6 +108,9 @@ struct FyersSocketOptions {
     std::string authorization;             ///< "appid:token"; never logged
     bool text = false;                     ///< frames sent are text, not binary
     std::function<bool()> stop;            ///< checked every second: true ends the session
+    /// Called every second while connected: frames it appends are sent (a
+    /// subscription that changes while the market is quiet).
+    std::function<void(std::vector<FyersFrame>&)> poll;
 };
 
 /// Connect, send `opening`, then pump. For every binary message
@@ -274,6 +277,11 @@ fyers_data_socket_run(
                     send(ping);
                     ++st.pings;
                     next_ping = now + ping_every;
+                }
+                if (options.poll) {
+                    std::vector<FyersFrame> out;
+                    options.poll(out);
+                    for (auto& f : out) send(std::move(f));
                 }
                 tick();
             });

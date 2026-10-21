@@ -21,6 +21,11 @@
 // "-SM", "-N1") already carries it ("NSE:XYZ-BE"); a longer tail is part of
 // the symbol ("BAJAJ-AUTO" -> "NSE:BAJAJ-AUTO-EQ"). That matched 9,459 of the
 // 9,461 NSE cash scrips; BSE has no such rule and stays group A.
+//
+// MCX AND CURRENCY. The same lookup names MCX commodities (MCX_COM.csv:
+// exchange 11, segment 20) and currency (NSE_CD.csv / BSE_CD.csv: segment
+// 12) by exchange token; without the masters they are guessed as
+// "<EX>:<Kite trading symbol>", which is FYERS's pattern for futures.
 
 #pragma once
 
@@ -36,8 +41,13 @@ namespace altair::live {
 
 class FyersCashNames {
 public:
-    /// Take the cash rows of one FYERS master CSV (NSE_CM or BSE_CM); other
-    /// rows and lines that do not parse are skipped. Returns rows taken.
+    /// FYERS's exchange and segment codes (master columns 10 and 11).
+    static constexpr int kNse = 10, kMcx = 11, kBse = 12;
+    static constexpr int kCash = 10, kCurrency = 12, kCommodity = 20;
+
+    /// Take the cash, currency and commodity rows of one FYERS master CSV
+    /// (NSE_CM, BSE_CM, NSE_CD, BSE_CD, MCX_COM); other rows and lines that
+    /// do not parse are skipped. Returns rows taken.
     std::size_t add_csv(std::istream& in) {
         std::size_t n = 0;
         std::string line;
@@ -51,25 +61,26 @@ public:
                     start = i + 1;
                 }
             }
-            if (k < 13 || col[11] != "10") continue;              // cash only
-            const bool bse = col[10] == "12";
-            if (!bse && col[10] != "10") continue;
+            if (k < 13) continue;
+            const int seg = col[11] == "10" ? kCash : col[11] == "12" ? kCurrency : col[11] == "20" ? kCommodity : 0;
+            const int ex = col[10] == "10" ? kNse : col[10] == "11" ? kMcx : col[10] == "12" ? kBse : 0;
+            if (seg == 0 || ex == 0 || (ex == kMcx) != (seg == kCommodity)) continue;
             const std::string_view ticker = col[9];
-            if (ticker.substr(0, 4) != (bse ? "BSE:" : "NSE:")) continue;
+            if (ticker.substr(0, 4) != (ex == kBse ? "BSE:" : ex == kMcx ? "MCX:" : "NSE:")) continue;
             const std::string tok(col[12]);
             char* end = nullptr;
             const unsigned long long t = std::strtoull(tok.c_str(), &end, 10);
             if (tok.empty() || end == nullptr || *end != '\0' || t == 0 || t > 0xFFFFFFFFull) continue;
-            names_[key(bse, static_cast<std::uint32_t>(t))] = std::string(ticker);
+            names_[key(ex, seg, static_cast<std::uint32_t>(t))] = std::string(ticker);
             ++n;
         }
         return n;
     }
 
-    /// Read `dir`/NSE_CM.csv and `dir`/BSE_CM.csv (either may be missing).
+    /// Read the masters under `dir` (any may be missing).
     std::size_t load(const std::string& dir) {
         std::size_t n = 0;
-        for (const char* f : {"/NSE_CM.csv", "/BSE_CM.csv"}) {
+        for (const char* f : {"/NSE_CM.csv", "/BSE_CM.csv", "/NSE_CD.csv", "/BSE_CD.csv", "/MCX_COM.csv"}) {
             std::ifstream in(dir + f, std::ios::binary);
             if (in) n += add_csv(in);
         }
@@ -78,15 +89,19 @@ public:
 
     /// FYERS's name for the exchange token, or nullptr when it has none.
     [[nodiscard]] const std::string* find(bool bse, std::uint32_t exchange_token) const {
-        const auto it = names_.find(key(bse, exchange_token));
+        return find(bse ? kBse : kNse, kCash, exchange_token);
+    }
+    /// The same for any exchange and segment code above.
+    [[nodiscard]] const std::string* find(int exchange, int segment, std::uint32_t exchange_token) const {
+        const auto it = names_.find(key(exchange, segment, exchange_token));
         return it == names_.end() ? nullptr : &it->second;
     }
     [[nodiscard]] std::size_t size() const noexcept { return names_.size(); }
     [[nodiscard]] bool empty() const noexcept { return names_.empty(); }
 
 private:
-    [[nodiscard]] static std::uint64_t key(bool bse, std::uint32_t t) noexcept {
-        return (std::uint64_t{bse ? 1u : 0u} << 32) | t;
+    [[nodiscard]] static std::uint64_t key(int exchange, int segment, std::uint32_t t) noexcept {
+        return (static_cast<std::uint64_t>(exchange) << 48) | (static_cast<std::uint64_t>(segment) << 32) | t;
     }
     std::unordered_map<std::uint64_t, std::string> names_;
 };

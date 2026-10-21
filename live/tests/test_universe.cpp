@@ -5,6 +5,7 @@
 
 #include <live/universe.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -148,7 +149,49 @@ int main() {
         check(o && o->kind == LiveKind::Call && o->fyers == "NSE:SBIN26OCT800CE" && o->underlying == "SBIN"
                   && o->strike == 800 && o->lot == 750,
               "an NFO option keeps its symbol, underlying, strike and lot");
-        check(!instrument_from_master(mcx), "an exchange the feed does not carry is refused, not guessed");
+        check(!instrument_from_master(mcx), "an MCX contract with no known lot is refused, not guessed");
+
+        // MCX and the INR currency pairs (live/contract_units.hpp). The Kite
+        // master says lot 1 for both; the paper book needs the units.
+        LiveKiteRow crude;
+        crude.token = 146796039; crude.exchange_token = 573422; crude.symbol = "CRUDEOIL26NOVFUT"; crude.name = "CRUDEOIL";
+        crude.type = "FUT"; crude.segment = "MCX-FUT"; crude.exchange = "MCX"; crude.lot = 1; crude.tick = 1;
+        crude.expiry_day = parse_day("2026-11-19");
+        const auto cr = instrument_from_master(crude);
+        check(cr && cr->kind == LiveKind::Future && cr->fyers == "MCX:CRUDEOIL26NOVFUT" && cr->lot == 100
+                  && cr->group == "Commodity" && quote_per(*cr) == 1,
+              "an MCX future streams as MCX:<symbol>, a lot of 100 barrels, in the Commodity group");
+        LiveKiteRow usd;
+        usd.token = 823299; usd.exchange_token = 3216; usd.symbol = "USDINR2690496.625CE"; usd.name = "USDINR";
+        usd.type = "CE"; usd.segment = "CDS-OPT"; usd.exchange = "CDS"; usd.lot = 1; usd.tick = 0.0025; usd.strike = 96.625;
+        usd.expiry_day = parse_day("2026-09-04");
+        const auto ux = instrument_from_master(usd);
+        check(ux && ux->kind == LiveKind::Call && ux->fyers == "NSE:USDINR2690496.625CE" && ux->group == "Currency"
+                  && ux->lot == 10 && std::fabs(ux->strike - 9662.5) < 1e-9 && std::fabs(ux->tick - 0.25) < 1e-12
+                  && quote_per(*ux) == 100,
+              "a USDINR option is quoted per 100 USD: strike 9,662.50, tick 0.25, a lot of 10 (1,000 USD)");
+        LiveKiteRow cross = usd;
+        cross.name = "EURUSD"; cross.symbol = "EURUSD26SEPFUT"; cross.segment = "CDS-FUT"; cross.type = "FUT";
+        LiveKiteRow bond = usd;
+        bond.name = "633GS2035"; bond.symbol = "633GS203526OCTFUT"; bond.segment = "CDS-FUT"; bond.type = "FUT";
+        check(!instrument_from_master(cross) && !instrument_from_master(bond),
+              "a cross pair and an interest-rate future (same segment) are not streamed");
+        // Rows in the FYERS master layout, written for this test (not fetched):
+        // column 10 the exchange (11 MCX, 10 NSE), 11 the segment (20 COM, 12 CD).
+        std::istringstream mcx_com(
+            "1120261119573422,CRUDEOIL 26 Nov 19 FUT,11,100,1.0,,0900-2330:,2026-10-20,1795089000,MCX:CRUDEOIL26NOVFUT,11,20,573422,CRUDEOIL,294,-1.0,XX,1120000000000294,None,0,0.0\n");
+        std::istringstream nse_cd(
+            "1012260904823299,USDINR 26 Sep 04 96.625 CE,14,1,0.0025,,0900-1700:,2026-10-20,1788525000,NSE:USDINR26S0496.625CE,10,12,3216,USDINR,1,96.625,CE,101200000000001,None,0,0.0\n");
+        FyersCashNames dn;
+        check(dn.add_csv(mcx_com) == 1 && dn.add_csv(nse_cd) == 1, "the MCX_COM and NSE_CD masters load");
+        const auto crn = instrument_from_master(crude, &dn);
+        const auto uxn = instrument_from_master(usd, &dn);
+        check(crn && crn->fyers == "MCX:CRUDEOIL26NOVFUT" && uxn && uxn->fyers == "NSE:USDINR26S0496.625CE",
+              "and name MCX and currency contracts by exchange token, not by the Kite symbol");
+        const std::vector<LiveInstrument> mixed{*e, *cr, *ux};
+        check(session_end_minute(mixed, [](const LiveInstrument& i) -> std::string_view { return i.group; }, 15 * 60 + 45)
+                  == kCommodityCloseMinute,
+              "an MCX scrip keeps the feed up to the MCX close");
 
         // FYERS's own names, by exchange token (live/fyers_names.hpp). The
         // master rows are real, fetched from public.fyers.in on 2026-10-07.

@@ -193,6 +193,8 @@ int main(int argc, char** argv) {
           "and a call and put at one strike agree, off the forward carried to the options' expiry");
     const QString cd = g->item(0, LiveChainView::CDelta) ? g->item(0, LiveChainView::CDelta)->text() : QString();
     check(cd.toDouble() > 0.4 && cd.toDouble() < 0.6, "an at-the-money call's delta is near one half");
+    check(!chain->smile().pillars && g->item(0, LiveChainView::Smile) && g->item(0, LiveChainView::Smile)->text() == QStringLiteral("—"),
+          "one strike is no smile: no vanna-volga pillars, VV ± shows a dash (analytics test: the smile itself)");
 
     // GREEK WATCH: the 24000 call from the chain, every column from the stream.
     {
@@ -294,6 +296,25 @@ int main(int argc, char** argv) {
         check(page.depth_split()->sizes().value(1) == 0, "a double-click on its title gives the book the full height");
         page.toggle_full_depth();
         check(page.depth_split()->sizes().value(1) > 0, "and again gives the trades their share back");
+    }
+
+    // THE DEPTH TITLE: fifty levels named; at five, why not fifty.
+    {
+        LiveRow fut, bse, idx;
+        fut.fyers = QStringLiteral("NSE:NIFTY26OCTFUT"); fut.kind = QStringLiteral("future");
+        bse.fyers = QStringLiteral("BSE:SBIN-A"); bse.kind = QStringLiteral("equity");
+        idx.fyers = QStringLiteral("NSE:NIFTY50-INDEX"); idx.kind = QStringLiteral("index");
+        LivePrice fifty, five;
+        fifty.levels = 50;
+        five.levels = 5;
+        check(depth_title_text(&fut, &fifty, 99'000).contains(QStringLiteral("50 levels (FYERS")), "fifty levels: said so");
+        check(depth_title_text(&fut, &five, 2'000).contains(QStringLiteral("asking FYERS for 50")),
+              "five, just after the scrip came on screen: the feed is asking for fifty");
+        check(depth_title_text(&fut, &five, 30'000).contains(QStringLiteral("Standard plan allows one scrip")),
+              "five, long after: FYERS sent no 50-level book, and the plan limit is named");
+        check(depth_title_text(&bse, &five, 30'000).contains(QStringLiteral("NSE equity and F&O only")),
+              "a BSE scrip: fifty is NSE only");
+        check(depth_title_text(&idx, nullptr, -1).contains(QStringLiteral("no order book")), "an index: no book at all");
     }
 
     // SHIFT+S AND TAB: the scrip selection by keyboard, a list at each step.

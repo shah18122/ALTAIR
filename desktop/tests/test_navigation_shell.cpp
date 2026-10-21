@@ -77,10 +77,10 @@ void shell_laptop_geometry(altair::ui::MainWindow& window, altair::ui::Workspace
     }
     nav->set_mode(altair::ui::NavigationMode::Expanded);
     window.resize(1280, 720);
-    for (int page = 0; page < 38; ++page) {
+    for (int page = 0; page < 39; ++page) {
         window.show_page(page);
         QApplication::processEvents();
-        check(window.size() == QSize(1280, 720), "all 38 page layouts stay within laptop viewport");
+        check(window.size() == QSize(1280, 720), "all 39 page layouts stay within laptop viewport");
     }
     window.show_page(2);
     QApplication::processEvents();
@@ -199,17 +199,18 @@ int main(int argc, char** argv) {
         check(!halt_action && !nav_toggle && !save_page, "Halt controls, Hide navigation and Save page are gone");
         check(nav->findChild<QPushButton*>(QStringLiteral("navMinimise")) && nav->findChild<QPushButton*>(QStringLiteral("navClose")),
               "minimise and close sit beside the ALTAIR name");
-        check(stack->count() == 38 && stack->currentIndex() == 2, "fresh workspace opens existing Terminal");
-        for (int i = 0; i < 38; ++i) {
+        check(stack->count() == 39 && stack->currentIndex() == 2, "fresh workspace opens existing Terminal");
+        for (int i = 0; i < 39; ++i) {
             const int destination = altair::ui::nav_destination(i);
             check(window.show_page(altair::ui::nav_page_id(i)) && stack->currentIndex() == destination &&
                   nav->current_page() == destination, "legacy routes resolve to canonical page stack destinations");
         }
-        check(!window.show_page(QStringLiteral("invalid.page")) && stack->currentIndex() == 37,
+        check(!window.show_page(QStringLiteral("invalid.page")) && stack->currentIndex() == 38,
               "invalid route does not select another page");
-        check(stack->currentWidget()->findChild<QLabel*>(QStringLiteral("aboutText")) != nullptr
-                  && stack->currentWidget()->findChild<QLabel*>(QStringLiteral("aboutText"))->text().contains(QStringLiteral("LIFETIME")),
+        check(stack->widget(37)->findChild<QLabel*>(QStringLiteral("aboutText")) != nullptr
+                  && stack->widget(37)->findChild<QLabel*>(QStringLiteral("aboutText"))->text().contains(QStringLiteral("LIFETIME")),
               "About carries the lifetime licence");
+        check(stack->widget(38)->objectName() == QStringLiteral("startPage"), "Start here is the last page of the stack");
         window.show_page(QStringLiteral("strategies.threshold"));
         check(stack->currentWidget()->findChild<QWidget*>(QStringLiteral("strategyRecord")) != nullptr,
               "Threshold page shows the OHL record");

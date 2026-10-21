@@ -443,6 +443,13 @@ if(TARGET altair_charges_toml)
     target_link_libraries(altair_vol_premium PRIVATE altair_analytics altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_vol_premium PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+    # Sell vol-of-vol on NSE closes (strategies/vol_of_vol.hpp): short the
+    # 25-delta strangle, long the ATM straddle, vega-neutral, delta hedged.
+    add_executable(altair_vol_of_vol vol_of_vol_main.cpp)
+    target_link_libraries(altair_vol_of_vol PRIVATE altair_analytics altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_vol_of_vol PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME vol_of_vol_help COMMAND altair_vol_of_vol --help)
+
     # Cross-sectional residual reversion over config/universe_nifty50.csv.
     add_executable(altair_resid_reversion resid_reversion_main.cpp)
     target_link_libraries(altair_resid_reversion PRIVATE altair_strategies altair_charges_toml altair_flags)

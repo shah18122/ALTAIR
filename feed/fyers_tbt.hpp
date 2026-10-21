@@ -31,9 +31,11 @@
 // (feed/tests/vectors/fyers_tbt.txt).
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -344,8 +346,9 @@ private:
 
 // ---- what the client sends ------------------------------------------------------
 
-[[nodiscard]] inline std::string tbt_subscribe_text(const std::vector<std::string>& symbols, int channel) {
-    std::string s = "{\"type\":1,\"data\":{\"subs\":1,\"symbols\":[";
+/// Subscribe (`subs` 1) or unsubscribe (`subs` -1) `symbols` on a channel.
+[[nodiscard]] inline std::string tbt_subscription_text(const std::vector<std::string>& symbols, int channel, int subs) {
+    std::string s = "{\"type\":1,\"data\":{\"subs\":" + std::to_string(subs) + ",\"symbols\":[";
     for (std::size_t i = 0; i < symbols.size(); ++i) {
         if (i) s += ',';
         s += '"';
@@ -355,6 +358,54 @@ private:
     }
     s += "],\"mode\":\"depth\",\"channel\":\"" + std::to_string(channel) + "\"}}";
     return s;
+}
+[[nodiscard]] inline std::string tbt_subscribe_text(const std::vector<std::string>& symbols, int channel) {
+    return tbt_subscription_text(symbols, channel, 1);
+}
+[[nodiscard]] inline std::string tbt_unsubscribe_text(const std::vector<std::string>& symbols, int channel) {
+    return tbt_subscription_text(symbols, channel, -1);
+}
+
+/// FYERS gives the 50-level book to NSE equity and NSE F&O only -- both
+/// carry the "NSE:" prefix -- and to a handful of symbols at a time: one on a
+/// Standard plan; five a connection (three connections) on Prime.
+inline constexpr std::size_t kTbtStandardSlots = 1;
+inline constexpr std::size_t kTbtSlotsPerConnection = 5;
+[[nodiscard]] inline bool tbt_eligible(std::string_view fyers_symbol) noexcept {
+    return fyers_symbol.substr(0, 4) == "NSE:" && fyers_symbol.find("-INDEX") == std::string_view::npos;
+}
+
+/// Which symbols hold the 50-level slots: the requested ones first, in the
+/// order asked (the scrip on screen, then the ones before it), then the
+/// defaults; only eligible ones the feed knows, no repeats, at most `slots`.
+[[nodiscard]] inline std::vector<std::string> tbt_plan_slots(const std::vector<std::string>& requested,
+                                                             const std::vector<std::string>& defaults, std::size_t slots,
+                                                             const std::function<bool(const std::string&)>& known) {
+    std::vector<std::string> out;
+    for (const auto* list : {&requested, &defaults})
+        for (const auto& s : *list) {
+            if (out.size() >= slots) return out;
+            if (!tbt_eligible(s) || !known(s) || std::find(out.begin(), out.end(), s) != out.end()) continue;
+            out.push_back(s);
+        }
+    return out;
+}
+
+/// The frames that move the subscription on `channel` from `from` to `to`:
+/// unsubscribe what left, subscribe what came, resume the channel. Empty
+/// when nothing changed.
+[[nodiscard]] inline std::vector<std::string> tbt_switch_texts(const std::vector<std::string>& from,
+                                                               const std::vector<std::string>& to, int channel) {
+    std::vector<std::string> gone, come;
+    for (const auto& s : from) if (std::find(to.begin(), to.end(), s) == to.end()) gone.push_back(s);
+    for (const auto& s : to) if (std::find(from.begin(), from.end(), s) == from.end()) come.push_back(s);
+    std::vector<std::string> out;
+    if (!gone.empty()) out.push_back(tbt_unsubscribe_text(gone, channel));
+    if (!come.empty()) {
+        out.push_back(tbt_subscribe_text(come, channel));
+        out.push_back("{\"type\":2,\"data\":{\"resumeChannels\":[\"" + std::to_string(channel) + "\"],\"pauseChannels\":[]}}");
+    }
+    return out;
 }
 
 [[nodiscard]] inline std::string tbt_resume_text(int channels) {

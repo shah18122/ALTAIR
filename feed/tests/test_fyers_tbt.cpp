@@ -140,6 +140,25 @@ int main() {
     check(url && url->first == "rtsocket-api.fyers.in" && url->second == "/versova", "the socket URL splits into host and path");
     check(!tbt_socket_url(R"({"data":{"socket_url":"http://x/y"}})"), "a URL that is not wss is not used");
 
+    // The 50-level slots follow the scrip on screen.
+    {
+        const auto known = [](const std::string& x) { return x != "NSE:UNKNOWN-EQ"; };
+        const std::vector<std::string> defaults{"NSE:NIFTY26OCTFUT", "NSE:BANKNIFTY26OCTFUT"};
+        const auto one = tbt_plan_slots({"BSE:SBIN-A", "NSE:NIFTY50-INDEX", "NSE:UNKNOWN-EQ", "NSE:SBIN-EQ"}, defaults, kTbtStandardSlots, known);
+        check(one.size() == 1 && one[0] == "NSE:SBIN-EQ",
+              "one slot on Standard: the first requested NSE scrip the feed knows; BSE, an index and an unknown are passed over");
+        const auto five = tbt_plan_slots({"NSE:SBIN-EQ", "NSE:SBIN-EQ"}, defaults, kTbtSlotsPerConnection, known);
+        check(five.size() == 3 && five[0] == "NSE:SBIN-EQ" && five[1] == defaults[0] && five[2] == defaults[1],
+              "spare slots fall back to the defaults, without repeats");
+        check(tbt_plan_slots({}, defaults, 1, known) == std::vector<std::string>{defaults[0]}, "no request: the first default");
+        const auto sw = tbt_switch_texts({"NSE:A-EQ", "NSE:B-EQ"}, {"NSE:B-EQ", "NSE:C-EQ"}, 1);
+        check(sw.size() == 3 && sw[0].find("\"subs\":-1") != std::string::npos && sw[0].find("NSE:A-EQ") != std::string::npos
+                  && sw[0].find("NSE:B-EQ") == std::string::npos && sw[1].find("\"subs\":1") != std::string::npos
+                  && sw[1].find("NSE:C-EQ") != std::string::npos && sw[2].find("resumeChannels") != std::string::npos,
+              "moving a slot unsubscribes what left (subs -1), subscribes what came, and resumes the channel");
+        check(tbt_switch_texts({"NSE:A-EQ"}, {"NSE:A-EQ"}, 1).empty(), "nothing changed: nothing sent");
+    }
+
     std::printf("%s\n", failures == 0 ? "all FYERS 50-level checks passed" : "FYERS 50-level checks did not pass");
     return failures == 0 ? 0 : 1;
 }

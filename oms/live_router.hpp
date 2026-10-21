@@ -485,6 +485,8 @@ plan_router_order(const OrderIntent& in, const RouterInstrument* inst, const Rou
         return std::unexpected(in.symbol + " is on " + inst->exchange + ", the request says " + in.exchange);
     if (inst->symbol != in.symbol)
         return std::unexpected("token " + std::to_string(in.token) + " is " + inst->symbol + ", the request says " + in.symbol);
+    if (inst->exchange == "MCX" || inst->exchange == "CDS" || inst->exchange == "BCD" || inst->fyers.rfind("MCX:", 0) == 0)
+        return std::unexpected(in.symbol + ": MCX and currency are prices and paper only in ALTAIR, not real orders");
     if (inst->lot <= 0 || inst->tick_paise <= 0 || inst->fyers.empty())
         return std::unexpected(in.symbol + " has no lot size, tick or FYERS symbol in the universe");
     if (!router_market_open(now_ns)) return std::unexpected("the market is closed (orders go 09:15 to 15:30 IST, weekdays)");
