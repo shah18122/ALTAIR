@@ -347,6 +347,8 @@ public:
         models_btn_->setToolTip(QStringLiteral(
             "Ctrl+M · live models: what each is doing and why, paper positions and trades with expenses. F4: the market watch."));
         h->addWidget(models_btn_);
+        // Simple / Advanced, for the watch, the chain and the models alike.
+        h->addWidget(simple_mode::button(strip));
         v->addWidget(strip);
 
         // ---- ACCOUNT-FIRST SURFACE -------------------------------------

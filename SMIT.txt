@@ -1207,3 +1207,31 @@ SEARCH
     honest frame: SEBI found 93 % of individual F&O traders lost money in
     FY22-24 while algorithmic firms took the profits; a small desk competes
     on patience, capacity and execution, not on speed.
+
+30. SIMPLE VIEW EVERYWHERE -- 2026-10-21
+  One switch, "Simple view" / "Advanced view", on the Terminal's top bar, on
+  Start here and on Demo Trading. Simple is the default and is remembered.
+  Nothing is computed differently -- only shown.
+    Watch      symbol, LTP, change, change %, bid, ask, volume, and one line of
+               what to press (Insert add, Enter chain, F1/F2 buy/sell, F11+F12 stop)
+    Chain      CE LTP / bid / ask, strike, PE bid / ask / LTP
+    Models     model, state and why; positions and trades with the net after
+               expenses; one line saying what the page is
+    Backtests  every strategy's verdict in one line, and the summary tabs only
+  Advanced view brings back every column and tab: OI, IV, delta, VV +/-,
+  depth quantities, the readings panel, expense heads, trade-by-trade tables,
+  filters.
+
+  BUILDING ON THIS PC (S:\altair): CMake now finds Qt at C:\Qt\6.8.3\msvc2022_64
+  by itself when D:\Qt is absent.
+
+  THE FINAL RUNS (measured 2026-10-21; every leak check clean)
+    Forecasts with implied and realised vol as inputs (+ ivrv): no change
+    worth the name -- every track's best skill against "no change" moves by
+    hundredths of a percent either way. IV/RV forecast how big the next move
+    is, not which way: they belong in the volatility trades.
+    altair_trader with the CNN, the analogs and the selector: NIFTY daily
+    -Rs 2.69 lakh over 107 trips (buy and hold +Rs 9.74 lakh); BANKNIFTY daily
+    +Rs 0.87 lakh on 16 trips, inside the placebo's range on shuffled data
+    (-3.06 to +1.17 lakh); both intraday arms negative. No edge; it mostly
+    picks "no change", which is right.

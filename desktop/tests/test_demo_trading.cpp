@@ -202,15 +202,44 @@ void test_threshold(const QString& root) {
 
 } // namespace
 
+/// Simple view: verdicts on top, summaries only; Advanced brings every tab back.
+void test_simple(const QString& root) {
+    using namespace altair::ui;
+    simple_mode::set(true);
+    DemoTradingPage page(root);
+    page.show();
+    int visible = 0, trades_visible = 0;
+    for (int i = 0; i < page.tabs()->count(); ++i) {
+        if (!page.tabs()->isTabVisible(i)) continue;
+        ++visible;
+        if (page.tabs()->tabText(i).contains(QStringLiteral("trades"))) ++trades_visible;
+    }
+    auto* card = page.findChild<QLabel*>(QStringLiteral("demoSimpleCard"));
+    check(visible > 0 && visible < page.tabs()->count() && trades_visible == 0,
+          "Simple: summary tabs only, no trade-by-trade tables");
+    check(card != nullptr && card->isVisible() && card->text().contains(QStringLiteral("after costs")),
+          "Simple: every strategy's verdict in a line, on top");
+    simple_mode::set(false);
+    int all = 0;
+    for (int i = 0; i < page.tabs()->count(); ++i) all += page.tabs()->isTabVisible(i) ? 1 : 0;
+    check(all == page.tabs()->count() && card != nullptr && !card->isVisible(), "Advanced: every tab, no verdict card");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     std::printf("Demo trading page\n");
+    // The checks below read every tab: Advanced view (desktop/simple_mode.hpp),
+    // kept in memory, not in the user's settings.
+    altair::ui::simple_mode::use_settings(false);
+    altair::ui::simple_mode::set(false);
     test_split();
     QTemporaryDir full, empty;
     test_page(full.path());
     test_empty(empty.path());
     QTemporaryDir thr;
     test_threshold(thr.path());
+    QTemporaryDir simple;
+    test_simple(simple.path());
     std::printf("Demo trading page: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

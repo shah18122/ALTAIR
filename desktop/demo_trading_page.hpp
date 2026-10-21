@@ -16,8 +16,10 @@
 #pragma once
 
 #include "helper_process.hpp"
+#include "simple_mode.hpp"
 #include "theme.hpp"
 #include "trade_stats.hpp"
+#include "verdicts.hpp"
 
 #include <QAbstractTableModel>
 #include <QCheckBox>
@@ -314,14 +316,25 @@ public:
         v->setContentsMargins(14, 12, 14, 8);
         v->setSpacing(6);
 
-        auto* head = new QLabel(QStringLiteral(
+        auto* top = new QHBoxLayout;
+        head_ = new QLabel(this);
+        head_->setWordWrap(true);
+        head_->setTextFormat(Qt::RichText);
+        top->addWidget(head_, 1);
+        top->addWidget(simple_mode::button(this), 0, Qt::AlignTop);
+        v->addLayout(top);
+        // Simple view: every strategy's result in one line (desktop/verdicts.hpp).
+        simple_card_ = new QLabel(start_verdicts_html(start_verdicts()), this);
+        simple_card_->setObjectName(QStringLiteral("demoSimpleCard"));
+        simple_card_->setWordWrap(true);
+        simple_card_->setTextFormat(Qt::RichText);
+        v->addWidget(simple_card_);
+        advanced_head_ = QStringLiteral(
             "<b>DEMO TRADING</b> &nbsp;·&nbsp; paper trades only: nothing here is sent to a broker. "
             "One lot each. Band models sell options at the edges their 09:20 forecast set, under the rule "
             "you pick, and buy them back by 15:20; pairs go long one future and short the other; the vol premium "
             "sells the monthly straddle delta hedged when implied vol beats a HAR forecast; stat-arb trades every NIFTY 50 "
-            "stock's residual against the market and its sector."), this);
-        head->setWordWrap(true);
-        v->addWidget(head);
+            "stock's residual against the market and its sector.");
 
         banner_ = new QLabel(this);
         banner_->setWordWrap(true);
@@ -351,7 +364,9 @@ public:
         controls->addWidget(status_, 1);
         v->addLayout(controls);
 
-        auto* filters = new QHBoxLayout;
+        filter_box_ = new QWidget(this);
+        auto* filters = new QHBoxLayout(filter_box_);
+        filters->setContentsMargins(0, 0, 0, 0);
         rule_ = new QComboBox(this);
         rule_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
         instrument_ = new QComboBox(this);
@@ -368,7 +383,7 @@ public:
         filters->addWidget(new QLabel(QStringLiteral("Model"), this));
         filters->addWidget(model_);
         filters->addStretch(1);
-        v->addLayout(filters);
+        v->addWidget(filter_box_);
         v->addWidget(totals_);
         stats_ = new QLabel(this);
         stats_->setObjectName(QStringLiteral("demoStats"));
@@ -448,6 +463,27 @@ public:
         connect(model_, &QComboBox::currentIndexChanged, this, [this](int) { refilter(); });
         connect(tabs_, &QTabWidget::currentChanged, this, [this](int) { update_stats(); });
         reload();
+        simple_mode::watch(this, [this](bool simple) { apply_simple(simple); });
+    }
+
+    /// Simple view: each strategy's verdict in a line, the summary tabs only
+    /// (no trade-by-trade tables, no filters). Advanced: everything.
+    void apply_simple(bool simple) {
+        head_->setText(simple ? QStringLiteral(
+                                    "<b>BACKTESTS</b> &nbsp;·&nbsp; paper only. Each strategy was run on past prices; "
+                                    "this is what it made <b>after expenses</b> and whether to trust it. Pick one and "
+                                    "press <b>Run</b> to run it again; the tabs below show its summary.")
+                              : advanced_head_);
+        simple_card_->setVisible(simple);
+        filter_box_->setVisible(!simple);
+        stats_->setVisible(!simple);
+        for (int i = 0; i < tabs_->count(); ++i) {
+            const QString t = tabs_->tabText(i);
+            const bool summary = t.contains(QLatin1String("summary")) || t.contains(QLatin1String("by model"))
+                              || t.contains(QLatin1String("how it works")) || t.contains(QLatin1String("ratio"));
+            tabs_->setTabVisible(i, !simple || summary);
+        }
+        if (simple && !tabs_->isTabVisible(tabs_->currentIndex())) tabs_->setCurrentIndex(0);
     }
 
     [[nodiscard]] QString banner_text() const { return banner_->text(); }
@@ -852,6 +888,10 @@ private:
     QComboBox* instrument_{};
     QComboBox* model_{};
     QTabWidget* tabs_{};
+    QLabel* head_{};
+    QLabel* simple_card_{};
+    QWidget* filter_box_{};
+    QString advanced_head_;
     demo_detail::CsvModel* summary_{};
     demo_detail::CsvModel* trades_{};
     demo_detail::CsvModel* pairs_summary_{};

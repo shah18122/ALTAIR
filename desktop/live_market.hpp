@@ -36,6 +36,7 @@
 
 #include "price_client.hpp"
 #include "scrip_master.hpp"
+#include "simple_mode.hpp"
 #include "theme.hpp"
 
 #include <analytics/greeks.hpp>
@@ -1006,6 +1007,11 @@ public:
         }
     }
 
+    /// Simple view: prices only -- call LTP, bid, ask, the strike, put bid, ask, LTP.
+    void apply_simple(bool simple) {
+        for (const int c : {COi, CVol, CIv, CDelta, Smile, PDelta, PIv, PVol, POi}) grid_->setColumnHidden(c, simple);
+    }
+
     /// The open chain's smile (OTM market IVs) and its vanna-volga pillars, as
     /// of the last refresh. Strikes in rupees, the forward too.
     struct ChainSmile {
@@ -1247,6 +1253,15 @@ public:
         status_->setTextFormat(Qt::RichText);
         status_->setWordWrap(true);
         v->addWidget(status_);
+        // Simple view: what to press, in one line (desktop/simple_mode.hpp).
+        simple_hint_ = new QLabel(QStringLiteral(
+            "<span style='color:#8FA3AE'>Click a scrip: its depth and trades show on the right &nbsp;·&nbsp; "
+            "<b>Insert</b> add a scrip &nbsp;·&nbsp; <b>Enter</b> option chain &nbsp;·&nbsp; <b>F1</b> buy, <b>F2</b> sell "
+            "(paper unless LIVE is on) &nbsp;·&nbsp; <b>F11+F12</b> stop everything</span>"), this);
+        simple_hint_->setObjectName(QStringLiteral("simpleHint"));
+        simple_hint_->setTextFormat(Qt::RichText);
+        simple_hint_->setWordWrap(true);
+        v->addWidget(simple_hint_);
 
         // ---- the watch and the chain, with depth and trades beside them ---
         model_ = new LiveWatchModel(client_, this);
@@ -1330,6 +1345,7 @@ public:
         split->setStretchFactor(0, 68);
         split->setStretchFactor(1, 32);
         v->addWidget(split, 1);
+        simple_mode::watch(this, [this](bool simple) { apply_simple(simple); });
 
         connect(search_, &QLineEdit::textChanged, this, [this](const QString& t) { filter_->set_text(t); });
         connect(view_->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
@@ -1440,6 +1456,18 @@ public:
         return true;
     }
     void focus_find() { search_->setFocus(); search_->selectAll(); }
+    /// Simple view: the price columns only, and the line of what to press.
+    void apply_simple(bool simple) {
+        using C = LiveWatchModel::Column;
+        for (int c = 0; c < LiveWatchModel::ColumnCount; ++c) {
+            const bool keep = c == C::Symbol || c == C::Ltp || c == C::Chg || c == C::ChgPct || c == C::Bid || c == C::Ask
+                           || c == C::Volume;
+            view_->setColumnHidden(c, simple && !keep);
+        }
+        chain_->apply_simple(simple);
+        simple_hint_->setVisible(simple);
+    }
+    [[nodiscard]] QLabel* simple_hint() const noexcept { return simple_hint_; }
     /// Insert: the loader's symbol box.
     void focus_add() { ensure_master(); loader_->focus(); }
 
@@ -2109,6 +2137,7 @@ private:
     QDialog* lists_dialog_ = nullptr;
     QSplitter* side_split_ = nullptr;
     QLabel* depth_title_ = nullptr;
+    QLabel* simple_hint_ = nullptr;
     QString depth_asked_;          ///< the FYERS name last written to depth_request.csv
     qint64 depth_asked_at_ = 0;    ///< when (ms since epoch)
     QTimer market_timer_;

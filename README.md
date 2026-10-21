@@ -58,8 +58,9 @@ build.bat            :: default preset: engine + tests (+ desktop when Qt is fou
 build.bat net        :: + broker helpers via vcpkg (Boost, OpenSSL)
 ```
 
-On Windows, CMake defaults Qt to `D:/Qt/6.8.3/msvc2022_64`; pass
-`-DALTAIR_QT_ROOT=<path>` to use another install. The desktop is at
+On Windows, CMake defaults Qt to `D:/Qt/6.8.3/msvc2022_64`, or
+`C:/Qt/6.8.3/msvc2022_64` when D: has none; pass `-DALTAIR_QT_ROOT=<path>` to
+use another install. The desktop is at
 `build\<preset>\desktop\altair_desktop.exe`.
 
 ### Linux

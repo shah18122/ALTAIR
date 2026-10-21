@@ -55,6 +55,7 @@ int main(int argc, char** argv) {
     using namespace altair::ui;
     QApplication app(argc, argv);
     std::printf("live models panel\n");
+    simple_mode::use_settings(false);   // the switch in memory, not the user's settings
 
     QTemporaryDir root;
     QDir(root.path()).mkpath(QStringLiteral("data/live/paper"));
@@ -120,6 +121,17 @@ int main(int argc, char** argv) {
     check(m->rowCount() == 3 && cell(m, 0, 0) == QStringLiteral("Strangle 80% NIFTY") && cell(m, 0, 2) == QStringLiteral("in position"),
           "every model has a row with its state");
     check(cell(m, 1, 4) == QStringLiteral("Gate shut: the call is worth -2.4 bp after costs."), "and says why it is not acting");
+    {
+        simple_mode::set(true);
+        auto* intro = panel.findChild<QLabel*>(QStringLiteral("modelsSimpleIntro"));
+        check(m->isColumnHidden(1) && m->isColumnHidden(3) && !m->isColumnHidden(2) && !m->isColumnHidden(4)
+                  && panel.trades_table()->isColumnHidden(10) && !panel.trades_table()->isColumnHidden(11)
+                  && intro != nullptr && intro->isVisible(),
+              "Simple: model, state and why; trades with the net; a line saying what the page is");
+        simple_mode::set(false);
+        check(!m->isColumnHidden(1) && !panel.trades_table()->isColumnHidden(10) && intro != nullptr && !intro->isVisible(),
+              "Advanced: family, signal and every expense column back");
+    }
     check(cell(m, 2, 2) == QStringLiteral("abstaining") && cell(m, 2, 4).startsWith(QStringLiteral("No history")),
           "a model without its inputs says so");
 

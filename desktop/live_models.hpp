@@ -152,6 +152,15 @@ public:
         status_->setTextFormat(Qt::RichText);
         status_->setWordWrap(true);
         v->addWidget(status_);
+        // Simple view: what this page is, in one line (desktop/simple_mode.hpp).
+        simple_intro_ = new QLabel(QStringLiteral(
+            "<span style='color:#8FA3AE'>The models trade <b>on paper</b> by themselves while the market is open. Each row "
+            "is one model: what it is doing now and why. Below: what they hold and what they made, <b>after expenses</b>. "
+            "Advanced view shows every reading and column.</span>"), this);
+        simple_intro_->setObjectName(QStringLiteral("modelsSimpleIntro"));
+        simple_intro_->setTextFormat(Qt::RichText);
+        simple_intro_->setWordWrap(true);
+        v->addWidget(simple_intro_);
 
         totals_ = new QLabel(this);
         totals_->setTextFormat(Qt::RichText);
@@ -211,6 +220,7 @@ public:
         stack->setStretchFactor(0, 55);
         stack->setStretchFactor(1, 45);
         v->addWidget(stack, 1);
+        simple_mode::watch(this, [this](bool simple) { apply_simple(simple); });
 
         // A new expense setting takes a restart: now, not after the back-off.
         connect(unverified_, &QCheckBox::toggled, this, [this] {
@@ -235,6 +245,19 @@ public:
         reload();
     }
     ~LiveModelsPanel() override { stop_engine(); }
+
+    /// Simple view: the model, its state and why; positions and trades with
+    /// the net after expenses; the readings panel and the build-up columns
+    /// (family, signal, gross, expense heads) only in Advanced.
+    void apply_simple(bool simple) {
+        models_->setColumnHidden(1, simple);   // Family
+        models_->setColumnHidden(3, simple);   // Signal
+        fields_->setVisible(!simple);
+        for (const int c : {7, 8}) positions_->setColumnHidden(c, simple);           // Entry exp, Held
+        for (const int c : {5, 7, 9, 10, 13}) trades_->setColumnHidden(c, simple);   // In, Out, Gross, Expenses, Costs
+        for (const int c : {2, 3}) by_model_->setColumnHidden(c, simple);            // Gross, Expenses
+        simple_intro_->setVisible(simple);
+    }
     LiveModelsPanel(const LiveModelsPanel&) = delete;
     LiveModelsPanel& operator=(const LiveModelsPanel&) = delete;
 
@@ -535,6 +558,7 @@ private:
     qint64 restart_after_ms_ = 0;   ///< epoch ms the engine may start again; -1 while it runs
     QLabel* status_ = nullptr;
     QLabel* totals_ = nullptr;
+    QLabel* simple_intro_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QTableWidget* models_ = nullptr;
     QTableWidget* fields_ = nullptr;

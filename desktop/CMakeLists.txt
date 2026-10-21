@@ -133,8 +133,10 @@ qt_add_executable(altair_desktop
     # The Terminal's Greek Watch and the demo books' reports.
     greek_watch.hpp
     demo_reports.hpp
-    # Start here: ALTAIR in plain words.
+    # Start here: ALTAIR in plain words; the Simple / Advanced switch.
     start_page.hpp
+    verdicts.hpp
+    simple_mode.hpp
 )
 
 # P34-02. THE ICON RESOURCE WAS NEVER COMPILED, AND NOTHING SAID SO.

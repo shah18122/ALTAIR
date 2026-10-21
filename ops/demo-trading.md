@@ -465,11 +465,20 @@ covers 161 inputs across 7 daily tracks: NIFTY, BANKNIFTY, NIFTY futures and
 INDIA VIX, each also with the VIX forecast fed in. Each input is the model's
 conviction, 2·p_up − 1, or ±1 for a bare call.
 
-**The model.** It is ridge regression of the next session's move, in bp,
-with older days fading (half-life 250 sessions). Four penalties run side by
-side, each scored on the calls it made before the outcome; the one with the
-least recent error makes the call. It needs 250 outcomes before its first
-call.
+**The model** (`models/meta_learners.hpp`). Four candidates run at every
+step, each scored on the calls it made before the outcome. The one with the
+least recent prequential error trades:
+- **No change:** holds no view. It wins whenever the others are no better.
+- **Ridge stack:** ridge regression of the next move on every input, with
+  older days fading.
+- **CNN:** a temporal convolutional net over the last days of inputs. It is
+  early-stopped on a held-back block, and forecasts "no change" unless it
+  beats "no change" there.
+- **Analogs:** principal components of the inputs, then the most similar
+  past moments and what followed them.
+
+Daily arms trade at each close. Intraday arms decide hourly and are flat
+every night.
 
 **Day by day, to the last close in the data:**
 - yesterday's outcome is learned and the model refitted;
@@ -483,16 +492,29 @@ call.
 
 No threshold is tuned.
 
-Walk-forward, 2016-02-08 to 2026-09-24, one lot, expenses priced. Net is in
-₹ lakh:
+**Measured 2026-10-21.** Walk-forward 2016-02-08 to 2026-09-24, one lot,
+expenses priced. The inputs are the base tracks plus IV/RV. The leak check
+passed: every decision is identical up to each cut, whatever comes after.
 
-| | Trips | Net | Longs | Shorts | Sharpe | Direction right | Buy and hold, net |
-|---|---|---|---|---|---|---|---|
-| NIFTY | 675 | 5.65 | +6.98 | −1.33 | 0.73 | 52.5 % | 9.74 |
-| BANKNIFTY | 468 | 3.48 | +6.08 | −2.60 | 0.38 | 51.8 % | 11.65 |
+The **placebo** is the same run on shuffled returns, where no edge can exist:
+it shows how much luck alone produces. Net is in ₹ lakh:
 
-It calls direction better than a coin and makes money after expenses, but
-less than holding the future over a decade that rose. Its short calls lose.
+| Arm | Trips | Net | Placebo net | Buy and hold, net |
+|---|---|---|---|---|
+| NIFTY daily | 107 | −2.69 | +1.17 | 9.74 |
+| BANKNIFTY daily | 16 | +0.87 | −3.06 | 11.66 |
+| NIFTY intraday | 63 | −0.86 | −0.78 | — |
+| BANKNIFTY intraday | 112 | −0.60 | −0.75 | — |
+
+**No edge.**
+- Every candidate's skill against "no change" is zero or negative: the CNN
+  −1.06 % on NIFTY daily, the analogs −0.18 %.
+- The selector therefore picks "no change" most of the time, and it should.
+- BANKNIFTY daily's +₹0.87 lakh is 16 trips: no larger than the placebo's
+  swings (−₹3.06 to +₹1.17 lakh).
+
+An earlier ridge-only run (2026-10-07: 161 inputs, all tracks) netted NIFTY
++₹5.65 lakh, with no placebo to compare it against.
 
 Ways to improve it, each a run of the same walk-forward, not a tuning on
 the result:

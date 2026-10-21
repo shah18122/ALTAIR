@@ -200,6 +200,33 @@ borrow the monthly future's carry; a minute without a fresh call and put at
 one strike, or with under a day to the expiry, gives no reading. Tapes rotate
 (`--keep-tapes`, 5 days by default): run it after the close at least that often.
 
+**Measured 2026-10-21** (all timeframes but 1 minute; 2,891 bhavcopy days; no
+recorded FYERS IV yet). The leak check covered 64 tracks, each cut twice:
+1.84 million rebuilt rows and 59.6 million rerun calls, every one identical.
+
+The best full-coverage skill against "no change" (RMSE), base inputs against
+**+ ivrv**:
+
+| Track | Base | + IV/RV |
+|---|---|---|
+| NIFTY daily | +0.078 % | +0.000 % |
+| BANKNIFTY daily | +0.000 % | +0.009 % |
+| NIFTY hourly | +0.034 % | +0.017 % |
+| BANKNIFTY hourly | +0.000 % | +0.014 % |
+| NIFTY 15m | +0.028 % | +0.014 % |
+| NIFTY 5m | +0.008 % | +0.006 % |
+| NIFTY 09:20 to close | +0.213 % | +0.405 % |
+| NIFTY 10:15 to close | +0.701 % | +0.674 % |
+| BANKNIFTY 10:15 to close | +0.739 % | +0.681 % |
+
+**IV and RV do not help a direction call.** Every change is a few hundredths
+of a percent either way, inside the noise. That is what option pricing
+predicts: implied and realised vol forecast the size of the next move, not
+its sign.
+
+Where they belong is the volatility trades, as the gate of the variance
+premium seller (`ops/research-ideas.md` 1a and 1d), not the direction models.
+
 ## Tradability
 
 A direction call that is right a share p of the time, on moves of mean size

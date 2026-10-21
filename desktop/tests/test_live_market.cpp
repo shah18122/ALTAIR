@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     using namespace altair::ui;
     QApplication app(argc, argv);
     std::printf("live market watch\n");
+    simple_mode::use_settings(false);   // the switch in memory, not the user's settings
 
     boost::asio::io_context io;
     PriceBus bus(io, 0);
@@ -195,6 +196,25 @@ int main(int argc, char** argv) {
     check(cd.toDouble() > 0.4 && cd.toDouble() < 0.6, "an at-the-money call's delta is near one half");
     check(!chain->smile().pillars && g->item(0, LiveChainView::Smile) && g->item(0, LiveChainView::Smile)->text() == QStringLiteral("—"),
           "one strike is no smile: no vanna-volga pillars, VV ± shows a dash (analytics test: the smile itself)");
+
+    // SIMPLE / ADVANCED: the same data, fewer columns (desktop/simple_mode.hpp).
+    {
+        auto* sw = simple_mode::button(nullptr);
+        sw->setChecked(true);
+        const bool simple_ok = page.view()->isColumnHidden(LiveWatchModel::BidQty) && page.view()->isColumnHidden(LiveWatchModel::Oi)
+                            && !page.view()->isColumnHidden(LiveWatchModel::Ltp) && !page.view()->isColumnHidden(LiveWatchModel::Bid)
+                            && g->isColumnHidden(LiveChainView::CIv) && g->isColumnHidden(LiveChainView::POi)
+                            && !g->isColumnHidden(LiveChainView::CLtp) && !g->isColumnHidden(LiveChainView::Strike)
+                            && !page.simple_hint()->isHidden();
+        check(simple_ok, "Simple: the watch shows prices, the chain LTP/bid/ask, and a line of what to press");
+        sw->setChecked(false);
+        check(!page.view()->isColumnHidden(LiveWatchModel::BidQty) && !g->isColumnHidden(LiveChainView::CIv)
+                  && page.simple_hint()->isHidden() && sw->text() == QStringLiteral("Advanced view"),
+              "Advanced: every column again; the button says which view is on");
+        check(g->item(0, LiveChainView::CIv) != nullptr && !g->item(0, LiveChainView::CIv)->text().isEmpty(),
+              "a hidden column is still filled: only the view changes");
+        delete sw;
+    }
 
     // GREEK WATCH: the 24000 call from the chain, every column from the stream.
     {

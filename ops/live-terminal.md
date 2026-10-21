@@ -77,6 +77,21 @@ Credentials:
 
 ## The Terminal
 
+- **Simple view / Advanced view** (`desktop/simple_mode.hpp`): one switch for
+  the whole app, on the Terminal's top bar, on Start here and on Demo Trading.
+  Simple is the default and is kept per user. Nothing is computed differently,
+  only shown:
+
+  | Screen | Simple view shows |
+  |---|---|
+  | Watch | Symbol, LTP, change, change %, bid, ask, volume, and a line of what to press |
+  | Option chain | CE LTP / bid / ask, strike, PE bid / ask / LTP |
+  | Models | Model, state and why; positions and trades with the net after expenses; a line saying what the page is |
+  | Demo Trading (backtests) | Every strategy's verdict in one line, and the summary tabs only |
+
+  Advanced view shows every column and tab as before: OI, IV, Δ, VV ±, depth
+  quantities, the readings panel, the expense heads, and the trade-by-trade
+  and filter views.
 - **Start here** (first in the sidebar, `desktop/start_page.hpp`) is ALTAIR in
   plain words. It shows:
   - what is running right now: prices, LIVE or paper, the models, a halt;
