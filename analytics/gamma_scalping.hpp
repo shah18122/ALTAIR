@@ -2,8 +2,12 @@
 // discrete hedging and costs do to it.
 //
 // Background: N. Bawa, "Gamma Scalping and the Volatility Risk Premium"
-// (Medium, 2026-04-01) -- not readable from here, so nothing below is taken
-// from it. The formulas are the standard ones it is named after:
+// (Medium, 2026-04-01). The article itself could not be fetched; its core
+// formula, as quoted to us, is (1) below written both ways,
+//     P&L ~ 1/2 Gamma dS^2 - Theta dt = 1/2 Gamma S^2 dt (sigma_r^2 - sigma_i^2),
+// profitable only when sigma_r > sigma_i, and path dependent because each
+// interval is weighted by the gamma held then. The test checks both points.
+// The rest are the standard results that go with it:
 //
 //   * One hedge interval of a delta-hedged option, priced at implied vol
 //     sigma_i, earns (theta-gamma balance, Black-Scholes)

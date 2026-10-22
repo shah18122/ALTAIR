@@ -361,8 +361,10 @@ stocks. The test windows were about 60 sessions each, with no costs.
 ### 2m. Gamma scalping and the Jane Street stories — *formulas added, nothing to trade*
 
 - **N. Bawa, "Gamma Scalping and the Volatility Risk Premium"** (Medium,
-  2026). The article could not be read from here (Medium refuses automated
-  access). Its subject is already in ALTAIR: the short-gamma side is the VRP
+  2026). The article could not be fetched (Medium refuses automated
+  access); Smit supplied its core formula, P&L ≈ ½ΓS²Δt(σr² − σi²), which
+  is eq. (1) in the header, and the test now checks it and its path
+  dependence. Its subject is already in ALTAIR: the short-gamma side is the VRP
   seller of 1a. The long-gamma side and its frictions are now in
   `analytics/gamma_scalping.hpp`: the theta-gamma P&L; E[P&L] ≈ vega·(σr − σi);
   the Kamal-Derman hedging error √(π/4)·vega·σ/√N; and Leland's cost-adjusted

@@ -17,7 +17,7 @@ What was found when checking each one is in `ops/research-ideas.md`.
 | Charithra C. M., I. T. Hawaldar, Vinish P., P. Pinto & C. Shetty, "Deep learning-based stock market forecasting: a comparative analysis of ANN, CNN, and LSTM", *Investment Management and Financial Innovations* 23(2), 2026, 219–234, doi [10.21511/imfi.23(2).2026.17](http://dx.doi.org/10.21511/imfi.23(2).2026.17), CC BY 4.0 | `analytics/forecast_metrics.hpp` | 2k |
 | G. S. Atsalakis & K. P. Valavanis, "Forecasting stock market short-term trends using a neuro-fuzzy based methodology", *Expert Systems with Applications* 36(7), 2009, 10696–10707, doi 10.1016/j.eswa.2009.02.043 | `models/anfis.hpp` | 2l |
 | J.-S. R. Jang, "ANFIS: adaptive-network-based fuzzy inference system", *IEEE Trans. Systems, Man, and Cybernetics* 23(3), 1993 | `models/anfis.hpp` | The hybrid learning rule |
-| N. Bawa, "Gamma Scalping and the Volatility Risk Premium", Medium, 2026-04-01 | none | Not readable from here; research-ideas 2m |
+| N. Bawa, "Gamma Scalping and the Volatility Risk Premium", Medium, 2026-04-01 | `analytics/gamma_scalping.hpp` | Core formula as supplied by Smit (page not fetchable); research-ideas 2m |
 | F. Ye et al., "Jane Street Stock prediction model based on LightGBM", ICSP 2021, 385–388, doi 10.1109/ICSP51882.2021.9408851 | none | Full text unavailable; 2m |
 | M. Kamal & E. Derman, "When you cannot hedge continuously: the corrections to Black-Scholes", *Risk* 12(1), 1999 | `analytics/gamma_scalping.hpp` | Hedging error |
 | H. E. Leland, "Option pricing and replication with transactions costs", *J. Finance* 40(5), 1985 | `analytics/gamma_scalping.hpp` | Cost-adjusted vol |

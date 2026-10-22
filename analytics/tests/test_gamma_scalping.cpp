@@ -65,6 +65,15 @@ int main() {
 
     check(gamma_scalp_step(0.1, 100.0, 1.0, 0.1, 0.01) == 0.5 * 0.1 * (1.0 - 1.0),
           "(1) breaks even when the move is exactly the implied move");
+    {
+        // The article's second form: a move of exactly sigma_r sqrt(dt).
+        const double G = 0.05, S = 100.0, dt = 1.0 / 365.0, sr = 0.20, si = 0.15;
+        const double a = gamma_scalp_step(G, S, S * sr * std::sqrt(dt), si, dt);
+        const double b = 0.5 * G * S * S * dt * (sr * sr - si * si);
+        check(std::fabs(a - b) < 1e-12 && a > 0.0
+                  && gamma_scalp_step(G, S, S * 0.10 * std::sqrt(dt), si, dt) < 0.0,
+              "(1) = 1/2 Gamma S^2 dt (sigma_r^2 - sigma_i^2): wins only when sigma_r > sigma_i");
+    }
 
     {
         const Run fair = hedge(0.15, 0.15, 84, 0.0, 1);
@@ -76,6 +85,17 @@ int main() {
               "(2) no edge when realised equals implied");
         check(std::fabs(rich.mean - gamma_scalp_expected(vega, 0.20, 0.15)) < 4.0 * se,
               "(2) long gamma earns vega x (sigma_r - sigma_i), within 4 standard errors");
+        // Path dependence: hedged 336 times at sigma_r = sigma_i the spread
+        // is just hedging error; with sigma_r = 20 % it stays large however
+        // often you hedge, because the P&L depends on WHERE the moves came
+        // (near the strike, high gamma) and not only on how big they were.
+        const Run fine_fair = hedge(0.15, 0.15, 336, 0.0, 4);
+        const Run fine_rich = hedge(0.15, 0.20, 336, 0.0, 5);
+        std::printf("    336 hedges: sd %.4f at sigma_r = sigma_i, %.4f at sigma_r 20 %%\n",
+                    fine_fair.sd, fine_rich.sd);
+        check(fine_rich.sd > 2.5 * fine_fair.sd,
+              "path dependence: with realised above implied, the P&L spread does not "
+              "shrink with hedging frequency");
     }
     for (int n : {21, 84, 336}) {
         const Run r = hedge(0.15, 0.15, n, 0.0, 10u + static_cast<unsigned>(n));
