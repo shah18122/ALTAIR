@@ -284,6 +284,16 @@ inline constexpr std::array kAtlasRows{
              "Forsyth's version of the same trade-off: nonlinear impact, a "
              "geometric price, and a sale that reacts to the price path, "
              "solved as a PDE. Never worse than Almgren-Chriss on its model."},
+    AtlasRow{"4. Microstructure & execution", "Execution with an alpha signal",
+             AtlasStatus::Implemented, "oms/alpha_execution.hpp", 12,
+             "Almgren-Chriss plus a term that buys sooner when a short-term "
+             "signal says the price is about to rise, and later when it says "
+             "the opposite."},
+    AtlasRow{"4. Microstructure & execution", "Execution state model",
+             AtlasStatus::Implemented, "oms/execution_state.hpp", 12,
+             "Scores the market from spread, depth, short-term volatility and "
+             "order-flow imbalance into four liquidity regimes, and sizes, "
+             "times or skips a trade accordingly."},
     AtlasRow{"4. Microstructure & execution", "Implementation shortfall",
              AtlasStatus::Implemented, "oms/shortfall.hpp", 12,
              "The gap between the price you decided at and the price you got, "

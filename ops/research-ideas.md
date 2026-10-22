@@ -231,6 +231,38 @@ implicit diffusion. `altair_optimal_exec` prints the refinement ladder.
   reach. The units of v in that example are probably different. Until that is
   settled, the long preset is the table as printed, not a validated case.
 
+### 2f. Execution with an alpha signal — *built*
+
+Lai, "Optimal Execution with Alpha Signals" (SSRN 6323159). Almgren-Chriss
+plus an OU signal, solved in closed form:
+`v* = κ·coth(κτ)·x + B(τ)·f/(2η)`.
+- **A fix to the paper.** Its eq. 10 has the sinh ratio upside down, so it
+  diverges. `oms/alpha_execution.hpp` uses the corrected form, and the test
+  checks it against an RK4 solve of eq. 9 to within 1e-6.
+- **Benchmark.** On 20,000 simulated days with the same random numbers, the
+  signal-aware rule lowers the paper's objective by 6.6% (0.01208 against
+  0.01293), more than 70 standard errors. The cash paid is lower too.
+
+### 2g. VRC execution state model — *built, with a size limit*
+
+Verma, "Market Impact Models for Small Funds" (SSRN 6301920).
+`oms/execution_state.hpp` implements every formula the paper gives:
+- EQS, the regimes and the Table 1 size cuts;
+- the eq. 13 cost and the passive-vs-aggressive rule;
+- the opportunistic slicer;
+- the abstain rule, net Kelly and the participation caps.
+
+**Errors in the paper, not used:**
+- Eq. 3: the permanent cost is ½γX², not γX².
+- Eq. 6: the AC trade size needs cosh, not sinh.
+- Eq. 33 needs future EQS values. The causal version uses their expectation.
+
+**Result.** Against TWAP, on the paper's own cost model:
+- On a 0.05%-of-ADV order the slicer is cheaper (2.91 against 3.25 bp).
+- On the paper's own 2.9%-of-ADV example it is dearer (6.06 against 4.88 bp).
+
+It suits small orders, such as a few NIFTY lots. It does not suit size.
+
 **Not done.** Nothing in `oms/` slices a live order with this. The impact
 parameters are the paper's normalised one-share values. Using it needs κt, κp
 and β fitted from our own fills (`risk/slippage.hpp`), per instrument.

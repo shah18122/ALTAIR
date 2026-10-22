@@ -132,6 +132,8 @@ inline constexpr Entry kByFile[] = {
     {"oms/execution.hpp", {"Not trained: scheduling rules.", "Volume profile from dataset/.", "Execution page; the router sends single limit/IOC orders."}},
     {"oms/shortfall.hpp", {"Not trained: the Almgren-Chriss solution for given risk aversion and impact.", "Volatility and impact estimates.", kResearch}},
     {"oms/hjb_execution.hpp", {"Not trained: Forsyth's HJB solved for given impact parameters and gamma.", "Volatility and impact estimates.", kResearch}},
+    {"oms/alpha_execution.hpp", {"Not trained: closed form; the signal's mean reversion and the impact coefficient are inputs.", "A live signal (e.g. order-flow imbalance) and impact estimates.", kResearch}},
+    {"oms/execution_state.hpp", {"Not trained: VRC's published weights and thresholds, to be refitted from our fills.", "Live spread, 50-level depth, short-term volatility and order-flow imbalance.", kResearch}},
     {"book/queue_position.hpp", {kNotTrained, kLiveBook, "The execution study and tuner use it to price passive (join-the-queue) fills."}},
     {"models/fill_probability.hpp", {"Fitted to recorded quotes and fills.", "Tapes recorded by the models engine.", "The tuner uses it to compare passive and aggressive execution."}},
     {"models/hawkes.hpp", {"Maximum likelihood on trade arrival times.", "Trades recorded from the live feed.", kResearch}},
