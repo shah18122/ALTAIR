@@ -85,6 +85,13 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_execution_test PRIVATE altair_oms altair_flags)
     add_test(NAME oms_execution COMMAND altair_execution_test)
 
+    # Forsyth (2011), optimal execution by an HJB equation: checked against
+    # the closed-form TWAP, the paper's Table 7.3, and every Almgren-Chriss
+    # trajectory on the same grid.
+    add_executable(altair_hjb_execution_test tests/test_hjb_execution.cpp)
+    target_link_libraries(altair_hjb_execution_test PRIVATE altair_oms altair_flags)
+    add_test(NAME oms_hjb_execution COMMAND altair_hjb_execution_test)
+
     # P13-07. Market impact and the capacity ceiling. QUANTLAB Q7: a linear,
     # size-blind cost model cannot express a bound at all.
     add_executable(altair_capacity_test tests/test_capacity.cpp)

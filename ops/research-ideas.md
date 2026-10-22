@@ -200,6 +200,41 @@ Potters & Wyart, cond-mat/0307332). For a desk this means:
 **Test.** Measure the kernel on recorded tapes, then plug it into the router's
 child-order spacing.
 
+### 2e. HJB optimal execution — *built, checked against the paper*
+
+**The idea.** Forsyth, "A Hamilton Jacobi Bellman approach to optimal trade
+execution" ([preprint](https://cs.uwaterloo.ca/~paforsyt/optimal_trade.pdf),
+Appl. Numer. Math. 61 (2011)). It drops Almgren-Chriss's three simplifications:
+- the price is geometric, with permanent impact in its drift;
+- temporary impact is nonlinear, `f(v) = [1+κs·sgn v]·exp(κt·sgn(v)|v|^β)`;
+- the sale can react to the price path. It minimises the pre-commitment
+  mean-variance objective `E[(B_L − γ/2)²]`, and sweeping γ gives the frontier.
+
+**Built.** The solver is `oms/hjb_execution.hpp`. It uses the paper's
+similarity reduction to two cash planes, semi-Lagrangian timestepping and
+implicit diffusion. `altair_optimal_exec` prints the refinement ladder.
+
+**Two changes from the paper, both stated in the header:**
+- The mean and variance are interpolated, not the second moment. Interpolating
+  V directly gave a riskless TWAP a standard deviation of 7.
+- The control nodes are cubed toward zero. With a uniform set, nothing slower
+  than "sell everything now" was admissible at the coarse levels.
+
+**Result on Table 7.1 (γ = 200).**
+- Level-2 objective: 1.177 against the paper's 1.176.
+- Level 1: 1.467 against the paper's 1.319.
+- E and sd move toward the paper's 99.295 and 0.7469.
+- On the same grid, the HJB objective beats the best Almgren-Chriss trajectory:
+  1.467 against 1.733 (kT = 32) at level 1.
+- Table 8.1, as published, does not reproduce. With κt = 0.069 and β = 0.5,
+  even a TWAP sells at 0.78 of the price, so the published E = 95.6 is out of
+  reach. The units of v in that example are probably different. Until that is
+  settled, the long preset is the table as printed, not a validated case.
+
+**Not done.** Nothing in `oms/` slices a live order with this. The impact
+parameters are the paper's normalised one-share values. Using it needs κt, κp
+and β fitted from our own fills (`risk/slippage.hpp`), per instrument.
+
 ---
 
 ## 3. Statistics that refuse to be fooled

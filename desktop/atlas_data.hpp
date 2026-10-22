@@ -279,6 +279,11 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "oms/shortfall.hpp", 12,
              "The trade-off between trading fast (costly impact) and slow "
              "(costly risk), solved rather than guessed."},
+    AtlasRow{"4. Microstructure & execution", "HJB optimal execution",
+             AtlasStatus::Implemented, "oms/hjb_execution.hpp", 12,
+             "Forsyth's version of the same trade-off: nonlinear impact, a "
+             "geometric price, and a sale that reacts to the price path, "
+             "solved as a PDE. Never worse than Almgren-Chriss on its model."},
     AtlasRow{"4. Microstructure & execution", "Implementation shortfall",
              AtlasStatus::Implemented, "oms/shortfall.hpp", 12,
              "The gap between the price you decided at and the price you got, "

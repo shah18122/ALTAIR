@@ -131,6 +131,7 @@ inline constexpr Entry kByFile[] = {
         "Execution page; demo fills are priced at the touch with size and latency, not with this model."}},
     {"oms/execution.hpp", {"Not trained: scheduling rules.", "Volume profile from dataset/.", "Execution page; the router sends single limit/IOC orders."}},
     {"oms/shortfall.hpp", {"Not trained: the Almgren-Chriss solution for given risk aversion and impact.", "Volatility and impact estimates.", kResearch}},
+    {"oms/hjb_execution.hpp", {"Not trained: Forsyth's HJB solved for given impact parameters and gamma.", "Volatility and impact estimates.", kResearch}},
     {"book/queue_position.hpp", {kNotTrained, kLiveBook, "The execution study and tuner use it to price passive (join-the-queue) fills."}},
     {"models/fill_probability.hpp", {"Fitted to recorded quotes and fills.", "Tapes recorded by the models engine.", "The tuner uses it to compare passive and aggressive execution."}},
     {"models/hawkes.hpp", {"Maximum likelihood on trade arrival times.", "Trades recorded from the live feed.", kResearch}},
