@@ -303,6 +303,13 @@ October 2008 week of −21.84 inside the bound) and DIA's m 0.2407.
   plain Gaussian. It overstates small moves and understates the crash tail,
   and in 300 simulated years the largest move was three times the "bound".
   Kept as a reference, not used for sizing or stops.
+- **On NIFTY** (checked against the Warsaw PDF Smit supplied): re-running the
+  paper's own two checks on weekly NIFTY moves, the "bound" is broken after
+  every fit. That includes the October 2008 crash week (−408 points against
+  |A| 331) and COVID (−1,661 against 1,080). erfc² misses the share of big
+  weeks by 0.11–0.22, not the paper's 0.02. Eq. 16 is not normalised (it
+  integrates to 0.06). The √m strike-width idea depends on price units, so
+  it is not implemented.
 
 ### 2j. The AI stock-prediction review — *nothing new to build*
 

@@ -266,8 +266,8 @@ inline constexpr std::array kAtlasRows{
     AtlasRow{"3. Time series & volatility", "Action-principle price bound",
              AtlasStatus::Implemented, "analytics/action_principle.hpp", 17,
              "Manhire's physics model: weekly moves as an oscillator with a "
-             "hard limit. Reproduces the paper, but fits fat tails worse "
-             "than a plain bell curve."},
+             "hard limit. Reproduces the paper, but on NIFTY the limit is "
+             "broken in every test window, 2008 and 2020 included."},
 
     // -- 4. Microstructure and execution ------------------------------------
     AtlasRow{"4. Microstructure & execution", "Order-book imbalance",

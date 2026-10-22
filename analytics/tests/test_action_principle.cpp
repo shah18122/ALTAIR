@@ -7,7 +7,10 @@
 
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <random>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace {
@@ -21,7 +24,7 @@ void check(bool ok, const char* what) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     using altair::action_bound;
     std::printf("Manhire action-principle bound\n");
 
@@ -105,6 +108,91 @@ int main() {
             check(std::isfinite(err_osc) && std::isfinite(err_gau),
                   "both tail models score (which is better is reported, not assumed)");
         }
+    }
+
+    // ---- eq. 16 is not a density -------------------------------------------
+    {
+        // Integral of (m / 2 pi t) exp(-m x^2 / t) over all x is sqrt(m / 4 pi t).
+        const auto spy = action_bound(1.76, 0.5398, 5.0);
+        double area = 0.0;
+        for (double x = -60.0; x <= 60.0; x += 0.001) { area += spy->density(x) * 0.001; }
+        std::printf("    eq. 16 integrates to %.4f over all moves (SPY)\n", area);
+        check(std::fabs(area - std::sqrt(spy->inertia / (4.0 * std::numbers::pi * 5.0))) < 1e-6
+                  && area < 0.1,
+              "eq. 16 integrates to sqrt(m / 4 pi t), about 0.06, not 1");
+    }
+
+    // ---- the paper's own tests, re-run on NIFTY ----------------------------
+    //
+    // Weekly = non-overlapping 5-session displacements in index points, as
+    // the paper does for SPY. Three windows, each fitted and then checked on
+    // the months after it, including the paper's own crash (October 2008).
+    // Its claims: no week beyond |A|, and erfc(X sqrt(m/2t))^2 within 0.02 of
+    // the historical share of weeks with |x| >= X.
+    if (argc > 1) {
+        std::ifstream in(argv[1]);
+        std::vector<std::string> dates;
+        std::vector<double> px;
+        std::string line;
+        std::getline(in, line);
+        while (std::getline(in, line)) {
+            std::stringstream ss(line);
+            std::string f[5];
+            for (auto& v : f) std::getline(ss, v, ',');
+            if (f[4].empty()) continue;
+            dates.push_back(f[0].substr(0, 10));
+            px.push_back(std::stod(f[4]));
+        }
+        const auto weeks = [&](const char* a, const char* b) {
+            std::vector<double> c;
+            for (std::size_t i = 0; i < px.size(); ++i)
+                if (dates[i] >= a && dates[i] <= b) c.push_back(px[i]);
+            std::vector<double> w;
+            for (std::size_t i = 5; i < c.size(); i += 5) w.push_back(c[i] - c[i - 5]);
+            return std::pair{c, w};
+        };
+        struct Window { const char *fa, *fb, *ta, *tb; };
+        int broken = 0, windows = 0;
+        double worst_gap = 0.0;
+        for (const Window& w : {Window{"2002-03-01", "2008-08-31", "2008-09-01", "2009-03-31"},
+                                Window{"2013-01-01", "2019-12-31", "2020-01-01", "2020-06-30"},
+                                Window{"2016-01-01", "2023-12-31", "2024-01-01", "2026-12-31"}}) {
+            const auto [closes, fit_w] = weeks(w.fa, w.fb);
+            const auto [_, test_w] = weeks(w.ta, w.tb);
+            const auto ab = altair::action_bound_from_closes(closes, 5);
+            if (!ab || test_w.empty()) continue;
+            ++windows;
+            double worst = 0.0, in_max = 0.0;
+            for (double v : test_w) if (std::fabs(v) > std::fabs(worst)) worst = v;
+            for (double v : fit_w) in_max = std::max(in_max, std::fabs(v));
+            broken += ab->inside(worst) ? 0 : 1;
+            double sabs = 0.0;
+            for (double v : fit_w) sabs += std::fabs(v);
+            const double xbar = sabs / static_cast<double>(fit_w.size());
+            double gap = 0.0;
+            for (double k : {1.0, 2.0, 3.0}) {
+                double freq = 0.0;
+                for (double v : fit_w) freq += std::fabs(v) >= k * xbar;
+                freq /= static_cast<double>(fit_w.size());
+                gap = std::max(gap, std::fabs(ab->beyond(k * xbar) - freq));
+            }
+            worst_gap = std::max(worst_gap, gap);
+            std::printf("    NIFTY fit %s..%s: |A| %.0f pts (largest fitted week %.0f); "
+                        "worst week to %s: %.0f; erfc^2 off by up to %.2f\n",
+                        w.fa, w.fb, ab->amplitude, in_max, w.tb, worst, gap);
+        }
+        if (windows == 3) {
+            check(broken == 3,
+                  "on NIFTY the 'bound' is broken in every window, the October 2008 "
+                  "crash week included");
+            check(worst_gap > 0.1,
+                  "and erfc^2 misses the share of big weeks by more than 0.1, not "
+                  "the paper's 0.02");
+        } else {
+            std::printf("    (NIFTY file lacks the windows: skipped)\n");
+        }
+    } else {
+        std::printf("    (no NIFTY file given: real-data check skipped)\n");
     }
 
     std::printf("%s (%d failure%s)\n", failures == 0 ? "PASS" : "FAIL",

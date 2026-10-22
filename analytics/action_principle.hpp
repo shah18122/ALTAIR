@@ -1,8 +1,9 @@
 // analytics/action_principle.hpp -- Manhire's "physical laws" price bound.
 //
 // J.T. Manhire, "Predicting Stock Market Prices with Physical Laws" (also
-// "The Action Principle in Market Mechanics"), Texas A&M, 2017; accepted at
-// the 13th Econophysics Colloquium, Warsaw. Equation numbers are the paper's.
+// "The Action Principle in Market Mechanics"), Texas A&M, 2017; the version
+// accepted for the 13th Annual Econophysics Colloquium, University of Warsaw,
+// July 2017 (checked against the PDF). Equation numbers are that version's.
 //
 // THE MODEL.
 //
@@ -17,8 +18,11 @@
 // coefficient is
 //     m = 2t (pi / |A|)^2                                              (12)
 // which makes phi = pi x / |A|, and the probabilities are
-//     Pr(|x| <  X) = erf(X sqrt(m/2t))^2                               (17)
-//     Pr(|x| >= X) = erfc(X sqrt(m/2t))^2
+//     Pr(|x| <  X) = erf(X sqrt(m/2t))^2                 (13, unnumbered form)
+//     Pr(|x| >= X) = erfc(X sqrt(m/2t))^2                              (17)
+//     Pr(|x| =  X) = (m / 2 pi t) exp(-m X^2 / t)                      (16)
+// and the paper reports (16) within 0.01 and (17) within 0.02 of SPY's and
+// DIA's historical frequencies.
 // The paper's check: SPY weekly 2002-08, |x-bar| = 1.76, p-bar = 0.5398,
 // |A| = 22.11 points, m = 0.2019; the October 2008 crash week was -21.84,
 // inside the bound. DIA: |A| = 20.25, m = 0.2407, crash week -19.45.
@@ -35,13 +39,26 @@
 //     no bound at all. amplitude() refuses p-bar <= 0.5 rather than return a
 //     negative or infinite "limit".
 //   * (17) does not add up: erf^2 + erfc^2 = 1 - 2 erf erfc, which is less
-//     than 1 everywhere except the ends (0.50 at phi = 0.48). Both are
-//     returned exactly as published; the test asserts the shortfall so
-//     nobody reads them as a distribution. A caller wanting one tail should
-//     use within() and take 1 - within() as the tail.
+//     than 1 everywhere except the ends (0.50 at phi = 0.48), although the
+//     paper says Pr(>=) = 1 - Pr(<). Both are returned exactly as published;
+//     the test asserts the shortfall so nobody reads them as a distribution.
+//     A caller wanting one tail should take 1 - within().
+//   * (16) is not normalised either: it integrates to sqrt(m / 4 pi t), about
+//     0.06 for SPY.
+//   * The closing suggestion that the best option strike width is sqrt(m)
+//     (0.45 for SPY, 0.49 for DIA, against 0.50 listed) is not implemented:
+//     m scales with 1/price^2, so sqrt(m) changes with the units the price is
+//     quoted in. For NIFTY it comes out near 0.01 points against 50-point
+//     strikes.
+//
+// ON NIFTY. The test re-runs the paper's two checks on weekly NIFTY moves in
+// three windows (fit 2002-08 as the paper did, 2013-19 and 2016-23). The
+// bound is broken after every fit, the October 2008 crash week included, and
+// it is broken inside the 2002-08 fit itself (|A| 331 points, largest week
+// 998). erfc^2 misses the share of big weeks by 0.11 to 0.22.
 //
 // WHAT IT IS NOT. A forecast of direction or timing (the paper says so), or
-// a tested NSE number: no NIFTY fit has been run yet.
+// a limit to size or stop against: on NIFTY it is not a limit at all.
 
 #pragma once
 
