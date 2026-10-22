@@ -189,6 +189,11 @@ inline constexpr std::array kAtlasRows{
              "What a delta-hedged option earns when the market moves more or "
              "less than its price implies, and what hedging less often and "
              "paying costs does to that."},
+    AtlasRow{"2. Machine learning", "Stochastic dominance test",
+             AtlasStatus::Implemented, "analytics/stochastic_dominance.hpp", 17,
+             "Asks whether every investor of a kind would prefer one return "
+             "stream to another, given today's conditions, not just which "
+             "has the higher average."},
     AtlasRow{"2. Machine learning", "Forecast accuracy tests",
              AtlasStatus::Implemented, "analytics/forecast_metrics.hpp", 17,
              "MAPE, RMSE and hit rate, plus the tests that say whether one "

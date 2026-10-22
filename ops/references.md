@@ -21,6 +21,9 @@ What was found when checking each one is in `ops/research-ideas.md`.
 | F. Ye et al., "Jane Street Stock prediction model based on LightGBM", ICSP 2021, 385–388, doi 10.1109/ICSP51882.2021.9408851 | none | Full text unavailable; 2m |
 | M. Kamal & E. Derman, "When you cannot hedge continuously: the corrections to Black-Scholes", *Risk* 12(1), 1999 | `analytics/gamma_scalping.hpp` | Hedging error |
 | H. E. Leland, "Option pricing and replication with transactions costs", *J. Finance* 40(5), 1985 | `analytics/gamma_scalping.hpp` | Cost-adjusted vol |
+| K. Verma & A. K. Jha, "Predicting Nifty 50 Trends Using a Markov Chain Approach", *IJCRT* 12(12), 2024 (SSRN 5063966) | `models/tests/test_markov_nifty.cpp` (uses `models/markov.hpp`) | 2n |
+| J. Olmo & M. Sanso-Navarro, "Forecasting the Performance of Hedge Fund Styles", 2012 (SSRN 1932225) | `analytics/stochastic_dominance.hpp` | 2o |
+| G. Amisano & R. Giacomini, "Comparing density forecasts via weighted likelihood ratio tests", *J. Business & Economic Statistics* 25(2), 2007 | none | Cited by Olmo & Sanso-Navarro; not built |
 | F. X. Diebold & R. S. Mariano, "Comparing predictive accuracy", *J. Business & Economic Statistics* 13(3), 1995 | `diebold_mariano` | |
 | D. Harvey, S. Leybourne & P. Newbold, "Testing the equality of prediction mean squared errors", *Int. J. Forecasting* 13(2), 1997 | `diebold_mariano` | The small-sample factor |
 | M. H. Pesaran & A. Timmermann, "A simple nonparametric test of predictive performance", *J. Business & Economic Statistics* 10(4), 1992 | `pesaran_timmermann` | |

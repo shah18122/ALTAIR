@@ -386,6 +386,42 @@ stocks. The test windows were about 60 sessions each, with no costs.
   features on unnamed US stocks, so nothing carries over to NSE. Gradient
   boosting is already one of the curriculum's base models.
 
+### 2n. The NIFTY Markov chain (Verma & Jha 2024) — *reproduced, no edge*
+
+IJCRT 12(12), December 2024 (SSRN 5063966). Up/down/unchanged states on 493
+NIFTY closes, Dec 2022 – Dec 2024: P(up|up) 0.5863, P(up|down) 0.5352,
+"long run" up 0.5639.
+- **Reproduced** by `models/tests/test_markov_nifty.cpp` on the repo's closes:
+  0.5857 and 0.5349.
+- **But both rows say "up"**, so the chain is just "always buy". The rows are
+  not distinguishable from independence (chi-square 3.8 against 9.5). Since
+  the paper's window, "up" has been right on 49.2% of 441 days. The paper's
+  "long run" 0.5639 is the share of up days; the stationary value is its own
+  P¹⁶ figure, 0.5629.
+- **Over 2000–2026 the persistence is real** (P(up|up) 0.568 against
+  P(up|down) 0.501, chi-square 31). However, "follow yesterday" on the spot
+  index nets less than buy-and-hold since 2015 once 3 bp a switch is paid
+  (log 61% against 102%). It is not built as a strategy.
+
+### 2o. Conditional stochastic dominance (Olmo & Sanso-Navarro 2012) — *built*
+
+"Forecasting the Performance of Hedge Fund Styles" (SSRN 1932225). The paper
+ranks hedge-fund styles by kernel-conditional stochastic dominance of orders
+1–3, with a multiplier-bootstrap p-value. Its data are Credit Suisse/Tremont
+indices, which are not investable and not Indian.
+- **Built.** `analytics/stochastic_dominance.hpp` implements eq. 7, 9 and 10,
+  with two changes stated in the header: an effective-sample-size scaling, and
+  bandwidths passed in rather than cross-validated. The test recovers known
+  first- and second-order orderings and a conditional flip that the
+  unconditional test cannot see.
+- **On real data**, NIFTY against BANKNIFTY daily, 2015–2026, conditioned on
+  NIFTY's trailing 20-day vol: "BANKNIFTY dominates" is rejected at second
+  order in calm, stressed and unconditional samples (p 0.00), and "NIFTY
+  dominates" is not (p 0.24–0.71). For a risk-averse holder NIFTY is the
+  better of the two.
+- **Use.** Compare strategies' daily P&L conditional on regime, as a gate in
+  the daily selector. Not wired in yet.
+
 ---
 
 ## 3. Statistics that refuse to be fooled
