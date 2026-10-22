@@ -184,6 +184,11 @@ inline constexpr std::array kAtlasRows{
              "Fuzzy if-then rules whose shapes are learned from data "
              "(Atsalakis & Valavanis). On NIFTY 2022-25 its calls were no "
              "better than chance."},
+    AtlasRow{"3. Time series & volatility", "Gamma scalping P&L",
+             AtlasStatus::Implemented, "analytics/gamma_scalping.hpp", 17,
+             "What a delta-hedged option earns when the market moves more or "
+             "less than its price implies, and what hedging less often and "
+             "paying costs does to that."},
     AtlasRow{"2. Machine learning", "Forecast accuracy tests",
              AtlasStatus::Implemented, "analytics/forecast_metrics.hpp", 17,
              "MAPE, RMSE and hit rate, plus the tests that say whether one "

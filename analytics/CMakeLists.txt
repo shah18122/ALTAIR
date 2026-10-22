@@ -66,6 +66,10 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME forecast_metrics COMMAND altair_forecast_metrics_test
              ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
 
+    add_executable(altair_gamma_scalping_test tests/test_gamma_scalping.cpp)
+    target_link_libraries(altair_gamma_scalping_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME gamma_scalping COMMAND altair_gamma_scalping_test)
+
     add_executable(altair_svi_test tests/test_svi.cpp)
     target_link_libraries(altair_svi_test PRIVATE altair_analytics altair_flags)
     add_test(NAME svi COMMAND altair_svi_test)

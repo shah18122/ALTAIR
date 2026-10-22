@@ -358,6 +358,25 @@ stocks. The test windows were about 60 sessions each, with no costs.
 - A 60-session window gives a hit rate a standard error of about 6 %, so the
   paper's 63 % average is about two standard errors from a coin.
 
+### 2m. Gamma scalping and the Jane Street stories — *formulas added, nothing to trade*
+
+- **N. Bawa, "Gamma Scalping and the Volatility Risk Premium"** (Medium,
+  2026). The article could not be read from here (Medium refuses automated
+  access). Its subject is already in ALTAIR: the short-gamma side is the VRP
+  seller of 1a. The long-gamma side and its frictions are now in
+  `analytics/gamma_scalping.hpp`: the theta-gamma P&L; E[P&L] ≈ vega·(σr − σi);
+  the Kamal-Derman hedging error √(π/4)·vega·σ/√N; and Leland's cost-adjusted
+  volatility. Monte Carlo agrees with each to within 4% (the Leland cost is
+  0.0727 against 0.0712). As reported, SEBI's case against Jane Street is
+  about expiry-day manipulation of BANKNIFTY, not gamma scalping, so there
+  is nothing in it to copy.
+- **Ye et al., "Jane Street Stock prediction model based on LightGBM"**,
+  ICSP 2021, pp. 385–388, doi 10.1109/ICSP51882.2021.9408851. The full text
+  is not available (ResearchGate has no file and IEEE is paywalled). It is
+  built on the Kaggle Jane Street competition data, which has anonymised
+  features on unnamed US stocks, so nothing carries over to NSE. Gradient
+  boosting is already one of the curriculum's base models.
+
 ---
 
 ## 3. Statistics that refuse to be fooled
