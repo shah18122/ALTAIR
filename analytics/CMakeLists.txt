@@ -57,6 +57,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_hurst_test PRIVATE altair_analytics altair_flags)
     add_test(NAME hurst COMMAND altair_hurst_test)
 
+    add_executable(altair_action_principle_test tests/test_action_principle.cpp)
+    target_link_libraries(altair_action_principle_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME action_principle COMMAND altair_action_principle_test)
+
     add_executable(altair_svi_test tests/test_svi.cpp)
     target_link_libraries(altair_svi_test PRIVATE altair_analytics altair_flags)
     add_test(NAME svi COMMAND altair_svi_test)

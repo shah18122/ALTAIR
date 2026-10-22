@@ -116,6 +116,7 @@ inline constexpr Entry kByFile[] = {
     {"analytics/kalman.hpp", {"Filter recursion; noise variances by maximum likelihood.", kBars, kResearch}},
     {"analytics/hmm.hpp", {"Baum-Welch (EM) on daily and 5-minute returns.", kBars, "Shows the regime on the Regimes page; not an order source."}},
     {"models/markov.hpp", {"Transition counts between regimes on history.", kBars, "Shows the regime on the Regimes page; not an order source."}},
+    {"analytics/action_principle.hpp", {"Two averages from history: mean absolute move and share of up periods.", kBars, kResearch}},
     {"analytics/hurst.hpp", {"Rescaled-range estimate on a rolling window.", kBars, "Shows trend vs mean-reversion on the Regimes page; not an order source."}},
     {"backtest/montecarlo.hpp", {"Simulation: drift, volatility and jumps estimated from returns.", kBars,
         "Used by the VaR and Monte Carlo pages (10,000 paths); not an order source."}},

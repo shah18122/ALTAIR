@@ -230,6 +230,9 @@ implicit diffusion. `altair_optimal_exec` prints the refinement ladder.
   even a TWAP sells at 0.78 of the price, so the published E = 95.6 is out of
   reach. The units of v in that example are probably different. Until that is
   settled, the long preset is the table as printed, not a validated case.
+- The impact parameters are the paper's normalised one-share values. Using
+  it needs κt, κp and β fitted from our own fills (`risk/slippage.hpp`), per
+  instrument.
 
 ### 2f. Execution with an alpha signal — *built*
 
@@ -281,9 +284,38 @@ LSTM's 67.2 on March 2025.
   out-of-sample calls from the previous close, and it is scored against "no
   change".
 - **Not yet measured on real data.** That needs the NSE bhavcopy, which this
-  environment cannot reach. The impact
-parameters are the paper's normalised one-share values. Using it needs κt, κp
-and β fitted from our own fills (`risk/slippage.hpp`), per instrument.
+  environment cannot reach.
+
+### 2i. Manhire's action-principle bound — *built, and it loses to a Gaussian*
+
+Manhire, "Predicting Stock Market Prices with Physical Laws" (Texas A&M,
+2017). Weekly price moves are treated as a harmonic oscillator, so they are
+bounded by `|A| = |x̄| / (2p̄ − 1)`, with tail probabilities
+`erf(πX/|A|)²` and `erfc(πX/|A|)²`. `analytics/action_principle.hpp` has it,
+and the test reproduces the paper's SPY numbers (|A| 22.11, m 0.2019, the
+October 2008 week of −21.84 inside the bound) and DIA's m 0.2407.
+- **Two flaws.** The two probabilities do not add to one (0.50 at φ = 0.48).
+  And the bound divides by `2p̄ − 1`, so with p̄ near one half, as in any
+  market close to a random walk, p̄ 0.53 instead of 0.54 moves it by a third.
+  p̄ ≤ 0.5 gives no bound, and the code refuses it.
+- **Benchmark.** On simulated fat-tailed weeks (Student t, 4 d.o.f.) the
+  oscillator's tail at 1–4 sd is off by 0.52 in total, against 0.09 for a
+  plain Gaussian. It overstates small moves and understates the crash tail,
+  and in 300 simulated years the largest move was three times the "bound".
+  Kept as a reference, not used for sizing or stops.
+
+### 2j. The AI stock-prediction review — *nothing new to build*
+
+Vishwas, Usha & Sangeetha, Mathematical Models in Engineering (2025),
+doi 10.21595/mme.2025.24861. A literature review with no method of its own.
+Its recommendations against what ALTAIR has:
+- standardised benchmarks: the forecast curriculum scores every model against
+  "no change" on the same walk-forward splits;
+- sentiment: `models/sentiment.hpp`, a lexicon scorer on hand-fed text (no
+  live news feed, so not multimodal);
+- continual learning: the daily selector refits on a schedule (2h);
+- explainability (SHAP/LIME) and graph networks: not present. Worth adding
+  only once a model clears the "no change" baseline on real NSE data.
 
 ---
 

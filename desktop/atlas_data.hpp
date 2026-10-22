@@ -249,6 +249,11 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "analytics/hurst.hpp", 17,
              "Measures whether a series trends, mean-reverts, or is a coin "
              "flip -- and says how sure it is."},
+    AtlasRow{"3. Time series & volatility", "Action-principle price bound",
+             AtlasStatus::Implemented, "analytics/action_principle.hpp", 17,
+             "Manhire's physics model: weekly moves as an oscillator with a "
+             "hard limit. Reproduces the paper, but fits fat tails worse "
+             "than a plain bell curve."},
 
     // -- 4. Microstructure and execution ------------------------------------
     AtlasRow{"4. Microstructure & execution", "Order-book imbalance",
