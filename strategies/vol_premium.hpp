@@ -226,7 +226,23 @@ inline constexpr double kYearDays = 365.0;
                 last_fwd = fwd;
             }
             const VrpQuote q = m.quote(i, t.expiry, t.strike);
-            if (!std::isfinite(q.call) || !std::isfinite(q.put) || !std::isfinite(fwd)) { continue; }   // unquoted today: hold
+            if (!std::isfinite(q.call) || !std::isfinite(q.put) || !std::isfinite(fwd)) {
+                // Unquoted today: hold -- unless the exit is due. A strike that
+                // went deep in the money (March 2020) can stop trading for good;
+                // held, it would never close and every later month would be
+                // silently skipped. Buy it back at intrinsic on the forward
+                // (the spot when the future is unquoted too).
+                if (sessions_left(m, i, t.expiry) <= p.exit_sessions) {
+                    const double u = std::isfinite(fwd) ? fwd : m.spot[i];
+                    if (!std::isfinite(fwd)) {
+                        t.hedge_pnl += static_cast<double>(lots) * p.lot_size * (u - last_fwd);
+                        last_fwd = u;
+                    }
+                    const VrpQuote in{std::max(u - t.strike, 0.0), std::max(t.strike - u, 0.0)};
+                    close(i, in, u, "unquoted at exit: intrinsic");
+                }
+                continue;
+            }
             const double T = years(m.day[i], t.expiry);
             const double iv = straddle_iv(q, fwd, t.strike, T, p.rate);
             if (std::isfinite(iv)) { last_iv = iv; }
