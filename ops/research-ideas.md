@@ -263,7 +263,25 @@ Verma, "Market Impact Models for Small Funds" (SSRN 6301920).
 
 It suits small orders, such as a few NIFTY lots. It does not suit size.
 
-**Not done.** Nothing in `oms/` slices a live order with this. The impact
+**Not done.** Nothing in `oms/` slices a live order with this.
+
+### 2h. The Gokhale stack (NIFTY 50 ensemble) — *added to altair_trader*
+
+Shindhe & Gokhale, Cureus J. Bus. Econ. 3(1), 2026. The paper stacks LSTM,
+GRU, XGBoost and random forest with a linear-regression meta-learner, fitting
+first after 24 months and refitting monthly. It reports RMSE 54.8 against
+LSTM's 67.2 on March 2025.
+- **The flaw.** It predicts each day's close from the *same day's* high and
+  low, which are only known at the close. That is a look-ahead, so the
+  reported accuracy cannot be traded.
+- **What is added.** `GokhaleStack` in `models/meta_learners.hpp` is a
+  candidate in altair_trader's daily selector. It keeps the same four base
+  models (gradient boosting stands in for XGBoost), the same meta-learner and
+  the same 24-month/monthly schedule. Its inputs are the base models'
+  out-of-sample calls from the previous close, and it is scored against "no
+  change".
+- **Not yet measured on real data.** That needs the NSE bhavcopy, which this
+  environment cannot reach. The impact
 parameters are the paper's normalised one-share values. Using it needs κt, κp
 and β fitted from our own fills (`risk/slippage.hpp`), per instrument.
 

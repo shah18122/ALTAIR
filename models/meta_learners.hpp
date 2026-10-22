@@ -532,6 +532,117 @@ private:
     std::string note_;
 };
 
+// ---------------------------------------------------------------------------
+// The Gokhale stack
+// ---------------------------------------------------------------------------
+
+/// Shindhe & Gokhale, "Deep Learning and Ensemble Methods for Forecasting
+/// Indian Large Capitalization Stock Index Prices", Cureus J. Bus. Econ. 3(1),
+/// 2026 (doi 10.7759/s44404-026-00224-8).
+///
+/// WHAT THE PAPER DOES. NIFTY 50 daily closes; seven models (ARIMA, LSTM,
+/// GRU, random forest, XGBoost, SVR, Prophet); walk-forward from a 24-month
+/// initial window, one month tested and added at a time; a stack of LSTM,
+/// GRU, XGBoost and random forest with a LINEAR-REGRESSION meta-learner. It
+/// reports RMSE 54.8 against the best single model's 67.2 on March 2025.
+///
+/// WHAT IS KEPT. The base learners (the curriculum's LSTM, GRU, gradient
+/// boosting for XGBoost, random forest, on the arm's own track), the
+/// meta-learner (ordinary least squares with an intercept -- a ridge of
+/// 1e-6 only so a collinear month cannot make it singular), the 24-month
+/// first fit, and the monthly expanding refit.
+///
+/// WHAT IS NOT, AND WHY.
+///   * The paper's inputs are the SAME DAY's open, high and low, used to
+///     predict that day's close. The high and low are only known at the
+///     close, so that is a look-ahead: most of its accuracy comes from being
+///     told the day's range. Here every input is a base model's call made at
+///     the previous close, and the target is the next session's return.
+///   * It never says how the meta-learner's training predictions were made.
+///     Here they are the base models' out-of-sample calls -- the only kind
+///     the curriculum produces -- so the stack cannot fit in-sample noise.
+///   * It has no "no change" baseline. Here the selector scores this stack
+///     against "no change" and the other stacks, prequentially.
+class GokhaleStack final : public Learner {
+public:
+    /// `cols` are the positions, in the feature vector, of the four base
+    /// models' calls; missing ones are simply fewer columns.
+    GokhaleStack(std::vector<std::size_t> cols, std::size_t first_fit = 504,
+                 std::size_t refit_every = 21)
+        : cols_(std::move(cols)), first_(first_fit), every_(refit_every) {}
+
+    std::string name() const override { return "Gokhale stack (linear)"; }
+
+    double predict(const std::vector<double>& x) override {
+        row_.assign(cols_.size() + 1, 1.0);
+        for (std::size_t k = 0; k < cols_.size(); ++k) {
+            row_[k + 1] = cols_[k] < x.size() ? x[cols_[k]] : 0.0;
+        }
+        if (w_.empty()) { return last_ = 0.0; }
+        double mu = 0.0;
+        for (std::size_t k = 0; k < row_.size(); ++k) { mu += w_[k] * row_[k]; }
+        return last_ = mu;
+    }
+
+    void learn(double y) override {
+        xs_.push_back(row_);
+        ys_.push_back(y);
+        const std::size_t n = ys_.size();
+        if (n >= first_ && (n - first_) % every_ == 0) { fit(); }
+    }
+
+    bool ready() const override { return !w_.empty(); }
+
+    std::string note() const override {
+        if (w_.empty()) { return "waiting for 24 months"; }
+        std::string s = "w:";
+        for (double v : w_) { s += ' ' + std::to_string(v); }
+        return s;
+    }
+
+private:
+    void fit() {
+        const std::size_t p = cols_.size() + 1;
+        std::vector<double> a(p * p, 0.0), b(p, 0.0);
+        for (std::size_t i = 0; i < ys_.size(); ++i) {
+            for (std::size_t r = 0; r < p; ++r) {
+                b[r] += xs_[i][r] * ys_[i];
+                for (std::size_t c = 0; c < p; ++c) { a[r * p + c] += xs_[i][r] * xs_[i][c]; }
+            }
+        }
+        for (std::size_t r = 1; r < p; ++r) { a[r * p + r] += 1e-6 * static_cast<double>(ys_.size()); }
+        // Gaussian elimination with partial pivoting; p is at most 5.
+        std::vector<double> w(b);
+        for (std::size_t c = 0; c < p; ++c) {
+            std::size_t piv = c;
+            for (std::size_t r = c + 1; r < p; ++r) {
+                if (std::fabs(a[r * p + c]) > std::fabs(a[piv * p + c])) { piv = r; }
+            }
+            if (std::fabs(a[piv * p + c]) < 1e-12) { return; }   // keep the last fit
+            if (piv != c) {
+                for (std::size_t k = 0; k < p; ++k) { std::swap(a[c * p + k], a[piv * p + k]); }
+                std::swap(w[c], w[piv]);
+            }
+            for (std::size_t r = c + 1; r < p; ++r) {
+                const double f = a[r * p + c] / a[c * p + c];
+                for (std::size_t k = c; k < p; ++k) { a[r * p + k] -= f * a[c * p + k]; }
+                w[r] -= f * w[c];
+            }
+        }
+        for (std::size_t c = p; c-- > 0;) {
+            for (std::size_t k = c + 1; k < p; ++k) { w[c] -= a[c * p + k] * w[k]; }
+            w[c] /= a[c * p + c];
+        }
+        w_ = std::move(w);
+    }
+
+    std::vector<std::size_t> cols_;
+    std::size_t first_, every_;
+    std::vector<std::vector<double>> xs_;
+    std::vector<double> ys_, w_, row_;
+    double last_ = 0.0;
+};
+
 /// Every candidate called on every step; the one with the least decayed
 /// prequential squared error is the one whose call is passed on.
 class Selector {

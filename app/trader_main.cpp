@@ -332,6 +332,17 @@ ArmOut run_arm(const Arm& arm, const Data& data, const Settings& st) {
     ac.min_steps = rc.min_days;
     ac.refit_every = static_cast<std::size_t>(63 * per);
     cands.push_back(std::make_unique<mt::AnalogLearner>(ac));
+    if (!arm.intraday) {
+        // Shindhe & Gokhale (2026): LSTM, GRU, XGBoost (here the curriculum's
+        // gradient boosting) and random forest on this arm's own track,
+        // stacked by linear regression, 24 months before the first fit,
+        // refit monthly. models/meta_learners.hpp says what is not copied.
+        std::vector<std::size_t> cols;
+        for (const char* m : {"LSTM", "GRU", "Gradient boosting", "Random forest"})
+            for (std::size_t k = 0; k < n_conv; ++k)
+                if (out.inputs[k].first == arm.track && out.inputs[k].second == m) cols.push_back(k);
+        if (!cols.empty()) cands.push_back(std::make_unique<mt::GokhaleStack>(std::move(cols)));
+    }
     mt::Selector sel(std::move(cands), rc.half_life_days, rc.score_days);
     out.cands.resize(sel.size());
     for (std::size_t k = 0; k < sel.size(); ++k) out.cands[k].name = sel.candidate(k).name();

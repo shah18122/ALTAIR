@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -141,6 +142,29 @@ void test_no_lookahead() {
     check(differs_after, "and the calls after it do respond to the other future (the check can fail)");
 }
 
+void test_gokhale_stack() {
+    // Two base calls carry the outcome with weights 0.6 and 0.3, two are
+    // noise; y = 0.6 a + 0.3 b + 2 + noise. Columns 1, 3, 4, 6 of a wider
+    // feature vector, as the trader passes them.
+    GokhaleStack st({1, 3, 4, 6}, 504, 21);
+    Gen g{17};
+    double sse = 0, sse0 = 0;
+    std::size_t first_ready = 0;
+    for (std::size_t t = 0; t < 900; ++t) {
+        std::vector<double> x(8);
+        for (double& v : x) v = g.n();
+        const double y = 0.6 * x[1] + 0.3 * x[3] + 2.0 + 0.5 * g.n();
+        const double p = st.predict(x);
+        if (st.ready() && first_ready == 0) first_ready = t;
+        if (t >= 600) { sse += (p - y) * (p - y); sse0 += y * y; }
+        st.learn(y);
+    }
+    check(first_ready == 504, "the stack makes no call before 24 months (504 sessions), as the paper's first window");
+    check(sse < 0.5 * sse0, "after it, the linear meta-learner recovers the weights and beats no change");
+    const std::string note = st.note();
+    check(note.find("w:") == 0, "and reports its fitted weights");
+}
+
 } // namespace
 
 int main() {
@@ -149,6 +173,7 @@ int main() {
     test_learning();
     test_noise();
     test_no_lookahead();
+    test_gokhale_stack();
     std::printf("Meta learners: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
