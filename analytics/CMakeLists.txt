@@ -61,6 +61,11 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_action_principle_test PRIVATE altair_analytics altair_flags)
     add_test(NAME action_principle COMMAND altair_action_principle_test)
 
+    add_executable(altair_forecast_metrics_test tests/test_forecast_metrics.cpp)
+    target_link_libraries(altair_forecast_metrics_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME forecast_metrics COMMAND altair_forecast_metrics_test
+             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
+
     add_executable(altair_svi_test tests/test_svi.cpp)
     target_link_libraries(altair_svi_test PRIVATE altair_analytics altair_flags)
     add_test(NAME svi COMMAND altair_svi_test)

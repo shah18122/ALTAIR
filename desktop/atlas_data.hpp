@@ -179,6 +179,15 @@ inline constexpr std::array kAtlasRows{
              "The requested one-dimensional dilated causal convolution is "
              "implemented with explicit left padding, receptive-field proof "
              "and a refusal when causality is unspecified."},
+    AtlasRow{"2. Machine learning", "Neuro-fuzzy (ANFIS)",
+             AtlasStatus::Implemented, "models/anfis.hpp", 17,
+             "Fuzzy if-then rules whose shapes are learned from data "
+             "(Atsalakis & Valavanis). On NIFTY 2022-25 its calls were no "
+             "better than chance."},
+    AtlasRow{"2. Machine learning", "Forecast accuracy tests",
+             AtlasStatus::Implemented, "analytics/forecast_metrics.hpp", 17,
+             "MAPE, RMSE and hit rate, plus the tests that say whether one "
+             "forecast really beats another or beats chance."},
     AtlasRow{"2. Machine learning", "Random forest", AtlasStatus::Implemented,
              "models/classical.hpp", 16,
              "Deterministic shallow trees trained on bootstrap samples and "

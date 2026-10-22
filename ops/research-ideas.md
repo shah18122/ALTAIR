@@ -317,6 +317,47 @@ Its recommendations against what ALTAIR has:
 - explainability (SHAP/LIME) and graph networks: not present. Worth adding
   only once a model clears the "no change" baseline on real NSE data.
 
+### 2k. The ANN / CNN / LSTM comparison on NIFTY — *its benchmark re-checked*
+
+Charithra C. M. et al., *Investment Management and Financial Innovations*
+23(2), 2026, doi 10.21511/imfi.23(2).2026.17. One-day-ahead NIFTY 50 price
+forecasts, 2017 – June 2025, 80/20 split. Table 2 gives MAPE: CNN 0.63 %,
+LSTM 0.72 %, ANN 0.89 %, ARIMA 1.21 %, random walk 1.47 %.
+- **The baseline is wrong by about two.** On ALTAIR's own NIFTY closes,
+  which match the paper's Table 4 to the paisa, "tomorrow = today" scores
+  0.70 % over the paper's period and 0.62 % on its last fifth. That beats the
+  paper's LSTM and ANN and ties its CNN.
+- **Its own Table 4 disagrees with Table 2.** On the eight printed rows with
+  a previous close, CNN scores 0.54 % against the random walk's 0.59 %, and
+  LSTM 0.79 %, which is worse. LSTM gets direction right on 2 of 8, against
+  a claimed 69.5 %.
+- **Leakage risk.** Scaling and "spike smoothing" are not said to be fitted
+  on the training part only. A centred smoother scores half the honest MAPE
+  on a pure random walk.
+- **What is added.** `analytics/forecast_metrics.hpp` provides MAPE, RMSE,
+  directional accuracy against the last known close, the Diebold-Mariano
+  test (with the HLN factor) and the Pesaran-Timmermann test. ALTAIR's
+  models can now be quoted in the paper's units. The curriculum already has
+  CNN, MLP and LSTM scored against "no change", so no new model is needed.
+
+### 2l. Atsalakis & Valavanis neuro-fuzzy (ANFIS) — *built, no edge on NIFTY*
+
+*Expert Systems with Applications* 36(7), 2009. An ANFIS on the last daily
+changes plus a 3-day moving-average trend, 27 rules, 100 epochs. It claims
+up to 68 % next-day hit rates and beats buy-and-hold on ten Athens and NYSE
+stocks. The test windows were about 60 sessions each, with no costs.
+- **Built.** `models/anfis.hpp` is Jang's first-order Sugeno model with
+  hybrid learning. It recovers a nonlinear test surface with a fifth of a
+  linear fit's error.
+- **On NIFTY** (trained 2009–21, scored on 866 sessions from 2022 to June
+  2025):
+  - Hit rate 53.3 %, exactly the share of up days (53.4 %). Pesaran-Timmermann
+    p is 0.44, so there is no skill.
+  - MAPE 0.646 % against the random walk's 0.648 % (DM p 0.75).
+  - The long/flat rule made +26.6 % after costs against buy-and-hold's +47.0 %.
+- A 60-session window gives a hit rate a standard error of about 6 %, so the
+  paper's 63 % average is about two standard errors from a coin.
+
 ---
 
 ## 3. Statistics that refuse to be fooled

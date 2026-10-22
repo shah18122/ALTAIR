@@ -83,6 +83,11 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_meta_learners_test PRIVATE altair_models altair_flags)
     add_test(NAME models_meta_learners COMMAND altair_meta_learners_test)
 
+    add_executable(altair_anfis_test tests/test_anfis.cpp)
+    target_link_libraries(altair_anfis_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_anfis COMMAND altair_anfis_test
+             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
+
     add_executable(altair_stream_forecast_test tests/test_stream_forecast.cpp)
     target_link_libraries(altair_stream_forecast_test PRIVATE altair_models altair_flags)
     add_test(NAME models_stream_forecast COMMAND altair_stream_forecast_test)
