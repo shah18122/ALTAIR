@@ -446,6 +446,24 @@ its test checks two of its claims on NIFTY's daily closes from 2000 on.
   is 1.0 to 1.15. That is the top of `oms/capacity.hpp`'s swept range (0.5–1.0).
   It is noted there, and the default is unchanged.
 
+### 2q. Orrell's quantum walk options model — *built; its smile is a frown*
+
+D. Orrell, "A Quantum Walk Model of Financial Options", *Wilmott* 2021: 62–69
+(SSRN 3512481; PDF supplied by Smit). Option buyers' beliefs are a Hadamard
+quantum walk; sellers price classically; the market price is a compromise
+between the two. `analytics/quantum_walk.hpp` holds the walk (with
+decoherence), the pricer (eq. 1) and the compromise (Appendix).
+- **The walk checks out.** Its variance is (1 − 1/√2)n², quadratic in time
+  (2,929 against 2,929 for 100 steps). Decoherence pulls it back towards the
+  classical walk, and the classical walk prices like Black-Scholes to within 1 %.
+- **Its smile is the wrong shape.** For a 20 % walk, the quantum price is
+  dearer at the money and cheaper in the wings. Its implied vol is 23 % at the
+  money and 16–18 % at ±15 %, a frown. NIFTY's curves up (a smile) on 97.7 %
+  of bhavcopy days, and BANKNIFTY's on 93.5 % (`altair_quantum_smile`).
+- **The compromise price slopes down, but not because of the walk.** That
+  comes from the seller's 10 % margin on deep in-the-money calls.
+- Nothing to trade. It explains no NSE anomaly that the bhavcopy shows.
+
 ---
 
 ## 3. Statistics that refuse to be fooled

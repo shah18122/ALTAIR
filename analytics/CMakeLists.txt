@@ -72,6 +72,10 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME quantum_oscillator COMMAND altair_quantum_oscillator_test
              ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
 
+    add_executable(altair_quantum_walk_test tests/test_quantum_walk.cpp)
+    target_link_libraries(altair_quantum_walk_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME quantum_walk COMMAND altair_quantum_walk_test)
+
     add_executable(altair_gamma_scalping_test tests/test_gamma_scalping.cpp)
     target_link_libraries(altair_gamma_scalping_test PRIVATE altair_analytics altair_flags)
     add_test(NAME gamma_scalping COMMAND altair_gamma_scalping_test)
