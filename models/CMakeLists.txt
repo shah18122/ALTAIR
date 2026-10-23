@@ -93,6 +93,11 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME models_arima_hybrid COMMAND altair_arima_hybrid_test
              ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
 
+    add_executable(altair_aro_test tests/test_aro.cpp)
+    target_link_libraries(altair_aro_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_aro COMMAND altair_aro_test
+             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
+
     add_executable(altair_markov_nifty_test tests/test_markov_nifty.cpp)
     target_link_libraries(altair_markov_nifty_test PRIVATE altair_models altair_flags)
     add_test(NAME models_markov_nifty COMMAND altair_markov_nifty_test

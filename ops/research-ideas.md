@@ -479,7 +479,7 @@ decoherence), the pricer (eq. 1) and the compromise (Appendix).
   comes from the seller's 10 % margin on deep in-the-money calls.
 - Nothing to trade. It explains no NSE anomaly that the bhavcopy shows.
 
-### 2p. Moving average vs Parabolic SAR vs CNN (Fauza & Noviaty 2022) — *PSAR added, claim not supported*
+### 2r. Moving average vs Parabolic SAR vs CNN (Fauza & Noviaty 2022) — *PSAR added, claim not supported*
 
 *Jurnal Ekonomi* 11(3), December 2022. One Indonesian bank stock (BNI),
 2021 only. A moving average (period not given) made −4.46%, Parabolic SAR
@@ -499,6 +499,46 @@ won. The CNN's design, training data and train/test split are not described.
   dilated causal CNN in the forecast curriculum, scored against "no change".
 
 ---
+
+### 2s. MMGAN-HPA (Polamuri, Srinivas & Krishna Mohan 2022) — *nothing checkable to build*
+
+*J. King Saud Univ. – Computer and Information Sciences* 34 (2022) 7433–7444,
+doi 10.1016/j.jksuci.2021.07.001, CC BY-NC-ND. A GAN with an LSTM generator
+and a CNN discriminator, fed Fourier, ARIMA, autoencoder and XGBoost features,
+hyperparameters by reinforcement learning and Bayesian optimisation. Six NSE
+stocks (TCS, Tata Steel, Axis Bank, BHEL, Wipro, Maruti).
+- **Not reproducible.** No date range, no train/test split, no price scaling,
+  no network sizes; the feature pipeline is deferred to the authors' earlier
+  MM-HPA paper. There is nothing precise enough to implement.
+- **Table 2 shows no real difference.** Across the three models every MSE is
+  identical to eight decimals; MAE moves in the seventh decimal; correlation
+  rises by almost exactly 0.000125 then 0.000120 for every one of the six
+  stocks.
+- **Correlation of a predicted price level is not skill.** "No change" scores
+  0.976–0.987 on NIFTY in 2019, 2022 and 2024 (one-year windows). On a
+  min-max scale "no change" has MAE 0.028–0.044 there; the paper's 0.0022–
+  0.0046 would be ten times better than any daily forecast published, but its
+  scale is not stated, so the claim cannot be checked either way.
+
+### 2t. LSTM tuned by artificial rabbits optimisation (Gülmez 2023) — *ARO built, origin bias found*
+
+*Expert Systems with Applications* 227 (2023) 120346, doi
+10.1016/j.eswa.2023.120346, CC BY. 30 DJIA stocks 2018–2023, 20 past closes
+→ next close, 80/20 split; ARO (Wang et al. 2022) picks the LSTM's layers,
+units, dropout, optimiser and learning rate (50 × 50, 8.7 days of compute).
+LSTM-ARO's MAPE is 1.1–3.1 %, best of six models on most stocks.
+- **Built: `models/aro.hpp`**, ARO as eqs. 6–20 (H drawn from N(0,1) as in
+  Wang's code; the printed eq. 13 is inconsistent).
+- **Origin bias.** Random hiding rescales each coordinate by itself, so the
+  search contracts toward 0. With equal budgets (d = 10, 3,030 evaluations)
+  ARO solves the sphere and Rastrigin centred at 0 to 1e-14, but moved to
+  2.5 it reaches 0.0066 and 4.98 (random search 1.21 and 31.8). Still better
+  than random search, much less than the origin-centred benchmarks suggest.
+- **The paper has no "no change" baseline.** It compares six models with each
+  other only. DJIA prices can't be fetched from this environment, so the
+  same check was run on NIFTY: Gülmez's design, with ARO tuning a ridge
+  model's window and penalty, scores test MAPE 0.832 % against "no change"
+  0.829 % (DM p 0.54, direction 48.1 %).
 
 ## 3. Statistics that refuse to be fooled
 

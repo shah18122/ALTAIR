@@ -189,6 +189,11 @@ inline constexpr std::array kAtlasRows{
              "Zhang's two-stage model: an ARIMA for the linear part, a small "
              "network on its residuals. On NIFTY 2022-26 neither stage beat "
              "\"no change\"."},
+    AtlasRow{"2. Machine learning", "Artificial rabbits optimisation",
+             AtlasStatus::Implemented, "models/aro.hpp", 17,
+             "A swarm search for model settings (Gulmez's LSTM-ARO). Strong "
+             "only near zero; tuning a NIFTY forecaster did not beat "
+             "\"no change\"."},
     AtlasRow{"3. Time series & volatility", "Parabolic SAR",
              AtlasStatus::Implemented, "analytics/parabolic_sar.hpp", 17,
              "Wilder's trailing stop that flips long and short. On NIFTY "
