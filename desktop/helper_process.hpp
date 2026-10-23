@@ -81,6 +81,10 @@ public:
     }
 
     [[nodiscard]] bool active() const noexcept { return active_; }
+    /// The research CLIs (the forecast curriculum prints a line per stage of
+    /// every track) can print more than kMaxOutputBytes; a runner that only
+    /// ever starts those may raise its own limit. Never lowered below it.
+    void set_output_limit(qsizetype bytes) noexcept { max_output_ = std::max(bytes, kMaxOutputBytes); }
     [[nodiscard]] std::uint64_t generation() const noexcept {
         return generation_;
     }
@@ -182,7 +186,7 @@ private:
     void drain_output() {
         if (!active_ || !process_) return;
         const QByteArray next = process_->readAll();
-        const qsizetype room = kMaxOutputBytes - output_.size();
+        const qsizetype room = max_output_ - output_.size();
         // QByteArray::first(n) requires n <= size(). `room` is the remaining
         // destination capacity, not the size of this read. Passing 256 KiB for
         // a short readyRead chunk made Qt scan beyond the chunk and crash in
@@ -209,7 +213,7 @@ private:
         result.error = forced_error_;
         if (result.error == HelperProcessError::OutputLimitExceeded) {
             result.detail = QStringLiteral(
-                "helper output exceeded the 256 KiB safety limit");
+                "helper output exceeded its safety limit");
         } else if (result.error == HelperProcessError::TimedOut) {
             result.detail = QStringLiteral("helper process timed out");
         } else if (result.error == HelperProcessError::Cancelled) {
@@ -234,6 +238,7 @@ private:
     std::vector<std::unique_ptr<QProcess>> retired_;
     QTimer timer_;
     QByteArray output_;
+    qsizetype max_output_ = kMaxOutputBytes;
     static constexpr qsizetype kMaxInputBytes = 64 * 1024;
     QByteArray input_;
     Completion completion_;

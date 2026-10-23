@@ -225,6 +225,50 @@ void test_simple(const QString& root) {
     check(all == page.tabs()->count() && card != nullptr && !card->isVisible(), "Advanced: every tab, no verdict card");
 }
 
+void test_daily_call(const QString& root) {
+    const QDate day(2026, 10, 23);
+    const auto find = [](const std::vector<demo_detail::RunStep>& plan, const QString& helper) {
+        for (const auto& s : plan) if (s.helper == helper) return &s;
+        return static_cast<const demo_detail::RunStep*>(nullptr);
+    };
+    auto plan = demo_detail::daily_call_plan(root, false, day);
+    check(find(plan, QStringLiteral("altair_kite_update")) == nullptr,
+          "daily call: no broker session, so dataset/ is not asked to update");
+    QStringList order;
+    for (const auto& s : plan) if (!s.helper.isEmpty()) order << s.helper + QLatin1Char(' ') + s.args.value(1);
+    check(order.size() >= 4 && order[0] == QStringLiteral("altair_forecast_curriculum daily")
+              && order[1] == QStringLiteral("altair_forecast_curriculum hourly")
+              && order[2].startsWith(QStringLiteral("altair_trader")) && order[3].startsWith(QStringLiteral("altair_vol_premium")),
+          "daily call: curriculum daily, then hourly, then altair_trader, then the vol premium");
+    const auto* vp = find(plan, QStringLiteral("altair_vol_premium"));
+    check(vp != nullptr && vp->args.contains(QStringLiteral("bhavcopy")) && !vp->required,
+          "daily call: the vol premium prices real NSE closes, and its failure does not stop the call");
+    check(find(plan, QStringLiteral("altair_trader"))->required
+              && !find(plan, QStringLiteral("altair_trader"))->args.contains(QStringLiteral("--unverified-costs")),
+          "daily call: altair_trader is required, and costs are only priced unverified when ticked");
+    for (const auto& s : plan)
+        if (!s.program.isEmpty())
+            check(s.args.contains(QStringLiteral("2026-10-09")) && !s.required,
+                  "daily call: the bhavcopy is topped up from two weeks back, optional");
+
+    write(root + QStringLiteral("/data/fyers_session.json"), "{}");
+    plan = demo_detail::daily_call_plan(root, true, day);
+    check(!plan.empty() && plan.front().helper == QStringLiteral("altair_kite_update")
+              && plan.front().args.contains(QStringLiteral("fyers")) && !plan.front().required,
+          "daily call: a FYERS session updates dataset/ from FYERS first");
+    check(find(plan, QStringLiteral("altair_trader"))->args.contains(QStringLiteral("--unverified-costs")),
+          "daily call: the ticked box reaches altair_trader");
+
+    DemoTradingPage page(root);
+    auto* button = page.findChild<QPushButton*>(QStringLiteral("refreshDailyCall"));
+    auto* combo = page.findChildren<QComboBox*>().value(0);
+    bool bhav_entry = false;
+    for (auto* c : page.findChildren<QComboBox*>())
+        bhav_entry = bhav_entry || c->findData(QStringLiteral("altair_vol_premium --source bhavcopy")) >= 0;
+    check(button != nullptr && combo != nullptr && bhav_entry,
+          "page: a Refresh daily call button and a vol premium run on NSE closes");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     std::printf("Demo trading page\n");
@@ -240,6 +284,8 @@ int main(int argc, char** argv) {
     test_threshold(thr.path());
     QTemporaryDir simple;
     test_simple(simple.path());
+    QTemporaryDir daily;
+    test_daily_call(daily.path());
     std::printf("Demo trading page: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

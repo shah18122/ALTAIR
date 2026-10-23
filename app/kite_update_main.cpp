@@ -49,8 +49,17 @@
 // wrote prices at six significant digits (C14-001). The rules above -- merge,
 // 1 bp, unfinished bars dropped -- are unchanged. What changed is how a file
 // is replaced, which files are replaced, and what is refused.
+//
+// --provider fyers. Smit links FYERS, not Kite, most days, and the desktop's
+// "Refresh daily call" needs dataset/ current before the models rerun. Only
+// the fetch differs (api-t1.fyers.in /data/history, the session from
+// data/fyers_session.json or app/fyers_env_session.hpp); the coverage check,
+// merge and write-back below are the same code for both providers.
 
 #include <app/dataset_merge.hpp>
+#include <app/fyers_env_session.hpp>
+#include <broker/fyers_api.hpp>
+#include <broker/fyers_historical.hpp>
 #include <broker/https_client.hpp>
 #include <broker/kite_historical.hpp>
 
@@ -117,25 +126,71 @@ namespace {
     return !out.empty();
 }
 
+/// One string field of a small JSON file, the same way. Never printed.
+[[nodiscard]] bool read_json_field(const std::string& all, const char* field,
+                                   std::string& out) {
+    const std::string key = std::string("\"") + field + "\"";
+    const auto k = all.find(key);
+    if (k == std::string::npos) { return false; }
+    const auto q1 = all.find('"', all.find(':', k) + 1);
+    if (q1 == std::string::npos) { return false; }
+    const auto q2 = all.find('"', q1 + 1);
+    if (q2 == std::string::npos) { return false; }
+    out = all.substr(q1 + 1, q2 - q1 - 1);
+    return !out.empty();
+}
+
+/// The FYERS Authorization header from data/fyers_session.json, else from the
+/// environment (app/fyers_env_session.hpp). Empty when neither is usable.
+[[nodiscard]] std::string fyers_authorization() {
+    std::string client, access;
+    std::ifstream f("data/fyers_session.json", std::ios::binary);
+    if (f) {
+        const std::string all((std::istreambuf_iterator<char>(f)),
+                              std::istreambuf_iterator<char>());
+        if (all.size() > 64 * 1024 || !read_json_field(all, "client_id", client)
+            || !read_json_field(all, "access_token", access)) {
+            client.clear();
+            access.clear();
+        }
+    }
+    if (client.empty()) {
+        if (const auto env = altair::fyers_env::from_environment()) {
+            client = env->client;
+            access = env->access;
+        }
+    }
+    if (client.empty()) { return {}; }
+    const auto h = altair::fyers::authorization_header(client.c_str(), access.c_str());
+    return h ? std::string(*h) : std::string{};
+}
+
 struct SeriesPlan {
     const char* sym;        // dataset directory
     std::int64_t token;     // Kite instrument_token
     const char* dir;        // interval directory
     const char* interval;   // Kite interval name
     std::int64_t ns;        // bar width in nanoseconds
+    const char* fyers_symbol;
+    const char* fyers_res;  // FYERS resolution
 };
 
 void usage(const char* exe) {
     std::printf(
         "  Bring dataset/ up to date from Kite, merging into what is there.\n\n"
-        "    %s [--out DIR] [--symbols nifty,banknifty] [--days N] --go\n\n"
+        "    %s [--provider kite|fyers] [--out DIR] [--symbols nifty,banknifty]\n"
+        "       [--intervals 1d,5m] [--days N] --go\n\n"
+        "    --provider  kite (default; data/kite_session.json and\n"
+        "                ALTAIR_KITE_API_KEY) or fyers (data/fyers_session.json\n"
+        "                or ALTAIR_FYERS_CLIENT_ID / ALTAIR_FYERS_ACCESS_TOKEN)\n"
         "    --out       dataset root (default dataset)\n"
+        "    --intervals default 1m,5m,15m,60m,1d\n"
         "    --symbols   default nifty,banknifty,indiavix\n"
         "    --days      how far back to ask when a series is EMPTY\n"
         "                (default 400; an existing series is topped up from\n"
         "                 its own last bar and ignores this)\n"
         "    --go        ACTUALLY CALL THE API.\n\n"
-        "  Read-only: /instruments/historical is a GET and this program has\n"
+        "  Read-only: both history endpoints are GETs and this program has\n"
         "  no order vocabulary.\n", exe);
 }
 
@@ -150,7 +205,15 @@ int main(int argc, char** argv)
     const char* out_s = arg_value(argc, argv, "--out");
     const char* syms_s = arg_value(argc, argv, "--symbols");
     const char* days_s = arg_value(argc, argv, "--days");
+    const char* ivs_s = arg_value(argc, argv, "--intervals");
+    const char* provider_s = arg_value(argc, argv, "--provider");
     const bool go = has_flag(argc, argv, "--go");
+    const std::string provider = provider_s != nullptr ? provider_s : "kite";
+    if (provider != "kite" && provider != "fyers") {
+        std::printf("  --provider must be kite or fyers\n");
+        return 2;
+    }
+    const bool fyers = provider == "fyers";
     const std::string root = out_s != nullptr ? out_s : "dataset";
     int back = 400;
     if (days_s != nullptr) {
@@ -163,9 +226,10 @@ int main(int argc, char** argv)
         back = *d;
     }
 
-    struct Sym { const char* name; std::int64_t token; };
-    const Sym kAll[] = {{"nifty", 256265}, {"banknifty", 260105},
-                        {"indiavix", 264969}};
+    struct Sym { const char* name; std::int64_t token; const char* fyers; };
+    const Sym kAll[] = {{"nifty", 256265, "NSE:NIFTY50-INDEX"},
+                        {"banknifty", 260105, "NSE:NIFTYBANK-INDEX"},
+                        {"indiavix", 264969, "NSE:INDIAVIX-INDEX"}};
     std::vector<Sym> syms;
     {
         // EXACT names. A substring match made `--symbols banknifty` update
@@ -186,17 +250,29 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    struct Iv { const char* dir; const char* name; std::int64_t ns; };
-    const Iv kIvs[] = {{"1m", "minute", 60'000'000'000LL},
-                       {"5m", "5minute", 300'000'000'000LL},
-                       {"15m", "15minute", 900'000'000'000LL},
-                       {"60m", "60minute", 3'600'000'000'000LL},
-                       {"1d", "day", 86'400'000'000'000LL}};
+    struct Iv { const char* dir; const char* name; std::int64_t ns; const char* fyers; };
+    const Iv kIvs[] = {{"1m", "minute", 60'000'000'000LL, "1"},
+                       {"5m", "5minute", 300'000'000'000LL, "5"},
+                       {"15m", "15minute", 900'000'000'000LL, "15"},
+                       {"60m", "60minute", 3'600'000'000'000LL, "60"},
+                       {"1d", "day", 86'400'000'000'000LL, "D"}};
+    std::vector<Iv> ivs;
+    {
+        std::vector<std::string_view> names;
+        for (const Iv& iv : kIvs) { names.emplace_back(iv.dir); }
+        const auto sel = ds::select_names(
+            ivs_s != nullptr ? ivs_s : "1m,5m,15m,60m,1d", names);
+        if (!sel.unknown.empty() || sel.picked.empty()) {
+            std::printf("  --intervals: pick from 1m, 5m, 15m, 60m, 1d\n");
+            return 2;
+        }
+        for (const std::size_t i : sel.picked) { ivs.push_back(kIvs[i]); }
+    }
 
     std::vector<SeriesPlan> plan;
     for (const Sym& s : syms) {
-        for (const Iv& iv : kIvs) {
-            plan.push_back({s.name, s.token, iv.dir, iv.name, iv.ns});
+        for (const Iv& iv : ivs) {
+            plan.push_back({s.name, s.token, iv.dir, iv.name, iv.ns, s.fyers, iv.fyers});
         }
     }
 
@@ -207,8 +283,8 @@ int main(int argc, char** argv)
     const std::int64_t today =
         (now_ns + altair::detail::kIstOffsetNs) / 86'400'000'000'000LL;
 
-    std::printf("\n  Updating %zu series under %s/\n", plan.size(),
-                root.c_str());
+    std::printf("\n  Updating %zu series under %s/ from %s\n", plan.size(),
+                root.c_str(), fyers ? "FYERS" : "Kite");
 
     if (!go) {
         for (const SeriesPlan& s : plan) {
@@ -219,18 +295,28 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    const std::string api_key = env_or_empty("ALTAIR_KITE_API_KEY");
-    if (api_key.empty()) {
-        std::printf("\n  ALTAIR_KITE_API_KEY is not set.\n");
-        return 3;
+    std::string auth;
+    if (fyers) {
+        auth = fyers_authorization();
+        if (auth.empty()) {
+            std::printf("\n  no usable FYERS session -- link FYERS in the desktop "
+                        "(altair_fyers_login). FYERS tokens are DAILY.\n");
+            return 3;
+        }
+    } else {
+        const std::string api_key = env_or_empty("ALTAIR_KITE_API_KEY");
+        if (api_key.empty()) {
+            std::printf("\n  ALTAIR_KITE_API_KEY is not set.\n");
+            return 3;
+        }
+        std::string access;
+        if (!read_access_token("data/kite_session.json", access)) {
+            std::printf("\n  no usable data/kite_session.json -- run "
+                        "altair_kite_login. Kite tokens are DAILY.\n");
+            return 3;
+        }
+        auth = std::string("token ") + api_key + ":" + access;
     }
-    std::string access;
-    if (!read_access_token("data/kite_session.json", access)) {
-        std::printf("\n  no usable data/kite_session.json -- run "
-                    "altair_kite_login. Kite tokens are DAILY.\n");
-        return 3;
-    }
-    const std::string auth = std::string("token ") + api_key + ":" + access;
 
     std::size_t series_done = 0, added_total = 0, replaced_total = 0;
     std::size_t rounding_total = 0, partial_total = 0, failed = 0;
@@ -322,7 +408,11 @@ int main(int argc, char** argv)
         const std::string from_s = altair::date_string(from_day);
         const std::string to_s = altair::date_string(today);
 
-        const auto chunks = altair::chunk_requests(from_s, to_s, s.interval);
+        const auto chunks = fyers
+            ? altair::fyers_history::chunk_requests(s.fyers_res, from_s, to_s)
+                  .transform_error([](auto) { return 0; })
+            : altair::chunk_requests(from_s, to_s, s.interval)
+                  .transform_error([](auto) { return 0; });
         if (!chunks) {
             std::printf("    spot/%-10s %-4s  could not plan a request\n",
                         s.sym, s.dir);
@@ -334,12 +424,27 @@ int main(int argc, char** argv)
         std::vector<altair::RawCandle> got;
         bool ok = true;
         for (std::size_t i = 0; i < chunks->size(); ++i) {
-            const auto uri = altair::historical_uri(s.token, s.interval,
-                                                    (*chunks)[i], false, false);
-            if (!uri) { ok = false; break; }
-            const auto r = altair::https_get_auth("api.kite.trade", *uri, auth);
-            if (!r || r->status != 200) { ok = false; break; }
-            const auto part = altair::parse_candles(r->body);
+            const auto part = [&]() -> std::optional<std::vector<altair::RawCandle>> {
+                if (fyers) {
+                    const auto uri = altair::fyers_history::uri(
+                        s.fyers_symbol, s.fyers_res, (*chunks)[i].from, (*chunks)[i].to);
+                    if (!uri) { return std::nullopt; }
+                    const auto r = altair::https_get_auth("api-t1.fyers.in", *uri, auth, "",
+                                                          std::chrono::seconds{30});
+                    if (!r || r->status != 200) { return std::nullopt; }
+                    auto p = altair::fyers_history::parse(r->body);
+                    if (!p) { return std::nullopt; }
+                    return std::move(*p);
+                }
+                const auto uri = altair::historical_uri(s.token, s.interval,
+                                                        (*chunks)[i], false, false);
+                if (!uri) { return std::nullopt; }
+                const auto r = altair::https_get_auth("api.kite.trade", *uri, auth);
+                if (!r || r->status != 200) { return std::nullopt; }
+                auto p = altair::parse_candles(r->body);
+                if (!p) { return std::nullopt; }
+                return std::move(*p);
+            }();
             if (!part) { ok = false; break; }
             got.insert(got.end(), part->begin(), part->end());
             if (i + 1 < chunks->size()) {

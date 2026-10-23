@@ -20,6 +20,32 @@ Every CLI here needs tomlplusplus, which provides the charges schedule.
 Without it they are not built. On the desktop page, pick one in the Run
 selector and press **Run**.
 
+### Refresh daily call, and the bhavcopy, from the page
+
+Two buttons beside **Run** chain the CLIs above, one after another
+(`desktop/demo_trading_page.hpp`, `demo_detail::daily_call_plan`):
+
+- **Refresh daily call**, after the 15:30 close:
+  1. `dataset/` brought current, merged, from the linked broker:
+     `altair_kite_update --provider fyers --go` when `data/fyers_session.json`
+     exists, else `altair_kite_update --go` when a Kite session does; no session
+     means the stored bars are used as they are;
+  2. the last two weeks of NSE bhavcopy (`ops/fetch_bhavcopy.ps1 -Go -From ...`);
+  3. `altair_forecast_curriculum --only daily`, then `--only hourly`;
+  4. `altair_trader` (tick **Price UNVERIFIED expenses** until
+     `config/charges.toml` is verified, or it refuses to decide);
+  5. `altair_vol_premium --source bhavcopy`.
+  Steps 1, 2 and 5 are optional: a failure is noted on the status line and the
+  chain goes on. 3 and 4 are required. The last NIFTY row of
+  `altair_trader/days.csv` is then the call the Terminal's **Desk trader**
+  (ops/live-terminal.md) acts on the next session, on paper.
+- **Fetch NSE bhavcopy** runs `ops/fetch_bhavcopy.ps1 -Go -From 2015-01-01`.
+  Days already in `data/bhavcopy/` are kept, so only the first run is long.
+
+The Run selector also has **Vol premium on NSE closes (bhavcopy)**: the same
+strategy on real at-the-money straddles and futures instead of synthetic
+prices.
+
 ## Expenses are refused until the charges are verified
 
 Expenses come only from `config/charges.toml`, through `risk/cost.hpp`. The
