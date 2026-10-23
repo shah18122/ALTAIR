@@ -121,6 +121,7 @@ inline constexpr Entry kByFile[] = {
     {"analytics/gamma_scalping.hpp", {"Not trained: closed forms checked by Monte Carlo.", "Implied and realised volatility, greeks.", kResearch}},
     {"analytics/stochastic_dominance.hpp", {"Not trained: kernel-weighted test with a multiplier bootstrap.", kBars, kResearch}},
     {"analytics/forecast_metrics.hpp", {"Not trained: scores and tests on a model's forecasts.", kBars, kResearch}},
+    {"models/arima_hybrid.hpp", {"An ARMA on past daily returns, then a network on its errors.", kBars, kResearch}},
     {"models/anfis.hpp", {"Hybrid least squares and gradient steps on past daily returns.", kBars, kResearch}},
     {"analytics/hurst.hpp", {"Rescaled-range estimate on a rolling window.", kBars, "Shows trend vs mean-reversion on the Regimes page; not an order source."}},
     {"backtest/montecarlo.hpp", {"Simulation: drift, volatility and jumps estimated from returns.", kBars,

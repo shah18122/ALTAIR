@@ -184,6 +184,11 @@ inline constexpr std::array kAtlasRows{
              "Fuzzy if-then rules whose shapes are learned from data "
              "(Atsalakis & Valavanis). On NIFTY 2022-25 its calls were no "
              "better than chance."},
+    AtlasRow{"2. Machine learning", "ARIMA + ANN hybrid",
+             AtlasStatus::Implemented, "models/arima_hybrid.hpp", 17,
+             "Zhang's two-stage model: an ARIMA for the linear part, a small "
+             "network on its residuals. On NIFTY 2022-26 neither stage beat "
+             "\"no change\"."},
     AtlasRow{"3. Time series & volatility", "Parabolic SAR",
              AtlasStatus::Implemented, "analytics/parabolic_sar.hpp", 17,
              "Wilder's trailing stop that flips long and short. On NIFTY "

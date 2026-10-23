@@ -311,18 +311,33 @@ October 2008 week of −21.84 inside the bound) and DIA's m 0.2407.
   integrates to 0.06). The √m strike-width idea depends on price units, so
   it is not implemented.
 
-### 2j. The AI stock-prediction review — *nothing new to build*
+### 2j. The AI stock-prediction review — *read in full; its one concrete hybrid built*
 
 Vishwas, Usha & Sangeetha, Mathematical Models in Engineering (2025),
-doi 10.21595/mme.2025.24861. A literature review with no method of its own.
-Its recommendations against what ALTAIR has:
-- standardised benchmarks: the forecast curriculum scores every model against
-  "no change" on the same walk-forward splits;
-- sentiment: `models/sentiment.hpp`, a lexicon scorer on hand-fed text (no
-  live news feed, so not multimodal);
-- continual learning: the daily selector refits on a schedule (2h);
-- explainability (SHAP/LIME) and graph networks: not present. Worth adding
-  only once a model clears the "no change" baseline on real NSE data.
+doi 10.21595/mme.2025.24861, CC BY. A literature review with no method or
+experiment of its own: ten sections and six comparison tables (hybrid,
+real-time, sentiment and simple models) listing methods, strengths and the
+metrics each paper used, but no common dataset or score.
+- **Its headline numbers are second-hand.** "LSTMs achieve 72 % accuracy …
+  CNN-based models achieve 90 %" (Section 2, ref. [10]) are quoted from other
+  papers on other data. The tables give no figures to compare against, so
+  there is no benchmark here to match.
+- **Built: Zhang's ARIMA + ANN hybrid** (`models/arima_hybrid.hpp`), the
+  review's "linear plus nonlinear" model (via Alshawarbeh et al., ref. [17]).
+  On a series built with a nonlinear residual it beats the ARMA clearly
+  (MSE 1.07 against 1.55, DM 8.3). On a linear series its network overfits
+  and costs about 2 % MSE. On NIFTY, trained 2009–21 and scored on
+  1,173 days from 2022: MAPE random walk 0.631 %, ARIMA 0.630 %, hybrid
+  0.641 %. Hybrid against ARIMA DM −1.78 (p 0.08, favours the ARIMA), hit
+  rate 50.5 % (PT p 0.35). Long/flat at 3 bp: ARIMA +24.5 %, hybrid +12.6 %,
+  buy-and-hold +32.9 %. Nothing nonlinear in yesterday's errors.
+- **The rest, against what ALTAIR has:** standardised benchmarks are the
+  forecast curriculum's "no change" baseline; sentiment is
+  `models/sentiment.hpp` (hand-fed text, not live Twitter/FinBERT); continual
+  learning is the scheduled refit (2h); K-means-then-LSTM, GANs, quantum
+  networks and metaheuristic-tuned LSTMs need cross-sectional or alternative
+  data the repo doesn't have. SHAP/LIME and graph networks are still absent,
+  worth adding only once a model clears "no change" on real NSE data.
 
 ### 2k. The ANN / CNN / LSTM comparison on NIFTY — *its benchmark re-checked*
 
