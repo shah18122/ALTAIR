@@ -464,6 +464,25 @@ decoherence), the pricer (eq. 1) and the compromise (Appendix).
   comes from the seller's 10 % margin on deep in-the-money calls.
 - Nothing to trade. It explains no NSE anomaly that the bhavcopy shows.
 
+### 2p. Moving average vs Parabolic SAR vs CNN (Fauza & Noviaty 2022) — *PSAR added, claim not supported*
+
+*Jurnal Ekonomi* 11(3), December 2022. One Indonesian bank stock (BNI),
+2021 only. A moving average (period not given) made −4.46%, Parabolic SAR
++12.51%, and a CNN on candlestick-chart images +27.14% with 56% of trades
+won. The CNN's design, training data and train/test split are not described.
+- **The arithmetic.** The CNN's 27.14% is the plain sum of 42 trade
+  percentages (Table 3 prints row 26 twice). Compounded it is 28.5%. There
+  are no costs: at typical Indonesian costs (0.15% buy, 0.25% sell) 42 round
+  trips leave about 8.6%.
+- **Added.** `analytics/parabolic_sar.hpp` is Wilder's PSAR, causal (each
+  stop uses only earlier bars).
+- **On NIFTY, 2005 to Sept 2026**, long/flat at 3 bp a side:
+  - PSAR: +308%, 258 trades, 47.7% won.
+  - 20-day MA: +800%, 271 trades.
+  - Buy-and-hold: +990%.
+  Neither indicator beats holding the index. ALTAIR already has a trained
+  dilated causal CNN in the forecast curriculum, scored against "no change".
+
 ---
 
 ## 3. Statistics that refuse to be fooled

@@ -184,6 +184,10 @@ inline constexpr std::array kAtlasRows{
              "Fuzzy if-then rules whose shapes are learned from data "
              "(Atsalakis & Valavanis). On NIFTY 2022-25 its calls were no "
              "better than chance."},
+    AtlasRow{"3. Time series & volatility", "Parabolic SAR",
+             AtlasStatus::Implemented, "analytics/parabolic_sar.hpp", 17,
+             "Wilder's trailing stop that flips long and short. On NIFTY "
+             "since 2005 it made far less than simply holding."},
     AtlasRow{"3. Time series & volatility", "Gamma scalping P&L",
              AtlasStatus::Implemented, "analytics/gamma_scalping.hpp", 17,
              "What a delta-hedged option earns when the market moves more or "

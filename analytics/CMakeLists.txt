@@ -80,6 +80,11 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_gamma_scalping_test PRIVATE altair_analytics altair_flags)
     add_test(NAME gamma_scalping COMMAND altair_gamma_scalping_test)
 
+    add_executable(altair_parabolic_sar_test tests/test_parabolic_sar.cpp)
+    target_link_libraries(altair_parabolic_sar_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME parabolic_sar COMMAND altair_parabolic_sar_test
+             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
+
     add_executable(altair_stochastic_dominance_test tests/test_stochastic_dominance.cpp)
     target_link_libraries(altair_stochastic_dominance_test PRIVATE altair_analytics altair_flags)
     add_test(NAME stochastic_dominance COMMAND altair_stochastic_dominance_test

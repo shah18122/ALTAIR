@@ -26,6 +26,8 @@ What was found when checking each one is in `ops/research-ideas.md`.
 | K. Verma & A. K. Jha, "Predicting Nifty 50 Trends Using a Markov Chain Approach", *IJCRT* 12(12), 2024 (SSRN 5063966) | `models/tests/test_markov_nifty.cpp` (uses `models/markov.hpp`) | 2n |
 | J. Olmo & M. Sanso-Navarro, "Forecasting the Performance of Hedge Fund Styles", 2012 (SSRN 1932225) | `analytics/stochastic_dominance.hpp` | 2o |
 | G. Amisano & R. Giacomini, "Comparing density forecasts via weighted likelihood ratio tests", *J. Business & Economic Statistics* 25(2), 2007 | none | Cited by Olmo & Sanso-Navarro; not built |
+| A. Fauza & E. Noviaty, "Analysis of Accuracy Level of Moving Average, Parabolic SAR and Convolutional Neural Network Indicators on Buy and Sell Decisions", *Jurnal Ekonomi* 11(3), 2022, 839–847 | `analytics/parabolic_sar.hpp` | 2p |
+| J. W. Wilder, *New Concepts in Technical Trading Systems*, 1978 | `analytics/parabolic_sar.hpp` | The PSAR rule |
 | F. X. Diebold & R. S. Mariano, "Comparing predictive accuracy", *J. Business & Economic Statistics* 13(3), 1995 | `diebold_mariano` | |
 | D. Harvey, S. Leybourne & P. Newbold, "Testing the equality of prediction mean squared errors", *Int. J. Forecasting* 13(2), 1997 | `diebold_mariano` | The small-sample factor |
 | M. H. Pesaran & A. Timmermann, "A simple nonparametric test of predictive performance", *J. Business & Economic Statistics* 10(4), 1992 | `pesaran_timmermann` | |

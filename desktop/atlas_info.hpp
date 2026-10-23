@@ -117,6 +117,7 @@ inline constexpr Entry kByFile[] = {
     {"analytics/hmm.hpp", {"Baum-Welch (EM) on daily and 5-minute returns.", kBars, "Shows the regime on the Regimes page; not an order source."}},
     {"models/markov.hpp", {"Transition counts between regimes on history.", kBars, "Shows the regime on the Regimes page; not an order source."}},
     {"analytics/action_principle.hpp", {"Two averages from history: mean absolute move and share of up periods.", kBars, kResearch}},
+    {"analytics/parabolic_sar.hpp", {"Not trained: Wilder's fixed 0.02 / 0.02 / 0.20 steps.", kBars, kResearch}},
     {"analytics/gamma_scalping.hpp", {"Not trained: closed forms checked by Monte Carlo.", "Implied and realised volatility, greeks.", kResearch}},
     {"analytics/stochastic_dominance.hpp", {"Not trained: kernel-weighted test with a multiplier bootstrap.", kBars, kResearch}},
     {"analytics/forecast_metrics.hpp", {"Not trained: scores and tests on a model's forecasts.", kBars, kResearch}},
