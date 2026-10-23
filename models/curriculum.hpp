@@ -55,6 +55,8 @@
 #include <analytics/hmm.hpp>
 #include <analytics/hurst.hpp>
 #include <analytics/kalman.hpp>
+#include <models/arima_hybrid.hpp>
+#include <models/aro.hpp>
 #include <models/attention.hpp>
 #include <models/classical.hpp>
 #include <models/deep_rl.hpp>
@@ -1383,6 +1385,42 @@ private:
     mutable std::size_t done_ = 0;
 };
 
+/// Zhang's ARIMA + network hybrid (models/arima_hybrid.hpp): an ARMA(2,0) on
+/// the return, then a small network on its last four residuals. Fitted on at
+/// most the last 4000 training returns, so a 1-minute track still trains in
+/// a moment; parameters frozen for the stage and rolled forward like the ARMA.
+class CurriculumArimaHybrid final : public CurriculumModel {
+public:
+    std::string name() const override { return "ARIMA + ANN hybrid"; }
+    std::string family() const override { return "time series"; }
+    std::string fit(const CurriculumDesign& d) override {
+        const auto h = d.history(d.train_rows());
+        if (h.size() < 100) { return "fewer than 100 returns"; }
+        const std::size_t keep = std::min<std::size_t>(h.size(), 4000);
+        ArimaAnnHybrid m(ArimaHybridConfig{2, 0, 4, 6, 400, 0.01, 1e-3, 2003});
+        if (!m.fit(h.subspan(h.size() - keep))) { return "hybrid fit refused"; }
+        fitted_ = m;
+        live_ = m;
+        base_ = d.train_rows();
+        done_ = base_;
+        return {};
+    }
+    CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
+        const auto h = d.history(i);
+        if (h.size() < base_) { return {}; }
+        if (h.size() < done_) { live_ = fitted_; done_ = base_; }
+        for (std::size_t t = done_; t < h.size(); ++t) { live_.update(h[t]); }
+        done_ = h.size();
+        return curriculum_detail::from_return(live_.forecast().hybrid, fitted_.residual_sd());
+    }
+
+private:
+    ArimaAnnHybrid fitted_;
+    mutable ArimaAnnHybrid live_;
+    std::size_t base_ = 0;
+    mutable std::size_t done_ = 0;
+};
+
 /// Ornstein-Uhlenbeck on the log price: mean reversion to the window's level.
 /// On a trending index the fit is usually refused as non-stationary, and the
 /// model abstains -- which is the honest answer.
@@ -1635,6 +1673,107 @@ public:
 private:
     std::vector<double> w_;
     double lambda_ = 0.1, sigma_ = 0.0;
+};
+
+/// Ridge regression whose penalty AND feature subset are chosen by
+/// artificial rabbits optimisation (models/aro.hpp, as in Gülmez's LSTM-ARO)
+/// on the inner split's validation MSE. Every coordinate lives in [1, 2], away
+/// from ARO's origin bias: the first maps to log10(lambda/n) in [-4, 2], each
+/// other to "use feature c" when above 1.5. 12 rabbits x 12 iterations, on
+/// at most the last 3000 inner rows.
+class CurriculumRidgeAro final : public CurriculumModel {
+public:
+    std::string name() const override { return "Ridge (ARO-tuned)"; }
+    std::string family() const override { return "classical"; }
+    std::string fit(const CurriculumDesign& d) override {
+        const std::size_t n = d.train_rows(), p = d.p();
+        if (n < p + 5) { return "fewer rows than features"; }
+        lambda_ = 0.1;
+        mask_.assign(p, 1);
+        const std::size_t v = curriculum_detail::inner_split(n);
+        if (const CurriculumDesign* di = n >= 60 ? d.inner(v) : nullptr) {
+            const std::size_t from = v > 3000 ? v - 3000 : 0;
+            const auto score = [&](const std::vector<double>& h) {
+                std::vector<char> mk(p);
+                for (std::size_t c = 0; c < p; ++c) { mk[c] = h[c + 1] > 1.5 ? 1 : 0; }
+                const double lam = std::pow(10.0, -4.0 + 6.0 * (h[0] - 1.0)) * static_cast<double>(v - from);
+                std::vector<double> w;
+                if (!fit_masked(*di, from, v, lam, mk, w)) { return 1e300; }
+                double ss = 0.0;
+                for (std::size_t j = v; j < n; ++j) {
+                    const double e = di->target(j) - dot_masked(w, mk, di->features(j));
+                    ss += e * e;
+                }
+                return ss;
+            };
+            std::vector<double> lo(p + 1, 1.0), hi(p + 1, 2.0);
+            const auto best = aro_minimise(score, lo, hi, AroConfig{12, 12, 2023});
+            if (!best.best.empty() && best.value < 1e300) {
+                lambda_ = std::pow(10.0, -4.0 + 6.0 * (best.best[0] - 1.0));
+                for (std::size_t c = 0; c < p; ++c) { mask_[c] = best.best[c + 1] > 1.5 ? 1 : 0; }
+            }
+        }
+        if (!fit_masked(d, 0, n, lambda_ * static_cast<double>(n), mask_, w_)) { return "singular design"; }
+        double ss = 0.0;
+        for (std::size_t j = 0; j < n; ++j) {
+            const double e = d.target(j) - dot_masked(w_, mask_, d.features(j));
+            ss += e * e;
+        }
+        sigma_ = std::sqrt(ss / static_cast<double>(n));
+        return {};
+    }
+    CurriculumCall predict(const CurriculumDesign& d, std::size_t i) const override {
+        const auto f = d.features(i);
+        if (f.empty()) { return {}; }
+        return curriculum_detail::from_return(dot_masked(w_, mask_, f), sigma_);
+    }
+    std::string tuned() const override {
+        std::size_t used = 0;
+        for (const char m : mask_) { used += m ? 1 : 0; }
+        return "lambda=" + curriculum_detail::trim_double(lambda_) + " x n, " + std::to_string(used) + "/" +
+               std::to_string(mask_.size()) + " features";
+    }
+    std::string params() const override {
+        std::string o = "w (intercept last, 0 = feature dropped)";
+        for (const double w : w_) { o += " " + curriculum_detail::exact_double(w); }
+        return o;
+    }
+
+private:
+    std::vector<double> w_;
+    std::vector<char> mask_;
+    double lambda_ = 0.1, sigma_ = 0.0;
+
+    /// curriculum_detail::ridge_fit on the masked features; dropped features
+    /// get weight 0.
+    static bool fit_masked(const CurriculumDesign& d, std::size_t from, std::size_t to, double lambda,
+                           const std::vector<char>& mk, std::vector<double>& w) {
+        std::vector<std::size_t> cols;
+        for (std::size_t c = 0; c < mk.size(); ++c) { if (mk[c]) { cols.push_back(c); } }
+        const std::size_t m = cols.size() + 1;
+        std::vector<double> a(m * m, 0.0), b(m, 0.0), row(m, 1.0), x;
+        for (std::size_t j = from; j < to; ++j) {
+            const auto f = d.features(j);
+            for (std::size_t k = 0; k < cols.size(); ++k) { row[k] = f[cols[k]]; }
+            const double y = d.target(j);
+            for (std::size_t r = 0; r < m; ++r) {
+                b[r] += row[r] * y;
+                for (std::size_t c = 0; c < m; ++c) { a[r * m + c] += row[r] * row[c]; }
+            }
+        }
+        for (std::size_t k = 0; k + 1 < m; ++k) { a[k * m + k] += lambda; }
+        if (!curriculum_detail::solve_dense(std::move(a), std::move(b), m, x)) { return false; }
+        w.assign(mk.size() + 1, 0.0);
+        for (std::size_t k = 0; k < cols.size(); ++k) { w[cols[k]] = x[k]; }
+        w.back() = x.back();
+        return true;
+    }
+    static double dot_masked(const std::vector<double>& w, const std::vector<char>& mk,
+                             std::span<const double> f) noexcept {
+        double v = w.back();
+        for (std::size_t c = 0; c < f.size() && c < mk.size(); ++c) { if (mk[c]) { v += w[c] * f[c]; } }
+        return v;
+    }
 };
 
 /// One regression tree (Atlas 2, "Decision tree": models/gbdt.hpp with a
@@ -2361,10 +2500,12 @@ curriculum_default_models(std::uint64_t seed = 0xA17A1Au) {
     m.push_back(std::make_unique<CurriculumTransformer>("Transformer", seed + 6));
     m.push_back(std::make_unique<CurriculumArma>(2, 0));
     m.push_back(std::make_unique<CurriculumArma>(1, 1));
+    m.push_back(std::make_unique<CurriculumArimaHybrid>());
     m.push_back(std::make_unique<CurriculumOu>());
     m.push_back(std::make_unique<CurriculumMarkov>());
     m.push_back(std::make_unique<CurriculumRegimes>(seed + 7));
     m.push_back(std::make_unique<CurriculumRidge>());
+    m.push_back(std::make_unique<CurriculumRidgeAro>());
     m.push_back(std::make_unique<CurriculumTree>());
     m.push_back(std::make_unique<CurriculumCnn>(seed + 8));
     m.push_back(std::make_unique<CurriculumAutoencoder>());

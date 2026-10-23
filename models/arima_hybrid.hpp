@@ -114,6 +114,11 @@ public:
     }
 
     [[nodiscard]] bool fitted() const noexcept { return fitted_; }
+    /// Standard deviation of the ARMA's training residuals.
+    [[nodiscard]] double residual_sd() const noexcept {
+        return std::sqrt(std::max(0.0, arma_.residual_variance));
+    }
+    [[nodiscard]] std::size_t observed() const noexcept { return history_.size(); }
 
 private:
     ArimaHybridConfig cfg_;

@@ -331,6 +331,10 @@ metrics each paper used, but no common dataset or score.
   0.641 %. Hybrid against ARIMA DM −1.78 (p 0.08, favours the ARIMA), hit
   rate 50.5 % (PT p 0.35). Long/flat at 3 bp: ARIMA +24.5 %, hybrid +12.6 %,
   buy-and-hold +32.9 %. Nothing nonlinear in yesterday's errors.
+- **In the forecast curriculum** as "ARIMA + ANN hybrid" (ARMA(2,0) plus a
+  network on four residual lags, fitted on at most the last 4,000 returns).
+  NIFTY daily, 2,689 calls: 51.9 % direction, skill vs "no change" −4.3 %,
+  net −1.2 bp a trade. AR(2) alone: 52.7 %, −0.5 %.
 - **The rest, against what ALTAIR has:** standardised benchmarks are the
   forecast curriculum's "no change" baseline; sentiment is
   `models/sentiment.hpp` (hand-fed text, not live Twitter/FinBERT); continual
@@ -539,6 +543,12 @@ LSTM-ARO's MAPE is 1.1–3.1 %, best of six models on most stocks.
   same check was run on NIFTY: Gülmez's design, with ARO tuning a ridge
   model's window and penalty, scores test MAPE 0.832 % against "no change"
   0.829 % (DM p 0.54, direction 48.1 %).
+- **In the forecast curriculum** as "Ridge (ARO-tuned)": ARO picks the
+  ridge penalty and which features to keep on the inner split's validation
+  error. NIFTY daily, 2,857 calls: 48.8 % direction, skill vs "no change"
+  −3.4 %, net −4.4 bp a trade (t −2.0). The plain ridge with its three-point
+  penalty grid: 51.1 %, −3.9 %. A better search finds a slightly lower error
+  in the tuning window and a worse direction record out of sample.
 
 ## 3. Statistics that refuse to be fooled
 
