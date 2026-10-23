@@ -300,6 +300,14 @@ add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
 target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
 target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# Orrell's eq. 8 smile against NSE option closes (analytics/quantum_oscillator.hpp).
+add_executable(altair_quantum_smile quantum_smile_main.cpp)
+target_link_libraries(altair_quantum_smile PRIVATE altair_analytics altair_flags)
+target_include_directories(altair_quantum_smile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(ALTAIR_BUILD_TESTS)
+    add_test(NAME quantum_smile_help COMMAND altair_quantum_smile --help)
+endif()
+
 # Magnitude-aware scoring and the per-call value gate over the curriculum's logs.
 add_executable(altair_magnitude magnitude_main.cpp)
 target_link_libraries(altair_magnitude PRIVATE altair_models altair_analytics altair_flags)

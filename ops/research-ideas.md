@@ -422,6 +422,30 @@ indices, which are not investable and not Indian.
 - **Use.** Compare strategies' daily P&L conditional on regime, as a gate in
   the daily selector. Not wired in yet.
 
+### 2p. Orrell's quantum oscillator — *built and checked; one claim holds, the smile does not*
+
+D. Orrell, "A Quantum Oscillator Model of Stock Markets" (SSRN 3941518; PDF
+supplied by Smit). The price is a quantum spring; its energy level is the
+number of trades in a step, Poisson with mean λ = ¼. It has no forecast and
+no trading rule. `analytics/quantum_oscillator.hpp` holds its formulas, and
+its test checks two of its claims on NIFTY's daily closes from 2000 on.
+- **Fat tails (Figure 1): partly.** The Poisson mix of normals beats a normal
+  at every horizon from 1 to 40 sessions. Its kurtosis is 4.33, though, while
+  NIFTY's is 8 to 14, and a Student-t fits better everywhere.
+- **Vol given the move (eq. 8), σx² = σ² + x²/2T: holds on realised vol.**
+  From the calmest fifth of 20-session windows, every other fifth is within
+  15 %, and the largest fifth is 30.4 % predicted against 31.1 % realised.
+- **Read as an option smile, eq. 8 fails** (`altair_quantum_smile`, on 2,906
+  NIFTY and 2,881 BANKNIFTY bhavcopy days, first monthly expiry 14–60 days
+  out, OTM strikes within 10 %). The market's curvature is about a quarter of
+  Orrell's 1/2T (median 0.25 NIFTY, 0.23 BANKNIFTY). Anchored at ATM, the
+  formula misses by 5.5 vol points (NIFTY) and 4.7 (BANKNIFTY), while a flat
+  ATM smile misses by 2.9 and 2.3, so it is worse than no smile on 97 % of days.
+  It is also symmetric, and NSE's smile is skewed.
+- **Square-root impact (eq. 5).** The constant comes out as √(2/(2λ+1)), which
+  is 1.0 to 1.15. That is the top of `oms/capacity.hpp`'s swept range (0.5–1.0).
+  It is noted there, and the default is unchanged.
+
 ---
 
 ## 3. Statistics that refuse to be fooled

@@ -67,6 +67,11 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME forecast_metrics COMMAND altair_forecast_metrics_test
              ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
 
+    add_executable(altair_quantum_oscillator_test tests/test_quantum_oscillator.cpp)
+    target_link_libraries(altair_quantum_oscillator_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME quantum_oscillator COMMAND altair_quantum_oscillator_test
+             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
+
     add_executable(altair_gamma_scalping_test tests/test_gamma_scalping.cpp)
     target_link_libraries(altair_gamma_scalping_test PRIVATE altair_analytics altair_flags)
     add_test(NAME gamma_scalping COMMAND altair_gamma_scalping_test)
