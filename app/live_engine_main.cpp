@@ -12,6 +12,8 @@
 //                                  magnitude gate: q·gain − (1−q)·loss − cost, clear of zero by --gate-z se
 //   Pairs BANKNIFTY/NIFTY          the 250-day spread at 15:15, carried
 //   Stat-arb NIFTY 50              Avellaneda-Lee s-scores at 15:15, carried
+//   Desk trader                    at 10:30, every model's committed view and altair_trader's
+//                                  call: the majority, one NIFTY future lot (live/desk_trader.hpp)
 //
 // WHAT IT WRITES (data/live/, git-ignored):
 //   engine_state.json          every second: each model's state, signal and reason,
@@ -58,6 +60,7 @@
 #include <live/latency.hpp>
 #include <live/ledger.hpp>
 #include <live/arbitrage.hpp>
+#include <live/desk_trader.hpp>
 #include <live/models.hpp>
 #include <live/option_arb.hpp>
 #include <live/threshold.hpp>
@@ -593,6 +596,17 @@ int main(int argc, char** argv) {
         }
         tuned_text += "\n";
         engine.add_model(g.make(p));
+    }
+    // The Desk trader, last: every model above, plus altair_trader's call and
+    // the vol premium's reading from their files (live/desk_trader.hpp). Paper
+    // only. Not in a replay: those files are not on the tape.
+    if (!replaying) {
+        auto call = lv::desk_read_trader(root / "data/verified/altair_trader");
+        auto vol = lv::desk_read_vol(root / "data/verified/vol_premium/signals.csv");
+        std::printf("  Desk trader: altair_trader %s; vol premium %s\n",
+                    call.ok ? ("call of " + lv::day_text(call.day)).c_str() : call.why.c_str(),
+                    vol.ok ? ("reading of " + lv::day_text(vol.day)).c_str() : vol.why.c_str());
+        engine.add_model(std::make_unique<lv::DeskTraderModel>(std::move(call), std::move(vol)));
     }
     // Real orders for the strategies switched on in the LIVE arm (and only
     // those, and only while armed): requests for the order router. Never in
