@@ -150,13 +150,13 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
                           "Accuracy %", "Magnitude-weighted accuracy %", "Gross edge bp / call",
                           "95% low %", "95% high %", "z vs coin", "p vs coin",
                           "p (Bonferroni)", "Up-rate on same bars %", "vs best constant call (pts)", "p vs constant (Bonferroni)",
-                          "Brier", "RMSE bp", "Random walk RMSE bp", "Skill vs RW %", "Price verdict",
+                          "Brier", "MAE bp", "Random walk MAE bp", "RMSE bp", "Random walk RMSE bp", "Skill vs RW %", "Price verdict",
                           "Trades (clear cost)", "Trade hit %", "Net bp / trade", "Net t-stat", "Net bp total",
                           "Final-stage accuracy %", "Fit s", "Verdict"};
     std::vector<XlsxCell> h;
     for (const char* c : head) { h.push_back(XlsxCell::str(c, true)); }
     sh.rows.push_back(h);
-    sh.widths = {24, 24, 11, 10, 10, 10, 9, 9, 10, 7, 10, 12, 11, 9, 9, 9, 9, 11, 12, 12, 12, 8, 9, 11, 10, 22, 11, 10, 10, 9, 11, 11, 8, 52};
+    sh.widths = {24, 24, 11, 10, 10, 10, 9, 9, 10, 7, 10, 12, 11, 9, 9, 9, 9, 11, 12, 12, 12, 8, 9, 11, 9, 11, 10, 22, 11, 10, 10, 9, 11, 11, 8, 52};
     for (const auto& r : results) {
         if (!r.ok) {
             sh.rows.push_back({XlsxCell::str(r.track.name), XlsxCell::str("-"), XlsxCell::str("-"),
@@ -193,6 +193,8 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
                 XlsxCell::num(scored ? 100.0 * (s.accuracy - s.best_constant) : nan),
                 XlsxCell::num(scored ? s.p_constant_adjusted : nan),
                 XlsxCell::num(s.all.brier()),
+                XlsxCell::num(s.have_price ? s.price.mae_model_bps : nan),
+                XlsxCell::num(s.have_price ? s.price.mae_naive_bps : nan),
                 XlsxCell::num(s.have_price ? s.price.rmse_model_bps : nan),
                 XlsxCell::num(s.have_price ? s.price.rmse_naive_bps : nan),
                 XlsxCell::num(s.have_price ? 100.0 * s.price.skill : nan),
@@ -1408,7 +1410,11 @@ int main(int argc, char** argv) {
             text << "  " << pad(r.run.models[m], 30) << pad(fixed(pct(s.accuracy), 2) + "%", 7)
                  << "  [" << fixed(pct(s.lo95), 1) << ", " << fixed(pct(s.hi95), 1) << "]"
                  << "  n=" << s.all.scored() << "  up-rate " << fixed(pct(s.up_rate), 1) + "%";
-            if (s.have_price) { text << "  skill vs RW " << fixed(100.0 * s.price.skill, 2, true) + "%"; }
+            if (s.have_price) {
+                text << "  skill vs RW " << fixed(100.0 * s.price.skill, 2, true) + "%"
+                     << "  MAE " << fixed(s.price.mae_model_bps, 1) << "/" << fixed(s.price.mae_naive_bps, 1)
+                     << " RMSE " << fixed(s.price.rmse_model_bps, 1) << "/" << fixed(s.price.rmse_naive_bps, 1) << " bp";
+            }
             if (s.all.trades > 0) {
                 text << "  net " << fixed(s.all.net_bp / static_cast<double>(s.all.trades), 2, true) << " bp/trade on "
                      << s.all.trades << (s.all.trades == 1 ? " trade" : " trades");

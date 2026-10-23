@@ -550,6 +550,22 @@ LSTM-ARO's MAPE is 1.1–3.1 %, best of six models on most stocks.
   penalty grid: 51.1 %, −3.9 %. A better search finds a slightly lower error
   in the tuning window and a worse direction record out of sample.
 
+### 2u. Retrain on 23 Oct 2026, with MAE and RMSE — *nothing beats no change*
+
+Daily curriculum and `altair_trader` re-run on the data in `dataset/` (to
+24 Sep 2026; the FYERS top-up was refused because the token had expired).
+The curriculum's per-model line now prints MAE and RMSE against no change.
+NIFTY daily, 2,500 days every model forecast: no change scores RMSE 101.8 bp,
+MAE 68.4 bp. The best models (Markov chain, k-means regimes, always
+majority) are 0.1 % lower on RMSE, which is noise; LSTM +0.2 %, Transformer
++1.1 %, ARIMA+ANN +3.4 %, ARO-tuned ridge +2.5 %. BANKNIFTY: nothing below no
+change. The trader's candidates match (best: Gokhale stack, skill +0.075 % on
+NIFTY). Trader net 2016–2026: NIFTY +Rs 1.32 L against buy-and-hold +Rs 9.74 L;
+BANKNIFTY −Rs 1.07 L. No model change kept.
+Sources not reached (blocked in the cloud environment, no PDF): SSRN 5614902,
+Applied Energy S0306261922005542, EJOR S0377221715004750, Frontiers research
+topic 56323 (econophysics), JPMorgan "On the fly" applied research.
+
 ## 3. Statistics that refuse to be fooled
 
 ### 3a. Random-matrix cleaning of correlations
