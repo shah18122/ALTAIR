@@ -17,8 +17,12 @@
 # ═══════════════════════════════════════════════════════════════════════════
 
 schema_version = 1
-last_verified  = "UNVERIFIED"      # set to an ISO date once you have checked it
-verified_by    = ""
+# Marked verified on the owner's instruction (2026-10-07) so expenses are
+# priced everywhere by default. The rates below were NOT re-checked against
+# the exchanges' circulars when this was set: check them, and the broker's
+# brokerage, before trusting any net figure with real money.
+last_verified  = "2026-10-07"
+verified_by    = "Smit Shah (owner's instruction)"
 
 # ───────────────────────────────────────────────────────────────────────────
 # Regulator-level, segment independent

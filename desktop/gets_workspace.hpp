@@ -18,6 +18,7 @@
 // nothing here can place an order.
 #pragma once
 
+#include "demo_reports.hpp"
 #include "gets_data.hpp"
 #include "gets_tables.hpp"
 #include "helper_process.hpp"
@@ -87,6 +88,14 @@ public:
         status_->setTextFormat(Qt::PlainText);
         h->addWidget(new QLabel(QStringLiteral("Rate"), bar));
         h->addWidget(rate_);
+        // Trade History, RMS and Expense & Margin for the real FYERS account,
+        // or for the demo books (the paper book and the models).
+        mode_ = new QComboBox(bar);
+        mode_->setObjectName(QStringLiteral("getsMode"));
+        mode_->addItems({QStringLiteral("Real (FYERS)"), QStringLiteral("Demo")});
+        mode_->setToolTip(QStringLiteral("Trade History, RMS and Expense & Margin: the FYERS account, or the demo books"));
+        h->addWidget(new QLabel(QStringLiteral("Account"), bar));
+        h->addWidget(mode_);
         h->addWidget(status_, 1);
         v->addWidget(bar);
 
@@ -96,6 +105,9 @@ public:
         if (account_page != nullptr) tabs_->addTab(account_page, QStringLiteral("Positions && Funds"));
         v->addWidget(tabs_, 1);
 
+        // Greek Watch and Greek Summary moved to the Terminal (from the option
+        // chain, one window); Top Movers to the strip beside LIVE. Their
+        // models are still built: the simulation and index tabs read them.
         build_watch_tab();
         build_summary_tab();
         build_simulation_tab();
@@ -104,6 +116,19 @@ public:
         build_rms_tab();
         build_movers_tab();
         build_index_tab();
+#ifdef ALTAIR_SOURCE_DIR
+        const QString paper_dir = QStringLiteral(ALTAIR_SOURCE_DIR "/data/live/paper");
+#else
+        const QString paper_dir = QStringLiteral("data/live/paper");
+#endif
+        demo_trades_ = new DemoTradeHistory(paper_dir, tabs_);
+        demo_expense_ = new DemoExpenseMargin(paper_dir, tabs_);
+        demo_rms_ = new DemoRms(paper_dir, [this](quint32 tok) { return demo_ltp_ ? demo_ltp_(tok) : 0.0; }, tabs_);
+        tabs_->addTab(demo_expense_, QStringLiteral("Expense && Margin"));
+        tabs_->addTab(demo_trades_, QStringLiteral("Trade History"));
+        tabs_->addTab(demo_rms_, QStringLiteral("RMS"));
+        connect(mode_, &QComboBox::currentIndexChanged, this, [this](int) { apply_mode(); });
+        apply_mode();
 
         paths_default();
         connect(rate_, &QDoubleSpinBox::valueChanged, this, [this](double) { recompute(); });
@@ -131,6 +156,14 @@ public:
     /// snapshot (by FYERS ticker) and returns how many it priced; 0 when the
     /// stream is not connected. The Terminal supplies it.
     void set_live_quotes(std::function<int(GetsQuotes&)> fill) { live_fill_ = std::move(fill); }
+    /// The stream's last price in rupees by token (the demo RMS marks to it).
+    void set_demo_ltp(std::function<double(quint32)> f) { demo_ltp_ = std::move(f); }
+    /// Real (FYERS) or Demo for Trade History, RMS and Expense & Margin.
+    void set_demo(bool demo) { mode_->setCurrentIndex(demo ? 1 : 0); }
+    [[nodiscard]] bool demo() const { return mode_->currentIndex() == 1; }
+    [[nodiscard]] DemoTradeHistory* demo_trades() const noexcept { return demo_trades_; }
+    [[nodiscard]] DemoExpenseMargin* demo_expense() const noexcept { return demo_expense_; }
+    [[nodiscard]] DemoRms* demo_rms() const noexcept { return demo_rms_; }
 
     /// Persist the watch list, user IVs, RMS limits and auto-refresh here.
     /// Without settings nothing is written (tests, first run).
@@ -268,6 +301,20 @@ protected:
 private:
     // ---- tabs -----------------------------------------------------------------
 
+    void apply_mode() {
+        const bool d = demo();
+        const auto show = [this](QWidget* w, bool on) {
+            const int i = tabs_->indexOf(w);
+            if (i >= 0) tabs_->setTabVisible(i, on);
+        };
+        show(real_expense_, !d);
+        show(real_trades_, !d);
+        show(real_rms_, !d);
+        show(demo_expense_, d);
+        show(demo_trades_, d);
+        show(demo_rms_, d);
+    }
+
     static QTableView* make_view(QWidget* parent, QAbstractItemModel* model, const QString& name) {
         auto* proxy = new QSortFilterProxyModel(parent);
         proxy->setSourceModel(model);
@@ -370,7 +417,8 @@ private:
                 w.removeAll(i.data(GetsTableModel::KeyRole).toString());
             if (w != watch_) set_watch(w);
         });
-        tabs_->addTab(page, QStringLiteral("Greek Watch"));
+        page->setParent(this);
+        page->hide();
     }
 
     void build_summary_tab() {
@@ -383,7 +431,8 @@ private:
             "Position Greeks by underlying and expiry, then Σ per underlying. Delta is in underlying "
             "units; Delta neutral is the number of futures lots that would flatten it. A group with a "
             "leg that has no LTP or no Greeks is marked incomplete rather than summed short.")));
-        tabs_->addTab(page, QStringLiteral("Greek Summary"));
+        page->setParent(this);
+        page->hide();
     }
 
     void build_simulation_tab() {
@@ -445,6 +494,7 @@ private:
         expense_note_ = note(page, QString());
         v->addWidget(expense_note_);
         tabs_->addTab(page, QStringLiteral("Expense && Margin"));
+        real_expense_ = page;
     }
 
     void build_trades_tab() {
@@ -464,6 +514,7 @@ private:
             static_cast<QSortFilterProxyModel*>(view->model())->setFilterFixedString(t);
         });
         tabs_->addTab(page, QStringLiteral("Trade History"));
+        real_trades_ = page;
     }
 
     void build_rms_tab() {
@@ -519,6 +570,7 @@ private:
         connect(max_open_, &QSpinBox::valueChanged, this, store);
         connect(max_loss_, &QSpinBox::valueChanged, this, store);
         tabs_->addTab(page, QStringLiteral("RMS"));
+        real_rms_ = page;
     }
 
     void build_movers_tab() {
@@ -547,7 +599,8 @@ private:
         connect(movers_kind_, &QComboBox::currentIndexChanged, this, again);
         connect(movers_side_, &QComboBox::currentIndexChanged, this, again);
         connect(movers_n_, &QSpinBox::valueChanged, this, again);
-        tabs_->addTab(page, QStringLiteral("Top Movers"));
+        page->setParent(this);
+        page->hide();
     }
 
     void build_index_tab() {
@@ -831,6 +884,14 @@ private:
 
     QTabWidget* tabs_{};
     QDoubleSpinBox* rate_{};
+    QComboBox* mode_{};
+    QWidget* real_expense_{};
+    QWidget* real_trades_{};
+    QWidget* real_rms_{};
+    DemoTradeHistory* demo_trades_{};
+    DemoExpenseMargin* demo_expense_{};
+    DemoRms* demo_rms_{};
+    std::function<double(quint32)> demo_ltp_;
     QLabel* status_{};
 
     QComboBox* profile_{};

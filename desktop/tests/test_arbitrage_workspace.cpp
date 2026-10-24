@@ -1,6 +1,9 @@
 #include "../arbitrage_workspace.hpp"
 
 #include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
 
 #include <cstdio>
 
@@ -20,6 +23,38 @@ int main(int argc, char** argv) {
           "an identical instrument and venue cannot manufacture arbitrage");
     page.set_manual_pair(QStringLiteral("CIPLA"), 0, QStringLiteral("CIPLA"), 1);
     check(page.manual_pair_valid(), "the same instrument may be paired across NSE and BSE");
+    page.set_manual_pair(QStringLiteral("CIPLA"), 0, QStringLiteral("SUNPHARMA"), 1);
+    check(!page.manual_pair_valid(), "two different stocks are a pair trade, not an arbitrage: refused");
+
+    // The live model's reading and positions, from the engine's state file.
+    QTemporaryDir tmp;
+    QDir().mkpath(tmp.path() + QStringLiteral("/data/live"));
+    QFile st(tmp.path() + QStringLiteral("/data/live/engine_state.json"));
+    if (st.open(QIODevice::WriteOnly)) {
+        st.write(R"JSON({"engine_ns": 1, "source": "SIM", "models": [
+          {"name": "Cross-exchange arbitrage", "family": "arbitrage", "state": "in position",
+           "signal": "RELIANCE NSE 1000.00/1000.10 · BSE 998.50/998.60 · edge 14.0 bp, needs 10.0",
+           "reason": "1 stock(s) held both ways until their prices meet",
+           "fields": [["pairs", "50 (50 quoted both sides)"], ["pair", "RELIANCE: NSE 1000.00/1000.10 · BSE 998.50/998.60 · edge 14.0 bp, needs 10.0"],
+                      ["pair", "INFY: NSE 1500.00/1500.10 · BSE 1500.00/1500.15 · edge -0.7 bp, needs 10.2"]]}],
+          "positions": [
+          {"model": "Cross-exchange arbitrage", "symbol": "RELIANCE", "token": 2, "side": 1, "qty": 100, "entry": 998.6, "why_in": "RELIANCE: sell NSE 1000.00, buy BSE 998.60 x100"},
+          {"model": "Cross-exchange arbitrage", "symbol": "RELIANCE", "token": 1, "side": -1, "qty": 100, "entry": 1000.0, "why_in": "RELIANCE: sell NSE 1000.00, buy BSE 998.60 x100"},
+          {"model": "Pairs", "symbol": "NIFTY26OCTFUT", "token": 9, "side": 1, "qty": 75, "entry": 25000.0, "why_in": "z"}]})JSON");
+        st.close();
+    }
+    page.set_root(tmp.path());
+    check(page.demo_state().contains(QStringLiteral("DEMO TRADING ON")) && page.demo_state().contains(QStringLiteral("in position")),
+          "demo trading is shown on, with the model's state");
+    check(page.pairs_table()->rowCount() == 2 && page.pairs_table()->item(0, 0)->text() == QStringLiteral("RELIANCE"),
+          "every pair it watches, best edge first");
+    check(page.held_table()->rowCount() == 2 && page.held_table()->item(0, 1)->text() == QStringLiteral("B")
+              && page.held_table()->item(1, 1)->text() == QStringLiteral("S"),
+          "and both legs it holds, nothing of another model's");
+    QTemporaryDir empty;
+    page.set_root(empty.path());
+    check(page.demo_state().contains(QStringLiteral("waiting")) && page.pairs_table()->rowCount() == 0,
+          "no engine yet: it says demo trading is waiting for the feed");
     altair::ui::ArbitrageViewRow row;
     row.sequence = 1;
     row.instrument = QStringLiteral("CIPLA");

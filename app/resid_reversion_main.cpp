@@ -220,7 +220,7 @@ int main(int argc, char** argv) {
         std::vector<double> day_cost(T, 0.0);
         std::ofstream tf(dir / ("trades_" + id + ".csv"), std::ios::trunc);
         tf << "symbol,sector,side,entry_date,exit_date,days_held,s_entry,s_exit,beta_market,beta_sector,kappa,hedged_return_bp,"
-              "gross_pnl,expenses,net_pnl,exit_reason,costs\n";
+              "gross_pnl,expenses,net_pnl,exit_reason,costs,brokerage,stt,exchange_txn,sebi,stamp,ipft,gst\n";
         double gross = 0, exp = 0, held = 0;
         std::size_t wins = 0;
         for (const auto& t : r->trades) {
@@ -248,7 +248,10 @@ int main(int argc, char** argv) {
                << iso_day(p.day[t.entry]) << ',' << iso_day(p.day[t.exit]) << ',' << (t.exit - t.entry) << ',' << fixed(t.s_entry, 2)
                << ',' << fixed(t.s_exit, 2) << ',' << fixed(t.beta_m, 3) << ',' << fixed(t.beta_s, 3) << ',' << fixed(t.kappa, 1) << ','
                << fixed(1e4 * t.ret, 1) << ',' << fixed(g, 2) << ',' << (priced ? fixed(c.total, 2) : std::string{}) << ','
-               << (priced ? fixed(net, 2) : std::string{}) << ',' << t.why << ',' << cost_tag << '\n';
+               << (priced ? fixed(net, 2) : std::string{}) << ',' << t.why << ',' << cost_tag
+                  << ',' << (priced ? fixed(c.brokerage, 2) + ',' + fixed(c.stt, 2) + ',' + fixed(c.exchange, 2) + ','
+                                 + fixed(c.sebi, 2) + ',' + fixed(c.stamp, 2) + ',' + fixed(c.ipft, 2) + ',' + fixed(c.gst, 2)
+                           : std::string{",,,,,,"}) << '\n';
         }
         // Daily book: hedged P&L of every open position, expenses on closing days.
         std::ofstream df(dir / ("daily_" + id + ".csv"), std::ios::trunc);

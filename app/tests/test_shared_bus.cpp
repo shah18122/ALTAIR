@@ -153,6 +153,31 @@ int main() {
               "every frame is delivered or counted as coalesced for that reader, exactly");
         std::printf("    burst: %zu delivered to the reader, ring waits %llu\n", got.size(),
                     static_cast<unsigned long long>(shared.waits()));
+
+        // Two producers at once: the feed's thread (trades) and the 50-level
+        // book's thread (second_book), each on its own ring.
+        const std::uint64_t trades_before = shared.trades(), books_before = shared.books();
+        constexpr std::uint64_t kEach = 5000;
+        std::thread feed_thread([&] {
+            for (std::uint64_t k = 0; k < kEach; ++k) shared.trade(px(static_cast<std::uint32_t>(1 + k % 50), 200), 3);
+        });
+        std::thread depth_thread([&] {
+            altair::PricePayload bp;
+            bp.flags = altair::kPriceHasBook;
+            bp.depth_levels = static_cast<std::uint16_t>(altair::kMaxDepthLevels);
+            altair::PriceLevel lv[altair::kMaxDepthLevels]{};
+            for (std::size_t i = 0; i < altair::kMaxDepthLevels; ++i) lv[i] = {100 - static_cast<std::int64_t>(i), 10, 1, 0};
+            for (std::uint64_t k = 0; k < kEach; ++k) {
+                bp.token = static_cast<std::uint32_t>(1 + k % 50);
+                shared.second_book(bp, lv, lv, 3);
+            }
+        });
+        feed_thread.join();
+        depth_thread.join();
+        shared.drain();
+        check(shared.trades() == trades_before + kEach && shared.books() == books_before + kEach,
+              "two producers, one ring each: every trade and every 50-level book is taken, none dropped");
+        (void)read_frames(a, abuf, 0, std::chrono::milliseconds(300));
     }
     std::printf("%s\n", failures == 0 ? "all shared bus checks passed" : "shared bus checks did not pass");
     return failures == 0 ? 0 : 1;

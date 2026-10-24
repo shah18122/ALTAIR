@@ -129,6 +129,22 @@ void test_veto_and_refusals() {
     check(!vrp_run(empty, policy()).has_value(), "a market without prices: refused");
 }
 
+void test_unquoted_strike_still_closes() {
+    // The held strike stops trading after the first entry (as NIFTY's deep in
+    // the money strikes did in March 2020): the trade must still close at the
+    // exit, at intrinsic, and later months must still be sold.
+    auto m = market(0.20, 0.10, 0.10, 21);
+    const auto quote = m.quote;
+    const double held = m.strike_near(0, 0, m.forward(0, *m.expiries.upper_bound(m.day[0])));
+    m.quote = [quote, held](std::size_t i, std::int64_t e, double k) {
+        return i > 0 && i < 40 && k == held ? VrpQuote{} : quote(i, e, k);
+    };
+    const auto r = vrp_run(m, policy());
+    check(r && r->trades.size() > 20, "an unquoted strike at the exit does not freeze the run");
+    check(r && !r->trades.empty() && std::string{r->trades.front().exit_reason} == "unquoted at exit: intrinsic",
+          "the unquoted trade is bought back at intrinsic");
+}
+
 } // namespace
 
 int main() {
@@ -138,6 +154,7 @@ int main() {
     test_wrong_forecast_loses();
     test_hedge_cuts_risk();
     test_veto_and_refusals();
+    test_unquoted_strike_still_closes();
     std::printf("Volatility premium: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

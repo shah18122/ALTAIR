@@ -146,6 +146,8 @@ struct Trade {
     bool      delivery = false;
     /// The instant the trade happened. Selects the schedule (D6).
     Timestamp trade_ts{};
+    /// Currency only: an option (currency_options), not a future.
+    bool      option = false;
 };
 
 /// D5 — itemised, never a single number. A cost you cannot decompose is a cost
@@ -256,7 +258,7 @@ line_for(const ChargeSchedule& s, const Trade& t) noexcept {
             return t.delivery ? &s.equity_delivery : &s.equity_intraday;
         case Segment::Fut:       return &s.equity_futures;
         case Segment::Opt:       return &s.equity_options;
-        case Segment::Currency:  return &s.currency_futures;
+        case Segment::Currency:  return t.option ? &s.currency_options : &s.currency_futures;
         case Segment::Commodity: return &s.commodity_futures;
     }
     return nullptr;

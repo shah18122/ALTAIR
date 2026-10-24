@@ -11,12 +11,16 @@
 //   * every round trip from data/live/paper/trades.csv with the model that
 //     took it, gross, expenses, net and why it was opened and closed;
 //   * P&L by model: today and all days, realised and open.
-// The engine is a separate process this panel can start and stop. Expenses
+// The engine is a separate process this panel starts BY ITSELF once the feed
+// streams -- no Start button, no start time: every model trades its own
+// signals in demo from 09:15 -- and starts again 15 s after it exits. Expenses
 // are refused while config/charges.toml is unverified, as everywhere in the
-// project; "Price UNVERIFIED expenses" passes --unverified-costs and every
-// figure is then marked UNVERIFIED.
+// project; "Price UNVERIFIED expenses" restarts it with --unverified-costs
+// and every figure is then marked UNVERIFIED.
 //
-// IT CANNOT TRADE. The engine places no orders and this panel links no broker.
+// THIS PANEL LINKS NO BROKER. The engine itself only writes requests for the
+// strategies switched on in the LIVE switch (app/live_real_orders.hpp); the
+// order router decides and sends them.
 
 #pragma once
 
@@ -132,26 +136,31 @@ public:
         v->setSpacing(6);
 
         auto* bar = new QHBoxLayout;
-        start_ = new QPushButton(QStringLiteral("Start models"), this);
-        start_->setToolTip(QStringLiteral(
-            "Run altair_live_engine: every live model on the price service's stream, paper-trading its signals. "
-            "Start the feed first (Market Watch → Start live feed, or Start SIM). Places no orders."));
-        stop_ = new QPushButton(QStringLiteral("Stop models"), this);
-        stop_->setEnabled(false);
+        running_ = new QLabel(this);
+        running_->setObjectName(QStringLiteral("modelsRunning"));
+        running_->setTextFormat(Qt::RichText);
         unverified_ = new QCheckBox(QStringLiteral("Price UNVERIFIED expenses"), this);
         unverified_->setToolTip(QStringLiteral(
-            "Pass --unverified-costs: price expenses from config/charges.toml although it is unverified. "
-            "Every expense and net figure is then marked UNVERIFIED."));
-        bar->addWidget(start_);
-        bar->addWidget(stop_);
-        bar->addWidget(unverified_);
+            "Restart the models with --unverified-costs: price expenses from config/charges.toml although it is "
+            "unverified. Every expense and net figure is then marked UNVERIFIED."));
+        bar->addWidget(running_);
         bar->addStretch();
+        bar->addWidget(unverified_);
         v->addLayout(bar);
 
         status_ = new QLabel(this);
         status_->setTextFormat(Qt::RichText);
         status_->setWordWrap(true);
         v->addWidget(status_);
+        // Simple view: what this page is, in one line (desktop/simple_mode.hpp).
+        simple_intro_ = new QLabel(QStringLiteral(
+            "<span style='color:#8FA3AE'>The models trade <b>on paper</b> by themselves while the market is open. Each row "
+            "is one model: what it is doing now and why. Below: what they hold and what they made, <b>after expenses</b>. "
+            "Advanced view shows every reading and column.</span>"), this);
+        simple_intro_->setObjectName(QStringLiteral("modelsSimpleIntro"));
+        simple_intro_->setTextFormat(Qt::RichText);
+        simple_intro_->setWordWrap(true);
+        v->addWidget(simple_intro_);
 
         totals_ = new QLabel(this);
         totals_->setTextFormat(Qt::RichText);
@@ -211,12 +220,24 @@ public:
         stack->setStretchFactor(0, 55);
         stack->setStretchFactor(1, 45);
         v->addWidget(stack, 1);
+        simple_mode::watch(this, [this](bool simple) { apply_simple(simple); });
 
-        connect(start_, &QPushButton::clicked, this, [this] { start_engine(); });
-        connect(stop_, &QPushButton::clicked, this, [this] { stop_engine(); });
+        // A new expense setting takes a restart: now, not after the back-off.
+        connect(unverified_, &QCheckBox::toggled, this, [this] {
+            restart_after_ms_ = 0;
+            stop_engine();
+        });
         connect(models_, &QTableWidget::currentCellChanged, this, [this](int r, int, int, int) { show_fields(r); });
         file_timer_.setInterval(1000);
-        connect(&file_timer_, &QTimer::timeout, this, [this] { reload(); });
+        connect(&file_timer_, &QTimer::timeout, this, [this] {
+            reload();
+            // Always on: the models start once the feed streams, and again
+            // 15 s after they exit (a crash is not retried every second).
+            if (auto_ && engine_ == nullptr && client_ != nullptr && client_->connected()
+                && QDateTime::currentMSecsSinceEpoch() >= restart_after_ms_)
+                start_engine();
+            show_running();
+        });
         file_timer_.start();
         mark_timer_.setInterval(250);
         connect(&mark_timer_, &QTimer::timeout, this, [this] { if (isVisible()) mark(); });
@@ -224,6 +245,19 @@ public:
         reload();
     }
     ~LiveModelsPanel() override { stop_engine(); }
+
+    /// Simple view: the model, its state and why; positions and trades with
+    /// the net after expenses; the readings panel and the build-up columns
+    /// (family, signal, gross, expense heads) only in Advanced.
+    void apply_simple(bool simple) {
+        models_->setColumnHidden(1, simple);   // Family
+        models_->setColumnHidden(3, simple);   // Signal
+        fields_->setVisible(!simple);
+        for (const int c : {7, 8}) positions_->setColumnHidden(c, simple);           // Entry exp, Held
+        for (const int c : {5, 7, 9, 10, 13}) trades_->setColumnHidden(c, simple);   // In, Out, Gross, Expenses, Costs
+        for (const int c : {2, 3}) by_model_->setColumnHidden(c, simple);            // Gross, Expenses
+        simple_intro_->setVisible(simple);
+    }
     LiveModelsPanel(const LiveModelsPanel&) = delete;
     LiveModelsPanel& operator=(const LiveModelsPanel&) = delete;
 
@@ -236,6 +270,10 @@ public:
     [[nodiscard]] QTableWidget* models_table() const noexcept { return models_; }
     /// "Price UNVERIFIED expenses": the Terminal's paper orders follow it too.
     [[nodiscard]] bool price_unverified() const { return unverified_->isChecked(); }
+    /// The models run by themselves (the app turns this on; tests leave it off).
+    void set_auto_demo(bool on) { auto_ = on; show_running(); }
+    [[nodiscard]] bool auto_demo() const noexcept { return auto_; }
+    [[nodiscard]] bool engine_running() const noexcept { return engine_ != nullptr; }
     [[nodiscard]] QTableWidget* positions_table() const noexcept { return positions_; }
     [[nodiscard]] QTableWidget* trades_table() const noexcept { return trades_; }
     [[nodiscard]] QTableWidget* by_model_table() const noexcept { return by_model_; }
@@ -256,8 +294,8 @@ private:
         QFile f(root_ + QStringLiteral("/data/live/engine_state.json"));
         const QString muted = QString::fromLatin1(theme_token::kTextMuted);
         if (!f.open(QIODevice::ReadOnly)) {
-            status_->setText(QStringLiteral("<span style='color:%1'>The models are not running. Start a feed on the Watch "
-                                            "view, then Start models.</span>").arg(muted));
+            status_->setText(QStringLiteral("<span style='color:%1'>The models are not running yet: they start by "
+                                            "themselves once the feed streams.</span>").arg(muted));
             models_->setRowCount(0);
             positions_cache_.clear();
             return;
@@ -480,9 +518,9 @@ private:
             const QString tail = QString::fromLocal8Bit(engine_->readAll()).trimmed().section(QChar('\n'), -1);
             engine_->deleteLater();
             engine_ = nullptr;
-            start_->setEnabled(true);
-            stop_->setEnabled(false);
-            unverified_->setEnabled(true);
+            if (restart_after_ms_ != 0) restart_after_ms_ = QDateTime::currentMSecsSinceEpoch() + kRestartBackoffMs;
+            else restart_after_ms_ = 1;   // a deliberate restart: at once
+            show_running();
             status_->setText(status_->text() + QStringLiteral("<br><span style='color:%1'>engine exited %2: %3</span>")
                                                    .arg(code == 0 ? QStringLiteral("#8A93A2") : QStringLiteral("#F07A6A"))
                                                    .arg(code).arg(tail.toHtmlEscaped()));
@@ -490,9 +528,19 @@ private:
         QStringList args;
         if (unverified_->isChecked()) args << QStringLiteral("--unverified-costs");
         engine_->start(exe, args);
-        start_->setEnabled(false);
-        stop_->setEnabled(true);
-        unverified_->setEnabled(false);
+        restart_after_ms_ = -1;   // running: an exit from here on waits the back-off
+        show_running();
+    }
+
+    void show_running() {
+        if (running_ == nullptr) return;
+        running_->setText(engine_ != nullptr
+                              ? QStringLiteral("<span style='color:#7EE787'>\u25CF Models running</span> \u2014 every model "
+                                               "trades its own signals in demo, all session; ticks are recorded for "
+                                               "altair_tune (last 5 days)")
+                          : !auto_ ? QStringLiteral("<span style='color:#8A93A2'>\u25CB Models off</span>")
+                                   : QStringLiteral("<span style='color:#F0B429'>\u25CB Models waiting for the feed</span> "
+                                                    "\u2014 they start by themselves"));
     }
 
     void stop_engine() {
@@ -503,11 +551,14 @@ private:
 
     const PriceClient* client_;
     QString root_;
-    QPushButton* start_ = nullptr;
-    QPushButton* stop_ = nullptr;
+    static constexpr qint64 kRestartBackoffMs = 15'000;
+    QLabel* running_ = nullptr;
     QCheckBox* unverified_ = nullptr;
+    bool auto_ = false;
+    qint64 restart_after_ms_ = 0;   ///< epoch ms the engine may start again; -1 while it runs
     QLabel* status_ = nullptr;
     QLabel* totals_ = nullptr;
+    QLabel* simple_intro_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QTableWidget* models_ = nullptr;
     QTableWidget* fields_ = nullptr;

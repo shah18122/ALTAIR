@@ -138,16 +138,14 @@ public:
     void on_new_day(LiveEngine&) override { traded_today_ = false; note_.clear(); call_ = put_ = nullptr; }
 
     void on_minute(LiveEngine& e, int m) override {
-        if (m == kDecideMinute && !traded_today_) {
-            LiveDecisionScope log(e, name(), [this] { return note_; });
-            decide(e);
-        }
-        if (m > kDecideMinute && !traded_today_) {
-            traded_today_ = true;
+        // THE FIRST MINUTE IT CAN, NOT ONE MINUTE. From 09:20 (the opening
+        // auction's noise settled) the model sells the band for what is left
+        // of the day at whatever minute it first runs: a late start sells a
+        // narrower band, it does not miss the day. Until 15:10.
+        if (m >= kDecideMinute && !traded_today_) {
             // A restart: the legs this model sold before it are in the book
             // (resumed from the journal). Take them up again -- the stop
-            // watches them and the page shows them -- rather than call the
-            // day missed.
+            // watches them and the page shows them -- rather than sell again.
             for (const auto& p : e.book().positions()) {
                 if (p.model != name()) continue;
                 const LiveInstrument* in = e.instrument(p.inst.token);
@@ -156,13 +154,18 @@ public:
                 if (in->kind == LiveKind::Put) put_ = in;
             }
             if (call_ != nullptr || put_ != nullptr) {
+                traded_today_ = true;
                 note_ = "Resumed at " + live_fmt::hhmm(m) + ": holding " + (call_ ? call_->symbol : std::string()) + (call_ && put_ ? " and " : "")
                       + (put_ ? put_->symbol : std::string()) + " sold earlier today" + (stop_ > 0.0 ? "; the stop watches them." : ".");
+                e.note_decision(name(), note_);
+            } else if (m <= kLastEntryMinute) {
+                LiveDecisionScope log(e, name(), [this] { return note_; });
+                decide(e, m);
             } else {
-                // The engine joined after 09:20: today's decision was never taken.
-                note_ = "Missed today: the models first ran at " + live_fmt::hhmm(m) + ", after 09:20 (a late start, or decisions paused on a feed gap).";
+                traded_today_ = true;
+                note_ = "Not sold today: the models first ran at " + live_fmt::hhmm(m) + ", after the last entry (15:10).";
+                e.note_decision(name(), note_);
             }
-            e.note_decision(name(), note_);
         }
         if (stop_ > 0.0 && m % 5 == 0 && m > kDecideMinute && m < kLiveSquareOffMinute) {
             for (const LiveInstrument* leg : {call_, put_}) {
@@ -190,8 +193,8 @@ public:
         v.name = name();
         v.family = family();
         const bool open = !e.book().flat(name());
-        v.state = open ? "in position" : (traded_today_ ? "done today" : "waiting for 09:20");
-        v.reason = note_.empty() ? "Sells the 80 % band's two edges at 09:20, one lot each; bought back by 15:20"
+        v.state = open ? "in position" : (traded_today_ ? "done today" : "watching");
+        v.reason = note_.empty() ? "Sells the 80 % band's two edges (from 09:20, at the first minute it runs), one lot each; bought back by 15:20"
                                        + std::string(stop_ > 0.0 ? ", or a leg at the first 5-minute close where its premium doubled." : ".")
                                  : note_;
         if (call_ && put_) {
@@ -210,21 +213,24 @@ public:
             }
             if (priced) v.fields.push_back({"premium left", live_fmt::num(now) + " of " + live_fmt::num(sold) + " sold"});
         }
-        v.fields.push_back({"band at 09:20", band_text_.empty() ? "—" : band_text_});
+        v.fields.push_back({"band when sold", band_text_.empty() ? "—" : band_text_});
         return v;
     }
 
+    /// The earliest minute it sells, and the last.
     static constexpr int kDecideMinute = 9 * 60 + 20;
+    static constexpr int kLastEntryMinute = 15 * 60 + 10;
 
 private:
-    void decide(LiveEngine& e) {
+    void decide(LiveEngine& e, int m) {
         traded_today_ = true;
-        if (e.stale()) { note_ = "Skipped today: the feed was stale at 09:20."; return; }
+        const std::string at = live_fmt::hhmm(m);
+        if (e.stale()) { note_ = "Skipped today: the feed was stale at " + at + "."; return; }
         const LiveInstrument* idx = e.index_of(in_.under);
         const double spot = idx ? e.ltp(idx->token) : 0.0;
-        if (!(spot > 0.0) || !(in_.sigma_day > 0.0)) { note_ = "Skipped today: no spot or no volatility forecast at 09:20."; return; }
+        if (!(spot > 0.0) || !(in_.sigma_day > 0.0)) { note_ = "Skipped today: no spot or no volatility forecast at " + at + "."; return; }
         const double rem = in_.intraday_share * in_.sigma_day * in_.sigma_day
-                         * live_model_detail::remaining_fraction(kDecideMinute);
+                         * live_model_detail::remaining_fraction(m);
         const double half = kLiveZ80 * std::sqrt(rem);
         const double upper = spot * std::exp(half), lower = spot * std::exp(-half);
         band_text_ = live_fmt::num(lower, 1) + " – " + live_fmt::num(upper, 1) + " around " + live_fmt::num(spot, 1);
@@ -241,7 +247,7 @@ private:
             return;
         }
         std::string why;
-        const std::string reason = "09:20 80% band " + band_text_;
+        const std::string reason = at + " 80% band " + band_text_;
         if (!e.book().open(name(), *c, -1, 1, e.clock_ns(), reason, false, &why)) { note_ = "Could not sell the call: " + why; return; }
         if (!e.book().open(name(), *p, -1, 1, e.clock_ns(), reason, false, &why)) {
             (void)e.book().close(name(), c->token, e.clock_ns(), "put leg unfilled");
@@ -250,7 +256,7 @@ private:
         }
         call_ = c;
         put_ = p;
-        note_ = "Sold at 09:20: " + c->symbol + " and " + p->symbol + ".";
+        note_ = "Sold at " + at + ": " + c->symbol + " and " + p->symbol + ".";
     }
 
     LiveVolInputs in_;
@@ -321,9 +327,14 @@ public:
     [[nodiscard]] std::string family() const override { return "pairs"; }
     [[nodiscard]] bool carry() const override { return true; }
 
+    /// Decides every quarter hour of the session, 09:30 to 15:15.
+    [[nodiscard]] static bool decision_minute(int m) noexcept {
+        return m >= 9 * 60 + 30 && m <= kLiveRollMinute && m % 15 == 0;
+    }
+
     void on_minute(LiveEngine& e, int m) override {
         z_ = zscore(e);
-        if (m != kLiveRollMinute || !f_.ok || !std::isfinite(z_)) return;
+        if (!decision_minute(m) || !f_.ok || !std::isfinite(z_)) return;
         LiveDecisionScope log(e, name(), [this] { return "z " + live_fmt::num(z_) + ": " + note_; });
         const LiveInstrument* a = e.carry_future("NIFTY");
         const LiveInstrument* b = e.carry_future("BANKNIFTY");
@@ -333,7 +344,7 @@ public:
                 const std::string why = std::fabs(z_) <= r_.exit ? "spread back to mean (z " + live_fmt::num(z_) + ")"
                                                                  : "stop (z " + live_fmt::num(z_) + ")";
                 e.book().close_if([this](const LivePosition& p) { return p.model == name(); }, e.clock_ns(), why);
-                note_ = "Closed at 15:15: " + why + ".";
+                note_ = "Closed at " + live_fmt::hhmm(m) + ": " + why + ".";
             }
             return;
         }
@@ -347,7 +358,7 @@ public:
         const double lots_a_f = f_.beta * pb * static_cast<double>(b->lot) / (pa * static_cast<double>(a->lot));
         const std::int64_t lots_a = std::max<std::int64_t>(1, std::llround(lots_a_f));   // RULE 11: safe-side floor -- a hedge leg is at least one lot.
         const int side_b = z_ > 0.0 ? -1 : 1;   // spread rich: sell B, buy A
-        const std::string why = "z " + live_fmt::num(z_) + " at 15:15";
+        const std::string why = "z " + live_fmt::num(z_) + " at " + live_fmt::hhmm(m);
         if (!e.book().open(name(), *b, side_b, 1, e.clock_ns(), why, true)
             || !e.book().open(name(), *a, -side_b, lots_a, e.clock_ns(), why, true)) {
             e.book().close_if([this](const LivePosition& p) { return p.model == name(); }, e.clock_ns(), "leg unfilled");
@@ -365,7 +376,7 @@ public:
         v.state = !f_.ok ? "abstaining" : (e.book().flat(name()) ? "watching" : "in position");
         v.signal = std::isfinite(z_) ? "z " + live_fmt::num(z_) : "";
         v.reason = !f_.ok ? "No formation: " + f_.why
-                          : (note_.empty() ? "Decides once a day at 15:15: in at |z| >= 2, out at |z| <= 0.5, stop at 4; carried overnight." : note_);
+                          : (note_.empty() ? "Decides every quarter hour (09:30–15:15): in at |z| >= 2, out at |z| <= 0.5, stop at 4; carried overnight." : note_);
         if (f_.ok) {
             v.fields.push_back({"beta (250 d)", live_fmt::num(f_.beta, 3)});
             v.fields.push_back({"spread sd", live_fmt::num(f_.sd, 4)});
@@ -413,11 +424,13 @@ public:
     [[nodiscard]] bool carry() const override { return true; }
 
     void on_minute(LiveEngine& e, int m) override {
-        if (m != kLiveRollMinute || !in_.ok) return;
+        // Every quarter hour of the session, 09:30 to 15:15, on today's returns so far.
+        if (!LivePairsModel::decision_minute(m) || !in_.ok) return;
         LiveDecisionScope log(e, name(), [this] { return note_; });
+        const std::string at = live_fmt::hhmm(m);
         const LiveInstrument* idx = e.index_of("NIFTY");
         const double mkt = idx ? e.ltp(idx->token) : 0.0;
-        if (!(mkt > 0.0) || !(in_.market_last_close > 0.0)) { note_ = "No NIFTY price at 15:15."; return; }
+        if (!(mkt > 0.0) || !(in_.market_last_close > 0.0)) { note_ = "No NIFTY price at " + at + "."; return; }
         // Today's return so far is the panel's last day.
         RrPanel p = in_.history;
         p.day.push_back(e.today());
@@ -453,9 +466,9 @@ public:
             if (held) continue;
             const int side = s < -pol_.entry ? 1 : (s > pol_.entry ? -1 : 0);
             if (side == 0) continue;
-            opened += e.book().open(name(), *fut, side, 1, e.clock_ns(), "s " + live_fmt::num(s) + " at 15:15", true) ? 1u : 0u;
+            opened += e.book().open(name(), *fut, side, 1, e.clock_ns(), "s " + live_fmt::num(s) + " at " + at, true) ? 1u : 0u;
         }
-        note_ = "15:15: " + std::to_string(priced) + " stocks priced, " + std::to_string(opened) + " opened, "
+        note_ = at + ": " + std::to_string(priced) + " stocks priced, " + std::to_string(opened) + " opened, "
               + std::to_string(closed) + " closed.";
     }
 
@@ -468,7 +481,7 @@ public:
         v.state = !in_.ok ? "abstaining" : (n > 0 ? "in position" : "watching");
         v.signal = n > 0 ? std::to_string(n) + " stock future(s) held" : "";
         v.reason = !in_.ok ? "No history: " + in_.why
-                           : (note_.empty() ? "Decides once a day at 15:15 on Avellaneda-Lee s-scores; one lot of each stock's future; carried." : note_);
+                           : (note_.empty() ? "Decides every quarter hour (09:30–15:15) on Avellaneda-Lee s-scores; one lot of each stock's future; carried." : note_);
         // The strongest five scores.
         std::vector<std::pair<double, std::string>> best;
         for (std::size_t i = 0; i < scores_.size(); ++i)

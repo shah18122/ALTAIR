@@ -328,17 +328,16 @@ public:
     std::string name() const override { return "Seasonal vol (time of day)"; }
     std::string family() const override { return "volatility"; }
     std::string fit(const CurriculumDesign& d) override {
-        const auto& tr = d.track();
         const std::size_t n = d.train_rows();
-        if (tr.slot.size() != tr.rows() || n < 100) { return "no slot profile"; }
+        if (!d.has_slots() || n < 100) { return "no slot profile"; }
         std::size_t slots = 0;
-        for (std::size_t j = 0; j < n; ++j) { slots = std::max<std::size_t>(slots, tr.slot[j] + 1u); }
+        for (std::size_t j = 0; j < n; ++j) { slots = std::max<std::size_t>(slots, d.slot(j) + 1u); }
         std::vector<double> ss(slots, 0.0), cnt(slots, 0.0);
         double all = 0.0;
         for (std::size_t j = 0; j < n; ++j) {
             const double r = d.target(j);
-            ss[tr.slot[j]] += r * r;
-            cnt[tr.slot[j]] += 1.0;
+            ss[d.slot(j)] += r * r;
+            cnt[d.slot(j)] += 1.0;
             all += r * r;
         }
         const double base = std::sqrt(all / static_cast<double>(n));
@@ -352,16 +351,15 @@ public:
         return {};
     }
     double scale(const CurriculumDesign& d, std::size_t i) const override {
-        const auto& tr = d.track();
         const auto h = d.history(i);
         if (h.size() < done_) { return band_detail::nan(); }
         for (std::size_t t = done_; t < h.size(); ++t) {
-            const double f = tr.slot[t] < f_.size() ? f_[tr.slot[t]] : 1.0;
+            const double f = d.slot(t) < f_.size() ? f_[d.slot(t)] : 1.0;
             const double u = h[t] / f;
             v_ = 0.94 * v_ + 0.06 * u * u;
         }
         done_ = h.size();
-        const double f = tr.slot[i] < f_.size() ? f_[tr.slot[i]] : 1.0;
+        const double f = d.slot(i) < f_.size() ? f_[d.slot(i)] : 1.0;
         return f * std::sqrt(v_);
     }
 

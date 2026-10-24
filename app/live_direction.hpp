@@ -62,6 +62,10 @@ namespace ft = altair::forecast_tracks;
 namespace da = altair::data_audit;
 
 inline constexpr int kDecideMinute = 10 * 60 + 15;
+/// The decision times the models are calibrated for: every hour from 10:15
+/// (the shortlisted track) to 14:15, each to the 15:20 square-off. A model
+/// trades at the first of them where its own gate opens.
+inline constexpr int kDecideMinutes[] = {10 * 60 + 15, 11 * 60 + 15, 12 * 60 + 15, 13 * 60 + 15, 14 * 60 + 15};
 
 /// The base models run live: the shortlisted AR/ARMA and three learners.
 [[nodiscard]] inline std::vector<std::unique_ptr<CurriculumModel>> direction_models() {
@@ -85,6 +89,7 @@ inline constexpr int kDecideMinute = 10 * 60 + 15;
 struct DirectionShared {
     bool ok = false;
     std::string why;
+    int decide_minute = kDecideMinute;        ///< IST minute of day this track decides at
     std::vector<da::AuditBar> nifty5, vix5;   ///< cleaned history, through yesterday
     double other_cost_bp = 1.3;
     std::size_t history_days = 0;
@@ -145,8 +150,9 @@ struct DirectionShared {
 /// `min_train_days` days are left out -- three-day fits are not what runs live.
 inline void calibrate(DirectionShared& s, std::int32_t min_train_days = 120) {
     ft::TrackInfo info;
-    ft::SessionInputs hist{"NIFTY 10:15", "NIFTY", kDecideMinute, &s.nifty5, &s.vix5, s.other_cost_bp, nullptr, ""};
-    hist.exit_minute = live::kLiveSquareOffMinute;   // trained on the horizon it trades: 10:15 to the 15:20 square-off
+    const std::string label = "NIFTY " + live::live_fmt::hhmm(s.decide_minute);
+    ft::SessionInputs hist{label, "NIFTY", s.decide_minute, &s.nifty5, &s.vix5, s.other_cost_bp, nullptr, ""};
+    hist.exit_minute = live::kLiveSquareOffMinute;   // trained on the horizon it trades: the decision to the 15:20 square-off
     const auto tr = ft::build_session(hist, info);
     if (tr.rows() < 200) { s.why = "only " + std::to_string(tr.rows()) + " finished days of 5-minute history"; return; }
     auto models = direction_models();
@@ -258,19 +264,21 @@ inline void decide_from_bars(DirectionShared& s, const std::vector<da::AuditBar>
     } timer{s, t0};
     s.today_call.assign(s.names.size(), CurriculumCall{});
     s.today_note.clear();
-    if (own.size() < 12 || vix.size() < 12) {
-        s.today_note = "Today's 5-minute bars do not run unbroken from 09:15 to 10:15 (did the feed start late?).";
+    const std::string at = live::live_fmt::hhmm(s.decide_minute);
+    const std::size_t need = static_cast<std::size_t>((s.decide_minute - live::kLiveOpenMinute) / 5);
+    if (own.size() < need || vix.size() < need) {
+        s.today_note = "Today's 5-minute bars do not run unbroken from 09:15 to " + at + " (did the feed start late?).";
         return;
     }
     std::vector<da::AuditBar> nb = s.nifty5, vb = s.vix5;
     nb.insert(nb.end(), own.begin(), own.end());
     vb.insert(vb.end(), vix.begin(), vix.end());
-    ft::SessionInputs in{"NIFTY 10:15", "NIFTY", kDecideMinute, &nb, &vb, s.other_cost_bp, nullptr, ""};
+    ft::SessionInputs in{"NIFTY " + at, "NIFTY", s.decide_minute, &nb, &vb, s.other_cost_bp, nullptr, ""};
     in.partial_last_day = true;
     in.exit_minute = live::kLiveSquareOffMinute;
     ft::TrackInfo info;
     const auto tr = ft::build_session(in, info);
-    if (!info.partial_last || tr.rows() < 2) { s.today_note = "Today's 10:15 row could not be built (no VIX bar at a stamp?)."; return; }
+    if (!info.partial_last || tr.rows() < 2) { s.today_note = "Today's " + at + " row could not be built (no VIX bar at a stamp?)."; return; }
     const std::size_t i = tr.rows() - 1;
     // The models were fitted before the session on exactly the rows before
     // today's. If the history rows differ (the dataset changed under a
@@ -311,93 +319,111 @@ inline void decide_today(DirectionShared& s, const live::LiveEngine& e) {
 
 class LiveDirectionModel final : public live::LiveModel {
 public:
-    /// `index` < names.size(): a base model; == names.size(): the vote.
-    LiveDirectionModel(std::shared_ptr<DirectionShared> s, std::size_t index) : s_(std::move(s)), i_(index) {}
+    /// `index` < names.size(): a base model; == names.size(): the vote. One
+    /// shared track per decision time (kDecideMinutes), all for the same models.
+    LiveDirectionModel(std::vector<std::shared_ptr<DirectionShared>> s, std::size_t index) : s_(std::move(s)), i_(index) {}
+    LiveDirectionModel(std::shared_ptr<DirectionShared> s, std::size_t index)
+        : LiveDirectionModel(std::vector<std::shared_ptr<DirectionShared>>{std::move(s)}, index) {}
 
     [[nodiscard]] std::string name() const override {
-        return "Direction 10:15 " + (i_ < s_->names.size() ? s_->names[i_] : std::string("Vote"));
+        const DirectionShared& z = *s_.front();
+        return "Direction " + (i_ < z.names.size() ? z.names[i_] : std::string("Vote"));
     }
     [[nodiscard]] std::string family() const override { return "direction + magnitude gate"; }
-    void on_new_day(live::LiveEngine&) override { done_ = false; note_.clear(); signal_.clear(); fields_.clear(); }
+    void on_new_day(live::LiveEngine&) override { entered_ = false; note_.clear(); signal_.clear(); fields_.clear(); }
 
     void on_minute(live::LiveEngine& e, int m) override {
-        if (m > kDecideMinute && !done_ && s_->ok) {
-            // The engine started (or restarted) after 10:15: today's call was
-            // never made here. A position resumed from the journal is held to
-            // the square-off as before.
-            done_ = true;
-            note_ = e.book().flat(name()) ? "Missed today: the models first ran at " + live::live_fmt::hhmm(m) + ", after 10:15 (a late start, or decisions paused on a feed gap)."
-                                          : "Resumed at " + live::live_fmt::hhmm(m) + ": holding the position taken at 10:15 to the square-off.";
-            e.note_decision(name(), note_);
+        // The decision times whose track was calibrated; a model that is in a
+        // position (or entered today) holds it to the square-off.
+        DirectionShared* sh = nullptr;
+        for (const auto& x : s_) if (x->ok && x->decide_minute == m) sh = x.get();
+        if (sh == nullptr) return;
+        if (entered_ || !e.book().flat(name())) {
+            if (!entered_) {
+                entered_ = true;
+                note_ = "Holding the position resumed from earlier today to the square-off.";
+                e.note_decision(name(), note_);
+            }
             return;
         }
-        if (m != kDecideMinute || done_ || !s_->ok) return;
-        done_ = true;
+        DirectionShared& s = *sh;
+        const std::string at = live::live_fmt::hhmm(m);
         // The gate's inputs go on the record with the outcome.
         live::LiveDecisionScope log(e, name(), [this] {
             std::string t = note_;
             for (const auto& [k, v] : fields_) t += " | " + k + " " + v;
             return t;
         });
-        decide_today(*s_, e);
-        if (!s_->today_note.empty()) { note_ = s_->today_note; return; }
+        decide_today(s, e);
+        if (!s.today_note.empty()) { note_ = at + ": " + s.today_note; return; }
         int dir = 0;
         double qraw = std::numeric_limits<double>::quiet_NaN();
-        if (i_ < s_->names.size()) {
-            const CurriculumCall& c = s_->today_call[i_];
-            if (!c.made || c.dir == 0) { note_ = "The model abstained today."; return; }
+        if (i_ < s.names.size()) {
+            const CurriculumCall& c = s.today_call[i_];
+            if (!c.made || c.dir == 0) { note_ = at + ": the model abstained."; return; }
             dir = c.dir;
             qraw = stated_q(c);
         } else {
             int up = 0, down = 0;
-            for (const auto& c : s_->today_call) if (c.made && c.dir != 0) (c.dir > 0 ? up : down) += 1;
-            if (up == down) { note_ = "The five models split evenly; no call."; return; }
+            for (const auto& c : s.today_call) if (c.made && c.dir != 0) (c.dir > 0 ? up : down) += 1;
+            if (up == down) { note_ = at + ": the five models split evenly; no call."; return; }
             dir = up > down ? 1 : -1;
         }
-        if (!(s_->today_sigma_bp > 0.0)) { note_ = "No volatility forecast for today (fewer than 20 sessions of history)."; return; }
-        const double q = s_->cal[i_].calibrated(qraw);
-        const GateValue g = gate_value(q, s_->cal[i_].calibrated_se(qraw), s_->payoff[i_].estimate(), s_->today_sigma_bp,
-                                       s_->today_cost_bp, s_->gate_z);
-        signal_ = std::string(dir > 0 ? "UP" : "DOWN") + " to 15:20";
-        fields_ = {{"calibrated q", live::live_fmt::pct(q, 1) + " ± " + live::live_fmt::pct(g.q_se, 1)},
+        if (!(s.today_sigma_bp > 0.0)) { note_ = at + ": no volatility forecast (fewer than 20 sessions of history)."; return; }
+        const double q = s.cal[i_].calibrated(qraw);
+        const GateValue g = gate_value(q, s.cal[i_].calibrated_se(qraw), s.payoff[i_].estimate(), s.today_sigma_bp,
+                                       s.today_cost_bp, s.gate_z);
+        signal_ = std::string(dir > 0 ? "UP" : "DOWN") + " " + at + " to 15:20";
+        fields_ = {{"decision", at},
+                   {"calibrated q", live::live_fmt::pct(q, 1) + " ± " + live::live_fmt::pct(g.q_se, 1)},
                    {"gain if right", live::live_fmt::num(g.gain_bp, 1) + " bp"},
                    {"loss if wrong", live::live_fmt::num(g.loss_bp, 1) + " bp"},
                    {"round-trip cost", live::live_fmt::num(g.cost_bp, 1) + " bp"},
                    {"value q·gain − (1−q)·loss − cost", live::live_fmt::num(g.value_bp, 1) + " ± " + live::live_fmt::num(g.se_bp, 1) + " bp"},
-                   {"gate bound (value − " + live::live_fmt::num(s_->gate_z, 1) + " se)", live::live_fmt::num(g.lower_bp, 1) + " bp"}};
+                   {"gate bound (value − " + live::live_fmt::num(s.gate_z, 1) + " se)", live::live_fmt::num(g.lower_bp, 1) + " bp"}};
         if (!g.open()) {
-            note_ = "Gate shut: worth " + live::live_fmt::num(g.value_bp, 1) + " ± " + live::live_fmt::num(g.se_bp, 1)
-                  + " bp after costs; it must clear zero by " + live::live_fmt::num(s_->gate_z, 1) + " standard error(s).";
+            note_ = at + ": gate shut, worth " + live::live_fmt::num(g.value_bp, 1) + " ± " + live::live_fmt::num(g.se_bp, 1)
+                  + " bp after costs; it must clear zero by " + live::live_fmt::num(s.gate_z, 1) + " standard error(s).";
             return;
         }
         const double value = g.value_bp;
         const auto* fut = e.near_future("NIFTY");
-        if (fut == nullptr || e.stale()) { note_ = "Gate open, but no NIFTY future or a stale feed."; return; }
+        if (fut == nullptr || e.stale()) { note_ = at + ": gate open, but no NIFTY future or a stale feed."; return; }
         std::string why;
         const std::string reason = signal_ + ": q " + live::live_fmt::pct(q, 1) + ", value " + live::live_fmt::num(value, 1) + " bp";
-        if (e.book().open(name(), *fut, dir, 1, e.clock_ns(), reason, false, &why)) note_ = "Gate open: " + reason + ".";
-        else note_ = "Gate open, but the entry was refused: " + why;
+        if (e.book().open(name(), *fut, dir, 1, e.clock_ns(), reason, false, &why)) {
+            entered_ = true;
+            note_ = "Gate open: " + reason + ".";
+        } else {
+            note_ = at + ": gate open, but the entry was refused: " + why;
+        }
     }
 
     [[nodiscard]] live::LiveModelView view(const live::LiveEngine& e) const override {
         live::LiveModelView v;
         v.name = name();
         v.family = family();
-        v.state = !s_->ok ? "abstaining" : (!e.book().flat(name()) ? "in position" : (done_ ? "done today" : "waiting for 10:15"));
+        const DirectionShared& z = *s_.front();
+        bool any = false;
+        for (const auto& x : s_) any = any || x->ok;
+        v.state = !any ? "abstaining" : (!e.book().flat(name()) ? "in position" : (entered_ ? "done today" : "watching"));
         v.signal = signal_;
-        v.reason = !s_->ok ? "No history: " + s_->why
-                           : (note_.empty() ? "At 10:15: forecast 10:15 to the 15:20 square-off; trade one NIFTY future lot only if q·gain − (1−q)·loss − cost clears zero by the gate's margin." : note_);
+        std::string times;
+        for (const auto& x : s_) if (x->ok) times += (times.empty() ? "" : ", ") + live::live_fmt::hhmm(x->decide_minute);
+        v.reason = !any ? "No history: " + z.why
+                        : (note_.empty() ? "At " + times + ": forecast to the 15:20 square-off; trade one NIFTY future lot at the first of them where q·gain − (1−q)·loss − cost clears zero by the gate's margin." : note_);
         v.fields = fields_;
-        if (s_->ok && i_ < s_->accuracy.size())
-            v.fields.push_back({"walk-forward hit rate", live::live_fmt::pct(s_->accuracy[i_], 1) + " of "
-                                                         + std::to_string(s_->scored[i_]) + " days"});
+        for (const auto& x : s_)
+            if (x->ok && i_ < x->accuracy.size())
+                v.fields.push_back({"walk-forward hit rate " + live::live_fmt::hhmm(x->decide_minute),
+                                    live::live_fmt::pct(x->accuracy[i_], 1) + " of " + std::to_string(x->scored[i_]) + " days"});
         return v;
     }
 
 private:
-    std::shared_ptr<DirectionShared> s_;
+    std::vector<std::shared_ptr<DirectionShared>> s_;
     std::size_t i_;
-    bool done_ = false;
+    bool entered_ = false;
     std::string note_, signal_;
     std::vector<std::pair<std::string, std::string>> fields_;
 };

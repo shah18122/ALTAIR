@@ -78,6 +78,7 @@ public:
                 const auto it = seeds.stocks.find(u_[i].symbol);
                 init(i, it != seeds.stocks.end() ? it->second : 0.0);
             }
+        for (std::size_t i = 0; i < u_.size(); ++i) link_twin(i);
     }
 
     /// Add an instrument mid-session: the market watch's scrip search. Its
@@ -88,6 +89,7 @@ public:
         u_.push_back(std::move(in));
         st_.emplace_back();
         init(u_.size() - 1, equity_close);
+        link_twin(u_.size() - 1);
     }
 
     /// Follow a real day: each index lands on every one of these minute
@@ -129,7 +131,16 @@ public:
         for (std::size_t i = 0; i < u_.size(); ++i) {
             const auto& in = u_[i];
             auto& s = st_[i];
-            if (in.kind == LiveKind::Equity) {
+            if (in.kind == LiveKind::Equity && s.twin >= 0) {
+                // A BSE listing: its NSE twin's price times (1 + basis). The
+                // basis decays to zero within a minute or so, wanders by a
+                // fraction of a basis point, and now and then jumps 12-30 bp
+                // -- the dislocation the cross-exchange arbitrage trades.
+                const double secs = static_cast<double>(dt_ns) * 1e-9;
+                s.basis = s.basis * std::exp(-secs / 20.0) + 0.00005 * std::sqrt(secs) * normal();
+                if (uniform() < secs / 600.0) s.basis += (uniform() < 0.5 ? -1.0 : 1.0) * (0.0012 + 0.0018 * uniform());
+                s.fair = st_[static_cast<std::size_t>(s.twin)].fair * (1.0 + s.basis);
+            } else if (in.kind == LiveKind::Equity) {
                 const double idio = 0.20 * sq * normal();
                 s.fair *= std::exp(s.beta * sn * sq * zn + idio - 0.5 * (s.beta * s.beta * sn * sn + 0.04) * dt);
             } else {
@@ -166,6 +177,8 @@ public:
 private:
     struct State {
         double fair = 0.0, beta = 1.0;
+        int twin = -1;           ///< a BSE listing: the index of its NSE twin
+        double basis = 0.0;      ///< BSE over NSE, as a fraction
         std::int64_t prev_close = 0, ltp = 0, open = 0, high = 0, low = 0;
         std::int64_t volume = 0, oi = 0, last_trade_ns = 0;
         double notional = 0.0;   // for the average price
@@ -193,6 +206,21 @@ private:
         for (std::size_t j = 0; j < u_.size() && j < st_.size(); ++j)
             if (u_[j].kind == LiveKind::Equity && u_[j].symbol == in.underlying && st_[j].fair > 0.0) return st_[j].fair;
         return nifty_;
+    }
+
+    /// A BSE equity follows its NSE twin (an earlier row) from the start:
+    /// same fair value, same previous close.
+    void link_twin(std::size_t i) {
+        const auto& in = u_[i];
+        if (in.kind != LiveKind::Equity || in.fyers.rfind("BSE:", 0) != 0) return;
+        for (std::size_t j = 0; j < i; ++j) {
+            if (u_[j].kind != LiveKind::Equity || u_[j].symbol != in.symbol || u_[j].fyers.rfind("NSE:", 0) != 0) continue;
+            st_[i].twin = static_cast<int>(j);
+            st_[i].fair = st_[j].fair;
+            st_[i].prev_close = st_[j].prev_close;
+            st_[i].ltp = st_[j].prev_close;
+            return;
+        }
     }
 
     void init(std::size_t i, double equity_close) {

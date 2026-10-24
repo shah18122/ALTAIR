@@ -2,3 +2,8 @@
 dataset/** -diff linguist-generated
 data/masters/** -diff linguist-generated
 data/instruments.csv -diff linguist-generated
+
+# Windows batch files run under cmd, whose label and goto parsing misbehaves on
+# LF-only lines: check them out with CRLF whatever core.autocrlf says.
+*.bat text eol=crlf
+*.cmd text eol=crlf

@@ -20,8 +20,15 @@
 #include <core/types/units.hpp>
 
 #include <QApplication>
+#include <QShortcut>
+#include <QCheckBox>
 #include <QDateTime>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTableWidget>
+#include <QTemporaryDir>
+#include <QTimeZone>
 
 #include <cmath>
 #include <cstdint>
@@ -446,6 +453,175 @@ int main(int argc, char** argv)
         std::swap(back.stamps_ns[0], back.stamps_ns[2]);
         check(stamps_ascending(s) && !stamps_ascending(back),
               "a file out of date order is detected, so it gets no basis");
+    }
+
+    // ------------------------------------------------------------------
+    // [9] LIVE: off by default; on only with LIVE typed; every order is
+    // confirmed and becomes one request line for the order router.
+    // ------------------------------------------------------------------
+    std::printf("\n[9] LIVE: off by default, a typed switch, a confirmed request\n");
+    {
+        QTemporaryDir tmp;
+        term.set_router_autostart(false);
+        term.set_live_root(tmp.path());
+        check(!term.live_on() && term.live_switch()->text() == QStringLiteral("PAPER"),
+              "LIVE is off by default: the switch says PAPER");
+        LiveTradingArmDialog dlg(LiveTradingLimits{});
+        dlg.type_phrase(QStringLiteral("live"));
+        check(!dlg.can_accept(), "the switch needs LIVE typed exactly");
+        dlg.type_phrase(QStringLiteral("LIVE"));
+        check(dlg.can_accept() && dlg.limits().max_lots == 1, "typed: it may switch on, one lot per order by default");
+
+        PaperOrder o;
+        o.inst = PaperInstrument{111u, QStringLiteral("NIFTY26OCTFUT"), QStringLiteral("NFO"), 75, 5, true};
+        o.product = QStringLiteral("NRML");
+        o.side = PaperSide::Buy;
+        o.type = PaperType::Limit;
+        o.qty = 75;
+        o.limit_paise = 2'500'000;
+        const QString intents = tmp.path() + QStringLiteral("/data/order_intents.jsonl");
+        check(!term.place_live(o, false).has_value() && !QFile::exists(intents), "with LIVE off, nothing is requested");
+
+        check(term.arm_live(LiveTradingLimits{}) && term.live_on() && term.live_switch()->text().contains(QStringLiteral("LIVE")),
+              "switched on, and the switch says LIVE");
+        QFile armf(tmp.path() + QStringLiteral("/data/live_trading.json"));
+        const QJsonObject arm = armf.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(armf.readAll()).object() : QJsonObject{};
+        armf.close();
+        const qint64 now_s = QDateTime::currentSecsSinceEpoch();
+        const qint64 until = static_cast<qint64>(arm.value(QStringLiteral("expires_unix")).toDouble());
+        check(arm.value(QStringLiteral("armed")).toBool() && arm.value(QStringLiteral("max_lots")).toInt() == 1
+                  && until > now_s && until - now_s <= 12 * 3600,
+              "the arm file: armed, one lot, and it ends within one session");
+        const QJsonObject st = arm.value(QStringLiteral("strategies")).toObject();
+        bool any_on = false;
+        for (const QString& k : {QStringLiteral("arbitrage"), QStringLiteral("ohl"), QStringLiteral("option_arb")})
+            any_on = any_on || !st.contains(k) || st.value(k).toObject().value(QStringLiteral("on")).toBool();
+        check(st.size() == 3 && !any_on, "the arm names every auto strategy, each off unless ticked");
+        {
+            LiveTradingArmDialog d2(LiveTradingLimits{});
+            d2.set_strategy(QStringLiteral("arbitrage"), true, 10);
+            const LiveTradingLimits l2 = d2.limits();
+            const QString p2 = tmp.path() + QStringLiteral("/arm2.json");
+            const bool wrote = write_live_arm(p2, true, QStringLiteral("t"), l2, QDateTime::currentDateTimeUtc());
+            const LiveTradingArm back = read_live_arm(p2, QDateTime::currentSecsSinceEpoch());
+            check(d2.findChild<QCheckBox*>(QStringLiteral("liveArmStrategy_arbitrage")) != nullptr && wrote
+                      && back.limits.strategies.size() == 3 && back.limits.strategies[0].key == QStringLiteral("arbitrage")
+                      && back.limits.strategies[0].on && back.limits.strategies[0].max_lots == 10
+                      && !back.limits.strategies[1].on && !back.limits.strategies[2].on,
+                  "ticking Auto: Arbitrage switches on it alone, with its own caps, and the file reads back the same");
+            check(live_strategies_text(l2).contains(QStringLiteral("ON")) && live_strategies_text(l2).contains(QStringLiteral("OHL threshold off")),
+                  "the LIVE tooltip says which strategies trade by themselves");
+        }
+
+        int asked = 0;
+        term.set_live_confirm([&](const QString& text) {
+            ++asked;
+            return !(text.contains(QStringLiteral("REAL ORDER")) && text.contains(QStringLiteral("NIFTY26OCTFUT")));
+        });
+        check(!term.place_live(o, true).has_value() && asked == 1 && !QFile::exists(intents),
+              "the confirmation names the order; declined, nothing is written");
+        term.set_live_confirm([&](const QString&) { ++asked; return true; });
+        const auto id = term.place_live(o, true);
+        QFile f(intents);
+        const QByteArray line = f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray{};
+        check(id.has_value() && asked == 2 && line.count('\n') == 1 && line.contains("\"token\":111")
+                  && line.contains("\"lots\":1,") && line.contains("\"order_type\":\"LIMIT\",\"limit_paise\":2500000")
+                  && line.contains("\"product\":\"NRML\""),
+              "confirmed: one request line, in lots, with the exact limit");
+        o.qty = 100;
+        check(!term.place_live(o, false).has_value(), "a quantity that is not whole lots is refused");
+
+        // The router's book, as the Terminal shows it.
+        QDir().mkpath(tmp.path() + QStringLiteral("/data/live_orders"));
+        QFile book(tmp.path() + QStringLiteral("/data/live_orders/orders.json"));
+        if (book.open(QIODevice::WriteOnly)) {
+            book.write(QStringLiteral("{\"router\":{\"beat_ns\":%1,\"armed\":true,\"killed\":false,\"dry_run\":false,\"session\":true,"
+                                      "\"why\":\"\",\"day_pnl_paise\":-12050,\"orders_today\":1,\"open\":1,\"max_orders_per_day\":20},"
+                                      "\"orders\":[{\"at_ns\":%1,\"intent\":\"x\",\"id\":\"26100500001\",\"symbol\":\"NIFTY26OCTFUT\","
+                                      "\"side\":\"BUY\",\"type\":\"LIMIT\",\"qty\":75,\"limit_paise\":2500000,\"status\":\"OPEN\","
+                                      "\"filled\":0,\"avg_paise\":0,\"message\":\"\"}]}")
+                           .arg(QDateTime::currentMSecsSinceEpoch() * 1'000'000LL)
+                           .toUtf8());
+            book.close();
+        }
+        const LiveTradingView v = read_live_router(book.fileName(), QDateTime::currentMSecsSinceEpoch() * 1'000'000LL);
+        check(v.running && v.armed && v.day_pnl_paise == -12'050 && v.orders.size() == 1 && v.orders[0].open(),
+              "the router's heartbeat, P&L and open order are read");
+        term.show_live_orders();
+        auto* lt = term.live_orders()->findChild<QTableWidget*>(QStringLiteral("liveOrderTable"));
+        check(lt != nullptr && lt->rowCount() == 1 && lt->item(0, 6)->text() == QStringLiteral("OPEN")
+                  && lt->item(0, 9)->text() == QStringLiteral("26100500001"),
+              "Live orders lists it, with FYERS's id to cancel by");
+        term.live_orders()->hide();
+
+        check(term.disarm_live() && !term.live_on() && term.live_switch()->text() == QStringLiteral("PAPER"),
+              "switched off: PAPER again");
+        o.qty = 75;
+        check(!term.place_live(o, false).has_value(), "and nothing more is requested");
+        check(live_arm_expiry(QDateTime(QDate(2026, 10, 5), QTime(4, 0), QTimeZone::utc())) ==
+                  QDateTime(QDate(2026, 10, 5), QTime(10, 0), QTimeZone::utc()).toSecsSinceEpoch(),
+              "an arm at 09:30 IST ends at 15:30 IST");
+        check(live_arm_expiry(QDateTime(QDate(2026, 10, 4), QTime(19, 0), QTimeZone::utc())) ==
+                  QDateTime(QDate(2026, 10, 5), QTime(7, 0), QTimeZone::utc()).toSecsSinceEpoch(),
+              "one given at 00:30 IST ends twelve hours later, never past what the router accepts");
+    }
+
+    // ------------------------------------------------------------------
+    // [10] The strip: no Market Watch / Option Chain buttons; Models toggles;
+    // the movers sit beside LIVE; Greek Watch opens from an option.
+    // ------------------------------------------------------------------
+    std::printf("\n[10] strip, Models toggle, movers, Greek Watch\n");
+    {
+        bool view_buttons = false;
+        for (auto* b : term.findChildren<QPushButton*>())
+            view_buttons = view_buttons || b->text() == QStringLiteral("Market Watch") || b->text() == QStringLiteral("Option Chain");
+        check(!view_buttons, "no Market Watch or Option Chain button: Enter on a scrip opens its chain");
+        check(term.findChild<QLabel*>(QStringLiteral("moversStrip")) != nullptr
+                  && term.movers_text().contains(QStringLiteral("movers")),
+              "the movers strip sits beside LIVE (waiting until prices arrive)");
+        check(term.show_view(QStringLiteral("models")) && term.show_view(QStringLiteral("watch")),
+              "Models (Ctrl+M) and back to the watch (F4)");
+        MasterScrip ce;
+        ce.token = 9030; ce.symbol = QStringLiteral("SBIN26OCT800CE"); ce.exchange = QStringLiteral("NFO");
+        ce.segment = QStringLiteral("NFO-OPT"); ce.name = QStringLiteral("SBIN"); ce.type = QStringLiteral("CE");
+        ce.expiry = QStringLiteral("2099-10-27"); ce.strike = 800; ce.lot = 750;
+        MasterScrip fut = ce;
+        fut.token = 9003; fut.symbol = QStringLiteral("SBIN99OCTFUT"); fut.segment = QStringLiteral("NFO-FUT");
+        fut.type = QStringLiteral("FUT"); fut.strike = 0;
+        MasterScrip eq;
+        eq.token = 779521; eq.symbol = QStringLiteral("SBIN"); eq.exchange = QStringLiteral("NSE");
+        eq.segment = QStringLiteral("NSE"); eq.type = QStringLiteral("EQ");
+        term.market_watch()->set_master_for_test({ce, fut, eq});
+        check(term.open_greek(9030) && term.greek_watch()->legs().size() == 1
+                  && term.greek_watch()->legs()[0].fut == 9003 && term.greek_watch()->legs()[0].spot == 779521,
+              "Greek Watch takes the option with its future and its stock to value it on");
+        check(!term.open_greek(779521), "an equity is not an option: Greek Watch refuses it");
+        term.greek_watch()->hide();
+
+        // GETS keys: Shift+S (scrip selection) and Ctrl+S (watchlists).
+        bool shift_s = false, ctrl_s = false;
+        for (auto* sc : term.findChildren<QShortcut*>()) {
+            shift_s = shift_s || sc->key() == QKeySequence(Qt::SHIFT | Qt::Key_S);
+            ctrl_s = ctrl_s || sc->key() == QKeySequence(Qt::CTRL | Qt::Key_S);
+        }
+        check(shift_s && ctrl_s, "Shift+S opens the scrip selection and Ctrl+S the watchlists");
+        auto* bar = term.market_watch()->loader();
+        bar->set_popups(false);
+        term.show();                       // focus needs a window on screen
+        term.activateWindow();
+        QApplication::processEvents();
+        bar->choose(QStringLiteral("NSE"), QStringLiteral("E"), QStringLiteral("SBIN"));
+        term.market_watch()->focus_scrip_selection();
+        QApplication::processEvents();
+        bar->step(false);
+        bar->step(false);
+        bar->step(false);
+        check(bar->focused_field() == QStringLiteral("addScripButton"),
+              "NSE, E, SBIN by Tab: Expiry, Type and Strike are skipped for equity and Add takes the focus");
+
+        // The message bar carries the order log.
+        check(term.message_bar() != nullptr && term.message_bar()->toPlainText().contains(QStringLiteral("LIVE")),
+              "the message bar shows the order log (the LIVE switch lines above)");
     }
 
     std::printf("\n%s -- %d failing check(s)\n",

@@ -38,9 +38,14 @@ Options:
 - `--cap-days N`: stop doubling once a block would exceed N days, then walk on in N-day blocks. 0 (the default) is pure doubling.
 - `--jobs N`: how many tracks run in parallel. The default is the machine's core count.
 - `--other-cost-bp X`.
-- `--only TEXT`: run only tracks whose name contains it, e.g. `--only 5m`.
+- `--only TEXT`: run only tracks whose name contains it, e.g. `--only 5m`; `--skip TEXT` leaves them out, e.g. `--skip 1m`.
+- `--bhavcopy DIR` (default `data\bhavcopy`, fetched by `ops\fetch_bhavcopy.ps1 -Go`) and `--recorded-iv DIR`
+  (default `data\live\iv`, written by `altair_iv_record`): the implied vol of the "+ ivrv" tracks. `--no-ivrv`
+  leaves those tracks out.
 - `--no-bands`, `--no-log`.
 - `--no-feeds`: skip the second pass.
+- `--leak-check`: prove that no forecast saw its future (see "No look-ahead"). It adds about 60 % to the run
+  time and exits with code 3 if anything leaked.
 
 ## Output (`data/verified/`, git-ignored)
 
@@ -49,6 +54,7 @@ Options:
 | `forecast_curriculum.xlsx` | **Tradability**: each track's mean move, cost, the accuracy a call needs to pay that cost (at the history's cost and at today's), and the best models against it. **Feeds**: every second-pass model against its first pass over the same period. **Summary**: direction, every model on every track (accuracy, 95 % interval, p against a coin and against the best constant call, both Bonferroni-corrected, coverage, Brier, price skill against the random walk, trades that clear cost, verdict). **Bands**: every band model on every track (hit rate, width, interval score, skill against the constant band). **Frontier**: accuracy of each model's most confident 0.1 % … 100 % of calls, and the largest slice still at or above 80 %. **Atlas coverage**: every Model Atlas row, and what the run did with it. **Data** · **Method** · one **sheet per track** with its learning curves. |
 | `forecast_curriculum.txt` | The summary as text. |
 | `forecast_log/<track>.csv` | Every forecast on the daily and hourly tracks: time, stage, days learned, model, last price, next price, forecast price, P(up), call, what moved, RIGHT/WRONG/FLAT, net bp if traded. The 1–15-minute logs would run to gigabytes and are not written. |
+| `leak_check.csv` | With `--leak-check`: for every track and cut, the rows rebuilt and the calls and bands rerun, how many differed (always 0 on a clean run), and the first difference. |
 
 ## Tracks
 
@@ -57,8 +63,8 @@ Options:
 | NIFTY, BANKNIFTY, NIFTY FUT, INDIA VIX daily | 15:30, from that day's bar | next trading day's close |
 | NIFTY, BANKNIFTY 0920-close and 1015-close (horizons) | 09:20 or 10:15, the close of that 5-minute bar | the same day's 15:30 close |
 | … + vol / cross / models / all (second pass) | the first-pass track's decision, plus other models' forecasts made by then | the same |
-| NIFTY, BANKNIFTY, INDIA VIX hourly | close of each of a full day's first six hourly bars (10:15 … 15:15) | the next hourly close (no overnight hour) |
-| NIFTY, BANKNIFTY, INDIA VIX 15m, 5m, 1m | close of every bar of a full 09:15–15:30 session but the last | the next bar's close (no overnight bar) |
+| NIFTY, BANKNIFTY, INDIA VIX hourly | close of each of the day's first six hourly bars (10:15 … 15:15), while the bars run on the 09:15 grid | the next hourly close (no overnight hour) |
+| NIFTY, BANKNIFTY, INDIA VIX 15m, 5m, 1m | close of every bar of the 09:15–15:30 session but the last, while the bars run on the grid | the next bar's close (no overnight bar) |
 
 Features (all known at the decision; standardised on the training window
 only — and where a model tunes a hyperparameter (k, λ, depth, the L2 weight),
@@ -73,9 +79,7 @@ futures track takes its price features from the spot index plus the
 
 ## Models
 
-| Family | Models |
-|---|---|
-33 direction forecasters and 9 ensembles:
+34 direction forecasters and 11 ensembles:
 
 | Family | Models |
 |---|---|
@@ -85,9 +89,10 @@ futures track takes its price features from the spot index plus the
 | Trees | Decision tree, Random forest (depth tuned), Gradient boosting |
 | Neural | MLP, LSTM, GRU, causal Transformer and CNN (three layers of dilated causal convolution), all trained by backpropagation |
 | Reinforcement | DQN, PPO and actor-critic, each as a contextual bandit (state: the features; actions: long or short; reward: the next standardised return with the action's sign) |
-| Time series | AR(2), ARMA(1,1), Seasonal AR (SARIMA), VAR(1), Kalman filter (drift), Ornstein–Uhlenbeck, Markov chain, Hidden Markov model, Hurst regime switch |
+| Time series | AR(2), ARMA(1,1), Seasonal AR (SARIMA), VAR(1), Kalman filter (drift), Ornstein–Uhlenbeck, Markov chain, Hidden Markov model, Hurst regime switch, **Seasonal mean** (each bar of the day's — each weekday's on a daily track — mean return, shrunk toward zero by its own noise; a slot inside its standard error forecasts no change) |
 | Regime | k-means regimes |
 | Ensembles | Vote, Champion, Hedge, **Stack** (a logistic regression on every model's past out-of-sample calls), and the filters that abstain unless confident: **Stack (confident third / 10 % / 2 %)**, **Consensus 75 % / 90 %** |
+| Drift ensembles (the size of the move, for RMSE against the random walk) | **Shrunk average**: the learning models' mean expected move × a slope fitted on the finished stages, shrunk by its t-statistic and kept in [0, 1]. **Ridge stack (drift)**: a ridge regression of the move on every base model's expected move; its penalty is chosen on the last finished stage, with "no change" (the random walk) itself a candidate, then refitted on every finished stage. Each keeps its drift only if a fit made without the last finished stage beat no change on it by more than one standard error; otherwise it forecasts no change |
 
 12 band models and 2 band ensembles:
 
@@ -128,8 +133,11 @@ scale (up to 575,000 rows a window):
 ## Data rules (from the data audit)
 
 Seconds floored; repeated stamps keep the first bar; impossible OHLC widened
-and counted (its close is kept); hourly forecasts only on full 09:15–15:15
-days (Muhurat, special sessions and the partial 2026-09-25 excluded); rows
+and counted (its close is kept); an intraday day is forecast along the 09:15
+grid up to its first missing or off-grid bar and no further — a row needs the
+bars to its own outcome, never the rest of the day, because whether a session
+will run its full length is not known at 10:15 (Muhurat and other off-grid
+sessions get no rows; the partial 2026-09-25 is forecast to 12:45); rows
 without a same-time INDIA VIX bar dropped; history before INDIA VIX begins
 (2015) not used; NIFTY futures **daily only** (the intraday files hold the
 next-month contract for July–August 2026) with outcomes that cross an expiry
@@ -149,10 +157,11 @@ only. A second pass appends some of them to another track's features:
 | **cross** | Hedge's forecast on the next faster and next slower timeframe and on the daily track, the other index's forecast and band, and INDIA VIX's forecast. |
 | **models** | All 32 first-pass models' signed confidence: +1 sure up, −1 sure down, 0 abstained. The coin flip is left out. |
 | **all** | Everything above, about 45 more inputs. |
+| **ivrv** | Implied and realised volatility, from the data rather than from models (`app/ivrv_feed.hpp`, below). |
 
 How the groups run:
 - **Daily and horizon tracks:** every group, an ablation that shows which input helps.
-- **5m, 15m and hourly:** "all" only.
+- **5m, 15m and hourly:** "all" and "ivrv".
 - **1m:** none. No accuracy pays a 1-minute trade's costs.
 
 **The join is as-of.** A row reads, from each feed, the latest value made at
@@ -162,6 +171,61 @@ opinion"), except the band and self feeds, whose rows are dropped instead.
 `models/tests/test_curriculum_feeds.cpp` runs both passes, changes one
 outcome, and checks that none of the 8,190 second-pass calls made before it
 moves.
+
+### Implied and realised volatility ("+ ivrv")
+
+What a volatility desk watches, as inputs, all as logs of annualised vol
+(a spread is then a log ratio, 0 when implied equals realised):
+
+| Input | From | Known at |
+|---|---|---|
+| RV session, RV 5d, RV 22d | each session's realised variance: squared five-minute returns plus the overnight gap | the 15:30 close |
+| HAR next session | the HAR model's forecast of the next session's (Corsi 2009), fitted on past sessions | the 15:30 close |
+| VIX vs RV 22d, VIX vs HAR (NIFTY) | INDIA VIX, NSE's 30-day IV of NIFTY options, over realised: the variance risk premium | the 15:30 close |
+| IV 30d, its change, IV vs RV 22d, IV vs HAR, term slope | the at-the-money IV of the index's monthly options in the NSE F&O bhavcopy, total variance interpolated to 30 days (NIFTY and BANKNIFTY) | 18:00, when NSE publishes the file: a 15:30 decision reads the previous evening's |
+| RV today so far, RV today vs 22d (intraday tracks) | today's five-minute bars up to the decision, scaled to a whole session | each bar's close |
+| IV now, IV now vs RV 22d (intraday tracks) | the FYERS chain the terminal recorded (`altair_iv_record`) | each minute's end |
+
+The recorded FYERS IV joins only once it covers 60 sessions: a few weeks of
+it among years of rows would be noise to every model. Until then the run
+says how many sessions it has. **The leak check rebuilds these inputs too**:
+from only the bars, VIX closes and IV readings known at each cut, and from a
+different future after it, then attaches them to the rebuilt track.
+
+`altair_iv_record` reads the engine's session tapes (`data/live/tapes/`,
+recorded while it runs) and writes each minute's at-the-money IV per index
+to `data/live/iv/<INDEX>/<date>.csv`. The forward comes from put-call parity
+at the strike where the call and put are closest, so a weekly expiry does not
+borrow the monthly future's carry; a minute without a fresh call and put at
+one strike, or with under a day to the expiry, gives no reading. Tapes rotate
+(`--keep-tapes`, 5 days by default): run it after the close at least that often.
+
+**Measured 2026-10-21** (all timeframes but 1 minute; 2,891 bhavcopy days; no
+recorded FYERS IV yet). The leak check covered 64 tracks, each cut twice:
+1.84 million rebuilt rows and 59.6 million rerun calls, every one identical.
+
+The best full-coverage skill against "no change" (RMSE), base inputs against
+**+ ivrv**:
+
+| Track | Base | + IV/RV |
+|---|---|---|
+| NIFTY daily | +0.078 % | +0.000 % |
+| BANKNIFTY daily | +0.000 % | +0.009 % |
+| NIFTY hourly | +0.034 % | +0.017 % |
+| BANKNIFTY hourly | +0.000 % | +0.014 % |
+| NIFTY 15m | +0.028 % | +0.014 % |
+| NIFTY 5m | +0.008 % | +0.006 % |
+| NIFTY 09:20 to close | +0.213 % | +0.405 % |
+| NIFTY 10:15 to close | +0.701 % | +0.674 % |
+| BANKNIFTY 10:15 to close | +0.739 % | +0.681 % |
+
+**IV and RV do not help a direction call.** Every change is a few hundredths
+of a percent either way, inside the noise. That is what option pricing
+predicts: implied and realised vol forecast the size of the next move, not
+its sign.
+
+Where they belong is the volatility trades, as the gate of the variance
+premium seller (`docs/research/research-ideas.md` 1a and 1d), not the direction models.
 
 ## Tradability
 
@@ -191,19 +255,98 @@ Only the daily and horizon tracks have break-evens a model reaches, and
 only on the confident slices: Consensus 75 % is right 55.5 % of the time on
 24 % of NIFTY days and 54.0 % on 35 % of BANKNIFTY days.
 
-## No look-ahead
+## No look-ahead: how a leak gets in, and how this run proves there is none
 
-Enforced by `models/curriculum.hpp`, not by care: targets are readable only
-inside the training window; features, lagged outcomes and prices only up to
-the row being forecast; the track is refused if any outcome is known after
-the next decision. Every refused read is counted — a clean run reports zero
-— and `models/tests/test_curriculum.cpp` changes one outcome and proves no
-call made before it moves.
+A backtest **leaks** when a decision at time T uses anything that was not
+known at T. A leaky backtest is not a bit optimistic. It is wrong, and it is
+most often wrong by showing exactly the accuracy people hope to see. Leaks
+come in by seven doors:
+
+1. **A feature computed with later data.** A centred or forward-looking
+   window, a rolling statistic that includes the bar being forecast, the
+   day's close used at 10:15, a daily series joined by date to an intraday
+   row (the day's INDIA VIX close at 10:15 is the commonest one).
+2. **Normalisation over the whole sample.** A scaler, z-score or PCA fitted
+   on every row, so the test rows shape the training inputs.
+3. **Targets that overlap the split.** A label whose horizon reaches past the
+   end of the training window into the block being forecast.
+4. **Selection on the future.** Keeping only the days that turned out
+   complete, the stocks that still exist, or the model that did best.
+5. **Tuning on the test block.** A hyper-parameter, a threshold or a "top x %"
+   cut-off chosen with the rows it is then scored on.
+6. **Stacking on in-sample predictions.** An ensemble or second-pass model fed
+   a first model's fitted values, not the forecasts it made before each
+   outcome.
+7. **A back door in the code.** A model handed the whole data set, or a
+   revised history (bars corrected after the fact) treated as what was known
+   then.
+
+**What the code does about each door:**
+
+| Door | Guard |
+|---|---|
+| 1 | Every feature is built from bars at or before the decision; INDIA VIX is joined at the same stamp, and its previous close comes from an earlier day. |
+| 2 | The scaler is fitted on the training window only. |
+| 3 | A track is refused if any outcome is known after the next decision. |
+| 5 | Hyper-parameters tune on an inner split, re-standardised on its own rows. |
+| 6 | Ensembles weigh only finished stages, and the second pass joins first-pass forecasts as-of their time. |
+| 7 | Targets are readable only inside the training window, and every refused read is counted. |
+
+**Fixed in this round (2026-10-19):**
+- **The `track()` back door (door 7).** A model could reach the raw track,
+  and so every future outcome, past the refusal counter. That accessor is
+  gone. Models now get only guarded reads: decision stamp, slot, season,
+  sequence columns, and whether there is a pair.
+- **Day selection (door 4).** Intraday days are no longer chosen by whether
+  they later turned out complete (see Data rules).
+- **The Frontier (door 5).** It set its top-x % cut-offs from the whole test
+  period's confidences. It is now ex ante: each stage's cut-offs come from
+  finished stages only.
+
+**The proof: `--leak-check`.** Guards only cover the doors someone thought
+of. The leak check tests the property instead (`app/forecast_leak_check.hpp`).
+A forecast made at T is a function of what was known at T, so give the
+pipeline a different world after T and it must say exactly the same things up
+to T. On every track, at two cuts (the middle of the third- and
+second-to-last stages):
+- **Builders.** The track is rebuilt from the bars known at the cut, and again
+  from bars whose prices after the cut are all moved. Every row decided by the
+  cut must come out bit for bit the same, its outcome too where that was known
+  by then.
+- **Models.** Every model, every ensemble and every 80 % band is rerun on the
+  rows up to the cut, with the cut row's own outcome changed. Every call up to
+  and including the cut row must be bit for bit the same.
+
+Any difference names the first row and field that moved, and by definition it
+is a leak.
+
+`app/tests/test_forecast_leak.cpp` runs the same check on synthetic data. It
+also plants leaks to show they are caught:
+- a feature built from the next close;
+- a whole-sample mean;
+- days kept only if they turned out complete;
+- a model that reads its row's outcome through a pointer it was handed.
+
+The last one is the case the look-ahead counter cannot see: it reads 0. A
+random-walk placebo is run as well, where no model may beat a coin after the
+Bonferroni correction.
+
+**What no code can rule out:**
+- **Revised data.** A fetch can correct old bars, so history is "as known
+  today", not as it was seen live.
+- **Research choices.** Running variants, reading the results and keeping the
+  best is door 5 at the scale of the project. The cure is to decide before
+  looking and to keep a final period untouched until a model is chosen.
 
 ## Scoring
 
 * **Accuracy** = right / (right + wrong). An unchanged close is neither; a
-  call with no direction counts as wrong.
+  call with no direction counts as wrong. The one exception is a forecast
+  of no change from a model that forecasts price by design (the seasonal
+  mean on a slot it shrank away, a drift ensemble that chose the random
+  walk): it is flagged price only, scored for RMSE and left out of the
+  direction record. A rule such as Momentum that makes no call still
+  counts as wrong.
 * **p vs coin**: two-sided, then **Bonferroni** over every model on every
   track. Twenty-one models on seven tracks will produce a few "significant"
   ones by luck alone.
@@ -225,16 +368,75 @@ call made before it moves.
     any miss. It is a proper score, so it cannot be gamed by width in
     either direction.
   - Each model is also measured against the constant-sigma band.
-* **Frontier**: each probabilistic model's calls are ranked by confidence
-  |P(up) − 0.5|. The report gives the accuracy of the top 0.1 %, 0.5 %,
-  1 % … 100 %, and the largest slice still at or above 80 % on 30+ calls.
-  - The ranking uses the whole test period's confidences but never its
-    outcomes. The thresholds are therefore not ones a trader could have
-    known in advance.
-  - The ex-ante versions are the Stack (confident …) and Consensus
-    ensembles, which are scored like any other model.
+* **Frontier (ex ante)**: the accuracy of each probabilistic model's most
+  confident 0.1 %, 0.5 %, 1 % … 100 % of calls, and the largest slice still
+  at or above 80 % on 30+ calls.
+  - Each stage's cut-off for a slice comes from the confidences
+    |P(up) − 0.5| of the calls the model made in stages already finished.
+    That is the rule a trader could have run live.
+  - Until 2026-10-19 the slices were cut from the whole test period's
+    confidences at once, which told a call it was in the top 1 % using calls
+    not yet made. Frontier numbers in results before that date are after
+    the fact.
+  - The "largest slice ≥ 80 %" is the best of every model × slice, so read
+    it as chosen after seeing the results.
 
 ## Results
+
+### Run of 2026-10-19: all 5 timeframes, leak-checked
+
+`altair_forecast_curriculum --leak-check --jobs 4`, on the dataset pushed on
+2026-09-29, after the leak fixes of 2026-10-19 and before the drift
+ensembles (their numbers are under "Price against the random walk" below).
+- **Scope:** 54 tracks and 4.79 million forecast bars:
+  - 20 first-pass tracks: NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d; NIFTY FUT daily; the 09:20 and 10:15 → close session tracks;
+  - 34 second-pass tracks (+ vol, + cross, + models, + all).
+- **Models:** 42 direction models (33 base, 9 ensembles) and 14 band models; 2,268 direction tests, Bonferroni-corrected by 2,268.
+- **Run:** 7,825 s with 4 parallel jobs; zero look-ahead refusals on every track.
+- **Leak check:** 108 cuts (2 per track). 4,946,800 rebuilt rows, 120,552,012 rerun calls and 40,184,004 rerun bands were compared with the full run, and **every one was identical**: no forecast saw its future (`leak_check.csv`).
+
+**Price against the random walk** (best model on ≥ 90 % of the bars; skill = 1 − RMSE / RMSE of no change):
+
+| Track | Random walk RMSE | Best model | Skill | Models beating it |
+|---|---|---|---|---|
+| NIFTY 1m | 3.8 bp | Gradient boosting | +0.12 % | 13 / 33 |
+| BANKNIFTY 1m | 5.4 bp | Seasonal AR (SARIMA) | +0.01 % | 4 / 33 |
+| INDIA VIX 1m | 30.5 bp | Ridge regression | +1.28 % | 20 / 32 |
+| NIFTY 5m | 8.4 bp | — | −0.00 % | 0 / 32 |
+| BANKNIFTY 5m | 11.9 bp | — | −0.00 % | 0 / 33 |
+| INDIA VIX 5m | 56.7 bp | Ridge regression | +0.39 % | 17 / 33 |
+| NIFTY 15m | 14.4 bp | ARMA(1,1) | +0.03 % | 3 / 34 |
+| BANKNIFTY 15m | 19.8 bp | ARMA(1,1) | +0.05 % | 3 / 34 |
+| INDIA VIX 15m | 85.0 bp | Random forest | +0.15 % | 11 / 33 |
+| NIFTY hourly | 27.9 bp | ARMA(1,1) | +0.03 % | 3 / 33 |
+| BANKNIFTY hourly | 38.1 bp | — | −0.02 % | 0 / 32 |
+| INDIA VIX hourly | 147.2 bp | Always majority | +0.11 % | 4 / 33 |
+| NIFTY daily | 102.4 bp | Markov chain | +0.08 % | 1 / 33 |
+| BANKNIFTY daily | 135.5 bp | — | −0.03 % | 0 / 32 |
+| INDIA VIX daily | 528.9 bp | Random forest | +1.96 % | 9 / 32 |
+| NIFTY FUT daily | 103.1 bp | — | −0.12 % | 0 / 31 |
+| NIFTY 09:20 → close | 80.6 bp | AR(2) | +0.21 % | 1 / 33 |
+| BANKNIFTY 09:20 → close | 110.6 bp | — | −0.02 % | 0 / 32 |
+| NIFTY 10:15 → close | 75.0 bp | ARMA(1,1) | +0.70 % | 6 / 33 |
+| BANKNIFTY 10:15 → close | 99.5 bp | ARMA(1,1) | +0.74 % | 5 / 34 |
+
+- **The second pass** (other models' forecasts as inputs) helps most on the
+  10:15 → close tracks: + vol takes NIFTY to +0.84 % and BANKNIFTY to
+  +0.98 %. On the 5m, 15m and hourly index tracks it moves the best skill
+  by at most 0.03 points, and on the daily tracks by −0.13 to +0.04.
+- **Direction:** the only ex-ante slice at or above 80 % anywhere is INDIA
+  VIX daily, Stack (confident 10 %): 81.0 % on 42 calls (Wilson low 66.7 %).
+  It is the best of every model × slice, so it was chosen after the fact.
+  The INDIA VIX 1m slices of the 2026-09-29 run (85 %) are gone: their
+  cut-offs used calls not yet made.
+- **Bands:** the 80 % bands are calibrated at every timeframe (78.6–82.0 %
+  hit rate), except NIFTY FUT daily at 76.9 %. The best band beats the
+  constant band by 11–18 % on the index tracks: Seasonal vol (time of day)
+  intraday, GJR-GARCH daily, Heston variance drift on the session tracks.
+  On INDIA VIX it beats it by 4–8 % (gradient boosting on |r| intraday, the
+  vol ensemble hourly and daily).
+
+### Run of 2026-09-29 (before the leak fixes)
 
 Run on the dataset pushed on 2026-09-29, with every model learning from every row.
 - **Scope:** 21 tracks (NIFTY, BANKNIFTY and INDIA VIX at 1m, 5m, 15m, 60m and 1d; NIFTY FUT daily; five "+ VIX fc" tracks) and 4.13 million forecast bars, about 174 million model decisions in all.
@@ -450,6 +652,55 @@ forecasts:
   candidates for the forward test the live engine runs, not findings.
 - The earlier tables in this file predate the inner-fold fix. The
   accuracies above suggest it moves little, but they are not re-run here.
+
+### Price against the random walk (RMSE, 2026-10-19)
+
+Skill = 1 − RMSE(model) / RMSE(random walk). The random walk forecasts no
+change, and on returns this close to unpredictable it is very hard to beat:
+a model's own drift usually adds more noise than signal, so most models
+come out slightly *worse* than doing nothing.
+
+The drift ensembles and the seasonal mean were added for exactly that.
+First pass, every model learning from every row,
+`altair_forecast_curriculum --only daily|hourly|15m|5m|1m --no-feeds --no-bands`.
+"Best" is the best model on at least 90 % of the bars.
+
+| Track | Random walk RMSE | Best before | Best now | Shrunk average | Ridge stack (drift) | Seasonal mean |
+|---|---|---|---|---|---|---|
+| NIFTY daily | 102.4 bp | Markov chain +0.08 % | Markov chain +0.08 % | -0.01 % | +0.00 % | -0.01 % |
+| BANKNIFTY daily | 135.5 bp | Markov chain -0.03 % | Shrunk average +0.00 % | +0.00 % | +0.00 % | -0.00 % |
+| INDIA VIX daily | 528.9 bp | Random forest +1.96 % | Seasonal mean +2.76 % | +0.85 % | +2.08 % | +2.76 % |
+| NIFTY FUT daily | 103.1 bp | Always majority -0.12 % | Shrunk average +0.00 % | +0.00 % | +0.00 % | -0.10 % |
+| NIFTY hourly | 27.9 bp | ARMA(1,1) +0.03 % | ARMA(1,1) +0.03 % | +0.01 % | -0.12 % | -0.04 % |
+| BANKNIFTY hourly | 38.1 bp | Seasonal AR (SARIMA) -0.02 % | Shrunk average +0.00 % | +0.00 % | +0.00 % | -0.04 % |
+| INDIA VIX hourly | 147.3 bp | Always majority +0.11 % | Seasonal mean +0.19 % | +0.05 % | -0.08 % | +0.19 % |
+| NIFTY 15m | 14.4 bp | ARMA(1,1) +0.03 % | ARMA(1,1) +0.03 % | +0.02 % | +0.00 % | -0.07 % |
+| BANKNIFTY 15m | 19.8 bp | ARMA(1,1) +0.05 % | ARMA(1,1) +0.05 % | +0.02 % | -0.15 % | -0.05 % |
+| INDIA VIX 15m | 85.0 bp | Random forest +0.15 % | Shrunk average +0.16 % | +0.16 % | +0.07 % | -0.05 % |
+| NIFTY 5m | 8.4 bp | Always majority -0.00 % | Shrunk average +0.01 % | +0.01 % | -0.00 % | -0.07 % |
+| BANKNIFTY 5m | 11.9 bp | Always majority -0.00 % | Shrunk average +0.01 % | +0.01 % | +0.01 % | -0.08 % |
+| INDIA VIX 5m | 56.7 bp | Ridge regression +0.39 % | Ridge stack (drift) +0.42 % | +0.34 % | +0.42 % | -0.06 % |
+| NIFTY 1m | 3.8 bp | Gradient boosting +0.12 % | Gradient boosting +0.12 % | +0.08 % | +0.12 % | -0.07 % |
+| BANKNIFTY 1m | 5.4 bp | Seasonal AR (SARIMA) +0.01 % | Seasonal AR (SARIMA) +0.01 % | +0.00 % | +0.00 % | -0.08 % |
+| INDIA VIX 1m | 30.6 bp | Ridge regression +1.28 % | Ridge stack (drift) +1.63 % | +1.08 % | +1.63 % | +0.23 % |
+
+- **Index tracks (NIFTY, BANKNIFTY, NIFTY FUT): the honest best is about
+  zero.** The Shrunk average stays within 0.01 % of the random walk on every
+  timeframe, and on most of them it chooses no change. The best single
+  models (Markov chain daily, ARMA(1,1) at 15 minutes) beat it by 0.03–0.08 %.
+  A large skill here would point to a leak, not a better model.
+- **INDIA VIX is where the structure is.** It mean-reverts and has a weekday
+  and time-of-day pattern. The Seasonal mean takes the daily skill from
+  +1.96 % to +2.76 %, and the Ridge stack the 1-minute skill from +1.28 % to
+  +1.63 % and the 5-minute from +0.39 % to +0.42 %.
+- **The Ridge stack can still lose** (−0.12 % NIFTY hourly, −0.15 % BANKNIFTY
+  15m): with 35 weights, one finished stage is a thin test of whether its fit
+  will hold. The Shrunk average fits one slope and is the safer of the two.
+- **The Seasonal mean loses on the index intraday tracks** (−0.04 to −0.08 %):
+  the time-of-day means it keeps there do not persist.
+- **Read the gate as chosen on this data.** The "beat no change by one
+  standard error" rule was set after a first daily run that kept drifts
+  which then lost. The forward test is the clean measure.
 
 ### What would improve it next
 - **Broker-verified data:** run `ops\broker_audit.ps1`, then repeat the run.

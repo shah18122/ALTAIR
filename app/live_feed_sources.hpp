@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -97,13 +98,21 @@ struct BusEvent {
 
 /// The bus, its board and its owner thread: everything a source publishes
 /// through. trade(), quote() and book() are called from ONE source thread at
-/// a time (the sources run one after another, never together); everything
-/// else is safe from any thread.
+/// a time (the sources run one after another, never together); second_book()
+/// from ONE other thread (the FYERS 50-level book's), on a ring of its own,
+/// so each ring keeps exactly one producer. Everything else is safe from any
+/// thread.
 class SharedBus {
 public:
     static constexpr std::size_t kRing = 4096;
 
-    explicit SharedBus(PriceBus& bus) : bus_(bus), ring_(std::make_unique<Ring>()), th_([this] { run(); }) {}
+    /// `owner_init` runs first on the owner thread (its core and priority).
+    explicit SharedBus(PriceBus& bus, std::function<void()> owner_init = {})
+        : bus_(bus), ring_(std::make_unique<Ring>()), second_(std::make_unique<Ring>()), init_(std::move(owner_init)),
+          th_([this] {
+              if (init_) init_();
+              run();
+          }) {}
     ~SharedBus() {
         stop_.store(true, std::memory_order_release);
         th_.join();
@@ -130,10 +139,19 @@ public:
         push(e);
         books_.fetch_add(1, std::memory_order_relaxed);
     }
+    /// A book from the second producer (the 50-level book's thread).
+    void second_book(const PricePayload& p, const PriceLevel* b, const PriceLevel* a, std::int64_t ns) {
+        BusEvent e;
+        e.kind = BusEvent::Book; e.ns = ns; e.price = p;
+        for (std::size_t i = 0; i < kMaxDepthLevels; ++i) { e.bids[i] = b[i]; e.asks[i] = a[i]; }
+        push(*second_, e);
+        books_.fetch_add(1, std::memory_order_relaxed);
+    }
     /// Block until everything pushed so far has been published (tests, shutdown).
     void drain() {
-        const std::uint64_t want = ring_->pushed();
-        while (published_.load(std::memory_order_acquire) < want) std::this_thread::yield();
+        const std::uint64_t want = ring_->pushed(), want2 = second_->pushed();
+        while (published_.load(std::memory_order_acquire) < want || published2_.load(std::memory_order_acquire) < want2)
+            std::this_thread::yield();
     }
 
     [[nodiscard]] std::size_t clients() const noexcept { return clients_.load(std::memory_order_relaxed); }
@@ -149,12 +167,13 @@ public:
 private:
     using Ring = SpscRing<BusEvent, kRing>;
 
-    void push(const BusEvent& e) {
-        if (ring_->try_push(e)) return;
+    void push(const BusEvent& e) { push(*ring_, e); }
+    void push(Ring& r, const BusEvent& e) {
+        if (r.try_push(e)) return;
         waits_.fetch_add(1, std::memory_order_relaxed);
         // Backpressure, never loss: the owner thread does not block, so this
         // wait is bounded by how long it takes to publish what is queued.
-        while (!ring_->try_push(e)) std::this_thread::yield();
+        while (!r.try_push(e)) std::this_thread::yield();
     }
 
     void run() {
@@ -168,6 +187,11 @@ private:
                 ++n;
             }
             published_.store(ring_->popped(), std::memory_order_release);
+            for (std::size_t k = 0; k < 1024 && second_->try_pop(e); ++k) {
+                apply(e);
+                ++n;
+            }
+            published2_.store(second_->popped(), std::memory_order_release);
             const auto now = std::chrono::steady_clock::now();
             if (n == 0 || now - last_poll >= std::chrono::milliseconds(5)) {
                 last_poll = now;
@@ -176,7 +200,7 @@ private:
                 clients_.store(bus_.clients(), std::memory_order_relaxed);
                 coalesced_.store(bus_.coalesced(), std::memory_order_relaxed);
             }
-            if (stopping && ring_->empty_approx()) break;
+            if (stopping && ring_->empty_approx() && second_->empty_approx()) break;
             if (n == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         bus_.poll();   // a last flush of what will go
@@ -203,10 +227,12 @@ private:
     PriceBus& bus_;                 ///< owner thread only
     BoardCache cache_;              ///< owner thread only
     std::unique_ptr<Ring> ring_;
+    std::unique_ptr<Ring> second_;  ///< the second producer's ring (second_book)
     std::atomic<bool> stop_{false};
-    std::atomic<std::uint64_t> published_{0};
+    std::atomic<std::uint64_t> published_{0}, published2_{0};
     std::atomic<std::size_t> clients_{0};
     std::atomic<std::uint64_t> trades_{0}, quotes_{0}, books_{0}, coalesced_{0}, waits_{0}, snapshots_{0};
+    std::function<void()> init_;
     std::thread th_;                ///< last: starts once everything above exists
 };
 
@@ -219,6 +245,11 @@ struct FeedStatus {
     std::size_t instruments = 0, unknown_symbols = 0, clients = 0;
     std::uint64_t trades = 0, quotes = 0, books = 0, reconnects = 0;
     std::int64_t engine_ns = 0;
+    std::vector<std::string> unknown;   ///< names the feed refused (the first 40 are written)
+    /// Every 30 s: instruments subscribed, with a price, with a book, with a
+    /// fresh 50-level book; and the first ones with no price yet.
+    std::size_t subscribed = 0, priced = 0, booked = 0, depth50 = 0;
+    std::vector<std::string> no_price;
 };
 
 inline void write_status(const std::string& path, const FeedStatus& s) {
@@ -234,7 +265,20 @@ inline void write_status(const std::string& path, const FeedStatus& s) {
           << "\",\n  \"error\": \"" << s.error << "\",\n  \"instruments\": " << s.instruments
           << ",\n  \"unknown_symbols\": " << s.unknown_symbols << ",\n  \"clients\": " << s.clients
           << ",\n  \"trades\": " << s.trades << ",\n  \"quotes\": " << s.quotes << ",\n  \"books\": " << s.books
-          << ",\n  \"reconnects\": " << s.reconnects << ",\n  \"engine_ns\": " << s.engine_ns << "\n}\n";
+          << ",\n  \"reconnects\": " << s.reconnects << ",\n  \"engine_ns\": " << s.engine_ns << ",\n  \"unknown\": [";
+        for (std::size_t i = 0; i < s.unknown.size() && i < 40; ++i) {
+            f << (i ? ", \"" : "\"");
+            for (const char c : s.unknown[i]) if (c != '"' && c != '\\' && static_cast<unsigned char>(c) >= 0x20) f << c;
+            f << '"';
+        }
+        f << "],\n  \"subscribed\": " << s.subscribed << ",\n  \"priced\": " << s.priced << ",\n  \"booked\": " << s.booked
+          << ",\n  \"depth50\": " << s.depth50 << ",\n  \"no_price\": [";
+        for (std::size_t i = 0; i < s.no_price.size() && i < 20; ++i) {
+            f << (i ? ", \"" : "\"");
+            for (const char c : s.no_price[i]) if (c != '"' && c != '\\' && static_cast<unsigned char>(c) >= 0x20) f << c;
+            f << '"';
+        }
+        f << "]\n}\n";
     }
     // Replaces in one step (std::filesystem::rename overwrites on every
     // platform): never deleted first, so a reader sees the old file or the new.

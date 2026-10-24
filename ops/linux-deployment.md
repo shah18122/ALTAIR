@@ -51,7 +51,7 @@ Order of operations, and it is not negotiable:
    conversions, and this codebase is full of `std::int64_t` paise flowing into
    `double` analytics.
 2. Get `ctest` green there. The same suite as MSVC — see the live baseline in
-   SMIT.txt section 5. The "93 tests" this line used to name is from P12-01's
+   docs/archive/SMIT.txt section 5. The "93 tests" this line used to name is from P12-01's
    original writing and is long superseded.
 3. Confirm the conservation invariant still holds bit-for-bit. It is integer
    arithmetic, so it must; if it does not, something is undefined behaviour and

@@ -44,6 +44,7 @@
 
 #include <analytics/greeks.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <expected>

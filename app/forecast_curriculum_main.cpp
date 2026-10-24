@@ -18,8 +18,12 @@
 //                                    Atlas coverage, Data, Method, one sheet per track
 //   <out>/forecast_curriculum.txt    the summary as text
 //   <out>/forecast_log/<track>.csv   every forecast (daily and hourly tracks)
+//   <out>/leak_check.csv             with --leak-check: every track rebuilt and
+//                                    rerun at two cuts (app/forecast_leak_check.hpp)
 
+#include <app/forecast_leak_check.hpp>
 #include <app/forecast_tracks.hpp>
+#include <app/ivrv_feed.hpp>
 #include <app/xlsx_writer.hpp>
 #include <models/band_curriculum.hpp>
 #include <models/curriculum.hpp>
@@ -39,6 +43,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -60,8 +65,9 @@ using altair::xlsx::XlsxSheet;
 struct FrontierRow {
     std::size_t model = 0;
     std::size_t scored = 0;
-    std::vector<double> acc;          ///< at kFrontierLevels
-    std::vector<std::size_t> n;       ///< rows in each level
+    std::vector<double> acc;          ///< at kFrontierLevels, ex ante (NaN: no calls in the slice)
+    std::vector<std::size_t> n;       ///< scored calls in each level
+    std::vector<double> cover;        ///< share of the scored calls each level actually took
     double best_level = 0.0;          ///< largest share with accuracy >= 80 % on >= 30 rows; 0 if none
     double best_acc = 0.0, best_low = 0.0, best_up_rate = 0.0;
     std::size_t best_n = 0;
@@ -83,6 +89,12 @@ struct TrackResult {
     bool log = false;                         ///< daily and hourly: small enough for a CSV
     /// Second pass: the first-pass track it extends, its feed group, and what attaching cost.
     std::string base, variant, feed_note;
+    /// First pass: the track rebuilt from transformed bars (the leak check).
+    altair::forecast_leak::Build rebuild;
+    /// --leak-check: one line per cut, and whether every one was clean.
+    std::vector<std::string> leak_csv;
+    bool leak_checked = false, leak_clean = true;
+    std::size_t leak_rows = 0, leak_calls = 0, leak_bands = 0;
 };
 
 /// `v` with `decimals` places; `sign` adds a + to positive numbers.
@@ -138,13 +150,13 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
                           "Accuracy %", "Magnitude-weighted accuracy %", "Gross edge bp / call",
                           "95% low %", "95% high %", "z vs coin", "p vs coin",
                           "p (Bonferroni)", "Up-rate on same bars %", "vs best constant call (pts)", "p vs constant (Bonferroni)",
-                          "Brier", "RMSE bp", "Random walk RMSE bp", "Skill vs RW %", "Price verdict",
+                          "Brier", "MAE bp", "Random walk MAE bp", "RMSE bp", "Random walk RMSE bp", "Skill vs RW %", "Price verdict",
                           "Trades (clear cost)", "Trade hit %", "Net bp / trade", "Net t-stat", "Net bp total",
                           "Final-stage accuracy %", "Fit s", "Verdict"};
     std::vector<XlsxCell> h;
     for (const char* c : head) { h.push_back(XlsxCell::str(c, true)); }
     sh.rows.push_back(h);
-    sh.widths = {24, 24, 11, 10, 10, 10, 9, 9, 10, 7, 10, 12, 11, 9, 9, 9, 9, 11, 12, 12, 12, 8, 9, 11, 10, 22, 11, 10, 10, 9, 11, 11, 8, 52};
+    sh.widths = {24, 24, 11, 10, 10, 10, 9, 9, 10, 7, 10, 12, 11, 9, 9, 9, 9, 11, 12, 12, 12, 8, 9, 11, 9, 11, 10, 22, 11, 10, 10, 9, 11, 11, 8, 52};
     for (const auto& r : results) {
         if (!r.ok) {
             sh.rows.push_back({XlsxCell::str(r.track.name), XlsxCell::str("-"), XlsxCell::str("-"),
@@ -181,6 +193,8 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
                 XlsxCell::num(scored ? 100.0 * (s.accuracy - s.best_constant) : nan),
                 XlsxCell::num(scored ? s.p_constant_adjusted : nan),
                 XlsxCell::num(s.all.brier()),
+                XlsxCell::num(s.have_price ? s.price.mae_model_bps : nan),
+                XlsxCell::num(s.have_price ? s.price.mae_naive_bps : nan),
                 XlsxCell::num(s.have_price ? s.price.rmse_model_bps : nan),
                 XlsxCell::num(s.have_price ? s.price.rmse_naive_bps : nan),
                 XlsxCell::num(s.have_price ? 100.0 * s.price.skill : nan),
@@ -201,45 +215,73 @@ XlsxSheet summary_sheet(const std::vector<TrackResult>& results, std::size_t tes
     return sh;
 }
 
-/// Rank a model's scored rows by confidence (|P(up) - 0.5|) and read the
-/// accuracy of its top slices. The ranking uses the whole test period's
-/// confidences -- no outcomes -- so the slice thresholds are not ones a trader
-/// could have known in advance; the ex-ante versions are the Stack (confident
-/// ...) and Consensus ensembles, which are scored like any model.
+/// A model's calls in its most confident slices, EX ANTE: each stage's
+/// cut-off for "the top x %" is set from the confidences (|P(up) - 0.5|) of
+/// the calls it made in the stages already finished -- never from the stage
+/// being scored. A trader could have run the same rule live, which an
+/// after-the-fact ranking of the whole test period's confidences could not
+/// (that version told a call it was "top 1 %" using calls not yet made).
+/// Stages before the model has 50 past calls set no cut-off and are left out.
 FrontierRow compute_frontier(const CurriculumTrack& t, const CurriculumRun& run, std::size_t m) {
+    constexpr std::size_t kLevels = std::size(kFrontierLevels);
     FrontierRow f;
     f.model = m;
-    std::vector<std::pair<double, std::pair<bool, bool>>> scored;   // confidence, (right, went up)
-    for (std::size_t i = run.first_row; i < t.rows(); ++i) {
-        const altair::CurriculumCall c = run.calls[m][i - run.first_row];
-        const double r = t.ret(i);
-        if (!c.made || !std::isfinite(c.p_up) || r == 0.0) { continue; }
-        const int out = r > 0.0 ? 1 : -1;
-        scored.push_back({std::fabs(c.p_up - 0.5), {c.dir == out, out > 0}});
-    }
-    f.scored = scored.size();
-    if (scored.empty()) { return f; }
-    std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-    std::vector<std::size_t> right(scored.size() + 1, 0), ups(scored.size() + 1, 0);
-    for (std::size_t k = 0; k < scored.size(); ++k) {
-        right[k + 1] = right[k] + (scored[k].second.first ? 1 : 0);
-        ups[k + 1] = ups[k] + (scored[k].second.second ? 1 : 0);
+    f.n.assign(kLevels, 0);
+    f.acc.assign(kLevels, std::numeric_limits<double>::quiet_NaN());
+    f.cover.assign(kLevels, std::numeric_limits<double>::quiet_NaN());
+    std::vector<std::size_t> right(kLevels, 0), ups(kLevels, 0);
+    std::vector<double> past;        // confidences of the finished stages' calls
+    std::vector<double> cut(kLevels);
+    const std::size_t n_rows = t.rows() - run.first_row;
+    std::size_t r = 0;
+    while (r < n_rows) {
+        const std::uint16_t stage = run.stage_of[r];
+        std::size_t e = r;
+        while (e < n_rows && run.stage_of[e] == stage) { ++e; }
+        const bool armed = past.size() >= 50;
+        if (armed) {
+            std::sort(past.begin(), past.end());
+            for (std::size_t k = 0; k < kLevels; ++k) {
+                const auto top = std::max<std::size_t>(1, static_cast<std::size_t>(std::llround(kFrontierLevels[k] * static_cast<double>(past.size()))));
+                cut[k] = past[past.size() - std::min(top, past.size())];
+            }
+        }
+        std::vector<double> made_here;
+        for (std::size_t q = r; q < e; ++q) {
+            const altair::CurriculumCall c = run.calls[m][q];
+            if (!c.made || !std::isfinite(c.p_up)) { continue; }
+            const double conf = std::fabs(c.p_up - 0.5);
+            made_here.push_back(conf);
+            const double ret = t.ret(run.first_row + q);
+            if (!armed || ret == 0.0) { continue; }
+            const int out = ret > 0.0 ? 1 : -1;
+            ++f.scored;
+            for (std::size_t k = 0; k < kLevels; ++k) {
+                if (conf < cut[k]) { continue; }
+                ++f.n[k];
+                right[k] += c.dir == out ? 1 : 0;
+                ups[k] += out > 0 ? 1 : 0;
+            }
+        }
+        past.insert(past.end(), made_here.begin(), made_here.end());
+        r = e;
     }
     const auto wilson_low = [](double p, double n) {
         const double z = 1.959963984540054;
         return (p + z * z / (2 * n) - z * std::sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / (1 + z * z / n);
     };
-    for (const double level : kFrontierLevels) {
-        const std::size_t n = std::max<std::size_t>(1, static_cast<std::size_t>(std::llround(level * static_cast<double>(scored.size()))));
-        f.n.push_back(n);
-        const double acc = static_cast<double>(right[n]) / static_cast<double>(n);
-        f.acc.push_back(acc);
-        if (n >= 30 && acc >= 0.80 && level > f.best_level) {
-            f.best_level = level;
+    for (std::size_t k = 0; k < kLevels; ++k) {
+        const std::size_t n = f.n[k];
+        if (n == 0 || f.scored == 0) { continue; }
+        const double acc = static_cast<double>(right[k]) / static_cast<double>(n);
+        f.acc[k] = acc;
+        f.cover[k] = static_cast<double>(n) / static_cast<double>(f.scored);
+        if (n >= 30 && acc >= 0.80 && kFrontierLevels[k] > f.best_level) {
+            f.best_level = kFrontierLevels[k];
             f.best_acc = acc;
             f.best_n = n;
             f.best_low = wilson_low(acc, static_cast<double>(n));
-            f.best_up_rate = static_cast<double>(ups[n]) / static_cast<double>(n);
+            f.best_up_rate = static_cast<double>(ups[k]) / static_cast<double>(n);
         }
     }
     return f;
@@ -251,7 +293,7 @@ XlsxSheet frontier_sheet(const std::vector<TrackResult>& results) {
     sh.freeze_rows = 1;
     std::vector<XlsxCell> h{XlsxCell::str("Track", true), XlsxCell::str("Model", true), XlsxCell::str("Scored calls", true)};
     for (const double l : kFrontierLevels) {
-        h.push_back(XlsxCell::str("Acc % top " + fixed(100.0 * l, l < 0.01 ? 1 : 0) + "%", true));
+        h.push_back(XlsxCell::str("Acc % top " + fixed(100.0 * l, l < 0.01 ? 1 : 0) + "% (ex ante)", true));
     }
     for (const char* c : {"Largest share at >= 80 % (n >= 30)", "Its accuracy %", "Its calls", "Wilson 95 % low %",
                           "Calls per trading day", "Up-rate on those bars %"}) {
@@ -264,7 +306,9 @@ XlsxSheet frontier_sheet(const std::vector<TrackResult>& results) {
         std::vector<const FrontierRow*> rows;
         for (const auto& f : r.frontier) { if (f.scored > 0) rows.push_back(&f); }
         std::stable_sort(rows.begin(), rows.end(), [](const FrontierRow* a, const FrontierRow* b) {
-            return a->acc.size() > 3 && b->acc.size() > 3 && a->acc[3] > b->acc[3];   // by the top-2 % slice
+            const double x = a->acc.size() > 3 && std::isfinite(a->acc[3]) ? a->acc[3] : -1.0;
+            const double y = b->acc.size() > 3 && std::isfinite(b->acc[3]) ? b->acc[3] : -1.0;
+            return x > y;   // by the top-2 % slice
         });
         for (const FrontierRow* f : rows) {
             std::vector<XlsxCell> row{XlsxCell::str(r.track.name), XlsxCell::str(r.run.models[f->model]),
@@ -761,7 +805,8 @@ void usage(const char* exe) {
         "  Train every Model Atlas forecaster on a doubling curriculum, for direction and for\n"
         "  80 %% range bands, on every timeframe, and keep the record.\n\n"
         "    %s [--dataset DIR] [--out DIR] [--first-days N] [--cap-days N] [--jobs N]\n"
-        "       [--other-cost-bp X] [--only TEXT] [--no-bands] [--no-feeds] [--no-log]\n\n"
+        "       [--other-cost-bp X] [--only TEXT] [--skip TEXT] [--no-bands] [--no-feeds] [--no-log] [--leak-check]\n"
+        "       [--bhavcopy DIR] [--recorded-iv DIR] [--no-ivrv]\n\n"
         "    --dataset DIR      default dataset\n"
         "    --out DIR          default data/verified\n"
         "    --first-days N     days learned before the first forecast (default 3)\n"
@@ -769,9 +814,18 @@ void usage(const char* exe) {
         "    --jobs N           tracks run in parallel (default: the machine's cores)\n"
         "    --other-cost-bp X  round-trip charges besides STT, incl. one tick of slippage (default 1.3)\n"
         "    --only TEXT        run only tracks whose name contains TEXT (e.g. daily, 5m, NIFTY)\n"
+        "    --skip TEXT        leave out tracks whose name contains TEXT (e.g. 1m)\n"
         "    --no-bands         skip the range-band curriculum\n"
         "    --no-feeds         skip the second pass (other models' forecasts as inputs)\n"
-        "    --no-log           skip the per-forecast CSV logs (written for daily and hourly tracks)\n", exe);
+        "    --no-log           skip the per-forecast CSV logs (written for daily and hourly tracks)\n"
+        "    --bhavcopy DIR     NSE F&O bhavcopy for the 30-day ATM IV of NIFTY and BANKNIFTY (default\n"
+        "                       data/bhavcopy; ops\\fetch_bhavcopy.ps1 fetches it)\n"
+        "    --recorded-iv DIR  ATM IV recorded from the FYERS chain (default data/live/iv; altair_iv_record)\n"
+        "    --no-ivrv          skip the \"+ ivrv\" tracks (implied and realised volatility as inputs)\n"
+        "    --leak-check       prove no forecast saw its future: rebuild every track from the bars known\n"
+        "                       at two cuts and from a different future after them, and rerun every model\n"
+        "                       with the cut row's outcome changed; everything up to each cut must be\n"
+        "                       bit for bit the same (about 60 %% more run time). Exit 3 on a leak.\n", exe);
 }
 
 bool parse_int(std::string_view v, long& out) {
@@ -804,8 +858,9 @@ int main(int argc, char** argv) {
     fs::path out = "data/verified";
     long first_days = 3, cap_days = 0, jobs = static_cast<long>(std::max(1u, std::thread::hardware_concurrency()));
     double other_cost = 1.3;
-    std::string only;
-    bool log = true, bands = true, feeds_on = true;
+    std::string only, skip;
+    bool log = true, bands = true, feeds_on = true, leak_check = false, ivrv_on = true;
+    fs::path bhav_dir = "data/bhavcopy", recorded_iv_dir = "data/live/iv";
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
         const bool has = i + 1 < argc;
@@ -813,9 +868,14 @@ int main(int argc, char** argv) {
         if (a == "--dataset" && has) { root = argv[++i]; continue; }
         if (a == "--out" && has) { out = argv[++i]; continue; }
         if (a == "--only" && has) { only = argv[++i]; continue; }
+        if (a == "--skip" && has) { skip = argv[++i]; continue; }
         if (a == "--no-log") { log = false; continue; }
         if (a == "--no-bands") { bands = false; continue; }
         if (a == "--no-feeds") { feeds_on = false; continue; }
+        if (a == "--leak-check") { leak_check = true; continue; }
+        if (a == "--no-ivrv") { ivrv_on = false; continue; }
+        if (a == "--bhavcopy" && has) { bhav_dir = argv[++i]; continue; }
+        if (a == "--recorded-iv" && has) { recorded_iv_dir = argv[++i]; continue; }
         if (a == "--first-days" && has) {
             if (!parse_int(argv[++i], first_days) || first_days < 1 || first_days > 1000) { usage(argv[0]); return 2; }
             continue;
@@ -858,7 +918,9 @@ int main(int argc, char** argv) {
         specs.push_back({"NIFTY " + hm + "-close", "NIFTY", "spot/nifty", 5, false, false, "spot/banknifty", "BANKNIFTY", minute});
         specs.push_back({"BANKNIFTY " + hm + "-close", "BANKNIFTY", "spot/banknifty", 5, false, false, "spot/nifty", "NIFTY", minute});
     }
-    const auto wanted = [&only](const std::string& name) { return only.empty() || name.find(only) != std::string::npos; };
+    const auto wanted = [&only, &skip](const std::string& name) {
+        return (only.empty() || name.find(only) != std::string::npos) && (skip.empty() || name.find(skip) == std::string::npos);
+    };
     std::erase_if(specs, [&](const TrackSpec& t) { return !wanted(t.name); });
 
     // Every series the tracks need, loaded and cleaned once, before any thread starts.
@@ -885,6 +947,63 @@ int main(int argc, char** argv) {
         const auto it = series.find(dir + "/" + tf_dir(tf));
         return it == series.end() ? nullptr : &it->second.bars;
     };
+    // IMPLIED AND REALISED VOLATILITY (app/ivrv_feed.hpp), for the "+ ivrv"
+    // tracks: each index's five-minute bars (realised), INDIA VIX's daily bars,
+    // the bhavcopy's 30-day ATM IV and the IV recorded from the FYERS chain.
+    struct IvInputs {
+        std::vector<da::AuditBar> five, vix;
+        altair::ivrv::IvSeries bhav, recorded;
+        std::size_t recorded_sessions = 0;
+    };
+    std::map<std::string, IvInputs> iv_inputs;   // "NIFTY", "BANKNIFTY"
+    // Recorded FYERS IV joins only once it covers this many sessions: a few
+    // days of it among years of rows would be noise to every model.
+    constexpr std::size_t kRecordedIvMinSessions = 60;
+    if (feeds_on && ivrv_on) {
+        ft::TrackInfo unused;
+        auto vix = ft::load_bars(root / "spot/indiavix/1d", da::kDailyTf, unused);
+        ft::clean_bars(vix, unused);
+        for (const auto& [inst, dir] : {std::pair<std::string, std::string>{"NIFTY", "spot/nifty"}, {"BANKNIFTY", "spot/banknifty"}}) {
+            IvInputs in;
+            ft::TrackInfo info;
+            in.five = ft::load_bars(root / dir / "5m", 5, info);
+            ft::clean_bars(in.five, info);
+            if (in.five.empty()) {
+                std::printf("  + ivrv: no five-minute bars under %s, %s skipped\n", (root / dir / "5m").string().c_str(), inst.c_str());
+                continue;
+            }
+            if (inst == "NIFTY") { in.vix = vix; }
+            altair::bhavcopy::LoadReport br;
+            in.bhav = altair::ivrv::iv_from_bhavcopy(altair::bhavcopy::load_dir(bhav_dir, inst, br));
+            in.recorded = altair::ivrv::load_recorded_iv(recorded_iv_dir, inst);
+            in.recorded_sessions = altair::ivrv::sessions_covered(in.recorded);
+            std::printf("  + ivrv %s: realised from %zu five-minute bars%s; bhavcopy IV on %zu days (%zu files under %s)%s;"
+                        " FYERS IV on %zu sessions%s\n",
+                        inst.c_str(), in.five.size(), in.vix.empty() ? "" : ", INDIA VIX", in.bhav.size(), br.files,
+                        bhav_dir.string().c_str(), in.bhav.empty() ? " -- run ops\\fetch_bhavcopy.ps1 -Go for it" : "",
+                        in.recorded_sessions,
+                        in.recorded_sessions >= kRecordedIvMinSessions ? "" : (" (joins at " + std::to_string(kRecordedIvMinSessions) + ")").c_str());
+            iv_inputs.emplace(inst, std::move(in));
+        }
+    }
+    /// The "+ ivrv" inputs of one index, from inputs passed through `x`
+    /// (identity for the run; truncated or perturbed for the leak check).
+    const auto make_ivrv = [&](const IvInputs& in, const altair::forecast_leak::Transform& x, bool intraday,
+                               const std::string& inst) {
+        const auto five = x.bars(in.five, 5);
+        const auto vix = in.vix.empty() ? std::vector<da::AuditBar>{} : x.bars(in.vix, da::kDailyTf);
+        const auto s = altair::ivrv::session_rv(five);
+        std::vector<altair::ModelFeed> out;
+        out.push_back(altair::ivrv::rv_daily_feed(inst + " RV", s, vix.empty() ? nullptr : &vix));
+        if (intraday) { out.push_back(altair::ivrv::rv_intraday_feed(inst + " RV today", five, s)); }
+        if (!in.bhav.empty()) { out.push_back(altair::ivrv::iv_daily_feed(inst + " IV (bhavcopy)", x.iv(in.bhav), s)); }
+        if (intraday && in.recorded_sessions >= kRecordedIvMinSessions) {
+            out.push_back(altair::ivrv::iv_intraday_feed(inst + " IV (FYERS)", x.iv(in.recorded), s));
+        }
+        return out;
+    };
+    const auto iv_instrument = [](const std::string& track) { return track.rfind("BANKNIFTY", 0) == 0 ? "BANKNIFTY" : "NIFTY"; };
+
     const std::string cost_text = "2 bp STT to 2026-03-31, 5 bp from 2026-04-01, + " + fixed(other_cost, 1)
                                   + " bp charges and one tick";
 
@@ -895,6 +1014,30 @@ int main(int argc, char** argv) {
 
     // Build a track from its spec.
     const auto build = [&](const TrackSpec& t, const ft::VixForecast* fc, TrackResult& r) {
+        // The same build from transformed bars, for the leak check.
+        r.rebuild = [&, t, fc](const altair::forecast_leak::Transform& x) {
+            const auto take = [&](const std::vector<da::AuditBar>* b) { return b == nullptr ? std::vector<da::AuditBar>{} : x.bars(*b, t.tf); };
+            const auto own = take(bars(t.dir, t.tf));
+            const auto vix = take(t.vix_itself ? nullptr : bars("spot/indiavix", t.tf));
+            const auto pair = take(t.pair_dir.empty() ? nullptr : bars(t.pair_dir, t.tf));
+            const auto spot = take(t.futures ? bars("spot/nifty", t.tf) : nullptr);
+            const ft::VixForecast vfc = fc != nullptr ? x.vix_forecast(*fc) : ft::VixForecast{};
+            const auto* vp = t.vix_itself ? nullptr : &vix;
+            const auto* pp = t.pair_dir.empty() ? nullptr : &pair;
+            ft::TrackInfo info;
+            if (t.decide_minute > 0) {
+                return ft::build_session({t.name, t.instrument, t.decide_minute, &own, vp, other_cost, pp, t.pair_name}, info);
+            }
+            if (t.tf == da::kDailyTf) {
+                return ft::build_daily({t.name, t.instrument, &own, vp, t.futures ? &spot : nullptr, !t.vix_itself, other_cost,
+                                        fc != nullptr ? &vfc : nullptr, pp, t.pair_name}, info);
+            }
+            if (t.tf == 60) {
+                return ft::build_hourly({t.name, t.instrument, &own, vp, !t.vix_itself, other_cost, fc != nullptr ? &vfc : nullptr,
+                                         pp, t.pair_name}, info);
+            }
+            return ft::build_intraday({t.name, t.instrument, t.tf, &own, vp, !t.vix_itself, other_cost, pp, t.pair_name}, info);
+        };
         r.info = series.at(t.dir + "/" + tf_dir(t.tf)).info;
         r.info.cost_note = t.vix_itself ? "not tradable" : cost_text;
         const auto* own = bars(t.dir, t.tf);
@@ -945,10 +1088,53 @@ int main(int argc, char** argv) {
             }
         }
         r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        {
+            const std::lock_guard<std::mutex> lock(print_mu);
+            std::printf("  %-26s %8zu decisions, %5d days, %2zu stages, %zu + %zu look-ahead refusals, %.0f s\n",
+                        r.track.name.c_str(), r.track.rows(), r.track.days(), r.run.stages.size(), r.run.lookahead_refusals,
+                        r.bands_ok ? r.bands.lookahead_refusals : 0, r.seconds);
+            std::fflush(stdout);
+        }
+        if (!leak_check) { return; }
+        // THE LEAK CHECK (app/forecast_leak_check.hpp): at each cut, the track
+        // rebuilt from the bars known then and from a different future, and
+        // every model rerun with the cut row's outcome changed.
+        namespace lk = altair::forecast_leak;
+        const auto tl = std::chrono::steady_clock::now();
+        r.leak_checked = true;
+        std::string first;
+        for (const std::size_t cut : lk::cut_rows(r.run)) {
+            const std::int64_t at = r.track.t[cut];
+            lk::BuilderCheck bc;
+            if (r.rebuild) { bc = lk::check_builder(r.rebuild, r.track, at); }
+            const lk::ModelCheck mc = lk::check_models(r.track, r.run, r.bands_ok ? &r.bands : nullptr, cut, opt);
+            const bool clean = bc.truncated.clean() && bc.perturbed.clean() && mc.ran && mc.calls.clean()
+                            && mc.bands.clean() && mc.refusals == 0;
+            r.leak_clean = r.leak_clean && clean;
+            r.leak_rows += bc.truncated.compared + bc.perturbed.compared;
+            r.leak_calls += mc.calls.compared;
+            r.leak_bands += mc.bands.compared;
+            std::string why = !bc.truncated.clean() ? "builder, later bars removed: " + bc.truncated.first
+                            : !bc.perturbed.clean() ? "builder, another future: " + bc.perturbed.first
+                            : !mc.calls.clean() ? "models: " + mc.calls.first
+                            : !mc.bands.clean() ? "bands: " + mc.bands.first
+                            : mc.refusals > 0 ? std::to_string(mc.refusals) + " look-ahead reads refused in the rerun"
+                            : !mc.ran ? "the rerun did not run" : "";
+            if (first.empty()) { first = why; }
+            std::string q = why;
+            std::replace(q.begin(), q.end(), '"', '\'');
+            r.leak_csv.push_back("\"" + r.track.name + "\"," + da::format_audit_time(at, false) + "," + std::to_string(cut) + ","
+                                 + (r.rebuild ? std::to_string(bc.truncated.compared) + "," + std::to_string(bc.truncated.differ)
+                                                    + "," + std::to_string(bc.perturbed.compared) + "," + std::to_string(bc.perturbed.differ)
+                                              : std::string{",,,"})
+                                 + "," + std::to_string(mc.calls.compared) + "," + std::to_string(mc.calls.differ) + ","
+                                 + std::to_string(mc.bands.compared) + "," + std::to_string(mc.bands.differ) + ","
+                                 + std::to_string(mc.refusals) + "," + (clean ? "clean" : "LEAK") + ",\"" + q + "\"");
+        }
         const std::lock_guard<std::mutex> lock(print_mu);
-        std::printf("  %-26s %8zu decisions, %5d days, %2zu stages, %zu + %zu look-ahead refusals, %.0f s\n",
-                    r.track.name.c_str(), r.track.rows(), r.track.days(), r.run.stages.size(), r.run.lookahead_refusals,
-                    r.bands_ok ? r.bands.lookahead_refusals : 0, r.seconds);
+        std::printf("  %-26s leak check: %s -- %zu rows rebuilt, %zu calls and %zu bands rerun, all identical up to each cut (%.0f s)\n",
+                    r.track.name.c_str(), r.leak_clean ? "clean" : ("LEAK: " + first).c_str(), r.leak_rows, r.leak_calls,
+                    r.leak_bands, std::chrono::duration<double>(std::chrono::steady_clock::now() - tl).count());
         std::fflush(stdout);
     };
     const auto run_all = [&](std::vector<TrackResult>& rs, std::size_t from, const std::vector<std::function<void(TrackResult&)>>& makers) {
@@ -1043,6 +1229,7 @@ int main(int argc, char** argv) {
         };
         struct P2 { std::string base, variant; std::vector<const altair::ModelFeed*> feeds; };
         std::vector<P2> p2;
+        std::map<std::string, std::vector<altair::ModelFeed>> ivrv_feeds;   // base track -> its "+ ivrv" inputs
         for (const auto& b : results) {
             if (!b.ok || !b.track.tradable) { continue; }
             const std::string& n = b.track.name;
@@ -1063,6 +1250,14 @@ int main(int argc, char** argv) {
                 p2.push_back({n, "models", {&self.models}});
             }
             p2.push_back({n, "all", all});
+            const auto in = iv_inputs.find(iv_instrument(n));
+            if (in != iv_inputs.end()) {
+                auto& owned = ivrv_feeds[n];
+                owned = make_ivrv(in->second, altair::forecast_leak::identity(), b.track.horizon != "next day", in->first);
+                std::vector<const altair::ModelFeed*> ptr;
+                for (const auto& f : owned) { ptr.push_back(&f); }
+                p2.push_back({n, "ivrv", ptr});
+            }
         }
         std::erase_if(p2, [&](const P2& q) { return !wanted(q.base + " + " + q.variant); });
         const std::size_t from = results.size();
@@ -1091,6 +1286,22 @@ int main(int argc, char** argv) {
                 }
                 r.track = std::move(*tr);
                 ft::detail::finish_info(r.track, r.info);
+                if (q.variant == "ivrv" && b.rebuild) {
+                    // The leak check rebuilds the base track AND its volatility
+                    // inputs from what was known at the cut, then attaches them.
+                    const std::string inst = iv_instrument(q.base);
+                    const bool intraday = b.track.horizon != "next day";
+                    const std::int64_t start = b.track.t[b.run.first_row];
+                    r.rebuild = [&, base = b.rebuild, inst, intraday, start, name](const altair::forecast_leak::Transform& x) {
+                        const altair::CurriculumTrack bt = base(x);
+                        const auto owned = make_ivrv(iv_inputs.at(inst), x, intraday, inst);
+                        std::vector<const altair::ModelFeed*> ptr;
+                        for (const auto& f : owned) { ptr.push_back(&f); }
+                        altair::FeedAttachInfo info;
+                        auto t = altair::curriculum_attach_feeds(bt, ptr, name, start, info);
+                        return t ? std::move(*t) : altair::CurriculumTrack{};
+                    };
+                }
                 std::string src;
                 for (const auto* f : q.feeds) { src += (src.empty() ? "" : ", ") + f->source + " (" + std::to_string(f->cols()) + ")"; }
                 r.feed_note = "inputs from " + src + "; " + std::to_string(fi.before_start) + " rows before the first forecast and "
@@ -1191,13 +1402,19 @@ int main(int argc, char** argv) {
         for (const std::size_t m : order) {
             const auto& s = r.summary[m];
             if (s.all.scored() == 0) {
-                text << "  " << pad(r.run.models[m], 30) << "  never forecast\n";
+                text << "  " << pad(r.run.models[m], 30)
+                     << (s.all.price_only > 0 ? "  no change on every bar: the random walk itself, by its own choice\n"
+                                              : "  never forecast\n");
                 continue;
             }
             text << "  " << pad(r.run.models[m], 30) << pad(fixed(pct(s.accuracy), 2) + "%", 7)
                  << "  [" << fixed(pct(s.lo95), 1) << ", " << fixed(pct(s.hi95), 1) << "]"
                  << "  n=" << s.all.scored() << "  up-rate " << fixed(pct(s.up_rate), 1) + "%";
-            if (s.have_price) { text << "  skill vs RW " << fixed(100.0 * s.price.skill, 2, true) + "%"; }
+            if (s.have_price) {
+                text << "  skill vs RW " << fixed(100.0 * s.price.skill, 2, true) + "%"
+                     << "  MAE " << fixed(s.price.mae_model_bps, 1) << "/" << fixed(s.price.mae_naive_bps, 1)
+                     << " RMSE " << fixed(s.price.rmse_model_bps, 1) << "/" << fixed(s.price.rmse_naive_bps, 1) << " bp";
+            }
             if (s.all.trades > 0) {
                 text << "  net " << fixed(s.all.net_bp / static_cast<double>(s.all.trades), 2, true) << " bp/trade on "
                      << s.all.trades << (s.all.trades == 1 ? " trade" : " trades");
@@ -1211,7 +1428,8 @@ int main(int argc, char** argv) {
             if (f.best_level > 0.0 && (best == nullptr || f.best_level > best->best_level)) { best = &f; }
         }
         if (best != nullptr) {
-            text << "  >= 80 % direction: " << r.run.models[best->model] << ", its most confident "
+            text << "  >= 80 % direction (ex-ante slices; best of every model x slice): " << r.run.models[best->model]
+                 << ", its most confident "
                  << fixed(100.0 * best->best_level, best->best_level < 0.01 ? 1 : 0) << "% of calls: "
                  << fixed(pct(best->best_acc), 1) << "% on " << best->best_n << " calls (Wilson low "
                  << fixed(pct(best->best_low), 1) << "%, up-rate on those bars " << fixed(pct(best->best_up_rate), 1)
@@ -1245,10 +1463,11 @@ int main(int argc, char** argv) {
         "with k the 80th percentile of the model's own past out-of-sample |move| / scale (in-sample until 50 exist). "
         "Every band aims at 80 %; they compete on the interval (Winkler) score -- width plus 5x any miss -- against the "
         "constant-sigma band. A wide band hits often and scores badly, so hit rate alone proves nothing.",
-        "FRONTIER. For each probabilistic model, its scored calls ranked by confidence |P(up) - 0.5|; the accuracy of the "
-        "top 0.1 %, 0.5 %, 1 % ... 100 %; and the largest slice still >= 80 % on 30+ calls. The ranking uses the whole "
-        "test period's confidences (no outcomes), so a trader would not have known the threshold in advance -- the "
-        "ex-ante versions are the Stack (confident ...) and Consensus ensembles, scored like any model on the Summary sheet.",
+        "FRONTIER, EX ANTE. For each probabilistic model, the accuracy of its most confident 0.1 %, 0.5 %, 1 % ... 100 % of "
+        "calls, where each stage's cut-off for a slice comes from the confidences |P(up) - 0.5| of the calls it made in the "
+        "stages already finished -- the rule a trader could have run live. (Ranking the whole test period at once, as an "
+        "earlier version did, told a call it was in the top 1 % using calls not yet made.) The largest slice still >= 80 % "
+        "on 30+ calls is the best of every model x slice tried: read it as selected after the fact.",
         "Timeframes: daily (decide at 15:30, outcome next close), hourly (decide at the close of each of a full day's first "
         "six bars), and 15m, 5m and 1m (decide at the close of every bar of a full 09:15-15:30 session but the last). "
         "Nothing is forecast across the night. Features at every timeframe include INDIA VIX at the same moment; "
@@ -1307,6 +1526,30 @@ int main(int argc, char** argv) {
     for (const auto& r : results) {
         if (r.ok && r.log) { write_log(out / "forecast_log", r); }
     }
+    bool leak_clean = true;
+    if (leak_check) {
+        std::ofstream f(out / "leak_check.csv", std::ios::binary | std::ios::trunc);
+        f << "track,cut_at,cut_row,builder_rows_truncated,differ,builder_rows_perturbed,differ,calls,differ,bands,differ,"
+             "refusals,verdict,first_difference\n";
+        std::size_t tracks = 0, rows = 0, calls = 0, bands_n = 0;
+        std::string bad;
+        for (const auto& r : results) {
+            if (!r.ok || !r.leak_checked) { continue; }
+            for (const auto& line : r.leak_csv) { f << line << '\n'; }
+            ++tracks;
+            rows += r.leak_rows;
+            calls += r.leak_calls;
+            bands_n += r.leak_bands;
+            if (!r.leak_clean) { leak_clean = false; bad += (bad.empty() ? "" : ", ") + r.track.name; }
+        }
+        std::ostringstream lt;
+        lt << "\nLeak check (--leak-check, app/forecast_leak_check.hpp): " << tracks << " tracks, each cut twice. "
+           << rows << " rebuilt rows, " << calls << " rerun calls and " << bands_n << " rerun bands compared with the full run: "
+           << (leak_clean ? "every one identical -- no forecast saw its future.\n" : "DIFFERENCES on " + bad + " (see leak_check.csv).\n");
+        std::ofstream t2(out / "forecast_curriculum.txt", std::ios::binary | std::ios::app);
+        t2 << lt.str();
+        text << lt.str();
+    }
     std::size_t refusals = 0;
     for (const auto& r : results) { refusals += (r.ok ? r.run.lookahead_refusals : 0) + (r.bands_ok ? r.bands.lookahead_refusals : 0); }
     const double total = std::chrono::duration<double>(std::chrono::steady_clock::now() - t_start).count();
@@ -1314,5 +1557,6 @@ int main(int argc, char** argv) {
     if (log) { std::printf("  wrote per-forecast logs (daily and hourly tracks) under %s\n", (out / "forecast_log").string().c_str()); }
     bool all_ok = !results.empty();
     for (const auto& r : results) { all_ok = all_ok && r.ok; }
+    if (!leak_clean) { return 3; }
     return all_ok && refusals == 0 ? 0 : 1;
 }

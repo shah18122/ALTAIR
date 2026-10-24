@@ -71,6 +71,12 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_fyers_order_adapter_test PRIVATE altair_oms altair_flags)
     add_test(NAME fyers_order_adapter COMMAND altair_fyers_order_adapter_test)
 
+    # The order router: arm file, limits, the dispatch gate, the order book,
+    # against a fake FYERS. No network and no credential.
+    add_executable(altair_live_router_test tests/test_live_router.cpp)
+    target_link_libraries(altair_live_router_test PRIVATE altair_oms altair_flags)
+    add_test(NAME live_router COMMAND altair_live_router_test)
+
     # P13-01..06. Execution algorithms and implementation shortfall. They live
     # in oms/ because they decide the quantity and timing of orders, which is
     # placing an order in every sense that matters -- a scheduler in
@@ -90,4 +96,25 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_paper_venue_test tests/test_paper_venue.cpp)
     target_link_libraries(altair_paper_venue_test PRIVATE altair_oms altair_flags)
     add_test(NAME paper_venue COMMAND altair_paper_venue_test)
+endif()
+
+# The order router: the one process that sends an order to a broker. Built
+# into the app directory beside the other helpers, so the Terminal finds it.
+# Needs the TLS client (the vcpkg `net` feature).
+if(TARGET altair_broker_net)
+    add_executable(altair_order_router order_router_main.cpp)
+    target_link_libraries(altair_order_router PRIVATE altair_oms altair_broker_net altair_live altair_affinity altair_flags)
+    target_compile_definitions(altair_order_router PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    set_target_properties(altair_order_router PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/app")
+    if(WIN32)
+        target_link_libraries(altair_order_router PRIVATE ws2_32 mswsock)
+    endif()
+    if(APPLE)
+        install(TARGETS altair_order_router RUNTIME DESTINATION "Altair.app/Contents/Helpers")
+    else()
+        install(TARGETS altair_order_router RUNTIME DESTINATION bin)
+    endif()
+    if(ALTAIR_BUILD_TESTS)
+        add_test(NAME order_router_help COMMAND altair_order_router --help)
+    endif()
 endif()

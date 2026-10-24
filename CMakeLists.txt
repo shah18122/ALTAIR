@@ -34,7 +34,11 @@ option(ALTAIR_NATIVE_ARCH      "Compile for the host CPU"    ON)
 # default is where aqtinstall put it on this box; it is off C: because C: had
 # 7.8 GB free against a 230 GB disk.
 if(WIN32)
+    # D: on the first box; C: is the usual aqtinstall / Qt installer place.
     set(_altair_qt_default "D:/Qt/6.8.3/msvc2022_64")
+    if(NOT EXISTS "${_altair_qt_default}" AND EXISTS "C:/Qt/6.8.3/msvc2022_64")
+        set(_altair_qt_default "C:/Qt/6.8.3/msvc2022_64")
+    endif()
 else()
     set(_altair_qt_default "")
 endif()

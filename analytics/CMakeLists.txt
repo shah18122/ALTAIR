@@ -26,6 +26,13 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_greeks_test PRIVATE altair_analytics altair_flags)
     add_test(NAME greeks COMMAND altair_greeks_test)
 
+    # The vanna-volga smile: pillars reproduced, flat stays flat, the hedge
+    # carries vega/vanna/volga, the closed form agrees with the price, and
+    # three pillars recover a SABR smile.
+    add_executable(altair_vanna_volga_test tests/test_vanna_volga.cpp)
+    target_link_libraries(altair_vanna_volga_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME vanna_volga COMMAND altair_vanna_volga_test)
+
     # The option chain as structure-of-arrays, cache-line aligned, one expiry
     # in L1D. Held to black76 on every strike and to put-call parity on every
     # row, because it is a second implementation of the same model and second
@@ -49,6 +56,11 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_hurst_test tests/test_hurst.cpp)
     target_link_libraries(altair_hurst_test PRIVATE altair_analytics altair_flags)
     add_test(NAME hurst COMMAND altair_hurst_test)
+
+    add_executable(altair_forecast_metrics_test tests/test_forecast_metrics.cpp)
+    target_link_libraries(altair_forecast_metrics_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME forecast_metrics COMMAND altair_forecast_metrics_test
+             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
 
     add_executable(altair_svi_test tests/test_svi.cpp)
     target_link_libraries(altair_svi_test PRIVATE altair_analytics altair_flags)

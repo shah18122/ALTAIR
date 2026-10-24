@@ -48,11 +48,31 @@ public:
         brand->setObjectName(QStringLiteral("navBrand"));
         auto* brand_layout = new QVBoxLayout(brand);
         brand_layout->setContentsMargins(8, 6, 8, 6);
+        // Full screen has no title bar: minimise and close live beside the name.
+        auto* title_row = new QHBoxLayout;
+        title_row->setContentsMargins(0, 0, 0, 0);
         heading_ = new QLabel(QStringLiteral("ALTAIR"), brand);
         heading_->setObjectName(QStringLiteral("navBrandTitle"));
-        auto* subheading = new QLabel(QStringLiteral("Trading workstation  ·  paper"), brand);
+        title_row->addWidget(heading_);
+        title_row->addStretch();
+        const auto chrome_button = [brand, title_row](const QString& text, const QString& name, const QString& tip) {
+            auto* b = new QPushButton(text, brand);
+            b->setObjectName(name);
+            b->setToolTip(tip);
+            b->setFlat(true);
+            b->setFixedSize(24, 22);
+            b->setStyleSheet(QStringLiteral("QPushButton{color:#8FA3AE;background:transparent;border:0;font-size:13px;}"
+                                            "QPushButton:hover{color:#F0B765;background:#1A262E;border-radius:4px;}"));
+            title_row->addWidget(b);
+            return b;
+        };
+        auto* minimise = chrome_button(QStringLiteral("\u2013"), QStringLiteral("navMinimise"), QStringLiteral("Minimise"));
+        auto* close = chrome_button(QStringLiteral("\u2715"), QStringLiteral("navClose"), QStringLiteral("Close ALTAIR"));
+        connect(minimise, &QPushButton::clicked, this, [this] { window()->showMinimized(); });
+        connect(close, &QPushButton::clicked, this, [this] { window()->close(); });
+        auto* subheading = new QLabel(QStringLiteral("GAUTAM GLOBAL LLP : SMIT SHAH"), brand);
         subheading->setObjectName(QStringLiteral("navBrandSub"));
-        brand_layout->addWidget(heading_);
+        brand_layout->addLayout(title_row);
         brand_layout->addWidget(subheading);
         layout->addWidget(brand);
         search_button_ = new QPushButton(QStringLiteral("⌕   Search pages…        Ctrl+K"), this);
@@ -151,10 +171,13 @@ public:
             // One entry per registry identity; uniqueness proves the maximum size.
         }
         applying_ = true;
-        const auto group = static_cast<std::size_t>(kNavigationPages[static_cast<std::size_t>(index)].group);
+        // A model page opened from the Model Atlas is not in the sidebar: the
+        // Atlas stays highlighted, which is where Back (Backspace) returns.
+        const int shown = nav_listed(index) ? index : 32;
+        const auto group = static_cast<std::size_t>(kNavigationPages[static_cast<std::size_t>(shown)].group);
         if (changed) groups_[group]->setExpanded(true);
-        tree_->setCurrentItem(pages_[static_cast<std::size_t>(index)]);
-        if (changed) tree_->scrollToItem(pages_[static_cast<std::size_t>(index)]);
+        tree_->setCurrentItem(pages_[static_cast<std::size_t>(shown)]);
+        if (changed) tree_->scrollToItem(pages_[static_cast<std::size_t>(shown)]);
         for (std::size_t g = 0; g < rail_buttons_.size(); ++g) rail_buttons_[g]->setChecked(g == group);
         for (auto* button : rail_buttons_) {
             if (!button || !button->menu()) continue;
@@ -259,43 +282,12 @@ private:
     void fill_group(QMenu* menu, int group) {
         for (const int index : kNavigationOrder)
             if (kNavigationPages[static_cast<std::size_t>(index)].group == group) add_route(menu, index);
-        if (group == 3) {
-            auto* catalogue = menu->addMenu(QStringLiteral("Atlas models"));
-            QMenu* family = nullptr;
-            QString previous;
-            for (const auto& row : kAtlasRows) {
-                QString name = QString::fromUtf8(row.family);
-                if (name != previous) {
-                    family = catalogue->addMenu(name.replace(QLatin1Char('&'), QStringLiteral("&&")));
-                    previous = QString::fromUtf8(row.family);
-                }
-                const QString model = QStringLiteral("atlas.%1").arg(
-                    QString::number(static_cast<qulonglong>(atlas_route_id(row)), 16));
-                QString display = QString::fromUtf8(row.model);
-                auto* action = family->addAction(display.replace(QLatin1Char('&'), QStringLiteral("&&")) +
-                    QStringLiteral("  [%1]").arg(atlas_status_text(row.status)));
-                action->setProperty("atlasModel", model);
-                action->setToolTip(QString::fromUtf8(row.what));
-                connect(action, &QAction::triggered, this, [this, model] {
-                    request_page(32);
-                    if (open_atlas_model) open_atlas_model(model);
-                });
-            }
-        }
     }
     void rebuild_tree() {
         applying_ = true;
         const QSignalBlocker blocker(tree_);
         tree_->clear();
         pages_.fill(nullptr);
-        auto* saved = new QTreeWidgetItem(tree_, {QStringLiteral("Favourites")});
-        for (const auto& id : state_.favourites) {
-            const int index = nav_page_index(id);
-            auto* item = new QTreeWidgetItem(saved, {QString::fromUtf8(kNavigationPages[static_cast<std::size_t>(index)].label)});
-            item->setData(0, Qt::UserRole, index);
-        }
-        saved->setExpanded(true);
-        saved->setHidden(state_.favourites.isEmpty());
         for (const int gi : kNavigationGroupOrder) {
             const auto g = static_cast<std::size_t>(gi);
             const auto& group = kNavigationGroups[g];
@@ -319,21 +311,6 @@ private:
             item->setData(0, Qt::UserRole, index);
             item->setToolTip(0, nav_page_id(index));
             pages_[static_cast<std::size_t>(index)] = item;
-        }
-        QTreeWidgetItem* family = nullptr;
-        QString previous;
-        for (const auto& row : kAtlasRows) {
-            const QString name = QString::fromUtf8(row.family);
-            if (name != previous) {
-                family = new QTreeWidgetItem(pages_[32], {name});
-                previous = name;
-            }
-            const QString model = QString::fromUtf8(row.model);
-            auto* entry = new QTreeWidgetItem(family,
-                {model + QStringLiteral("  [%1]").arg(atlas_status_text(row.status))});
-            entry->setData(0, Qt::UserRole, 32);
-            entry->setData(0, Qt::UserRole + 2, model);
-            entry->setToolTip(0, QString::fromUtf8(row.what));
         }
         applying_ = false;
         select_page(state_.page);

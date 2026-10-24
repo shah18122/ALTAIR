@@ -16,13 +16,20 @@
 #pragma once
 
 #include "helper_process.hpp"
+#include "simple_mode.hpp"
 #include "theme.hpp"
+#include "trade_stats.hpp"
+#include "verdicts.hpp"
 
 #include <QAbstractTableModel>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDate>
+#include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QTextBrowser>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -32,6 +39,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QSortFilterProxyModel>
 #include <QTabWidget>
 #include <QTableView>
@@ -292,6 +300,71 @@ private:
     return {};
 }
 
+/// One step of a chained run (the "Refresh daily call" and bhavcopy buttons).
+struct RunStep {
+    QString label;          ///< what the status line names
+    QString helper;         ///< a research CLI found by find_helper; empty when `program` is set
+    QString program;        ///< a system program (PowerShell), run as given
+    QStringList args;
+    int timeout_ms = 30 * 60 * 1000;
+    bool required = true;   ///< a failure stops the chain; otherwise it is noted and the chain goes on
+};
+
+/// PowerShell, for ops/fetch_bhavcopy.ps1: Windows' own, else pwsh if installed.
+[[nodiscard]] inline QString powershell_program() {
+#if defined(_WIN32)
+    return QStringLiteral("powershell");
+#else
+    return QStandardPaths::findExecutable(QStringLiteral("pwsh"));
+#endif
+}
+
+/// ops/fetch_bhavcopy.ps1 from `from` to today. It keeps every day already
+/// under data/bhavcopy/, so a rerun fetches only what is missing.
+[[nodiscard]] inline RunStep bhavcopy_step(const QString& root, const QString& from, int timeout_ms) {
+    return {QStringLiteral("NSE F&O bhavcopy from %1").arg(from), {}, powershell_program(),
+            {QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
+             QStringLiteral("-File"), root + QStringLiteral("/ops/fetch_bhavcopy.ps1"), QStringLiteral("-Go"),
+             QStringLiteral("-From"), from},
+            timeout_ms, false};
+}
+
+/// "Refresh daily call", after the close: bring dataset/ current from the
+/// linked broker, top up the bhavcopy, rerun the curriculum's daily and hourly
+/// tracks (the logs altair_trader reads; two passes, because one full run
+/// prints past HelperProcess's output limit), then altair_trader -- whose
+/// last row of days.csv is the call the terminal's Desk trader acts on -- and
+/// the vol premium on real NSE closes, whose signals.csv the Desk trader shows.
+/// `today` is the IST date. Nothing here can place an order.
+[[nodiscard]] inline std::vector<RunStep> daily_call_plan(const QString& root, bool unverified, const QDate& today) {
+    std::vector<RunStep> plan;
+    // Existence only: the session files are read by the helper, never here.
+    if (QFileInfo::exists(root + QStringLiteral("/data/fyers_session.json"))) {
+        plan.push_back({QStringLiteral("dataset/ from FYERS"), QStringLiteral("altair_kite_update"), {},
+                        {QStringLiteral("--provider"), QStringLiteral("fyers"), QStringLiteral("--go")},
+                        20 * 60 * 1000, false});
+    } else if (QFileInfo::exists(root + QStringLiteral("/data/kite_session.json"))) {
+        plan.push_back({QStringLiteral("dataset/ from Kite"), QStringLiteral("altair_kite_update"), {},
+                        {QStringLiteral("--go")}, 20 * 60 * 1000, false});
+    }
+    if (!powershell_program().isEmpty())
+        plan.push_back(bhavcopy_step(root, today.addDays(-14).toString(Qt::ISODate), 20 * 60 * 1000));
+    plan.push_back({QStringLiteral("curriculum, daily tracks"), QStringLiteral("altair_forecast_curriculum"), {},
+                    {QStringLiteral("--only"), QStringLiteral("daily")}, 90 * 60 * 1000, true});
+    plan.push_back({QStringLiteral("curriculum, hourly tracks"), QStringLiteral("altair_forecast_curriculum"), {},
+                    {QStringLiteral("--only"), QStringLiteral("hourly")}, 90 * 60 * 1000, true});
+    QStringList costs;
+    if (unverified) costs << QStringLiteral("--unverified-costs");
+    plan.push_back({QStringLiteral("altair_trader"), QStringLiteral("altair_trader"), {}, costs, 60 * 60 * 1000, true});
+    QStringList vp = costs;
+    vp << QStringLiteral("--source") << QStringLiteral("bhavcopy");
+    const QString vix_log = root + QStringLiteral("/data/verified/forecast_log/india_vix_daily.csv");
+    if (QFileInfo::exists(vix_log)) vp << QStringLiteral("--vix-log") << vix_log;
+    plan.push_back({QStringLiteral("vol premium on NSE closes"), QStringLiteral("altair_vol_premium"), {}, vp,
+                    30 * 60 * 1000, false});
+    return plan;
+}
+
 } // namespace demo_detail
 
 class DemoTradingPage final : public QWidget {
@@ -299,6 +372,7 @@ public:
     /// `root` holds data/verified/; empty means the source tree.
     explicit DemoTradingPage(QString root = {}, QWidget* parent = nullptr)
         : QWidget(parent), root_dir_(std::move(root)) {
+        helper_.set_output_limit(16 * 1024 * 1024);   // the curriculum is chatty; see run_chain
         if (root_dir_.isEmpty()) {
 #ifdef ALTAIR_SOURCE_DIR
             root_dir_ = QStringLiteral(ALTAIR_SOURCE_DIR);
@@ -310,14 +384,25 @@ public:
         v->setContentsMargins(14, 12, 14, 8);
         v->setSpacing(6);
 
-        auto* head = new QLabel(QStringLiteral(
+        auto* top = new QHBoxLayout;
+        head_ = new QLabel(this);
+        head_->setWordWrap(true);
+        head_->setTextFormat(Qt::RichText);
+        top->addWidget(head_, 1);
+        top->addWidget(simple_mode::button(this), 0, Qt::AlignTop);
+        v->addLayout(top);
+        // Simple view: every strategy's result in one line (desktop/verdicts.hpp).
+        simple_card_ = new QLabel(start_verdicts_html(start_verdicts()), this);
+        simple_card_->setObjectName(QStringLiteral("demoSimpleCard"));
+        simple_card_->setWordWrap(true);
+        simple_card_->setTextFormat(Qt::RichText);
+        v->addWidget(simple_card_);
+        advanced_head_ = QStringLiteral(
             "<b>DEMO TRADING</b> &nbsp;·&nbsp; paper trades only: nothing here is sent to a broker. "
             "One lot each. Band models sell options at the edges their 09:20 forecast set, under the rule "
             "you pick, and buy them back by 15:20; pairs go long one future and short the other; the vol premium "
             "sells the monthly straddle delta hedged when implied vol beats a HAR forecast; stat-arb trades every NIFTY 50 "
-            "stock's residual against the market and its sector."), this);
-        head->setWordWrap(true);
-        v->addWidget(head);
+            "stock's residual against the market and its sector.");
 
         banner_ = new QLabel(this);
         banner_->setWordWrap(true);
@@ -330,12 +415,25 @@ public:
         run_choice_->addItem(QStringLiteral("Option demo (band models)"), QStringLiteral("altair_band_option_demo"));
         run_choice_->addItem(QStringLiteral("Pairs with futures"), QStringLiteral("altair_pairs_futures"));
         run_choice_->addItem(QStringLiteral("Vol premium (hedged straddle)"), QStringLiteral("altair_vol_premium"));
+        run_choice_->addItem(QStringLiteral("Vol premium on NSE closes (bhavcopy)"),
+                             QStringLiteral("altair_vol_premium --source bhavcopy"));
         run_choice_->addItem(QStringLiteral("Stat-arb (NIFTY 50 residuals)"), QStringLiteral("altair_resid_reversion"));
+        run_choice_->addItem(QStringLiteral("altair_trader (one model over every model)"), QStringLiteral("altair_trader"));
         run_ = new QPushButton(QStringLiteral("Run"), this);
         unverified_ = new QCheckBox(QStringLiteral("Price UNVERIFIED expenses"), this);
         unverified_->setToolTip(QStringLiteral("Pass --unverified-costs: price expenses from config/charges.toml although "
                                                "it is not verified. Every expense and net figure is then stamped UNVERIFIED."));
         auto* reread = new QPushButton(QStringLiteral("Re-read"), this);
+        daily_ = new QPushButton(QStringLiteral("Refresh daily call"), this);
+        daily_->setObjectName(QStringLiteral("refreshDailyCall"));
+        daily_->setToolTip(QStringLiteral(
+            "After the close: update dataset/ from the linked broker (FYERS, else Kite), top up the NSE bhavcopy, "
+            "rerun the forecast curriculum (daily and hourly tracks), altair_trader and the vol premium on NSE closes. "
+            "The terminal's Desk trader then reads tomorrow's call. Paper only; it takes a while."));
+        bhav_ = new QPushButton(QStringLiteral("Fetch NSE bhavcopy"), this);
+        bhav_->setToolTip(QStringLiteral(
+            "ops/fetch_bhavcopy.ps1 from 2015: NSE's end-of-day F&O files into data/bhavcopy/. Days already "
+            "there are kept, so after the first time it only fetches what is new."));
         status_ = new QLabel(this);
         status_->setStyleSheet(QStringLiteral("color:%1;").arg(QString::fromLatin1(theme_token::kTextMuted)));
         status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -343,10 +441,14 @@ public:
         controls->addWidget(run_);
         controls->addWidget(unverified_);
         controls->addWidget(reread);
+        controls->addWidget(daily_);
+        controls->addWidget(bhav_);
         controls->addWidget(status_, 1);
         v->addLayout(controls);
 
-        auto* filters = new QHBoxLayout;
+        filter_box_ = new QWidget(this);
+        auto* filters = new QHBoxLayout(filter_box_);
+        filters->setContentsMargins(0, 0, 0, 0);
         rule_ = new QComboBox(this);
         rule_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
         instrument_ = new QComboBox(this);
@@ -363,8 +465,13 @@ public:
         filters->addWidget(new QLabel(QStringLiteral("Model"), this));
         filters->addWidget(model_);
         filters->addStretch(1);
-        v->addLayout(filters);
+        v->addWidget(filter_box_);
         v->addWidget(totals_);
+        stats_ = new QLabel(this);
+        stats_->setObjectName(QStringLiteral("demoStats"));
+        stats_->setWordWrap(true);
+        stats_->setTextFormat(Qt::RichText);
+        v->addWidget(stats_);
 
         tabs_ = new QTabWidget(this);
         summary_ = new demo_detail::CsvModel(this);
@@ -376,6 +483,11 @@ public:
         sa_summary_ = new demo_detail::CsvModel(this);
         sa_trades_ = new demo_detail::CsvModel(this);
         vrp_trades_ = new demo_detail::CsvModel(this);
+        trader_trades_ = new demo_detail::CsvModel(this);
+        trader_days_ = new demo_detail::CsvModel(this);
+        trader_weights_ = new demo_detail::CsvModel(this);
+        trader_candidates_ = new demo_detail::CsvModel(this);
+        trader_analogs_ = new demo_detail::CsvModel(this);
         summary_filter_ = new demo_detail::ColumnFilter(this);
         summary_filter_->setSourceModel(summary_);
         summary_filter_->setSortRole(Qt::UserRole);
@@ -395,7 +507,10 @@ public:
         ratio_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
         ratio_->setContentsMargins(12, 12, 12, 12);
         const auto view = [this](QAbstractItemModel* m) {
-            views_.push_back(demo_detail::table_view(m, this));
+            auto* tv = demo_detail::table_view(m, this);
+            tv->setToolTip(QStringLiteral("Double-click a row: every column, the expense heads and gross to net"));
+            connect(tv, &QTableView::doubleClicked, this, [this, tv](const QModelIndex& i) { show_row(tv, i.row()); });
+            views_.push_back(tv);
             return views_.back();
         };
         tabs_->addTab(view(summary_filter_), QStringLiteral("Options · by model"));
@@ -409,18 +524,72 @@ public:
         tabs_->addTab(view(sorted(sa_summary_)), QStringLiteral("Stat-arb · summary"));
         tabs_->addTab(view(sorted(sa_trades_)), QStringLiteral("Stat-arb · trades"));
         tabs_->addTab(ratio_, QStringLiteral("BANKNIFTY/NIFTY ratio"));
+        // altair_trader (app/trader_main.cpp): its trips, its call every step,
+        // the weight it puts on every model, how each candidate (ridge, CNN,
+        // analogs) did against no change, the latest most similar past
+        // moments, and its summary.
+        tabs_->addTab(view(sorted(trader_trades_)), QStringLiteral("altair_trader · trades"));
+        tabs_->addTab(view(sorted(trader_days_)), QStringLiteral("altair_trader · days"));
+        tabs_->addTab(view(sorted(trader_weights_)), QStringLiteral("altair_trader · weights"));
+        tabs_->addTab(view(sorted(trader_candidates_)), QStringLiteral("altair_trader · models"));
+        tabs_->addTab(view(sorted(trader_analogs_)), QStringLiteral("altair_trader · similar days"));
+        trader_summary_ = new QTextBrowser(this);
+        trader_summary_->setObjectName(QStringLiteral("traderSummary"));
+        tabs_->addTab(trader_summary_, QStringLiteral("altair_trader · how it works"));
         v->addWidget(tabs_, 1);
 
         connect(run_, &QPushButton::clicked, this, [this] { run(run_choice_->currentData().toString()); });
         connect(reread, &QPushButton::clicked, this, [this] { reload(); });
+        connect(daily_, &QPushButton::clicked, this, [this] {
+            const QDate today = QDateTime::currentDateTimeUtc().addSecs(5 * 3600 + 30 * 60).date();
+            run_chain(demo_detail::daily_call_plan(root_dir_, unverified_->isChecked(), today),
+                      QStringLiteral("daily call"));
+        });
+        connect(bhav_, &QPushButton::clicked, this, [this] {
+            if (demo_detail::powershell_program().isEmpty()) {
+                status_->setText(QStringLiteral("no PowerShell here: run ops/fetch_bhavcopy.ps1 -Go by hand"));
+                return;
+            }
+            run_chain({demo_detail::bhavcopy_step(root_dir_, QStringLiteral("2015-01-01"), 4 * 60 * 60 * 1000)},
+                      QStringLiteral("bhavcopy"));
+        });
         connect(rule_, &QComboBox::currentIndexChanged, this, [this](int) { load_rule(); });
         connect(instrument_, &QComboBox::currentIndexChanged, this, [this](int) { refilter(); });
         connect(model_, &QComboBox::currentIndexChanged, this, [this](int) { refilter(); });
+        connect(tabs_, &QTabWidget::currentChanged, this, [this](int) { update_stats(); });
         reload();
+        simple_mode::watch(this, [this](bool simple) { apply_simple(simple); });
+    }
+
+    /// Simple view: each strategy's verdict in a line, the summary tabs only
+    /// (no trade-by-trade tables, no filters). Advanced: everything.
+    void apply_simple(bool simple) {
+        head_->setText(simple ? QStringLiteral(
+                                    "<b>BACKTESTS</b> &nbsp;·&nbsp; paper only. Each strategy was run on past prices; "
+                                    "this is what it made <b>after expenses</b> and whether to trust it. Pick one and "
+                                    "press <b>Run</b> to run it again; the tabs below show its summary.")
+                              : advanced_head_);
+        simple_card_->setVisible(simple);
+        filter_box_->setVisible(!simple);
+        stats_->setVisible(!simple);
+        for (int i = 0; i < tabs_->count(); ++i) {
+            const QString t = tabs_->tabText(i);
+            const bool summary = t.contains(QLatin1String("summary")) || t.contains(QLatin1String("by model"))
+                              || t.contains(QLatin1String("how it works")) || t.contains(QLatin1String("ratio"));
+            tabs_->setTabVisible(i, !simple || summary);
+        }
+        if (simple && !tabs_->isTabVisible(tabs_->currentIndex())) tabs_->setCurrentIndex(0);
     }
 
     [[nodiscard]] QString banner_text() const { return banner_->text(); }
     [[nodiscard]] QString totals_text() const { return totals_->text(); }
+    [[nodiscard]] QString stats_text() const { return stats_->text(); }
+    [[nodiscard]] QTabWidget* tabs() const noexcept { return tabs_; }
+    /// What a double-click on row `row` of the table in tab `tab` shows.
+    [[nodiscard]] QString row_detail(int tab, int row) const {
+        auto* tv = qobject_cast<QTableView*>(tabs_->widget(tab));
+        return tv == nullptr ? QString() : row_detail_html(tv->model(), row);
+    }
     [[nodiscard]] QString ratio_text() const { return ratio_->text(); }
     [[nodiscard]] int shown_trades() const { return trade_filter_->rowCount(); }
     [[nodiscard]] QComboBox* model_filter() const { return model_; }
@@ -428,6 +597,9 @@ public:
     [[nodiscard]] QComboBox* rule_filter() const { return rule_; }
     [[nodiscard]] int shown_summary_rows() const { return summary_filter_->rowCount(); }
     [[nodiscard]] int vol_premium_trades() const { return vrp_trades_->rowCount(); }
+    /// What a double-click on a trade shows: every column, the expense heads
+    /// summed, gross walked to net (the Threshold page uses it too).
+    [[nodiscard]] static QString trade_detail_html(const QAbstractItemModel* m, int row) { return row_detail_html(m, row); }
     [[nodiscard]] int stat_arb_trades() const { return sa_trades_->rowCount(); }
 
 private:
@@ -463,6 +635,17 @@ private:
         }
         sa_summary_->set(demo_detail::read_csv(out_dir(QStringLiteral("resid_reversion")) + QStringLiteral("/summary.csv")));
         sa_trades_->set(demo_detail::read_csv(out_dir(QStringLiteral("resid_reversion")) + QStringLiteral("/trades_market+sector.csv")));
+        {
+            const QString tdir = out_dir(QStringLiteral("altair_trader"));
+            trader_trades_->set(demo_detail::read_csv(tdir + QStringLiteral("/trades.csv")));
+            trader_days_->set(demo_detail::read_csv(tdir + QStringLiteral("/days.csv")));
+            trader_weights_->set(demo_detail::read_csv(tdir + QStringLiteral("/weights.csv")));
+            trader_candidates_->set(demo_detail::read_csv(tdir + QStringLiteral("/candidates.csv")));
+            trader_analogs_->set(demo_detail::read_csv(tdir + QStringLiteral("/analogs.csv")));
+            QFile f(tdir + QStringLiteral("/summary.txt"));
+            const QString summary = f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+            trader_summary_->setHtml(trader_how_html(summary));
+        }
         const QString costs = meta_.count(QStringLiteral("costs")) ? meta_[QStringLiteral("costs")] : QString{};
         costs_verified_ = costs == QLatin1String("verified");
 
@@ -473,7 +656,8 @@ private:
         QStringList rules;
         if (rc >= 0) {
             for (const auto& row : sc.rows) {
-                if (rc < row.size() && !rules.contains(row[rc])) rules << row[rc];
+                // "touch" sold after the move and is no longer run; an older output may still hold it.
+                if (rc < row.size() && row[rc] != QLatin1String("touch") && !rules.contains(row[rc])) rules << row[rc];
             }
         }
         {
@@ -580,6 +764,7 @@ private:
         const QString where = inst.isEmpty() ? QStringLiteral("NIFTY + BANKNIFTY") : inst;
         equity_->set(std::move(points), QStringLiteral("Cumulative P&L, 1 lot per trade · %1 · %2").arg(who, where),
                      costs_verified_);
+        update_stats();
         if (n == 0) {
             totals_->setText(QStringLiteral("no option trades loaded"));
             return;
@@ -592,6 +777,125 @@ private:
                   .arg(demo_detail::rupees(gross), demo_detail::rupees(expenses), demo_detail::rupees(net), stamp)
             : QStringLiteral("<nobr>%1 trades</nobr> · <nobr>gross %2</nobr> · expenses not priced (charges schedule unverified)")
                   .arg(n).arg(demo_detail::rupees(gross)));
+    }
+
+    /// The ratios over the trades behind the tab on show: the options'
+    /// filtered trades, or the pairs', the vol premium's, the stat-arb's.
+    void update_stats() {
+        if (stats_ == nullptr || tabs_ == nullptr) return;
+        const int t = tabs_->currentIndex();
+        QAbstractItemModel* m = t <= 2 ? static_cast<QAbstractItemModel*>(trade_filter_)
+                              : t <= 5 ? static_cast<QAbstractItemModel*>(pairs_trades_)
+                              : t <= 7 ? static_cast<QAbstractItemModel*>(vrp_trades_)
+                              : t <= 9 ? static_cast<QAbstractItemModel*>(sa_trades_)
+                              : t >= 11 ? static_cast<QAbstractItemModel*>(trader_trades_) : nullptr;
+        const QString what = t <= 2 ? QStringLiteral("Options") : t <= 5 ? QStringLiteral("Pairs")
+                           : t <= 7 ? QStringLiteral("Vol premium") : t <= 9 ? QStringLiteral("Stat-arb")
+                           : t >= 11 ? QStringLiteral("altair_trader") : QString();
+        if (m == nullptr || m->rowCount() == 0) { stats_->setText(QString()); return; }
+        const auto col = [m](std::initializer_list<const char*> names) {
+            for (const char* n : names)
+                for (int c = 0; c < m->columnCount(); ++c)
+                    if (m->headerData(c, Qt::Horizontal).toString() == QLatin1String(n)) return c;
+            return -1;
+        };
+        const int cd = col({"date", "exit_date"}), cg = col({"gross_pnl", "gross"}), ce = col({"expenses"}), cn = col({"net_pnl", "net"});
+        if (cg < 0) { stats_->setText(QString()); return; }
+        std::vector<TradeStatRow> rows;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        for (int r = 0; r < m->rowCount(); ++r) {
+            const auto num = [&](int c) {
+                if (c < 0) return nan;
+                bool ok = false;
+                const double v = m->index(r, c).data().toString().toDouble(&ok);
+                return ok ? v : nan;
+            };
+            rows.push_back(TradeStatRow{cd >= 0 ? m->index(r, cd).data().toString() : QString(), num(cg), num(ce), num(cn)});
+        }
+        stats_->setText(QStringLiteral("<b>%1, as shown:</b> ").arg(what) + trade_stats_html(trade_stats(rows)));
+    }
+
+    /// altair_trader, explained, with its latest summary under it.
+    [[nodiscard]] static QString trader_how_html(const QString& summary) {
+        QString h = QStringLiteral(
+            "<h3>altair_trader &mdash; models over every model</h3>"
+            "<p><b>Inputs.</b> Every base model of the forecast curriculum, on every daily track (NIFTY, BANKNIFTY, NIFTY "
+            "futures, INDIA VIX) and, for the intraday arms, every hourly track, says which way the next step goes and how "
+            "sure it is: its conviction (2&middot;p<sub>up</sub> &minus; 1, or &plusmn;1) is one input. Beside them, implied "
+            "and realised volatility: realised from five-minute bars, INDIA VIX, the bhavcopy's 30-day ATM IV and, once "
+            "recorded long enough, the FYERS chain's &mdash; each as of the decision.</p>"
+            "<p><b>Four candidates, every step.</b> No change; the ridge stack (ridge regression with old days fading); a "
+            "temporal CNN that mixes the models' calls into a few learned patterns and reads how they moved over the last "
+            "ten steps; and the analogs, which find the past moments whose calls looked most like now and take what "
+            "followed them (<i>similar days</i> tab). Each is scored on the calls it made before each outcome; the one with "
+            "the least recent error trades. The CNN and the analogs also check, at every refit, that they beat no change on "
+            "the newest fifth of their own past, and forecast no change if not.</p>"
+            "<p><b>Step by step.</b> The last outcome is learned and the candidates refitted; this step's call is made from "
+            "fits that never saw it; then it trades one lot of the index future. It enters only when the expected move beats "
+            "the round trip's expenses (both fills, priced from config/charges.toml), holds while the call points the held "
+            "way, and exits when it turns. Daily: a month end inside a holding pays a roll. Intraday: no entry at the "
+            "session's last hourly decision, and nothing is carried overnight. Every trip lists every expense head "
+            "(double-click one). On paper only.</p>"
+            "<p><b>Read it against buy and hold</b> (in the summary): the timing has to beat simply holding the future.</p>");
+        if (summary.isEmpty())
+            h += QStringLiteral("<p><i>No run yet: choose <b>altair_trader</b> and press <b>Run</b> (it reads "
+                                "data/verified/forecast_log/, which altair_forecast_curriculum writes).</i></p>");
+        else
+            h += QStringLiteral("<h4>Latest run</h4><pre>%1</pre>").arg(summary.toHtmlEscaped());
+        return h;
+    }
+
+    /// One row: every column, the expense heads summed, gross walked to net.
+    [[nodiscard]] static QString row_detail_html(const QAbstractItemModel* m, int row) {
+        if (m == nullptr || row < 0 || row >= m->rowCount()) return {};
+        std::map<QString, QString> v;
+        QString h = QStringLiteral("<table border='1' cellspacing='0' cellpadding='3'>");
+        for (int c = 0; c < m->columnCount(); ++c) {
+            const QString name = m->headerData(c, Qt::Horizontal).toString();
+            const QString val = m->index(row, c).data().toString();
+            v[name] = val;
+            h += QStringLiteral("<tr><td><b>%1</b></td><td>%2</td></tr>").arg(name.toHtmlEscaped(), val.toHtmlEscaped());
+        }
+        h += QStringLiteral("</table>");
+        const auto has = [&v](const char* k) { return v.count(QString::fromLatin1(k)) != 0 && !v[QString::fromLatin1(k)].isEmpty(); };
+        const auto get = [&v](const char* k) { return v[QString::fromLatin1(k)]; };
+        // altair_trader names them gross / net.
+        if (!has("gross_pnl") && has("gross")) v[QStringLiteral("gross_pnl")] = v[QStringLiteral("gross")];
+        if (!has("net_pnl") && has("net")) v[QStringLiteral("net_pnl")] = v[QStringLiteral("net")];
+        QString walk;
+        if (has("theta_pnl") && has("gross_pnl"))
+            walk += QStringLiteral("<b>Gross</b> = time decay %1 + the underlying's move %2 + the change in IV %3 + slippage %4%5 = <b>%6</b><br>")
+                        .arg(get("theta_pnl"), get("move_pnl"), get("iv_pnl"), get("slippage_pnl"),
+                             has("hedge_pnl") ? QStringLiteral(" + futures hedge ") + get("hedge_pnl") : QString(), get("gross_pnl"));
+        else if (has("gross_pnl"))
+            walk += QStringLiteral("<b>Gross</b> = <b>%1</b><br>").arg(get("gross_pnl"));
+        if (has("brokerage"))
+            walk += QStringLiteral("<b>Expenses</b> = brokerage %1 + STT %2 + exchange %3 + SEBI %4 + stamp %5 + IPFT %6 + GST %7 = <b>%8</b><br>")
+                        .arg(get("brokerage"), get("stt"), get("exchange_txn"), get("sebi"), get("stamp"), get("ipft"), get("gst"),
+                             get("expenses"));
+        else if (has("expenses"))
+            walk += QStringLiteral("<b>Expenses</b> = <b>%1</b> (this output predates the item-by-item columns: run it again)<br>")
+                        .arg(get("expenses"));
+        else if (has("gross_pnl"))
+            walk += QStringLiteral("<b>Expenses</b>: not priced in this run<br>");
+        if (has("net_pnl")) walk += QStringLiteral("<b>Net</b> = gross − expenses = <b>%1</b>").arg(get("net_pnl"));
+        return (walk.isEmpty() ? QString() : QStringLiteral("<p>") + walk + QStringLiteral("</p>")) + h;
+    }
+
+    void show_row(QTableView* tv, int row) {
+        const QString html = row_detail_html(tv->model(), row);
+        if (html.isEmpty()) return;
+        QDialog d(this);
+        d.setWindowTitle(QStringLiteral("Trade"));
+        d.resize(760, 640);
+        auto* lay = new QVBoxLayout(&d);
+        auto* b = new QTextBrowser(&d);
+        b->setHtml(html);
+        lay->addWidget(b);
+        auto* ok = new QDialogButtonBox(QDialogButtonBox::Close, &d);
+        connect(ok, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        lay->addWidget(ok);
+        d.exec();
     }
 
     void reload_ratio() {
@@ -624,22 +928,24 @@ private:
         ratio_->setText(html);
     }
 
-    void run(const QString& name) {
+    /// A combo entry is the CLI, optionally followed by fixed arguments.
+    void run(const QString& entry) {
+        QStringList args = entry.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        const QString name = args.isEmpty() ? QString{} : args.takeFirst();
         const QString exe = demo_detail::find_helper(name);
         if (exe.isEmpty()) {
             status_->setText(QStringLiteral("%1 is not built (it needs tomlplusplus).").arg(name));
             return;
         }
-        QStringList args;
         if (unverified_->isChecked()) args << QStringLiteral("--unverified-costs");
         const QString vix_log = root_dir_ + QStringLiteral("/data/verified/forecast_log/india_vix_daily.csv");
         if (name == QLatin1String("altair_vol_premium") && QFileInfo::exists(vix_log)) {
             args << QStringLiteral("--vix-log") << vix_log;   // adds the VIX-direction veto variant
         }
-        run_->setEnabled(false);
+        set_running(true);
         status_->setText(QStringLiteral("running %1 ...").arg(name));
         const auto started = helper_.start(exe, args, root_dir_, 30 * 60 * 1000, [this, name](HelperProcessResult r) {
-            run_->setEnabled(true);
+            set_running(false);
             if (!r.ran_to_completion()) {
                 status_->setText(QStringLiteral("%1 failed: %2").arg(name, r.detail));
                 return;
@@ -651,9 +957,70 @@ private:
             reload();
         });
         if (!started) {
-            run_->setEnabled(true);
+            set_running(false);
             status_->setText(QStringLiteral("another run is still going"));
         }
+    }
+
+    void set_running(bool on) {
+        run_->setEnabled(!on);
+        daily_->setEnabled(!on);
+        bhav_->setEnabled(!on);
+    }
+
+    /// Run `plan` one step after another on helper_. A required step that
+    /// fails stops the chain; an optional one is noted and skipped past.
+    void run_chain(std::vector<demo_detail::RunStep> plan, const QString& title) {
+        if (helper_.active()) {
+            status_->setText(QStringLiteral("another run is still going"));
+            return;
+        }
+        chain_ = std::move(plan);
+        chain_title_ = title;
+        chain_notes_.clear();
+        set_running(true);
+        chain_step(0);
+    }
+
+    void chain_step(std::size_t i) {
+        if (i >= chain_.size()) {
+            set_running(false);
+            status_->setText(chain_notes_.isEmpty()
+                ? QStringLiteral("%1 done").arg(chain_title_)
+                : QStringLiteral("%1 done; %2").arg(chain_title_, chain_notes_.join(QStringLiteral("; "))));
+            reload();
+            return;
+        }
+        const demo_detail::RunStep& step = chain_[i];
+        const QString exe = step.program.isEmpty() ? demo_detail::find_helper(step.helper) : step.program;
+        const auto failed = [this, i](const QString& why) {
+            const demo_detail::RunStep& s = chain_[i];
+            if (s.required) {
+                set_running(false);
+                status_->setText(QStringLiteral("%1 stopped at %2: %3").arg(chain_title_, s.label, why));
+                reload();
+                return;
+            }
+            chain_notes_ << QStringLiteral("%1 skipped (%2)").arg(s.label, why);
+            chain_step(i + 1);
+        };
+        if (exe.isEmpty()) {
+            failed(QStringLiteral("%1 is not built").arg(step.helper));
+            return;
+        }
+        status_->setText(QStringLiteral("%1, step %2 of %3: %4 ...").arg(chain_title_).arg(i + 1).arg(chain_.size())
+                             .arg(step.label));
+        const auto started = helper_.start(exe, step.args, root_dir_, step.timeout_ms,
+                                           [this, i, failed](HelperProcessResult r) {
+            if (!r.ran_to_completion()) { failed(r.detail); return; }
+            if (r.exit_code != 0) {
+                failed(QStringLiteral("exit %1: %2").arg(r.exit_code)
+                           .arg(r.output.trimmed().section(QChar('\n'), -1)));
+                return;
+            }
+            chain_step(i + 1);
+        });
+        if (!started) failed(QStringLiteral("could not start"));
     }
 
     QString root_dir_;
@@ -661,17 +1028,33 @@ private:
     bool have_meta_ = false;
     std::map<QString, QString> meta_;
     HelperProcess helper_;
+    std::vector<demo_detail::RunStep> chain_;
+    QString chain_title_;
+    QStringList chain_notes_;
+    QPushButton* daily_{};
+    QPushButton* bhav_{};
     QLabel* banner_{};
     QLabel* status_{};
     QLabel* totals_{};
+    QLabel* stats_{};
     QLabel* ratio_{};
     QComboBox* run_choice_{};
+    demo_detail::CsvModel* trader_trades_{};
+    demo_detail::CsvModel* trader_days_{};
+    demo_detail::CsvModel* trader_weights_{};
+    demo_detail::CsvModel* trader_candidates_{};
+    demo_detail::CsvModel* trader_analogs_{};
+    QTextBrowser* trader_summary_{};
     QPushButton* run_{};
     QCheckBox* unverified_{};
     QComboBox* rule_{};
     QComboBox* instrument_{};
     QComboBox* model_{};
     QTabWidget* tabs_{};
+    QLabel* head_{};
+    QLabel* simple_card_{};
+    QWidget* filter_box_{};
+    QString advanced_head_;
     demo_detail::CsvModel* summary_{};
     demo_detail::CsvModel* trades_{};
     demo_detail::CsvModel* pairs_summary_{};

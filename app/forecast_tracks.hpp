@@ -10,9 +10,15 @@
 //     Dec 2018-2019) has its range widened to include them and is counted.
 //     Its close -- what every target uses -- is kept as printed.
 //   * A non-positive or non-finite price drops the bar, counted.
-//   * Hourly: only days with the full 09:15-15:15 grid of seven bars are
-//     forecast. Muhurat and special sessions and the partial last day
-//     (2026-09-25, ends 12:47) are excluded, counted.
+//   * Intraday (hourly, 1-15 minutes, the session horizons): a day is
+//     forecast along the 09:15 grid up to its first missing or off-grid bar,
+//     and no further. A row needs only the bars to its own outcome -- never
+//     the rest of the day: whether a session will run its full length is not
+//     known at 10:15, and choosing days by it would select them on the
+//     future (a backtest that silently skips the day a feed broke or the
+//     market halted). Muhurat and other off-grid sessions get no rows; a day
+//     cut short (the partial last day, 2026-09-25, ends 12:47) is forecast to
+//     where it stops. Days short of the full grid are counted.
 //   * NIFTY futures: daily only. The intraday files hold the next-month
 //     contract for July-August 2026 (the audit's finding), so an intraday
 //     futures track would be learning the wrong instrument. A daily outcome
@@ -70,7 +76,7 @@ struct TrackInfo {
     std::size_t bars{};             ///< after cleaning
     std::size_t bad_price{};        ///< dropped
     std::size_t ohlc_repaired{};    ///< range widened to include open and close
-    std::size_t short_days{};       ///< hourly: days without the full grid, not forecast
+    std::size_t short_days{};       ///< intraday: days short of the full grid, forecast only up to where it stops
     std::size_t before_vix{};       ///< bars before INDIA VIX begins, not used
     std::size_t no_vix{};           ///< rows dropped: no VIX bar at the same time
     std::size_t no_vix_forecast{};  ///< rows dropped: no VIX forecast known at the decision
@@ -411,12 +417,13 @@ struct HourlyInputs {
         if (days.empty() || days.back().day != d) { days.push_back({d, i, i}); }
         days.back().e = i + 1;
     }
-    const auto full = [&bars](const DaySpan& s) {
-        if (s.e - s.b != 7) { return false; }
-        for (std::size_t k = 0; k < 7; ++k) {
-            if (da::audit_minute_of_day(bars[s.b + k].t) != 555 + 60 * static_cast<std::int64_t>(k)) { return false; }
-        }
-        return true;
+    // Leading bars of the day on the 09:15 hourly grid. A row needs its own
+    // bar and the next: nothing later in the day decides whether it exists.
+    const auto on_grid = [&bars](const DaySpan& s) {
+        std::size_t k = 0;
+        while (k < 7 && s.b + k < s.e
+               && da::audit_minute_of_day(bars[s.b + k].t) == 555 + 60 * static_cast<std::int64_t>(k)) { ++k; }
+        return k;
     };
     // VIX by stamp, and VIX's last close by day.
     std::map<std::int64_t, double> vix_at;
@@ -432,7 +439,9 @@ struct HourlyInputs {
     for (std::size_t q = 0; q < days.size(); ++q) {
         const DaySpan& s = days[q];
         if (!is_vix && s.day < vix_start) { info.before_vix += s.e - s.b; continue; }
-        if (!full(s)) { ++info.short_days; continue; }
+        const std::size_t grid = on_grid(s);
+        if (grid < 7) { ++info.short_days; }
+        if (grid < 2) { continue; }
         if (q < 2) { info.warmup += s.e - s.b; continue; }
         const DaySpan& p1 = days[q - 1];
         const DaySpan& p2 = days[q - 2];
@@ -457,7 +466,7 @@ struct HourlyInputs {
         }
         const auto vix_prev_close = is_vix ? vix_close.end() : vix_close.find(p1.day);
         bool counted_day = false;
-        for (std::size_t j = 0; j < 6; ++j) {
+        for (std::size_t j = 0; j < 6 && j + 1 < grid; ++j) {
             const da::AuditBar& b = bars[s.b + j];
             // The closes before this bar: today's, then yesterday's last two.
             const double prev_c = j > 0 ? bars[s.b + j - 1].c : pc;
@@ -552,12 +561,12 @@ struct IntradayInputs {
         if (days.empty() || days.back().day != d) { days.push_back({d, i, i}); }
         days.back().e = i + 1;
     }
-    const auto full = [&](const DaySpan& sp) {
-        if (sp.e - sp.b != per_day) { return false; }
-        for (std::size_t k = 0; k < per_day; ++k) {
-            if (da::audit_minute_of_day(bars[sp.b + k].t) != 555 + tf * static_cast<std::int64_t>(k)) { return false; }
-        }
-        return true;
+    // Leading bars of the day on the 09:15 grid (see build_hourly).
+    const auto on_grid = [&](const DaySpan& sp) {
+        std::size_t k = 0;
+        while (k < per_day && sp.b + k < sp.e
+               && da::audit_minute_of_day(bars[sp.b + k].t) == 555 + tf * static_cast<std::int64_t>(k)) { ++k; }
+        return k;
     };
     const auto bar_close = [tf](std::int64_t stamp) {
         const std::int64_t close = da::audit_day(stamp) * kDaySec + kCloseSec;
@@ -585,7 +594,9 @@ struct IntradayInputs {
     std::vector<double> rets(per_day);
     for (std::size_t q = 0; q < days.size(); ++q) {
         const DaySpan& sp = days[q];
-        if (!full(sp)) { ++info.short_days; continue; }
+        const std::size_t grid = on_grid(sp);
+        if (grid < per_day) { ++info.short_days; }
+        if (grid < 2) { continue; }
         if (q < 2) { info.warmup += sp.e - sp.b; continue; }
         const DaySpan& p1 = days[q - 1];
         const DaySpan& p2 = days[q - 2];
@@ -594,7 +605,7 @@ struct IntradayInputs {
         const double open = bars[sp.b].o;
         const double vix_pc = is_vix ? pc : vix_close_before(sp.day);
         bool counted_day = false;
-        for (std::size_t k = 0; k + 1 < per_day; ++k) {
+        for (std::size_t k = 0; k + 1 < grid; ++k) {
             const da::AuditBar& b = bars[sp.b + k];
             const double prev_c = k > 0 ? bars[sp.b + k - 1].c : pc;
             const double prev2_c = k > 1 ? bars[sp.b + k - 2].c : (k == 1 ? pc : bars[p1.e - 2].c);
@@ -696,12 +707,13 @@ struct SessionInputs {
         if (days.empty() || days.back().day != d) { days.push_back({d, i, i}); }
         days.back().e = i + 1;
     }
-    const auto full = [&](const DaySpan& sp) {
-        if (sp.e - sp.b != per_day) { return false; }
-        for (std::size_t k = 0; k < per_day; ++k) {
-            if (da::audit_minute_of_day(bars[sp.b + k].t) != 555 + 5 * static_cast<std::int64_t>(k)) { return false; }
-        }
-        return true;
+    // Leading bars of the day on the 09:15 grid (see build_hourly): a row
+    // needs the bars to its outcome and nothing after.
+    const auto on_grid = [&](const DaySpan& sp) {
+        std::size_t k = 0;
+        while (k < per_day && sp.b + k < sp.e
+               && da::audit_minute_of_day(bars[sp.b + k].t) == 555 + 5 * static_cast<std::int64_t>(k)) { ++k; }
+        return k;
     };
     // The VIX close of the last day before `day` that has one.
     std::vector<std::int64_t> vix_days;
@@ -718,22 +730,18 @@ struct SessionInputs {
         return day - vix_days[k] <= 7 ? vix_last[k] : std::numeric_limits<double>::quiet_NaN();
     };
 
-    // Today, unfinished: the bars so far are the start of the 09:15 grid.
-    const auto prefix = [&](const DaySpan& sp) {
-        if (sp.e - sp.b > per_day) { return false; }
-        for (std::size_t k = 0; k < sp.e - sp.b; ++k) {
-            if (da::audit_minute_of_day(bars[sp.b + k].t) != 555 + 5 * static_cast<std::int64_t>(k)) { return false; }
-        }
-        return true;
-    };
-
     std::int32_t day_ordinal = -1;
     std::vector<double> row(tr.p);
     for (std::size_t q = 0; q < days.size(); ++q) {
         const DaySpan& sp = days[q];
-        const bool partial = in.partial_last_day && q + 1 == days.size() && !full(sp) && prefix(sp)
-                          && sp.e - sp.b > k_dec;
-        if (!full(sp) && !partial) { ++info.short_days; continue; }
+        const std::size_t grid = on_grid(sp);
+        // Every bar to the outcome is on the grid: the row can be scored.
+        const bool complete = grid > k_exit;
+        // Today, unfinished: every bar so far on the grid, past the decision.
+        const bool partial = in.partial_last_day && q + 1 == days.size() && !complete && grid == sp.e - sp.b
+                          && grid > k_dec;
+        if (grid < per_day) { ++info.short_days; }
+        if (!complete && !partial) { continue; }
         if (q < 6 || k_dec + 1 >= per_day || k_dec >= k_exit) { ++info.warmup; continue; }
         const DaySpan& p1 = days[q - 1];
         const double pc = bars[p1.e - 1].c, ppc = bars[days[q - 2].e - 1].c, pc5 = bars[days[q - 6].e - 1].c;
@@ -773,7 +781,7 @@ struct SessionInputs {
         row[c++] = std::log(v / v_pc);
         row[c++] = std::log(v / v_open);
         if (partial) { info.partial_last = true; }
-        const double outcome = partial ? d.c : bars[sp.b + k_exit].c;   // a full day has every bar
+        const double outcome = partial ? d.c : bars[sp.b + k_exit].c;   // complete: on the grid to k_exit
         detail::push_row(tr, row, sp.day * kDaySec + static_cast<std::int64_t>(in.decide_minute) * 60,
                          sp.day * kDaySec + static_cast<std::int64_t>(in.exit_minute) * 60, ++day_ordinal, d.c, outcome,
                          futures_cost_bp(sp.day, in.other_cost_bp),

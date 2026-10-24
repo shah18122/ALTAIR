@@ -113,7 +113,10 @@ std::vector<Spec> read_pairs(const fs::path& file) {
     return out;
 }
 
-struct Costs { bool priced = false; double total = 0.0; };
+struct Costs {
+    bool priced = false;
+    double total = 0.0, brokerage = 0.0, stt = 0.0, exchange = 0.0, sebi = 0.0, stamp = 0.0, ipft = 0.0, gst = 0.0;
+};
 
 /// One futures order through risk/cost.hpp. Brokerage is Rs 20 or 0.03 %,
 /// whichever is lower -- commercial, not in charges.toml; the literal
@@ -135,7 +138,15 @@ bool add_order(Costs& c, const std::vector<altair::ChargeSchedule>& schedules, a
     if (s == nullptr) { return false; }
     const auto b = altair::compute_cost(t, *s, br);
     if (!b) { return false; }
-    c.total += static_cast<double>(b->total.raw()) / 100.0;
+    const auto rs = [](altair::Notional n) { return static_cast<double>(n.raw()) / 100.0; };
+    c.total += rs(b->total);
+    c.brokerage += rs(b->brokerage);
+    c.stt += rs(b->stt);
+    c.exchange += rs(b->exchange_txn);
+    c.sebi += rs(b->sebi);
+    c.stamp += rs(b->stamp);
+    c.ipft += rs(b->ipft);
+    c.gst += rs(b->gst);
     return true;
 }
 
@@ -197,7 +208,8 @@ int main(int argc, char** argv) {
     std::ofstream trades(dir / "trades.csv", std::ios::trunc), windows(dir / "windows.csv", std::ios::trunc),
         summary(dir / "summary.csv", std::ios::trunc), ratio(dir / "ratio.csv", std::ios::trunc);
     trades << "pair,window,entry_date,exit_date,days_held,position,z_entry,z_exit,lots_a,qty_a,a_entry,a_exit,lots_b,qty_b,"
-              "b_entry,b_exit,hedge_beta,held_ratio,rolls,exit_reason,gross_pnl,expenses,net_pnl,costs\n";
+              "b_entry,b_exit,hedge_beta,held_ratio,rolls,exit_reason,gross_pnl,expenses,net_pnl,costs,"
+              "brokerage,stt,exchange_txn,sebi,stamp,ipft,gst\n";
     windows << "pair,formation_from,trade_from,trade_to,traded,reason,beta,adf_t,critical_5pct,half_life_days,correlation\n";
     summary << "pair,status,days,first,last,windows,windows_traded,trades,wins,win_pct,gross_pnl,expenses,net_pnl,"
                "net_per_trade,avg_days_held,max_drawdown,lot_a,lot_b,costs\n";
@@ -315,7 +327,11 @@ int main(int argc, char** argv) {
                    << fixed(t.b_in, 2) << ',' << fixed(t.b_out, 2) << ',' << fixed(t.hedge_beta, 4) << ','
                    << fixed(t.held_ratio, 4) << ',' << t.rolls.size() << ',' << t.exit_reason << ',' << fixed(t.gross, 2) << ','
                    << (c.priced ? fixed(c.total, 2) : std::string{}) << ',' << (c.priced ? fixed(pnl, 2) : std::string{}) << ','
-                   << (c.priced ? cost_tag : std::string{"refused"}) << '\n';
+                   << (c.priced ? cost_tag : std::string{"refused"}) << ','
+                   << (c.priced ? fixed(c.brokerage, 2) + ',' + fixed(c.stt, 2) + ',' + fixed(c.exchange, 2) + ',' + fixed(c.sebi, 2)
+                                      + ',' + fixed(c.stamp, 2) + ',' + fixed(c.ipft, 2) + ',' + fixed(c.gst, 2)
+                                : std::string{",,,,,,"})
+                   << '\n';
         }
         const std::size_t n = res->trades.size();
         summary << s.pair << ",ok," << day.size() << ',' << iso_day(day.front()) << ',' << iso_day(day.back()) << ','

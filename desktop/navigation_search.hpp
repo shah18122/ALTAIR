@@ -9,6 +9,7 @@
 #include <QVBoxLayout>
 #include <functional>
 #include <utility>
+#include <vector>
 
 namespace altair::ui {
 class NavigationSearch final : public QDialog {
@@ -55,7 +56,12 @@ private:
     void filter() {
         results_->clear();
         const auto want = query_->text().simplified();
-        for (const int index : kNavigationOrder) {
+        // The sidebar's pages first, then the ones that open from the Model
+        // Atlas, so a model page is never out of reach.
+        std::vector<int> order(kNavigationOrder.begin(), kNavigationOrder.end());
+        for (int i = 0; i < static_cast<int>(kNavigationPages.size()); ++i)
+            if (nav_visible(i) && !nav_listed(i)) order.push_back(i);
+        for (const int index : order) {
             const auto& page = kNavigationPages[static_cast<std::size_t>(index)];
             const auto group = QString::fromUtf8(kNavigationGroups[static_cast<std::size_t>(page.group)].label);
             const bool saved = favourites_.contains(nav_page_id(index));

@@ -5,9 +5,11 @@
 
 #include <live/universe.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -147,7 +149,82 @@ int main() {
         check(o && o->kind == LiveKind::Call && o->fyers == "NSE:SBIN26OCT800CE" && o->underlying == "SBIN"
                   && o->strike == 800 && o->lot == 750,
               "an NFO option keeps its symbol, underlying, strike and lot");
-        check(!instrument_from_master(mcx), "an exchange the feed does not carry is refused, not guessed");
+        check(!instrument_from_master(mcx), "an MCX contract with no known lot is refused, not guessed");
+
+        // MCX and the INR currency pairs (live/contract_units.hpp). The Kite
+        // master says lot 1 for both; the paper book needs the units.
+        LiveKiteRow crude;
+        crude.token = 146796039; crude.exchange_token = 573422; crude.symbol = "CRUDEOIL26NOVFUT"; crude.name = "CRUDEOIL";
+        crude.type = "FUT"; crude.segment = "MCX-FUT"; crude.exchange = "MCX"; crude.lot = 1; crude.tick = 1;
+        crude.expiry_day = parse_day("2026-11-19");
+        const auto cr = instrument_from_master(crude);
+        check(cr && cr->kind == LiveKind::Future && cr->fyers == "MCX:CRUDEOIL26NOVFUT" && cr->lot == 100
+                  && cr->group == "Commodity" && quote_per(*cr) == 1,
+              "an MCX future streams as MCX:<symbol>, a lot of 100 barrels, in the Commodity group");
+        LiveKiteRow usd;
+        usd.token = 823299; usd.exchange_token = 3216; usd.symbol = "USDINR2690496.625CE"; usd.name = "USDINR";
+        usd.type = "CE"; usd.segment = "CDS-OPT"; usd.exchange = "CDS"; usd.lot = 1; usd.tick = 0.0025; usd.strike = 96.625;
+        usd.expiry_day = parse_day("2026-09-04");
+        const auto ux = instrument_from_master(usd);
+        check(ux && ux->kind == LiveKind::Call && ux->fyers == "NSE:USDINR2690496.625CE" && ux->group == "Currency"
+                  && ux->lot == 10 && std::fabs(ux->strike - 9662.5) < 1e-9 && std::fabs(ux->tick - 0.25) < 1e-12
+                  && quote_per(*ux) == 100,
+              "a USDINR option is quoted per 100 USD: strike 9,662.50, tick 0.25, a lot of 10 (1,000 USD)");
+        LiveKiteRow cross = usd;
+        cross.name = "EURUSD"; cross.symbol = "EURUSD26SEPFUT"; cross.segment = "CDS-FUT"; cross.type = "FUT";
+        LiveKiteRow bond = usd;
+        bond.name = "633GS2035"; bond.symbol = "633GS203526OCTFUT"; bond.segment = "CDS-FUT"; bond.type = "FUT";
+        check(!instrument_from_master(cross) && !instrument_from_master(bond),
+              "a cross pair and an interest-rate future (same segment) are not streamed");
+        // Rows in the FYERS master layout, written for this test (not fetched):
+        // column 10 the exchange (11 MCX, 10 NSE), 11 the segment (20 COM, 12 CD).
+        std::istringstream mcx_com(
+            "1120261119573422,CRUDEOIL 26 Nov 19 FUT,11,100,1.0,,0900-2330:,2026-10-20,1795089000,MCX:CRUDEOIL26NOVFUT,11,20,573422,CRUDEOIL,294,-1.0,XX,1120000000000294,None,0,0.0\n");
+        std::istringstream nse_cd(
+            "1012260904823299,USDINR 26 Sep 04 96.625 CE,14,1,0.0025,,0900-1700:,2026-10-20,1788525000,NSE:USDINR26S0496.625CE,10,12,3216,USDINR,1,96.625,CE,101200000000001,None,0,0.0\n");
+        FyersCashNames dn;
+        check(dn.add_csv(mcx_com) == 1 && dn.add_csv(nse_cd) == 1, "the MCX_COM and NSE_CD masters load");
+        const auto crn = instrument_from_master(crude, &dn);
+        const auto uxn = instrument_from_master(usd, &dn);
+        check(crn && crn->fyers == "MCX:CRUDEOIL26NOVFUT" && uxn && uxn->fyers == "NSE:USDINR26S0496.625CE",
+              "and name MCX and currency contracts by exchange token, not by the Kite symbol");
+        const std::vector<LiveInstrument> mixed{*e, *cr, *ux};
+        check(session_end_minute(mixed, [](const LiveInstrument& i) -> std::string_view { return i.group; }, 15 * 60 + 45)
+                  == kCommodityCloseMinute,
+              "an MCX scrip keeps the feed up to the MCX close");
+
+        // FYERS's own names, by exchange token (live/fyers_names.hpp). The
+        // master rows are real, fetched from public.fyers.in on 2026-10-07.
+        std::istringstream nse_cm(
+            "10100000003045,STATE BANK OF INDIA,0,1,0.05,INE062A01020,0915-1530|1815-1915:,2026-10-06,,NSE:SBIN-EQ,10,10,3045,SBIN,3045,-1.0,XX,10100000003045,None,1,3.7\n"
+            "101000000011033,AGASTYA ENE AND INFRA LTD,0,1,0.01,INE753W01010,0915-1530|1815-1915:,2026-10-06,,NSE:AGASTYAEN-BE,10,10,11033,AGASTYAEN,11033,-1.0,XX,101000000011033,None,0,0.0\n"
+            "101000000016669,BAJAJ AUTO LIMITED,0,1,1.0,INE917I01010,0915-1530|1815-1915:,2026-10-06,,NSE:BAJAJ-AUTO-EQ,10,10,16669,BAJAJ-AUTO,16669,-1.0,XX,101000000016669,None,1,3.6\n"
+            "garbage line\n");
+        std::istringstream bse_cm(
+            "1210000000532628,3I INFOTECH LTD.,0,1,0.01,INE748C01038,0915-1530|1815-1915:,2026-10-07,,BSE:3IINFOLTD-T,12,10,532628,3IINFOLTD,532628,-1.0,XX,1210000000532628,None,0,0.0\r\n"
+            "1210000000500112,STATE BANK OF INDIA,0,1,0.05,INE062A01020,0915-1530|1815-1915:,2026-10-07,,BSE:SBIN-A,12,10,500112,SBIN,500112,-1.0,XX,1210000000500112,None,0,0.0\n");
+        FyersCashNames names;
+        check(names.add_csv(nse_cm) == 3 && names.add_csv(bse_cm) == 2 && names.size() == 5,
+              "the FYERS cash masters load by exchange token; a line that does not parse is skipped");
+        LiveKiteRow t_grp;   // a BSE group-T scrip: "-A" was a name FYERS does not know
+        t_grp.token = 136352772; t_grp.exchange_token = 532628; t_grp.symbol = "3IINFOLTD"; t_grp.type = "EQ";
+        t_grp.segment = "BSE"; t_grp.exchange = "BSE";
+        LiveKiteRow be;      // an NSE BE-series scrip Kite still names by its old symbol
+        be.token = 2824449; be.exchange_token = 11033; be.symbol = "SANGINITA-BE"; be.type = "EQ";
+        be.segment = "NSE"; be.exchange = "NSE";
+        LiveKiteRow dash;    // a dash that is part of the symbol, not a series
+        dash.token = 4267265; dash.exchange_token = 16669; dash.symbol = "BAJAJ-AUTO"; dash.type = "EQ";
+        dash.segment = "NSE"; dash.exchange = "NSE";
+        const auto tg = instrument_from_master(t_grp, &names);
+        const auto bs = instrument_from_master(be, &names);
+        check(tg && tg->fyers == "BSE:3IINFOLTD-T" && bs && bs->fyers == "NSE:AGASTYAEN-BE",
+              "a BSE group-T scrip and an NSE BE scrip take FYERS's names, not -A / -EQ");
+        check(instrument_from_master(dash, &names)->fyers == "NSE:BAJAJ-AUTO-EQ"
+                  && instrument_from_master(eq, &names)->fyers == "NSE:SBIN-EQ",
+              "and the plain EQ series stays -EQ (a token not in the master is guessed)");
+        check(fyers_cash_guess(false, "SANGINITA-BE") == "NSE:SANGINITA-BE" && fyers_cash_guess(false, "BAJAJ-AUTO") == "NSE:BAJAJ-AUTO-EQ"
+                  && fyers_cash_guess(false, "LT") == "NSE:LT-EQ" && fyers_cash_guess(true, "SBIN") == "BSE:SBIN-A",
+              "without the masters: a two-letter series is kept, a longer tail is the symbol, BSE is group A");
 
         const auto dir = std::filesystem::temp_directory_path() / "altair_watch_test";
         std::filesystem::create_directories(dir);

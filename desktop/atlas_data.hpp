@@ -179,6 +179,39 @@ inline constexpr std::array kAtlasRows{
              "The requested one-dimensional dilated causal convolution is "
              "implemented with explicit left padding, receptive-field proof "
              "and a refusal when causality is unspecified."},
+    AtlasRow{"2. Machine learning", "Neuro-fuzzy (ANFIS)",
+             AtlasStatus::Implemented, "research/models/anfis.hpp", 17,
+             "Fuzzy if-then rules whose shapes are learned from data "
+             "(Atsalakis & Valavanis). On NIFTY 2022-25 its calls were no "
+             "better than chance."},
+    AtlasRow{"2. Machine learning", "ARIMA + ANN hybrid",
+             AtlasStatus::Implemented, "models/arima_hybrid.hpp", 17,
+             "Zhang's two-stage model: an ARIMA for the linear part, a small "
+             "network on its residuals. On NIFTY 2022-26 neither stage beat "
+             "\"no change\"."},
+    AtlasRow{"2. Machine learning", "Artificial rabbits optimisation",
+             AtlasStatus::Implemented, "models/aro.hpp", 17,
+             "A swarm search for model settings (Gulmez's LSTM-ARO). Strong "
+             "only near zero; tuning a NIFTY forecaster did not beat "
+             "\"no change\"."},
+    AtlasRow{"3. Time series & volatility", "Parabolic SAR",
+             AtlasStatus::Implemented, "research/models/parabolic_sar.hpp", 17,
+             "Wilder's trailing stop that flips long and short. On NIFTY "
+             "since 2005 it made far less than simply holding."},
+    AtlasRow{"3. Time series & volatility", "Gamma scalping P&L",
+             AtlasStatus::Implemented, "research/models/gamma_scalping.hpp", 17,
+             "What a delta-hedged option earns when the market moves more or "
+             "less than its price implies, and what hedging less often and "
+             "paying costs does to that."},
+    AtlasRow{"2. Machine learning", "Stochastic dominance test",
+             AtlasStatus::Implemented, "research/models/stochastic_dominance.hpp", 17,
+             "Asks whether every investor of a kind would prefer one return "
+             "stream to another, given today's conditions, not just which "
+             "has the higher average."},
+    AtlasRow{"2. Machine learning", "Forecast accuracy tests",
+             AtlasStatus::Implemented, "analytics/forecast_metrics.hpp", 17,
+             "MAPE, RMSE and hit rate, plus the tests that say whether one "
+             "forecast really beats another or beats chance."},
     AtlasRow{"2. Machine learning", "Random forest", AtlasStatus::Implemented,
              "models/classical.hpp", 16,
              "Deterministic shallow trees trained on bootstrap samples and "
@@ -249,6 +282,11 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "analytics/hurst.hpp", 17,
              "Measures whether a series trends, mean-reverts, or is a coin "
              "flip -- and says how sure it is."},
+    AtlasRow{"3. Time series & volatility", "Action-principle price bound",
+             AtlasStatus::Implemented, "research/models/action_principle.hpp", 17,
+             "Manhire's physics model: weekly moves as an oscillator with a "
+             "hard limit. Reproduces the paper, but on NIFTY the limit is "
+             "broken in every test window, 2008 and 2020 included."},
 
     // -- 4. Microstructure and execution ------------------------------------
     AtlasRow{"4. Microstructure & execution", "Order-book imbalance",
@@ -279,6 +317,21 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "oms/shortfall.hpp", 12,
              "The trade-off between trading fast (costly impact) and slow "
              "(costly risk), solved rather than guessed."},
+    AtlasRow{"4. Microstructure & execution", "HJB optimal execution",
+             AtlasStatus::Implemented, "research/execution/hjb_execution.hpp", 12,
+             "Forsyth's version of the same trade-off: nonlinear impact, a "
+             "geometric price, and a sale that reacts to the price path, "
+             "solved as a PDE. Never worse than Almgren-Chriss on its model."},
+    AtlasRow{"4. Microstructure & execution", "Execution with an alpha signal",
+             AtlasStatus::Implemented, "research/execution/alpha_execution.hpp", 12,
+             "Almgren-Chriss plus a term that buys sooner when a short-term "
+             "signal says the price is about to rise, and later when it says "
+             "the opposite."},
+    AtlasRow{"4. Microstructure & execution", "Execution state model",
+             AtlasStatus::Implemented, "research/execution/execution_state.hpp", 12,
+             "Scores the market from spread, depth, short-term volatility and "
+             "order-flow imbalance into four liquidity regimes, and sizes, "
+             "times or skips a trade accordingly."},
     AtlasRow{"4. Microstructure & execution", "Implementation shortfall",
              AtlasStatus::Implemented, "oms/shortfall.hpp", 12,
              "The gap between the price you decided at and the price you got, "

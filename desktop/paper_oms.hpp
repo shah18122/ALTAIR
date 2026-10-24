@@ -66,7 +66,7 @@ enum class PaperStatus : std::uint8_t { Open, Filled, Cancelled, Rejected };
 struct PaperInstrument {
     quint32 token = 0;
     QString symbol;
-    QString exchange = QStringLiteral("NFO");   ///< NSE, NFO
+    QString exchange = QStringLiteral("NFO");   ///< NSE, BSE, NFO; MCX, CDS, BCD (paper only)
     qint64 lot = 1;
     qint64 tick_paise = 5;
     bool tradable = true;                        ///< an index is not

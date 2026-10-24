@@ -113,6 +113,44 @@ int main() {
           "three levels, prices, sizes and order counts");
     check(f.price.has(kPriceNoExchTs) && f.price.exchange_ts_ns == recv, "a book is stamped at receipt, and says so");
 
+    // All five levels present: exactly five, nothing past them. Looping to the
+    // 50-level size once read field 5+i as "level 6" (ask price 1 as a bid,
+    // bid size 1 as an ask price): the garbage the Terminal showed.
+    {
+        std::array<std::int32_t, 30> full{};
+        for (int i = 0; i < 5; ++i) {
+            full[static_cast<std::size_t>(i)] = 5505200 - 100 * i;          // bids
+            full[static_cast<std::size_t>(5 + i)] = 5506700 + 100 * i;      // asks
+            full[static_cast<std::size_t>(10 + i)] = 90 + i;                // bid sizes
+            full[static_cast<std::size_t>(15 + i)] = 810 + i;               // ask sizes
+            full[static_cast<std::size_t>(20 + i)] = 3;                     // bid orders
+            full[static_cast<std::size_t>(25 + i)] = 1;                     // ask orders
+        }
+        altair::fyers_hsm::HsmUpdate u5 = update(HsmTopic::Depth, full.data(), full.size());
+        u5.present = (1u << 30) - 1;
+        LastTrade l5;
+        check(to_frames(u5, 12466946u, l5, recv, f) && f.price.depth_levels == 5,
+              "five levels a side from the five-level topic, never more");
+        check(f.bids[4].price_paise == 5504800 && f.asks[4].price_paise == 5507100 && f.bids[5].price_paise == 0
+                  && f.asks[5].price_paise == 0 && f.bids[5].qty == 0,
+              "level 5 is the fifth bid and ask; nothing is read past it");
+    }
+
+    // Currency: four decimals, published per 100 USD so it is whole paise.
+    {
+        // USDINR future: ltp 83.4525, bid 83.4500, ask 83.4550 (precision 4).
+        std::array<std::int32_t, 21> cf{834525, 1200, 1790000000, 1790000001, 25, 40, 834500, 834550, 3,
+                                        5000, 4000, 834400, 0, 833000, 835000, 0, 0, 800000, 870000, 833500, 832975};
+        altair::fyers_hsm::HsmUpdate cu = update(HsmTopic::Scrip, cf.data(), cf.size());
+        cu.precision = 4;
+        LastTrade lc;
+        check(!to_frames(cu, 1u, lc, recv, f) || !f.trade, "at 1 a USDINR price is not whole paise: refused, not rounded");
+        LastTrade lc2;
+        check(to_frames(cu, 1u, lc2, recv, f, 100) && f.trade && f.price.last_paise == 834525
+                  && f.quote_p.bid == 834500 && f.quote_p.ask == 834550 && f.quote_p.prev_close == 832975,
+              "per 100 USD it is exact: 83.4525 is Rs 8,345.25, bid 8,345.00, ask 8,345.50");
+    }
+
     std::printf("%s\n", failures == 0 ? "all fyers price frame checks passed" : "fyers price frame checks did not pass");
     return failures == 0 ? 0 : 1;
 }

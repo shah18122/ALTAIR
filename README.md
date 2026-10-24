@@ -8,12 +8,15 @@ options and indices. It covers market data, instrument masters, microstructure,
 models, strategies, risk and cost, paper execution and a broker portal, all in
 one process.
 
-> **Live order submission is disabled by design.** Every broker order path sits
-> behind one dispatch permit that refuses while live trading is off. Paper mode
+> **Paper by default.** Real orders go only through the Terminal's PAPER / LIVE
+> switch (typed `LIVE`, off by default) and the order router, with caps, a
+> day-loss stop and a kill switch. MCX and currency are paper-only. Paper mode
 > runs on real data with an isolated simulated ledger.
 
-The single planning and status document is **[SMIT.txt](SMIT.txt)**: the plan,
-the status verified against the code, next steps and the change log.
+**Start with [docs/STATUS.md](docs/STATUS.md)**: what works, what the research
+found, what is open, and where everything is. Runbooks are in [ops/](ops/README.md),
+research notes in [docs/research/](docs/research), and the original plan
+(SMIT.txt) is archived in [docs/archive/](docs/archive).
 
 ---
 
@@ -42,7 +45,12 @@ broker/       OAuth, verified-TLS HTTPS, account snapshots, WebSockets
 app/          helper binaries: the only code that opens sockets or reads credentials
 server/       price bus / price service
 desktop/      Qt 6 Widgets UI (may not link oms/ or broker/: enforced at link time)
+live/         live terminal engine: universe, bars, live models, paper book, real-order bridge
+research/     paper pipeline, and paper replications that showed no edge (research/models, research/execution)
+threshold_strategy/  your threshold strategy workbooks and TradingView exports
 ops/          runbooks
+docs/         status page, research notes and references, archive
+scripts/legacy/  old GUI-only build scripts (use build.bat net)
 ```
 
 ## Build
@@ -55,11 +63,12 @@ OpenSSL. The desktop needs Qt 6.8+ (Core, Gui, Network, Svg, Widgets).
 
 ```bat
 build.bat            :: default preset: engine + tests (+ desktop when Qt is found)
-build.bat net        :: + broker helpers via vcpkg (Boost, OpenSSL)
+build.bat net        :: + broker helpers and the FYERS feed via vcpkg (use this one)
 ```
 
-On Windows, CMake defaults Qt to `D:/Qt/6.8.3/msvc2022_64`; pass
-`-DALTAIR_QT_ROOT=<path>` to use another install. The desktop is at
+On Windows, CMake defaults Qt to `D:/Qt/6.8.3/msvc2022_64`, or
+`C:/Qt/6.8.3/msvc2022_64` when D: has none; pass `-DALTAIR_QT_ROOT=<path>` to
+use another install. The desktop is at
 `build\<preset>\desktop\altair_desktop.exe`.
 
 ### Linux
@@ -165,8 +174,15 @@ direction, and an 80 % range band (scored on how narrow it can be). A
 Tradability sheet gives the accuracy each track needs to pay its costs.
 
 ```powershell
-build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
+build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified --leak-check
 ```
+
+`--leak-check` proves that no forecast saw its future. At two cuts per track,
+it rebuilds the track from the bars known then, and again from a different
+future after them. It also reruns every model with the cut row's outcome
+changed. Everything up to each cut must come out bit for bit the same, or the
+run exits with code 3. How leaks happen, and the doors closed: see
+[ops/forecast-curriculum.md](ops/forecast-curriculum.md#no-look-ahead-how-a-leak-gets-in-and-how-this-run-proves-there-is-none).
 
 Writes `data/verified/forecast_curriculum.xlsx` (direction summary, range
 bands, accuracy-vs-coverage frontier, learning curve per track, data
@@ -250,6 +266,21 @@ Demo Trading** page runs both and shows trades, per-model totals and equity.
   OU s-score (Avellaneda-Lee) with many small hedged positions.
   - The stock data comes from FYERS (`ops/fetch_universe.ps1`).
   - The universe is today's members, so results carry survivorship bias.
+- `altair_trader`: one model over every model. Every base model's
+  out-of-sample call (161 inputs, 7 daily tracks) feeds a ridge stack that is
+  refitted every day. It trades one lot of the NIFTY or BANKNIFTY future when
+  the expected move beats the round trip's expenses.
+  - Walk-forward 2016-2026 it nets ₹5.65 lakh on NIFTY. That is less than
+    buy and hold (₹9.74 lakh): the longs earn and the shorts lose.
+  - See `ops/demo-trading.md`.
+- `altair_threshold`: your `threshold_strategy/` strategies, on paper (Strategies → Threshold).
+  - The 2-day high/low BANKNIFTY breakout matches the workbook's own trade log on 1,454 of its 1,467 trades.
+  - It nets ₹10.98 lakh over 2007-2026 on one lot with real futures expenses. Slippage of about 12 points
+    a fill would take that away.
+  - The BANKNIFTY/NIFTY ratio z-score is close to its note: no real edge.
+  - Your TradingView results are shown as they are, with a warning: 89 % of their trades open and close
+    inside one bar.
+  - See `ops/demo-trading.md`.
 - `altair_depth_study`: the HFT question asked honestly. It tests whether
   order flow imbalance, imbalance and microprice in recorded FYERS depth
   (`ops/record_depth.ps1`, `altair_fyers_ticker --stamp`) predict the next
@@ -278,5 +309,5 @@ Money is integer paise, and doubles never carry money across a module
 boundary. Lot and tick sizes come from the point-in-time spec store, never
 literals. Backtest and live share one code path. There is no look-ahead. A
 fixed bound refuses, proves it is unreachable, or truncates visibly. The full
-list, and the configure-time audits that enforce it, are in SMIT.txt
-section 3.
+list, and the configure-time audits that enforce it, are in
+docs/archive/SMIT.txt section 3.

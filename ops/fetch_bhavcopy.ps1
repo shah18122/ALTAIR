@@ -8,7 +8,8 @@
 # data/bhavcopy/ (git-ignored) and never committed.
 #
 # TWO FORMATS, BOTH HANDLED BY app/bhavcopy.hpp:
-#   through 2024-07-05  archives.nseindia.com/content/historical/DERIVATIVES/<YYYY>/<MON>/fo<DD><MON><YYYY>bhav.csv.zip
+#   through 2024-07-05  nsearchives.nseindia.com/content/historical/DERIVATIVES/<YYYY>/<MON>/fo<DD><MON><YYYY>bhav.csv.zip
+#                       (archives.nseindia.com, the old host, refuses some years: it is tried second)
 #   from 2024-07-08     nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_<YYYYMMDD>_F_0000.csv.zip
 # A weekday with no file is a holiday: counted, not an error.
 #
@@ -50,8 +51,10 @@ while ($day -le $end) {
         $url = 'https://nsearchives.nseindia.com/content/fo/' + $name + '.zip'
     } else {
         $name = 'fo' + $day.ToString('dd') + $mon + $day.ToString('yyyy') + 'bhav.csv'
-        $url = 'https://archives.nseindia.com/content/historical/DERIVATIVES/' + $day.ToString('yyyy') + '/' + $mon + '/' + $name + '.zip'
+        $url = 'https://nsearchives.nseindia.com/content/historical/DERIVATIVES/' + $day.ToString('yyyy') + '/' + $mon + '/' + $name + '.zip'
     }
+    $urls = @($url)
+    if ($day -lt $udiffFrom) { $urls += $url.Replace('https://nsearchives.', 'https://archives.') }
     $dir = Join-Path $Out $day.ToString('yyyy')
     $csv = Join-Path $dir $name
     if ((Test-Path $csv) -and -not $Force) { $kept++; $day = $day.AddDays(1); continue }
@@ -62,17 +65,25 @@ while ($day -le $end) {
     }
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $zip = Join-Path $env:TEMP ($name + '.zip')
-    try {
-        Invoke-WebRequest -Uri $url -Headers $headers -OutFile $zip -UseBasicParsing -TimeoutSec 60
-        Expand-Archive -Path $zip -DestinationPath $dir -Force
-        Remove-Item $zip -ErrorAction SilentlyContinue
-        $fetched++
-        Write-Host "$($day.ToString('yyyy-MM-dd'))  ok"
-    } catch {
-        $code = $null
-        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+    $done = $false; $code = $null; $msg = ''
+    foreach ($u in $urls) {
+        try {
+            Invoke-WebRequest -Uri $u -Headers $headers -OutFile $zip -UseBasicParsing -TimeoutSec 60
+            Expand-Archive -Path $zip -DestinationPath $dir -Force
+            Remove-Item $zip -ErrorAction SilentlyContinue
+            $fetched++
+            Write-Host "$($day.ToString('yyyy-MM-dd'))  ok"
+            $done = $true
+            break
+        } catch {
+            $code = $null
+            if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+            $msg = $_.Exception.Message
+        }
+    }
+    if (-not $done) {
         if ($code -eq 404) { $holidays++ }
-        else { $failed++; Write-Host "$($day.ToString('yyyy-MM-dd'))  failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+        else { $failed++; Write-Host "$($day.ToString('yyyy-MM-dd'))  failed: $msg" -ForegroundColor Yellow }
     }
     Start-Sleep -Milliseconds $DelayMs
     $day = $day.AddDays(1)

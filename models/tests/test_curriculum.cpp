@@ -211,6 +211,12 @@ void test_learning_and_no_leak() {
           "the confident third calls on roughly a third of the Stack's rows, no less accurately");
     check(cons.all.forecasts < tr.rows() - run->first_row && cons.accuracy > 0.65,
           "Consensus calls only when the models agree, and is right when they do");
+    const auto avg = curriculum_summary(tr, *run, idx("Shrunk average"), tests);
+    const auto ridge = curriculum_summary(tr, *run, idx("Ridge stack (drift)"), tests);
+    std::printf("        skill vs RW: shrunk average %+.3f  ridge stack %+.3f  AR(2) %+.3f\n", avg.price.skill,
+                ridge.price.skill, ar.price.skill);
+    check(avg.have_price && avg.price.skill > 0.0 && ridge.have_price && ridge.price.skill > 0.0,
+          "where the moves are predictable, both drift ensembles beat the random walk");
 
     // Changing one outcome must not change any call made before it was known.
     auto moved = tr;
@@ -227,6 +233,105 @@ void test_learning_and_no_leak() {
         }
     }
     check(same, "an outcome cannot change any call made before it was known");
+}
+
+/// Calls every row and names no direction: a rule with nothing to say.
+class NoDirection final : public CurriculumModel {
+public:
+    std::string name() const override { return "No direction"; }
+    std::string family() const override { return "baseline"; }
+    std::string fit(const CurriculumDesign&) override { return {}; }
+    CurriculumCall predict(const CurriculumDesign&, std::size_t) const override {
+        CurriculumCall c;
+        c.made = true;
+        c.mu = 0.0;
+        return c;
+    }
+};
+
+/// The drift ensembles on a random walk, and the seasonal mean on a track with
+/// one slot that drifts.
+void test_drift_ensembles() {
+    {
+        // Only a model that forecasts price by design is exempt from the
+        // direction record: a rule's call without a direction is still wrong.
+        auto tr = ar_track(200, 0.0, 0.0, 17);
+        std::vector<std::unique_ptr<CurriculumModel>> models;
+        models.push_back(std::make_unique<NoDirection>());
+        const auto run = curriculum_run(tr, models);
+        check(run.has_value(), "a model with no direction runs");
+        if (!run) { return; }
+        const auto s = curriculum_summary(tr, *run, 0, 1);
+        check(s.all.price_only == 0 && s.all.no_direction == s.all.scored() && s.all.scored() > 0
+                  && s.all.right == 0,
+              "a call without a direction, not flagged price only, is scored as wrong");
+    }
+    {
+        auto tr = ar_track(600, 0.0, 0.0, 11);
+        auto models = curriculum_default_models();
+        const auto run = curriculum_run(tr, models);
+        check(run.has_value() && run->lookahead_refusals == 0, "the full set runs on a random walk");
+        if (!run) { return; }
+        const auto idx = [&](const char* name) {
+            for (std::size_t m = 0; m < run->models.size(); ++m) { if (run->models[m] == name) return m; }
+            return run->models.size();
+        };
+        const std::size_t tests = run->models.size();
+        const auto avg = curriculum_summary(tr, *run, idx("Shrunk average"), tests);
+        const auto ridge = curriculum_summary(tr, *run, idx("Ridge stack (drift)"), tests);
+        std::vector<double> base_skill;
+        for (std::size_t m = 0; m < run->base_models; ++m) {
+            const auto s = curriculum_summary(tr, *run, m, tests);
+            if (s.have_price) { base_skill.push_back(s.price.skill); }
+        }
+        std::sort(base_skill.begin(), base_skill.end());
+        const double median = base_skill.empty() ? 0.0 : base_skill[base_skill.size() / 2];
+        std::printf("        random walk, skill vs RW: shrunk average %+.4f  ridge stack %+.4f  median base model %+.4f\n",
+                    avg.price.skill, ridge.price.skill, median);
+        check(avg.have_price && ridge.have_price && avg.price.skill > -0.005 && ridge.price.skill > -0.005
+                  && avg.price.skill > median && ridge.price.skill > median,
+              "on a random walk the drift ensembles shrink to (nearly) no change, and lose less than the typical model");
+        check(ridge.all.price_only + avg.all.price_only > 0,
+              "a forecast of no change is a price forecast only, left out of the direction record");
+    }
+    {
+        // Every fifth day drifts up 100 bp (one standard deviation); the other
+        // days are pure noise.
+        auto tr = ar_track(600, 0.0, 0.0, 13);
+        double lift = 1.0;
+        tr.slot.resize(tr.rows());
+        for (std::size_t i = 0; i < tr.rows(); ++i) {
+            tr.slot[i] = static_cast<std::uint16_t>(i % 5);
+            tr.anchor[i] *= lift;
+            if (tr.slot[i] == 0) { lift *= std::exp(0.01); }
+            tr.actual[i] *= lift;
+        }
+        std::vector<std::unique_ptr<CurriculumModel>> models;
+        models.push_back(std::make_unique<CurriculumSeasonalMean>());
+        models.push_back(std::make_unique<CurriculumMajority>());
+        const auto run = curriculum_run(tr, models);
+        check(run.has_value(), "the seasonal mean runs");
+        if (!run) { return; }
+        double drift_mu = 0.0, other_abs = 0.0;
+        std::size_t drift_n = 0, other_n = 0, other_zero = 0;
+        // From the stage that learns 96 days: about 19 of each slot.
+        for (std::size_t i = run->stages[5].test_begin; i < tr.rows(); ++i) {
+            const CurriculumCall c = run->calls[0][i - run->first_row];
+            if (!c.made) { continue; }
+            if (tr.slot[i] == 0) { drift_mu += c.mu; ++drift_n; }
+            else {
+                other_abs += std::fabs(c.mu);
+                ++other_n;
+                if (c.mu == 0.0) { ++other_zero; }
+            }
+        }
+        drift_mu /= static_cast<double>(std::max<std::size_t>(drift_n, 1));
+        other_abs /= static_cast<double>(std::max<std::size_t>(other_n, 1));
+        std::printf("        seasonal mean: drifting slot %.4f, other slots |mu| %.5f, %zu of %zu exactly no change\n",
+                    drift_mu, other_abs, other_zero, other_n);
+        check(drift_mu > 0.006 && other_abs < 0.2 * drift_mu && 2 * other_zero > other_n,
+              "the seasonal mean keeps the slot that drifts and shrinks the noisy ones to no change");
+    }
 }
 
 /// Two prices tied by a mean-reverting spread: this leg reverts toward the pair.
@@ -470,6 +575,7 @@ int main() {
     test_scoring();
     test_pairs();
     test_learning_and_no_leak();
+    test_drift_ensembles();
     test_large_windows();
     test_inner_fold();
     std::printf("Forecast curriculum: %d failure(s)\n", failures);

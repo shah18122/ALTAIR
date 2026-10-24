@@ -76,6 +76,28 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_magnitude_test PRIVATE altair_models altair_flags)
     add_test(NAME models_magnitude COMMAND altair_magnitude_test)
 
+    add_executable(altair_meta_trader_test tests/test_meta_trader.cpp)
+    target_link_libraries(altair_meta_trader_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_meta_trader COMMAND altair_meta_trader_test)
+    add_executable(altair_meta_learners_test tests/test_meta_learners.cpp)
+    target_link_libraries(altair_meta_learners_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_meta_learners COMMAND altair_meta_learners_test)
+
+    add_executable(altair_arima_hybrid_test tests/test_arima_hybrid.cpp)
+    target_link_libraries(altair_arima_hybrid_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_arima_hybrid COMMAND altair_arima_hybrid_test
+             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
+
+    add_executable(altair_aro_test tests/test_aro.cpp)
+    target_link_libraries(altair_aro_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_aro COMMAND altair_aro_test
+             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
+
+    add_executable(altair_markov_nifty_test tests/test_markov_nifty.cpp)
+    target_link_libraries(altair_markov_nifty_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_markov_nifty COMMAND altair_markov_nifty_test
+             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
+
     add_executable(altair_stream_forecast_test tests/test_stream_forecast.cpp)
     target_link_libraries(altair_stream_forecast_test PRIVATE altair_models altair_flags)
     add_test(NAME models_stream_forecast COMMAND altair_stream_forecast_test)

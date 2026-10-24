@@ -165,7 +165,7 @@ if(ALTAIR_HAVE_NET)
         add_executable(altair_price_service price_service_main.cpp)
         target_link_libraries(altair_price_service PRIVATE
             altair_server altair_broker_net altair_feed altair_instruments
-            altair_live altair_lockfree altair_credential_store altair_flags Boost::headers)
+            altair_live altair_lockfree altair_credential_store altair_affinity altair_flags Boost::headers)
         target_compile_definitions(altair_price_service PRIVATE
             ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
             ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -300,6 +300,14 @@ add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
 target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
 target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# Orrell's eq. 8 smile against NSE option closes (research/models/quantum_oscillator.hpp).
+add_executable(altair_quantum_smile quantum_smile_main.cpp)
+target_link_libraries(altair_quantum_smile PRIVATE altair_research altair_flags)
+target_include_directories(altair_quantum_smile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(ALTAIR_BUILD_TESTS)
+    add_test(NAME quantum_smile_help COMMAND altair_quantum_smile --help)
+endif()
+
 # Magnitude-aware scoring and the per-call value gate over the curriculum's logs.
 add_executable(altair_magnitude magnitude_main.cpp)
 target_link_libraries(altair_magnitude PRIVATE altair_models altair_analytics altair_flags)
@@ -320,7 +328,8 @@ find_package(Boost CONFIG QUIET COMPONENTS headers)
 if(TARGET altair_charges_toml AND Boost_FOUND)
     add_executable(altair_live_engine live_engine_main.cpp)
     target_link_libraries(altair_live_engine PRIVATE
-        altair_live altair_models altair_strategies altair_analytics altair_charges_toml altair_flags Boost::headers Threads::Threads)
+        altair_live altair_models altair_strategies altair_analytics altair_charges_toml altair_flags altair_oms altair_affinity
+        Boost::headers Threads::Threads)
     target_include_directories(altair_live_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_live_engine PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     # The commit at configure time, written beside each model bundle (not part of its id).
@@ -336,8 +345,27 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
     if(WIN32)
         target_link_libraries(altair_live_engine PRIVATE ws2_32 mswsock)
     endif()
+    # The event-driven strategies tuned on the recorded session tapes.
+    add_executable(altair_tune tune_main.cpp)
+    target_link_libraries(altair_tune PRIVATE altair_live altair_charges_toml altair_flags)
+    target_include_directories(altair_tune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_tune PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    # Each minute's ATM implied vol from the recorded FYERS chain.
+    add_executable(altair_iv_record iv_record_main.cpp)
+    target_link_libraries(altair_iv_record PRIVATE altair_live altair_flags)
+    target_include_directories(altair_iv_record PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     if(ALTAIR_BUILD_TESTS)
         add_test(NAME live_engine_help COMMAND altair_live_engine --help)
+        add_test(NAME tune_help COMMAND altair_tune --help)
+        add_test(NAME iv_record_help COMMAND altair_iv_record --help)
+        add_executable(altair_iv_record_test tests/test_iv_record.cpp)
+        target_link_libraries(altair_iv_record_test PRIVATE altair_live altair_flags)
+        target_include_directories(altair_iv_record_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        add_test(NAME iv_record COMMAND altair_iv_record_test)
+        add_executable(altair_live_tune_test tests/test_live_tune.cpp)
+        target_link_libraries(altair_live_tune_test PRIVATE altair_live altair_flags)
+        target_include_directories(altair_live_tune_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        add_test(NAME live_tune COMMAND altair_live_tune_test)
         # A simulated morning recorded, then replayed: the same journal and
         # decisions byte for byte (needs dataset/ and a shell).
         if(NOT WIN32 AND TARGET altair_price_service)
@@ -398,6 +426,20 @@ if(TARGET altair_charges_toml)
     target_link_libraries(altair_band_option_demo PRIVATE altair_models altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_band_option_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+    # altair_trader: one model over every model's out-of-sample output,
+    # refitted and traded day by day on the index futures.
+    add_executable(altair_trader trader_main.cpp)
+    target_link_libraries(altair_trader PRIVATE altair_models altair_charges_toml altair_flags)
+    target_include_directories(altair_trader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+    # The owner's threshold strategies (threshold_strategy/), on paper.
+    add_executable(altair_threshold threshold_main.cpp)
+    target_link_libraries(altair_threshold PRIVATE altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_threshold PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    if(ALTAIR_BUILD_TESTS)
+        add_test(NAME threshold_help COMMAND altair_threshold --help)
+    endif()
+
     # Pairs hedged with futures, walked forward over config/pairs.csv.
     add_executable(altair_pairs_futures pairs_futures_main.cpp)
     target_link_libraries(altair_pairs_futures PRIVATE altair_strategies altair_charges_toml altair_flags)
@@ -409,6 +451,20 @@ if(TARGET altair_charges_toml)
     target_link_libraries(altair_vol_premium PRIVATE altair_analytics altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_vol_premium PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+    # Sell vol-of-vol on NSE closes (strategies/vol_of_vol.hpp): short the
+    # 25-delta strangle, long the ATM straddle, vega-neutral, delta hedged.
+    add_executable(altair_vol_of_vol vol_of_vol_main.cpp)
+    target_link_libraries(altair_vol_of_vol PRIVATE altair_analytics altair_strategies altair_charges_toml altair_flags)
+    target_include_directories(altair_vol_of_vol PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME vol_of_vol_help COMMAND altair_vol_of_vol --help)
+
+    # Forsyth's HJB optimal execution (research/execution/hjb_execution.hpp) on the paper's
+    # data, against Table 7.3 and every Almgren-Chriss trajectory.
+    add_executable(altair_optimal_exec optimal_exec_main.cpp)
+    target_link_libraries(altair_optimal_exec PRIVATE altair_research altair_flags)
+    target_include_directories(altair_optimal_exec PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME optimal_exec_help COMMAND altair_optimal_exec --help)
+
     # Cross-sectional residual reversion over config/universe_nifty50.csv.
     add_executable(altair_resid_reversion resid_reversion_main.cpp)
     target_link_libraries(altair_resid_reversion PRIVATE altair_strategies altair_charges_toml altair_flags)
@@ -419,6 +475,17 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_forecast_tracks_test PRIVATE altair_models altair_flags)
     target_include_directories(altair_forecast_tracks_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME forecast_tracks COMMAND altair_forecast_tracks_test)
+    # No forecast sees its future: every builder and every model gives the
+    # same answers up to a cut whatever happens after it; planted leaks are caught.
+    add_executable(altair_forecast_leak_test tests/test_forecast_leak.cpp)
+    target_link_libraries(altair_forecast_leak_test PRIVATE altair_models altair_flags)
+    target_include_directories(altair_forecast_leak_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME forecast_leak COMMAND altair_forecast_leak_test)
+
+    add_executable(altair_ivrv_feed_test tests/test_ivrv_feed.cpp)
+    target_link_libraries(altair_ivrv_feed_test PRIVATE altair_models altair_flags)
+    target_include_directories(altair_ivrv_feed_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME ivrv_feed COMMAND altair_ivrv_feed_test)
     # The live 10:15 direction models: fitted before the session, they call
     # exactly what a fit at 10:15 would; the conditional gate's inputs.
     add_executable(altair_live_direction_test tests/test_live_direction.cpp)
@@ -426,6 +493,12 @@ if(ALTAIR_BUILD_TESTS)
         altair_live altair_models altair_strategies altair_analytics altair_flags)
     target_include_directories(altair_live_direction_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME live_direction COMMAND altair_live_direction_test)
+    # A switched-on strategy's real orders: requests, sizing to the caps, fills,
+    # the P&L record, legging and the halt -- on files, no broker.
+    add_executable(altair_live_real_orders_test tests/test_live_real_orders.cpp)
+    target_link_libraries(altair_live_real_orders_test PRIVATE altair_live altair_oms altair_flags)
+    target_include_directories(altair_live_real_orders_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME live_real_orders COMMAND altair_live_real_orders_test)
     # NSE F&O bhavcopy, both formats, from fixtures written to a temp dir.
     add_executable(altair_bhavcopy_test tests/test_bhavcopy.cpp)
     target_link_libraries(altair_bhavcopy_test PRIVATE altair_flags)
