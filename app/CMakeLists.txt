@@ -300,9 +300,9 @@ add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
 target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
 target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-# Orrell's eq. 8 smile against NSE option closes (analytics/quantum_oscillator.hpp).
+# Orrell's eq. 8 smile against NSE option closes (research/models/quantum_oscillator.hpp).
 add_executable(altair_quantum_smile quantum_smile_main.cpp)
-target_link_libraries(altair_quantum_smile PRIVATE altair_analytics altair_flags)
+target_link_libraries(altair_quantum_smile PRIVATE altair_research altair_flags)
 target_include_directories(altair_quantum_smile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 if(ALTAIR_BUILD_TESTS)
     add_test(NAME quantum_smile_help COMMAND altair_quantum_smile --help)
@@ -458,10 +458,10 @@ if(TARGET altair_charges_toml)
     target_include_directories(altair_vol_of_vol PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME vol_of_vol_help COMMAND altair_vol_of_vol --help)
 
-    # Forsyth's HJB optimal execution (oms/hjb_execution.hpp) on the paper's
+    # Forsyth's HJB optimal execution (research/execution/hjb_execution.hpp) on the paper's
     # data, against Table 7.3 and every Almgren-Chriss trajectory.
     add_executable(altair_optimal_exec optimal_exec_main.cpp)
-    target_link_libraries(altair_optimal_exec PRIVATE altair_oms altair_flags)
+    target_link_libraries(altair_optimal_exec PRIVATE altair_research altair_flags)
     target_include_directories(altair_optimal_exec PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME optimal_exec_help COMMAND altair_optimal_exec --help)
 

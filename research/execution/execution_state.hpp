@@ -1,4 +1,4 @@
-// oms/execution_state.hpp -- the VRC Execution State Model and its tools.
+// research/execution/execution_state.hpp -- the VRC Execution State Model and its tools.
 //
 // D. Verma, "Market Impact Models for Small Funds: Practical Execution Alpha,
 // Intraday Liquidity Dynamics, and the Microstructure of Trading Cost",

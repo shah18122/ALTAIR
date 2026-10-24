@@ -1,4 +1,4 @@
-// analytics/stochastic_dominance.hpp -- conditional stochastic dominance
+// research/models/stochastic_dominance.hpp -- conditional stochastic dominance
 // between two return streams, by kernel weighting and a multiplier bootstrap.
 //
 // J. Olmo & M. Sanso-Navarro, "Forecasting the Performance of Hedge Fund

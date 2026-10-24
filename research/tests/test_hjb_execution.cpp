@@ -12,7 +12,7 @@
 // Level 2 (17 s) is too slow for a sanitizer job; altair_optimal_exec prints
 // the full ladder against Table 7.3.
 
-#include <oms/hjb_execution.hpp>
+#include <research/execution/hjb_execution.hpp>
 
 #include <cmath>
 #include <cstdio>

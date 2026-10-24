@@ -1,4 +1,4 @@
-// analytics/quantum_oscillator.hpp -- Orrell's quantum oscillator model.
+// research/models/quantum_oscillator.hpp -- Orrell's quantum oscillator model.
 //
 // D. Orrell, "A Quantum Oscillator Model of Stock Markets" (Systems
 // Forecasting; SSRN 3941518). The price is a quantum harmonic oscillator held

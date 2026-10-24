@@ -34,7 +34,7 @@
 // strategies switched on in the LIVE arm; this one has no switch there.
 //
 // HONESTY. On NSE closes 2015-2026 no forecasting model beats "no change"
-// after costs (ops/research-ideas.md); this combines their calls, it does not
+// after costs (docs/research/research-ideas.md); this combines their calls, it does not
 // give them an edge. It is for watching every model in one place.
 
 #pragma once

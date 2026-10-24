@@ -1,4 +1,4 @@
-// analytics/gamma_scalping.hpp -- the delta-hedged option P&L, and what
+// research/models/gamma_scalping.hpp -- the delta-hedged option P&L, and what
 // discrete hedging and costs do to it.
 //
 // Background: N. Bawa, "Gamma Scalping and the Volatility Risk Premium"

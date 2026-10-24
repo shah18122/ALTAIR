@@ -57,39 +57,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_hurst_test PRIVATE altair_analytics altair_flags)
     add_test(NAME hurst COMMAND altair_hurst_test)
 
-    add_executable(altair_action_principle_test tests/test_action_principle.cpp)
-    target_link_libraries(altair_action_principle_test PRIVATE altair_analytics altair_flags)
-    add_test(NAME action_principle COMMAND altair_action_principle_test
-             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
-
     add_executable(altair_forecast_metrics_test tests/test_forecast_metrics.cpp)
     target_link_libraries(altair_forecast_metrics_test PRIVATE altair_analytics altair_flags)
     add_test(NAME forecast_metrics COMMAND altair_forecast_metrics_test
              ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
-
-    add_executable(altair_quantum_oscillator_test tests/test_quantum_oscillator.cpp)
-    target_link_libraries(altair_quantum_oscillator_test PRIVATE altair_analytics altair_flags)
-    add_test(NAME quantum_oscillator COMMAND altair_quantum_oscillator_test
-             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
-
-    add_executable(altair_quantum_walk_test tests/test_quantum_walk.cpp)
-    target_link_libraries(altair_quantum_walk_test PRIVATE altair_analytics altair_flags)
-    add_test(NAME quantum_walk COMMAND altair_quantum_walk_test)
-
-    add_executable(altair_gamma_scalping_test tests/test_gamma_scalping.cpp)
-    target_link_libraries(altair_gamma_scalping_test PRIVATE altair_analytics altair_flags)
-    add_test(NAME gamma_scalping COMMAND altair_gamma_scalping_test)
-
-    add_executable(altair_parabolic_sar_test tests/test_parabolic_sar.cpp)
-    target_link_libraries(altair_parabolic_sar_test PRIVATE altair_analytics altair_flags)
-    add_test(NAME parabolic_sar COMMAND altair_parabolic_sar_test
-             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv)
-
-    add_executable(altair_stochastic_dominance_test tests/test_stochastic_dominance.cpp)
-    target_link_libraries(altair_stochastic_dominance_test PRIVATE altair_analytics altair_flags)
-    add_test(NAME stochastic_dominance COMMAND altair_stochastic_dominance_test
-             ${CMAKE_SOURCE_DIR}/dataset/spot/nifty/1d/all.csv
-             ${CMAKE_SOURCE_DIR}/dataset/spot/banknifty/1d/all.csv)
 
     add_executable(altair_svi_test tests/test_svi.cpp)
     target_link_libraries(altair_svi_test PRIVATE altair_analytics altair_flags)

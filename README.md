@@ -8,12 +8,15 @@ options and indices. It covers market data, instrument masters, microstructure,
 models, strategies, risk and cost, paper execution and a broker portal, all in
 one process.
 
-> **Live order submission is disabled by design.** Every broker order path sits
-> behind one dispatch permit that refuses while live trading is off. Paper mode
+> **Paper by default.** Real orders go only through the Terminal's PAPER / LIVE
+> switch (typed `LIVE`, off by default) and the order router, with caps, a
+> day-loss stop and a kill switch. MCX and currency are paper-only. Paper mode
 > runs on real data with an isolated simulated ledger.
 
-The single planning and status document is **[SMIT.txt](SMIT.txt)**: the plan,
-the status verified against the code, next steps and the change log.
+**Start with [docs/STATUS.md](docs/STATUS.md)**: what works, what the research
+found, what is open, and where everything is. Runbooks are in [ops/](ops/README.md),
+research notes in [docs/research/](docs/research), and the original plan
+(SMIT.txt) is archived in [docs/archive/](docs/archive).
 
 ---
 
@@ -42,7 +45,12 @@ broker/       OAuth, verified-TLS HTTPS, account snapshots, WebSockets
 app/          helper binaries: the only code that opens sockets or reads credentials
 server/       price bus / price service
 desktop/      Qt 6 Widgets UI (may not link oms/ or broker/: enforced at link time)
+live/         live terminal engine: universe, bars, live models, paper book, real-order bridge
+research/     paper pipeline, and paper replications that showed no edge (research/models, research/execution)
+threshold_strategy/  your threshold strategy workbooks and TradingView exports
 ops/          runbooks
+docs/         status page, research notes and references, archive
+scripts/legacy/  old GUI-only build scripts (use build.bat net)
 ```
 
 ## Build
@@ -55,7 +63,7 @@ OpenSSL. The desktop needs Qt 6.8+ (Core, Gui, Network, Svg, Widgets).
 
 ```bat
 build.bat            :: default preset: engine + tests (+ desktop when Qt is found)
-build.bat net        :: + broker helpers via vcpkg (Boost, OpenSSL)
+build.bat net        :: + broker helpers and the FYERS feed via vcpkg (use this one)
 ```
 
 On Windows, CMake defaults Qt to `D:/Qt/6.8.3/msvc2022_64`, or
@@ -301,5 +309,5 @@ Money is integer paise, and doubles never carry money across a module
 boundary. Lot and tick sizes come from the point-in-time spec store, never
 literals. Backtest and live share one code path. There is no look-ahead. A
 fixed bound refuses, proves it is unreachable, or truncates visibly. The full
-list, and the configure-time audits that enforce it, are in SMIT.txt
-section 3.
+list, and the configure-time audits that enforce it, are in
+docs/archive/SMIT.txt section 3.

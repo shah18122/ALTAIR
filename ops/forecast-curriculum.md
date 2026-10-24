@@ -225,7 +225,7 @@ predicts: implied and realised vol forecast the size of the next move, not
 its sign.
 
 Where they belong is the volatility trades, as the gate of the variance
-premium seller (`ops/research-ideas.md` 1a and 1d), not the direction models.
+premium seller (`docs/research/research-ideas.md` 1a and 1d), not the direction models.
 
 ## Tradability
 

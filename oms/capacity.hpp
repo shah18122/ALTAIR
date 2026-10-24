@@ -60,7 +60,7 @@ struct ImpactParams {
     /// The square-root-law coefficient. Literature: roughly 0.5-1.0 for
     /// equities. SWEPT, not fitted -- see the header. Orrell's quantum
     /// oscillator derives it as sqrt(2 / (2 lambda + 1)): 1.0 at lambda 1/2,
-    /// 1.15 at 1/4 (analytics/quantum_oscillator.hpp, impact_constant) -- the
+    /// 1.15 at 1/4 (research/models/quantum_oscillator.hpp, impact_constant) -- the
     /// top of the swept range, not a reason to stop sweeping.
     double eta = 0.7;
 

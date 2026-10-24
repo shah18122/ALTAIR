@@ -1,7 +1,7 @@
 // analytics/tests/test_gamma_scalping.cpp -- the delta-hedged P&L formulas
 // against a Monte Carlo Black-76 hedge of a 21-day ATM call.
 
-#include <analytics/gamma_scalping.hpp>
+#include <research/models/gamma_scalping.hpp>
 #include <analytics/greeks.hpp>
 
 #include <cmath>

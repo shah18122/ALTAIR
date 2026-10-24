@@ -4,7 +4,7 @@
 // Optional argument: a daily CSV (time,open,high,low,close,...), normally
 // dataset/spot/nifty/1d/all.csv. Without it the real-data section is skipped.
 
-#include <models/anfis.hpp>
+#include <research/models/anfis.hpp>
 #include <analytics/forecast_metrics.hpp>
 
 #include <cmath>

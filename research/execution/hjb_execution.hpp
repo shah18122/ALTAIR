@@ -1,4 +1,4 @@
-// oms/hjb_execution.hpp -- optimal trade execution by an HJB equation.
+// research/execution/hjb_execution.hpp -- optimal trade execution by an HJB equation.
 //
 // P.A. Forsyth, "A Hamilton Jacobi Bellman approach to optimal trade
 // execution", Applied Numerical Mathematics 61 (2011) 241-265. Preprint:

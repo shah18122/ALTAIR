@@ -43,7 +43,7 @@ struct StartVerdict {
          QStringLiteral("A small premium before slippage (NIFTY Rs 3.1 lakh gross over 562 weeks); any realistic "
                         "slippage turns every variant negative"),
          QStringLiteral("Not tradable as built: needs passive fills at mid"), -1,
-         QStringLiteral("altair_vol_of_vol; ops/research-ideas.md, 2026-10-21")},
+         QStringLiteral("altair_vol_of_vol; docs/research/research-ideas.md, 2026-10-21")},
         {QStringLiteral("Selling options at a forecast band each morning (strangle at 09:20)"),
          QStringLiteral("Tested on synthetic premiums only; the \"sell at the touch\" rule lost and was dropped"),
          QStringLiteral("Unproven on real prices"), 0, QStringLiteral("ops/demo-trading.md")},

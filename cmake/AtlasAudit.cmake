@@ -80,7 +80,7 @@ while(_pos LESS _len)
     # Anchored on those two things so a description mentioning a filename in
     # prose cannot be mistaken for the path field.
     set(_path "")
-    if(_row MATCHES "\"([A-Za-z_0-9]+/[A-Za-z_0-9]+[.]hpp)\"")
+    if(_row MATCHES "\"([A-Za-z_0-9]+(/[A-Za-z_0-9]+)+[.]hpp)\"")
         set(_path "${CMAKE_MATCH_1}")
     endif()
 

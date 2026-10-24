@@ -1,4 +1,4 @@
-// analytics/action_principle.hpp -- Manhire's "physical laws" price bound.
+// research/models/action_principle.hpp -- Manhire's "physical laws" price bound.
 //
 // J.T. Manhire, "Predicting Stock Market Prices with Physical Laws" (also
 // "The Action Principle in Market Mechanics"), Texas A&M, 2017; the version

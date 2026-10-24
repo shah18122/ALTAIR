@@ -1,7 +1,7 @@
 // app/quantum_smile_main.cpp -- altair_quantum_smile: Orrell's eq. 8 smile on
 // real NIFTY / BANKNIFTY option closes.
 //
-// analytics/quantum_oscillator.hpp says volatility given a log move x over T is
+// research/models/quantum_oscillator.hpp says volatility given a log move x over T is
 //     sigma_x^2 = sigma^2 + x^2 / (2T).
 // Read as an option smile, with x = ln(K / F), it predicts the wings from the
 // floor with no free slope. Each bhavcopy day, for the first monthly expiry
@@ -11,13 +11,13 @@
 //   * Orrell ATM   sqrt(ATM^2 + k^2 / 2T): the paper's slope, anchored at ATM, nothing fitted
 //   * Orrell fit   the same slope, sigma fitted to the day's smile
 //   * free         a + b k^2 fitted: what slope the market wants (b x 2T = 1 is Orrell's;
-//                  b > 0 is a smile, b < 0 the frown analytics/quantum_walk.hpp implies)
+//                  b > 0 is a smile, b < 0 the frown research/models/quantum_walk.hpp implies)
 // RMSE in vol points against the market, averaged over days.
 //
 // Read-only; writes nothing. Fetch the files with ops/fetch_bhavcopy.ps1.
 
 #include <analytics/iv.hpp>
-#include <analytics/quantum_oscillator.hpp>
+#include <research/models/quantum_oscillator.hpp>
 #include <app/bhavcopy.hpp>
 
 #include <algorithm>
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
         std::printf("    the market's slope as a multiple of Orrell's 1/(2T): median %.2f (quartiles %.2f, %.2f)\n",
                     slope[slope.size() / 2], slope[slope.size() / 4], slope[3 * slope.size() / 4]);
         const auto convex = std::count_if(slope.begin(), slope.end(), [](double b) { return b > 0.0; });
-        std::printf("    curved up (a smile, not the quantum walk's frown: analytics/quantum_walk.hpp) on %.1f %% of days\n",
+        std::printf("    curved up (a smile, not the quantum walk's frown: research/models/quantum_walk.hpp) on %.1f %% of days\n",
                     100.0 * static_cast<double>(convex) / dn);
         std::printf("    ATM-anchored error by side (market minus model): puts %+.2f, calls %+.2f vol points -- the skew it lacks\n",
                     100 * e_lo_atm / dn, 100 * e_hi_atm / dn);

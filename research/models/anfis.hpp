@@ -1,4 +1,4 @@
-// models/anfis.hpp -- a first-order Sugeno neuro-fuzzy model (ANFIS).
+// research/models/anfis.hpp -- a first-order Sugeno neuro-fuzzy model (ANFIS).
 //
 // Jang, "ANFIS: adaptive-network-based fuzzy inference system", IEEE SMC
 // 23(3), 1993, as used by Atsalakis & Valavanis, "Forecasting stock market

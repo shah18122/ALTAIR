@@ -28,7 +28,7 @@ out-latency them. It can win where they don't bother:
 checks and placebos:
 - **Price direction:** on index direction no model beats the random walk after
   costs (`ops/forecast-curriculum.md`). On a shuffled-returns placebo the best
-  "skill" is +0.002% (section 28 of SMIT.txt).
+  "skill" is +0.002% (section 28 of docs/archive/SMIT.txt).
 - **The meta-trader:** altair_trader's CNN, analogs and selector mostly choose
   "no change", and that is the right call.
 - **Arbitrage and option arbitrage:** both are real but small, and they live or
@@ -210,7 +210,7 @@ Appl. Numer. Math. 61 (2011)). It drops Almgren-Chriss's three simplifications:
 - the sale can react to the price path. It minimises the pre-commitment
   mean-variance objective `E[(B_L − γ/2)²]`, and sweeping γ gives the frontier.
 
-**Built.** The solver is `oms/hjb_execution.hpp`. It uses the paper's
+**Built.** The solver is `research/execution/hjb_execution.hpp`. It uses the paper's
 similarity reduction to two cash planes, semi-Lagrangian timestepping and
 implicit diffusion. `altair_optimal_exec` prints the refinement ladder.
 
@@ -240,7 +240,7 @@ Lai, "Optimal Execution with Alpha Signals" (SSRN 6323159). Almgren-Chriss
 plus an OU signal, solved in closed form:
 `v* = κ·coth(κτ)·x + B(τ)·f/(2η)`.
 - **A fix to the paper.** Its eq. 10 has the sinh ratio upside down, so it
-  diverges. `oms/alpha_execution.hpp` uses the corrected form, and the test
+  diverges. `research/execution/alpha_execution.hpp` uses the corrected form, and the test
   checks it against an RK4 solve of eq. 9 to within 1e-6.
 - **Benchmark.** On 20,000 simulated days with the same random numbers, the
   signal-aware rule lowers the paper's objective by 6.6% (0.01208 against
@@ -249,7 +249,7 @@ plus an OU signal, solved in closed form:
 ### 2g. VRC execution state model — *built, with a size limit*
 
 Verma, "Market Impact Models for Small Funds" (SSRN 6301920).
-`oms/execution_state.hpp` implements every formula the paper gives:
+`research/execution/execution_state.hpp` implements every formula the paper gives:
 - EQS, the regimes and the Table 1 size cuts;
 - the eq. 13 cost and the passive-vs-aggressive rule;
 - the opportunistic slicer;
@@ -291,7 +291,7 @@ LSTM's 67.2 on March 2025.
 Manhire, "Predicting Stock Market Prices with Physical Laws" (Texas A&M,
 2017). Weekly price moves are treated as a harmonic oscillator, so they are
 bounded by `|A| = |x̄| / (2p̄ − 1)`, with tail probabilities
-`erf(πX/|A|)²` and `erfc(πX/|A|)²`. `analytics/action_principle.hpp` has it,
+`erf(πX/|A|)²` and `erfc(πX/|A|)²`. `research/models/action_principle.hpp` has it,
 and the test reproduces the paper's SPY numbers (|A| 22.11, m 0.2019, the
 October 2008 week of −21.84 inside the bound) and DIA's m 0.2407.
 - **Two flaws.** The two probabilities do not add to one (0.50 at φ = 0.48).
@@ -372,7 +372,7 @@ LSTM 0.72 %, ANN 0.89 %, ARIMA 1.21 %, random walk 1.47 %.
 changes plus a 3-day moving-average trend, 27 rules, 100 epochs. It claims
 up to 68 % next-day hit rates and beats buy-and-hold on ten Athens and NYSE
 stocks. The test windows were about 60 sessions each, with no costs.
-- **Built.** `models/anfis.hpp` is Jang's first-order Sugeno model with
+- **Built.** `research/models/anfis.hpp` is Jang's first-order Sugeno model with
   hybrid learning. It recovers a nonlinear test surface with a fifth of a
   linear fit's error.
 - **On NIFTY** (trained 2009–21, scored on 866 sessions from 2022 to June
@@ -392,7 +392,7 @@ stocks. The test windows were about 60 sessions each, with no costs.
   is eq. (1) in the header, and the test now checks it and its path
   dependence. Its subject is already in ALTAIR: the short-gamma side is the VRP
   seller of 1a. The long-gamma side and its frictions are now in
-  `analytics/gamma_scalping.hpp`: the theta-gamma P&L; E[P&L] ≈ vega·(σr − σi);
+  `research/models/gamma_scalping.hpp`: the theta-gamma P&L; E[P&L] ≈ vega·(σr − σi);
   the Kamal-Derman hedging error √(π/4)·vega·σ/√N; and Leland's cost-adjusted
   volatility. Monte Carlo agrees with each to within 4% (the Leland cost is
   0.0727 against 0.0712). As reported, SEBI's case against Jane Street is
@@ -428,7 +428,7 @@ NIFTY closes, Dec 2022 – Dec 2024: P(up|up) 0.5863, P(up|down) 0.5352,
 ranks hedge-fund styles by kernel-conditional stochastic dominance of orders
 1–3, with a multiplier-bootstrap p-value. Its data are Credit Suisse/Tremont
 indices, which are not investable and not Indian.
-- **Built.** `analytics/stochastic_dominance.hpp` implements eq. 7, 9 and 10,
+- **Built.** `research/models/stochastic_dominance.hpp` implements eq. 7, 9 and 10,
   with two changes stated in the header: an effective-sample-size scaling, and
   bandwidths passed in rather than cross-validated. The test recovers known
   first- and second-order orderings and a conditional flip that the
@@ -446,7 +446,7 @@ indices, which are not investable and not Indian.
 D. Orrell, "A Quantum Oscillator Model of Stock Markets" (SSRN 3941518; PDF
 supplied by Smit). The price is a quantum spring; its energy level is the
 number of trades in a step, Poisson with mean λ = ¼. It has no forecast and
-no trading rule. `analytics/quantum_oscillator.hpp` holds its formulas, and
+no trading rule. `research/models/quantum_oscillator.hpp` holds its formulas, and
 its test checks two of its claims on NIFTY's daily closes from 2000 on.
 - **Fat tails (Figure 1): partly.** The Poisson mix of normals beats a normal
   at every horizon from 1 to 40 sessions. Its kurtosis is 4.33, though, while
@@ -470,7 +470,7 @@ its test checks two of its claims on NIFTY's daily closes from 2000 on.
 D. Orrell, "A Quantum Walk Model of Financial Options", *Wilmott* 2021: 62–69
 (SSRN 3512481; PDF supplied by Smit). Option buyers' beliefs are a Hadamard
 quantum walk; sellers price classically; the market price is a compromise
-between the two. `analytics/quantum_walk.hpp` holds the walk (with
+between the two. `research/models/quantum_walk.hpp` holds the walk (with
 decoherence), the pricer (eq. 1) and the compromise (Appendix).
 - **The walk checks out.** Its variance is (1 − 1/√2)n², quadratic in time
   (2,929 against 2,929 for 100 steps). Decoherence pulls it back towards the
@@ -493,7 +493,7 @@ won. The CNN's design, training data and train/test split are not described.
   percentages (Table 3 prints row 26 twice). Compounded it is 28.5%. There
   are no costs: at typical Indonesian costs (0.15% buy, 0.25% sell) 42 round
   trips leave about 8.6%.
-- **Added.** `analytics/parabolic_sar.hpp` is Wilder's PSAR, causal (each
+- **Added.** `research/models/parabolic_sar.hpp` is Wilder's PSAR, causal (each
   stop uses only earlier bars).
 - **On NIFTY, 2005 to Sept 2026**, long/flat at 3 bp a side:
   - PSAR: +308%, 258 trades, 47.7% won.

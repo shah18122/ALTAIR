@@ -2,7 +2,7 @@
 // the walk's known properties, the pricer against Black-Scholes, and the
 // shape of the smile the paper's market model implies.
 
-#include <analytics/quantum_walk.hpp>
+#include <research/models/quantum_walk.hpp>
 
 #include <cmath>
 #include <cstdio>

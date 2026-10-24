@@ -5,7 +5,7 @@
 // Optional argument: a daily CSV (time,open,high,low,close,...), normally
 // dataset/spot/nifty/1d/all.csv.
 
-#include <analytics/parabolic_sar.hpp>
+#include <research/models/parabolic_sar.hpp>
 
 #include <cmath>
 #include <cstdio>

@@ -1,7 +1,7 @@
 // analytics/tests/test_quantum_oscillator.cpp -- Orrell's quantum oscillator:
 // the formulas, then the paper's two checkable claims on NIFTY's daily closes.
 
-#include <analytics/quantum_oscillator.hpp>
+#include <research/models/quantum_oscillator.hpp>
 
 #include <algorithm>
 #include <cmath>

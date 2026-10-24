@@ -1,4 +1,4 @@
-// analytics/parabolic_sar.hpp -- Wilder's Parabolic SAR ("stop and reverse").
+// research/models/parabolic_sar.hpp -- Wilder's Parabolic SAR ("stop and reverse").
 //
 // J. Welles Wilder, New Concepts in Technical Trading Systems (1978). Added
 // for A. Fauza & E. Noviaty, "Analysis of Accuracy Level of Moving Average,

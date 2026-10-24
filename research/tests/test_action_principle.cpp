@@ -3,7 +3,7 @@
 // The paper's own numbers first, then the two places it does not hold
 // together, then the bound against a Gaussian on fat-tailed simulated weeks.
 
-#include <analytics/action_principle.hpp>
+#include <research/models/action_principle.hpp>
 
 #include <cmath>
 #include <cstdio>

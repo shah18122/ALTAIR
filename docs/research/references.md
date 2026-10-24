@@ -1,37 +1,37 @@
 # References
 
 The papers behind ALTAIR's research-round code, with where each one is used.
-What was found when checking each one is in `ops/research-ideas.md`.
+What was found when checking each one is in `docs/research/research-ideas.md`.
 
 ## Implemented or checked
 
 | Source | Used in | Notes |
 |---|---|---|
-| P. A. Forsyth, "A Hamilton Jacobi Bellman approach to optimal trade execution", *Applied Numerical Mathematics* 61 (2011). [Preprint](https://cs.uwaterloo.ca/~paforsyt/optimal_trade.pdf) | `oms/hjb_execution.hpp` | research-ideas 2e |
-| Lai Jien Weng, "Optimal Execution with Alpha Signals", Monash, 2026 (SSRN 6323159) | `oms/alpha_execution.hpp` | 2f; eq. 10 corrected |
-| D. Verma, "Market Impact Models for Small Funds", Verma Research Capital, 2026 (SSRN 6301920) | `oms/execution_state.hpp` | 2g |
+| P. A. Forsyth, "A Hamilton Jacobi Bellman approach to optimal trade execution", *Applied Numerical Mathematics* 61 (2011). [Preprint](https://cs.uwaterloo.ca/~paforsyt/optimal_trade.pdf) | `research/execution/hjb_execution.hpp` | research-ideas 2e |
+| Lai Jien Weng, "Optimal Execution with Alpha Signals", Monash, 2026 (SSRN 6323159) | `research/execution/alpha_execution.hpp` | 2f; eq. 10 corrected |
+| D. Verma, "Market Impact Models for Small Funds", Verma Research Capital, 2026 (SSRN 6301920) | `research/execution/execution_state.hpp` | 2g |
 | VISTAS eprint 14517, ICBDS 2025, doi [10.1109/ICBDS67396.2025.11376874](https://doi.org/10.1109/ICBDS67396.2025.11376874) (LSTM vs Transformer) | none | Too little detail to reproduce |
 | Shindhe & Gokhale, NIFTY 50 deep-learning and ensemble forecasting, *Cureus Journal of Business and Economics* 3(1), 2026 | `models/meta_learners.hpp` (`GokhaleStack`) | 2h; same-day high/low look-ahead |
-| J. T. Manhire, "Predicting Stock Market Prices with Physical Laws", Texas A&M, 2017; accepted for the 13th Annual Econophysics Colloquium, University of Warsaw, July 2017 (PDF supplied by Smit) | `analytics/action_principle.hpp` | 2i |
-| D. Orrell, "A Quantum Walk Model of Financial Options", *Wilmott* 2021: 62-69, doi [10.1002/wilm.10918](https://doi.org/10.1002/wilm.10918) (SSRN 3512481; PDF supplied by Smit) | `analytics/quantum_walk.hpp` | 2q |
-| D. Orrell, "A Quantum Oscillator Model of Stock Markets", Systems Forecasting (SSRN 3941518; PDF supplied by Smit) | `analytics/quantum_oscillator.hpp`, `app/quantum_smile_main.cpp` | 2p |
+| J. T. Manhire, "Predicting Stock Market Prices with Physical Laws", Texas A&M, 2017; accepted for the 13th Annual Econophysics Colloquium, University of Warsaw, July 2017 (PDF supplied by Smit) | `research/models/action_principle.hpp` | 2i |
+| D. Orrell, "A Quantum Walk Model of Financial Options", *Wilmott* 2021: 62-69, doi [10.1002/wilm.10918](https://doi.org/10.1002/wilm.10918) (SSRN 3512481; PDF supplied by Smit) | `research/models/quantum_walk.hpp` | 2q |
+| D. Orrell, "A Quantum Oscillator Model of Stock Markets", Systems Forecasting (SSRN 3941518; PDF supplied by Smit) | `research/models/quantum_oscillator.hpp`, `app/quantum_smile_main.cpp` | 2p |
 | Vishwas, Usha & Sangeetha, "Artificial intelligence-based stock market price prediction: a review", *Mathematical Models in Engineering*, 2025, doi 10.21595/mme.2025.24861 | `models/arima_hybrid.hpp` | 2j; read in full |
 | Charithra C. M., I. T. Hawaldar, Vinish P., P. Pinto & C. Shetty, "Deep learning-based stock market forecasting: a comparative analysis of ANN, CNN, and LSTM", *Investment Management and Financial Innovations* 23(2), 2026, 219–234, doi [10.21511/imfi.23(2).2026.17](http://dx.doi.org/10.21511/imfi.23(2).2026.17), CC BY 4.0 | `analytics/forecast_metrics.hpp` | 2k |
 | G. P. Zhang, "Time series forecasting using a hybrid ARIMA and neural network model", *Neurocomputing* 50, 2003, 159–175, doi 10.1016/S0925-2312(01)00702-0 | `models/arima_hybrid.hpp` | 2j; the hybrid the review describes via Alshawarbeh et al. |
 | S. R. Polamuri, K. Srinivas & A. Krishna Mohan, "Multi-Model Generative Adversarial Network Hybrid Prediction Algorithm (MMGAN-HPA) for stock market prices prediction", *J. King Saud Univ. – Computer and Information Sciences* 34, 2022, 7433–7444, doi 10.1016/j.jksuci.2021.07.001 (PDF supplied by Smit) | none | 2s; not reproducible |
 | B. Gülmez, "Stock price prediction with optimized deep LSTM network with artificial rabbits optimization algorithm", *Expert Systems with Applications* 227, 2023, 120346, doi 10.1016/j.eswa.2023.120346 (PDF supplied by Smit) | `models/aro.hpp` | 2t |
 | L. Wang, Q. Cao, Z. Zhang, S. Mirjalili & W. Zhao, "Artificial rabbits optimization: a new bio-inspired meta-heuristic algorithm for solving engineering optimization problems", *Engineering Applications of Artificial Intelligence* 114, 2022, 105082, doi 10.1016/j.engappai.2022.105082 | `models/aro.hpp` | 2t; the algorithm |
-| G. S. Atsalakis & K. P. Valavanis, "Forecasting stock market short-term trends using a neuro-fuzzy based methodology", *Expert Systems with Applications* 36(7), 2009, 10696–10707, doi 10.1016/j.eswa.2009.02.043 | `models/anfis.hpp` | 2l |
-| J.-S. R. Jang, "ANFIS: adaptive-network-based fuzzy inference system", *IEEE Trans. Systems, Man, and Cybernetics* 23(3), 1993 | `models/anfis.hpp` | The hybrid learning rule |
-| N. Bawa, "Gamma Scalping and the Volatility Risk Premium", Medium, 2026-04-01 | `analytics/gamma_scalping.hpp` | Core formula as supplied by Smit (page not fetchable); research-ideas 2m |
+| G. S. Atsalakis & K. P. Valavanis, "Forecasting stock market short-term trends using a neuro-fuzzy based methodology", *Expert Systems with Applications* 36(7), 2009, 10696–10707, doi 10.1016/j.eswa.2009.02.043 | `research/models/anfis.hpp` | 2l |
+| J.-S. R. Jang, "ANFIS: adaptive-network-based fuzzy inference system", *IEEE Trans. Systems, Man, and Cybernetics* 23(3), 1993 | `research/models/anfis.hpp` | The hybrid learning rule |
+| N. Bawa, "Gamma Scalping and the Volatility Risk Premium", Medium, 2026-04-01 | `research/models/gamma_scalping.hpp` | Core formula as supplied by Smit (page not fetchable); research-ideas 2m |
 | F. Ye et al., "Jane Street Stock prediction model based on LightGBM", ICSP 2021, 385–388, doi 10.1109/ICSP51882.2021.9408851 | none | Full text unavailable; 2m |
-| M. Kamal & E. Derman, "When you cannot hedge continuously: the corrections to Black-Scholes", *Risk* 12(1), 1999 | `analytics/gamma_scalping.hpp` | Hedging error |
-| H. E. Leland, "Option pricing and replication with transactions costs", *J. Finance* 40(5), 1985 | `analytics/gamma_scalping.hpp` | Cost-adjusted vol |
+| M. Kamal & E. Derman, "When you cannot hedge continuously: the corrections to Black-Scholes", *Risk* 12(1), 1999 | `research/models/gamma_scalping.hpp` | Hedging error |
+| H. E. Leland, "Option pricing and replication with transactions costs", *J. Finance* 40(5), 1985 | `research/models/gamma_scalping.hpp` | Cost-adjusted vol |
 | K. Verma & A. K. Jha, "Predicting Nifty 50 Trends Using a Markov Chain Approach", *IJCRT* 12(12), 2024 (SSRN 5063966) | `models/tests/test_markov_nifty.cpp` (uses `models/markov.hpp`) | 2n |
-| J. Olmo & M. Sanso-Navarro, "Forecasting the Performance of Hedge Fund Styles", 2012 (SSRN 1932225) | `analytics/stochastic_dominance.hpp` | 2o |
+| J. Olmo & M. Sanso-Navarro, "Forecasting the Performance of Hedge Fund Styles", 2012 (SSRN 1932225) | `research/models/stochastic_dominance.hpp` | 2o |
 | G. Amisano & R. Giacomini, "Comparing density forecasts via weighted likelihood ratio tests", *J. Business & Economic Statistics* 25(2), 2007 | none | Cited by Olmo & Sanso-Navarro; not built |
-| A. Fauza & E. Noviaty, "Analysis of Accuracy Level of Moving Average, Parabolic SAR and Convolutional Neural Network Indicators on Buy and Sell Decisions", *Jurnal Ekonomi* 11(3), 2022, 839–847 | `analytics/parabolic_sar.hpp` | 2r |
-| J. W. Wilder, *New Concepts in Technical Trading Systems*, 1978 | `analytics/parabolic_sar.hpp` | The PSAR rule |
+| A. Fauza & E. Noviaty, "Analysis of Accuracy Level of Moving Average, Parabolic SAR and Convolutional Neural Network Indicators on Buy and Sell Decisions", *Jurnal Ekonomi* 11(3), 2022, 839–847 | `research/models/parabolic_sar.hpp` | 2r |
+| J. W. Wilder, *New Concepts in Technical Trading Systems*, 1978 | `research/models/parabolic_sar.hpp` | The PSAR rule |
 | F. X. Diebold & R. S. Mariano, "Comparing predictive accuracy", *J. Business & Economic Statistics* 13(3), 1995 | `diebold_mariano` | |
 | D. Harvey, S. Leybourne & P. Newbold, "Testing the equality of prediction mean squared errors", *Int. J. Forecasting* 13(2), 1997 | `diebold_mariano` | The small-sample factor |
 | M. H. Pesaran & A. Timmermann, "A simple nonparametric test of predictive performance", *J. Business & Economic Statistics* 10(4), 1992 | `pesaran_timmermann` | |

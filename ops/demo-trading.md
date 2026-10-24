@@ -320,7 +320,7 @@ wings are dear. It is not significant even before slippage, and four legs
 crossed at the touch cost more than it pays.
 
 **Not tradable as built.** It would need passive fills at mid, which only
-recorded 50-level tapes can test. `ops/research-ideas.md` sets out that
+recorded 50-level tapes can test. `docs/research/research-ideas.md` sets out that
 experiment.
 
 ## Cross-sectional statistical arbitrage

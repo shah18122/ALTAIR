@@ -1,6 +1,6 @@
 // app/optimal_exec_main.cpp -- altair_optimal_exec: Forsyth's HJB execution.
 //
-// oms/hjb_execution.hpp on the paper's own data. Prints, for one example:
+// research/execution/hjb_execution.hpp on the paper's own data. Prints, for one example:
 //   * the refinement ladder of E[(B_L - gamma/2)^2], E and sd against the
 //     paper's Table 7.3 (the short example only -- it is the one the paper
 //     tabulates);
@@ -11,7 +11,7 @@
 //
 // Writes nothing. Level 2 takes about 20 s, level 3 several minutes.
 
-#include <oms/hjb_execution.hpp>
+#include <research/execution/hjb_execution.hpp>
 
 #include <cmath>
 #include <cstdio>

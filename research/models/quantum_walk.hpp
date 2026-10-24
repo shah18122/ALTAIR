@@ -1,4 +1,4 @@
-// analytics/quantum_walk.hpp -- Orrell's quantum walk option model.
+// research/models/quantum_walk.hpp -- Orrell's quantum walk option model.
 //
 // D. Orrell, "A Quantum Walk Model of Financial Options", Wilmott 2021: 62-69
 // (SSRN 3512481; PDF supplied by Smit). Investors' beliefs about the future

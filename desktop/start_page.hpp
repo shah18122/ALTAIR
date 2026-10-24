@@ -163,7 +163,7 @@ public:
              start_verdicts_html(start_verdicts())
                  + QStringLiteral("<br><span style='color:#8FA3AE'>Green: works. Amber: real but not proven. Red: does not "
                                   "work, or not worth it. Every number is after expenses, from the document named under "
-                                  "it. Ideas for what to test next: ops/research-ideas.md.</span>"));
+                                  "it. Ideas for what to test next: docs/research/research-ideas.md.</span>"));
         v->addStretch();
         scroll->setWidget(body);
         outer->addWidget(scroll);

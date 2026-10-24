@@ -5,7 +5,7 @@
 // Optional arguments: NIFTY and BANKNIFTY daily CSVs. Without them the
 // real-data section is skipped.
 
-#include <analytics/stochastic_dominance.hpp>
+#include <research/models/stochastic_dominance.hpp>
 
 #include <cmath>
 #include <cstdio>

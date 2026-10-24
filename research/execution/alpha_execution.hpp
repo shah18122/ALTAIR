@@ -1,4 +1,4 @@
-// oms/alpha_execution.hpp -- Almgren-Chriss with a short-term alpha signal.
+// research/execution/alpha_execution.hpp -- Almgren-Chriss with a short-term alpha signal.
 //
 // Lai Jien Weng, "Optimal Execution with Alpha Signals" (Monash, 2026-03-01,
 // SSRN 6323159).
