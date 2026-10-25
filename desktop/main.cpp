@@ -358,6 +358,7 @@ int main(int argc, char** argv) {
                        || args.contains(QStringLiteral("--terminal-view")) || args.contains(QStringLiteral("--compute"))
                        || args.contains(QStringLiteral("--train")) || args.contains(QStringLiteral("--no-live-feed"));
     window.set_live_feed_on_open(!scripted);
+    if (!scripted) window.news_ticker()->start();
 
     // --compute presses the button on whatever page --page opened. Separate
     // from --page because most pages have no button, and a flag that silently

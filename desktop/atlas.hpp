@@ -70,7 +70,7 @@ public:
                 "actually has.<br>"
                 "<span style='color:#3FB950'>%1 built</span> · "
                 "<span style='color:#B9770B'>%2 partial</span> · "
-                "<span style='color:#7F8C8D'>%3 absent</span> "
+                "<span style='color:#8B949E'>%3 absent</span> "
                 "&nbsp;of %4 entries. "
                 "The absences are listed on purpose: a catalogue that shows "
                 "only what exists teaches you that everything exists.<br>"
@@ -125,7 +125,7 @@ public:
                 "quietly describe a tree that has moved on."),
             this);
         note_->setWordWrap(true);
-        note_->setStyleSheet(QStringLiteral("color:#7F8C8D;padding:4px;"));
+        note_->setStyleSheet(QStringLiteral("color:#8B949E;padding:4px;"));
         v->addWidget(note_);
 
         connect(find_, &QLineEdit::textChanged, this,
@@ -223,8 +223,8 @@ private:
                 it->setForeground(1, QColor(QStringLiteral("#B9770B")));
                 break;
             case AtlasStatus::Absent:
-                it->setForeground(1, QColor(QStringLiteral("#7F8C8D")));
-                it->setForeground(0, QColor(QStringLiteral("#7F8C8D")));
+                it->setForeground(1, QColor(QStringLiteral("#8B949E")));
+                it->setForeground(0, QColor(QStringLiteral("#8B949E")));
                 break;
             }
             it->setToolTip(0, QStringLiteral(

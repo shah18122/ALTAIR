@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include "auth.hpp"
 #include "feed_status.hpp"
 #include "format.hpp"
@@ -115,7 +116,7 @@ public:
             // collapses to nothing looks like a layout that was never
             // written, and that is what sent me looking in the wrong place.
             mark->setText(QStringLiteral("[mark unavailable]"));
-            mark->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+            set_role(mark, QStringLiteral("note"));
         }
         mark->setAlignment(Qt::AlignCenter);
         v->addWidget(mark);
@@ -147,7 +148,7 @@ public:
                     "default account to fall back to."),
                 this);
             none->setWordWrap(true);
-            none->setStyleSheet(QStringLiteral("color:#F85149;"));
+            set_role(none, QStringLiteral("error"));
             v->addWidget(none);
         }
 
@@ -160,7 +161,7 @@ public:
         v->addLayout(form);
 
         error_ = new QLabel(this);
-        error_->setStyleSheet(QStringLiteral("color:#F85149;"));
+        set_role(error_, QStringLiteral("error"));
         error_->setVisible(false);
         v->addWidget(error_);
 
@@ -265,7 +266,7 @@ public:
                          : QStringLiteral("no session")),
             this);
         note->setWordWrap(true);
-        note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(note, QStringLiteral("note"));
         v->addWidget(note);
 
         auto* t = fact_table({QStringLiteral("Broker"), QStringLiteral("Stage"),
@@ -289,7 +290,7 @@ public:
         const bool kite = can_trade(QStringLiteral("Kite"));
         verdict->setText(
             QStringLiteral("<b>Broker priority — FYERS: PRIMARY (%1) · Kite: SECONDARY (%2)</b>"
-                           "  <span style='color:#7F8C8D'>(XTS withdrawn; read-only UI)</span>")
+                           "  <span style='color:#8B949E'>(XTS withdrawn; read-only UI)</span>")
                 .arg(fyers ? QStringLiteral("ready") : QStringLiteral("not ready"),
                      kite ? QStringLiteral("ready") : QStringLiteral("not ready")));
         verdict->setStyleSheet(
@@ -336,7 +337,7 @@ public:
         auto* note = new QLabel(
             QStringLiteral("Use this page to confirm broker priority. Credentials are read from the local environment only; token values are never rendered here. The Kite account remains available under Accounts as the secondary route."), this);
         note->setWordWrap(true);
-        note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(note, QStringLiteral("note"));
         v->addWidget(note);
     }
 };
@@ -411,7 +412,7 @@ public:
                 .arg(rows.size()).arg(fitted).arg(no_edge).arg(synthetic).arg(blocked),
             this);
         summary->setWordWrap(true);
-        summary->setStyleSheet(QStringLiteral("color:#8B949E;"));
+        set_role(summary, QStringLiteral("note"));
         v->addWidget(summary);
 
         filter_ = new QLineEdit(this);
@@ -479,8 +480,7 @@ public:
         detail_ = new QPlainTextEdit(this);
         detail_->setReadOnly(true);
         detail_->setMinimumHeight(190);
-        detail_->setStyleSheet(QStringLiteral(
-            "background:#12161A;color:#D6DBDF;font-family:Consolas,monospace;"));
+        set_role(detail_, QStringLiteral("log"));
         v->addWidget(detail_);
 
         auto* controls = new QHBoxLayout;
@@ -1118,7 +1118,7 @@ public:
                 "sized or ordered."),
             this);
         note->setWordWrap(true);
-        note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(note, QStringLiteral("note"));
         v->addWidget(note);
 
         auto* add_row = new QHBoxLayout;
@@ -1165,7 +1165,7 @@ public:
 
         quote_age_ = new QLabel(this);
         quote_age_->setWordWrap(true);
-        quote_age_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(quote_age_, QStringLiteral("note"));
         v->addWidget(quote_age_);
 
         summary_ = new QLabel(this);

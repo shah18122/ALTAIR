@@ -85,7 +85,7 @@ public:
                 "They are never written to project files or process arguments."),
             this);
         note->setWordWrap(true);
-        note->setStyleSheet(QStringLiteral("color:#9FB3C8;font-size:11px;"));
+        note->setStyleSheet(QStringLiteral("color:#8B949E;font-size:11px;"));
         root->addWidget(note);
 
         auto* form = new QFormLayout;

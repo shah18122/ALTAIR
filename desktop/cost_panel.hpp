@@ -40,6 +40,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include <risk/cost.hpp>
 
 #if ALTAIR_HAVE_CHARGES_TOML
@@ -86,7 +87,7 @@ public:
 
         note_ = new QLabel(this);
         note_->setWordWrap(true);
-        note_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(note_, QStringLiteral("note"));
         v->addWidget(note_);
 
         auto* form = new QHBoxLayout;
@@ -119,8 +120,7 @@ public:
 
         out_ = new QPlainTextEdit(this);
         out_->setReadOnly(true);
-        out_->setStyleSheet(QStringLiteral(
-            "background:#12161A;color:#D6DBDF;font-family:Consolas,monospace;"));
+        set_role(out_, QStringLiteral("log"));
         v->addWidget(out_, 1);
 
         connect(segment_, &QComboBox::currentIndexChanged, this,

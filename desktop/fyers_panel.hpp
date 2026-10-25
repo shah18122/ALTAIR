@@ -1,6 +1,7 @@
 // desktop/fyers_panel.hpp -- read-only FYERS account snapshot viewer.
 #pragma once
 
+#include "theme.hpp"
 #include "account_widgets.hpp"
 #include "helper_process.hpp"
 
@@ -49,7 +50,7 @@ public:
         fetch_ = new QPushButton(QStringLiteral("Fetch from FYERS"), action);
         reread_ = new QPushButton(QStringLiteral("Re-read file"), action);
         status_ = new QLabel(action);
-        status_->setStyleSheet(QStringLiteral("color:#9FB3C8;"));
+        set_role(status_, QStringLiteral("note"));
         row->addWidget(fetch_);
         row->addWidget(reread_);
         row->addWidget(status_, 1);
@@ -94,9 +95,7 @@ private:
     [[nodiscard]] static QPlainTextEdit* json_page() {
         auto* out = new QPlainTextEdit;
         out->setReadOnly(true);
-        out->setStyleSheet(QStringLiteral(
-            "QPlainTextEdit{background:#11171C;color:#D6DBDF;"
-            "font-family:Consolas,monospace;font-size:12px;border:none;}"));
+        set_role(out, QStringLiteral("log"));
         return out;
     }
 

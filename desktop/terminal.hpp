@@ -63,12 +63,14 @@
 #include "paper_oms.hpp"
 #include "paper_windows.hpp"
 #include "position_table.hpp"
+#include "theme.hpp"
 #include "price_client.hpp"
 #include "data/series_io.hpp"
 
 #include <QButtonGroup>
 #include <QDialog>
 #include <QFile>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QShortcut>
@@ -161,24 +163,20 @@ public:
                 "since acted on a line. It reports what is in the file."),
             this);
         head->setWordWrap(true);
-        head->setStyleSheet(QStringLiteral(
-            "background:#3A2E17;color:#F0E0C0;padding:8px;"
-            "border:1px solid #7A5E20;"));
+        set_role(head, QStringLiteral("banner-warn"));
         v->addWidget(head);
 
         auto* row = new QHBoxLayout;
         reload_ = new QPushButton(QStringLiteral("Re-read the queue"), this);
         count_ = new QLabel(this);
-        count_->setStyleSheet(QStringLiteral("color:#9FB3C8;"));
+        set_role(count_, QStringLiteral("note"));
         row->addWidget(reload_);
         row->addWidget(count_, 1);
         v->addLayout(row);
 
         out_ = new QPlainTextEdit(this);
         out_->setReadOnly(true);
-        out_->setStyleSheet(QStringLiteral(
-            "background:#11171C;color:#D6DBDF;"
-            "font-family:Consolas,monospace;font-size:12px;border:none;"));
+        set_role(out_, QStringLiteral("log"));
         v->addWidget(out_, 1);
 
         connect(reload_, &QPushButton::clicked, this,
@@ -236,45 +234,39 @@ private:
 /// being impressed. Scoped to this page by object name so it cannot leak into
 /// the analysis pages, which are documents and read better light.
 inline const char* kTerminalStyle = R"(
-QWidget#AltairTerminal { background:#0E1116; color:#D0D6DE; }
-QWidget#AltairTerminal QLabel { color:#D0D6DE; }
+QWidget#AltairTerminal { background:#0D1117; color:#E6EDF3; }
 QWidget#AltairTerminal QTableWidget, QWidget#AltairTerminal QTableView {
-    background:#15181D; alternate-background-color:#181C22; color:#D0D6DE;
-    gridline-color:#232830; selection-background-color:#3A3212;
-    selection-color:#FFFFFF; font-family:Consolas,'Cascadia Mono',monospace;
+    background:#0D1117; alternate-background-color:#11161D; color:#E6EDF3;
+    gridline-color:#1C2128; selection-background-color:#493D2C;
+    selection-color:#FFFFFF; border:1px solid #21262D; border-radius:6px;
+    font-family:"Cascadia Mono",Consolas,"JetBrains Mono",monospace;
 }
 QWidget#AltairTerminal QHeaderView::section {
-    background:#1C2129; color:#8A93A2; border:0; border-right:1px solid #232830;
-    padding:3px 4px; font-weight:bold;
+    background:#161B22; color:#8B949E; border:0; border-bottom:1px solid #30363D;
+    border-right:1px solid #21262D; padding:4px 6px; font-weight:600;
 }
-QWidget#AltairTerminal QTabWidget::pane { border:1px solid #232830; }
+QWidget#AltairTerminal QTabWidget::pane { border:1px solid #21262D; border-radius:6px; }
 QWidget#AltairTerminal QTabBar::tab {
-    background:#15181D; color:#8A93A2; padding:5px 12px; border:0;
+    background:transparent; color:#8B949E; padding:6px 14px; border:0;
+    border-bottom:2px solid transparent;
 }
+QWidget#AltairTerminal QTabBar::tab:hover { color:#E6EDF3; }
 QWidget#AltairTerminal QTabBar::tab:selected {
-    background:#1C2129; color:#F4C95D; border-bottom:2px solid #F4C95D;
+    color:#F0B765; border-bottom:2px solid #E3A34A;
 }
-QWidget#AltairTerminal QPushButton {
-    background:#1C2129; color:#D0D6DE; border:1px solid #2C333D;
-    padding:4px 10px;
-}
-QWidget#AltairTerminal QPushButton:hover { border-color:#F4C95D; }
 QWidget#AltairTerminal QComboBox, QWidget#AltairTerminal QSpinBox,
 QWidget#AltairTerminal QLineEdit, QWidget#AltairTerminal QPlainTextEdit {
-    background:#15181D; color:#D0D6DE; border:1px solid #2C333D; padding:2px 4px;
+    padding:3px 6px;
 }
-QWidget#AltairTerminal QSplitter::handle { background:#232830; }
-QWidget#AltairTerminal QCheckBox, QWidget#AltairTerminal QRadioButton {
-    color:#D0D6DE;
-}
-QWidget#AltairTerminal QGroupBox { color:#8A93A2; border:1px solid #232830;
-    margin-top:14px; }
-QWidget#AltairTerminal QGroupBox::title { subcontrol-origin:margin; left:8px;
-    color:#F4C95D; }
-QWidget#strip { background:#0A0C10; border-bottom:1px solid #F4C95D; }
-QWidget#accountSurface { background:#0E1116; }
-QLabel#sectionKicker { color:#F4C95D;font-weight:700;letter-spacing:1px; }
-QLabel#accountCaveat { color:#8A93A2; }
+QWidget#AltairTerminal QSplitter::handle { background:#21262D; }
+QWidget#AltairTerminal QSplitter::handle:hover { background:#E3A34A; }
+QWidget#AltairTerminal QGroupBox { color:#8B949E; }
+QWidget#AltairTerminal QGroupBox::title { color:#E3A34A; }
+QWidget#strip { background:#0B0F14; border-bottom:1px solid #21262D; }
+QWidget#strip QPushButton { padding:5px 12px; }
+QWidget#accountSurface { background:#0D1117; }
+QLabel#sectionKicker { color:#E3A34A;font-weight:700;letter-spacing:1px; }
+QLabel#accountCaveat { color:#8B949E; }
 )";
 
 class TerminalPage final : public QWidget {
@@ -299,16 +291,27 @@ public:
         strip->setObjectName(QStringLiteral("strip"));
         strip->setAttribute(Qt::WA_StyledBackground, true);
         auto* h = new QHBoxLayout(strip);
-        h->setContentsMargins(10, 6, 10, 6);
-        h->setSpacing(18);
+        h->setContentsMargins(14, 8, 14, 8);
+        h->setSpacing(14);
+        // Groups, left to right: the indices · the stream and the movers ·
+        // the views · the PAPER / LIVE switch, set apart at the far right
+        // because it is the one control on the strip that spends money.
+        const auto rule = [strip, h] {
+            auto* r = new QFrame(strip);
+            r->setProperty("role", QStringLiteral("rule"));
+            r->setFrameShape(QFrame::NoFrame);
+            r->setFixedWidth(1);
+            h->addWidget(r);
+        };
         auto* title = new QLabel(QStringLiteral(
-            "<span style='color:#F4C95D;font-weight:bold;letter-spacing:2px'>"
+            "<span style='color:#F0B765;font-weight:800;letter-spacing:2px'>"
             "TERMINAL</span>"), strip);
         h->addWidget(title);
+        rule();
         nifty_ = make_tile(strip, h);
         bnf_ = make_tile(strip, h);
         vix_ = make_tile(strip, h);
-        h->addStretch();
+        rule();
         stream_state_ = new QLabel(strip);
         stream_state_->setTextFormat(Qt::RichText);
         h->addWidget(stream_state_);
@@ -316,30 +319,19 @@ public:
         // for scripts and tests but the trader never needs it.
         stream_btn_ = new QPushButton(QStringLiteral("Connect stream"), strip);
         stream_btn_->hide();
-        toast_ = new QLabel(strip);
-        toast_->setObjectName(QStringLiteral("terminalToast"));
-        toast_->setTextFormat(Qt::RichText);
-        h->addWidget(toast_);
-        // LIVE: off by default. On sends Buy/Sell to FYERS through the order
-        // router after a typed confirmation (live_trading.hpp).
-        live_btn_ = new QPushButton(QStringLiteral("PAPER"), strip);
-        live_btn_->setObjectName(QStringLiteral("liveSwitch"));
-        live_btn_->setToolTip(QStringLiteral(
-            "Paper: orders fill against the live book and nothing reaches a broker. Click to switch LIVE on: "
-            "Buy/Sell go to FYERS with real money, within limits you set, until 15:30 or until you switch it off."));
-        h->addWidget(live_btn_);
-        live_orders_btn_ = new QPushButton(QStringLiteral("Live orders"), strip);
-        live_orders_btn_->setObjectName(QStringLiteral("liveOrdersButton"));
-        live_orders_btn_->setToolTip(QStringLiteral("Every order sent to FYERS today and what became of it; cancel from here"));
-        h->addWidget(live_orders_btn_);
-        // Top gainers and losers of the streamed NSE stocks, beside LIVE; a
-        // click opens the top ten of each.
+        // Top gainers and losers of the streamed NSE stocks; a click opens
+        // the top ten of each.
         movers_ = new QLabel(strip);
         movers_->setObjectName(QStringLiteral("moversStrip"));
         movers_->setTextFormat(Qt::RichText);
         movers_->setToolTip(QStringLiteral("Top gainers and losers of the streamed stocks, every 2 s. Click for the top ten."));
-        movers_->setText(QStringLiteral("<span style='color:#6B7380'>movers: waiting for prices</span>"));
+        movers_->setText(QStringLiteral("<span style='color:#6E7681'>movers: waiting for prices</span>"));
         h->addWidget(movers_);
+        h->addStretch();
+        toast_ = new QLabel(strip);
+        toast_->setObjectName(QStringLiteral("terminalToast"));
+        toast_->setTextFormat(Qt::RichText);
+        h->addWidget(toast_);
         // The market watch is home; Enter on a scrip opens its option chain.
         // Models toggles the live models over it (Ctrl+M; F4 back).
         models_btn_ = new QPushButton(QStringLiteral("Models"), strip);
@@ -349,6 +341,21 @@ public:
         h->addWidget(models_btn_);
         // Simple / Advanced, for the watch, the chain and the models alike.
         h->addWidget(simple_mode::button(strip));
+        rule();
+        live_orders_btn_ = new QPushButton(QStringLiteral("Live orders"), strip);
+        live_orders_btn_->setObjectName(QStringLiteral("liveOrdersButton"));
+        live_orders_btn_->setToolTip(QStringLiteral("Every order sent to FYERS today and what became of it; cancel from here"));
+        h->addWidget(live_orders_btn_);
+        // LIVE: off by default. On sends Buy/Sell to FYERS through the order
+        // router after a typed confirmation (live_trading.hpp).
+        live_btn_ = new QPushButton(QStringLiteral("PAPER"), strip);
+        live_btn_->setObjectName(QStringLiteral("liveSwitch"));
+        live_btn_->setProperty("variant", QStringLiteral("paper"));
+        live_btn_->setMinimumWidth(96);
+        live_btn_->setToolTip(QStringLiteral(
+            "Paper: orders fill against the live book and nothing reaches a broker. Click to switch LIVE on: "
+            "Buy/Sell go to FYERS with real money, within limits you set, until 15:30 or until you switch it off."));
+        h->addWidget(live_btn_);
         v->addWidget(strip);
 
         // ---- ACCOUNT-FIRST SURFACE -------------------------------------
@@ -1358,14 +1365,14 @@ private:
         live_on_ = a.armed;
         if (halted()) {
             live_btn_->setText(QStringLiteral("\u25A0 HALTED"));
-            live_btn_->setStyleSheet(QStringLiteral("background:#6E1B1B;color:#FFFFFF;font-weight:700;border-radius:4px;padding:3px 10px;"));
+            set_variant(live_btn_, QStringLiteral("halted"));
             live_btn_->setToolTip(QStringLiteral("Trading is halted (F11+F12). %1. F11+F12 again to resume.").arg(halt_summary()));
         } else if (live_on_) {
             const QString until = QDateTime::fromSecsSinceEpoch(a.expires_unix).toString(QStringLiteral("HH:mm"));
             live_btn_->setText(!v.running ? QStringLiteral("● LIVE · router down")
                                : v.killed ? QStringLiteral("● LIVE · KILL ON")
                                : v.why.isEmpty() ? QStringLiteral("● LIVE") : QStringLiteral("● LIVE · refusing"));
-            live_btn_->setStyleSheet(QStringLiteral("background:#DA3633;color:#FFFFFF;font-weight:700;border-radius:4px;padding:3px 10px;"));
+            set_variant(live_btn_, QStringLiteral("live"));
             live_btn_->setToolTip(QStringLiteral("Orders go to FYERS until %1. %3. %2 Click to switch LIVE off.")
                                       .arg(until, live_strategies_text(a.limits), !v.running ? (router_note_.isEmpty() ? QStringLiteral("The order router is not running.")
                                                                                       : router_note_)
@@ -1373,7 +1380,7 @@ private:
             if (!v.running) ensure_router();
         } else {
             live_btn_->setText(QStringLiteral("PAPER"));
-            live_btn_->setStyleSheet(QString());
+            set_variant(live_btn_, QStringLiteral("paper"));
         }
         // Say what became of each live order, once.
         for (const LiveTradingOrder& o : v.orders) {

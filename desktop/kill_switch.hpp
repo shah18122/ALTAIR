@@ -75,6 +75,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include "auth.hpp"
 
 #include <QByteArray>
@@ -487,7 +488,7 @@ public:
                 "window crashing, which an in-process flag would not."),
             this);
         note->setWordWrap(true);
-        note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(note, QStringLiteral("note"));
         v->addWidget(note);
 
         state_ = new QLabel(this);
@@ -524,7 +525,7 @@ public:
                 "the one that matters."),
             this);
         asym_->setWordWrap(true);
-        asym_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(asym_, QStringLiteral("note"));
         v->addWidget(asym_);
         v->addStretch();
 

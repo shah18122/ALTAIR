@@ -33,6 +33,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include "account_widgets.hpp"
 #include "auth.hpp"
 
@@ -77,8 +78,8 @@ public:
             this);
         head->setWordWrap(true);
         head->setStyleSheet(QStringLiteral(
-            "background:#161C22;color:#9FB3C8;padding:8px;"
-            "border:1px solid #2C3E50;"));
+            "background:#161B22;color:#8B949E;padding:8px;"
+            "border:1px solid #30363D;"));
         v->addWidget(head);
 
         auto* row = new QHBoxLayout;
@@ -91,7 +92,7 @@ public:
         listen_ = new QPushButton(QStringLiteral("Listen"), this);
         listen_->setStyleSheet(action_button_css(true));
         status_ = new QLabel(this);
-        status_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(status_, QStringLiteral("note"));
         row->addWidget(broker_);
         row->addWidget(new QLabel(QStringLiteral("Listen for"), this));
         row->addWidget(secs_);
@@ -108,7 +109,7 @@ public:
 
         note_ = new QLabel(this);
         note_->setWordWrap(true);
-        note_->setStyleSheet(QStringLiteral("color:#9FB3C8;font-size:11px;"));
+        note_->setStyleSheet(QStringLiteral("color:#8B949E;font-size:11px;"));
         v->addWidget(note_);
 
         connect(listen_, &QPushButton::clicked, this, &LiveFeedPanel::listen);

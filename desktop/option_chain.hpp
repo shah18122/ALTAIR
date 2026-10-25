@@ -36,6 +36,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include "chain_panel.hpp"
 #include "data/series_io.hpp"
 
@@ -139,7 +140,7 @@ public:
 
         foot_ = new QLabel(this);
         foot_->setWordWrap(true);
-        foot_->setStyleSheet(QStringLiteral("color:#8A93A2;"));
+        set_role(foot_, QStringLiteral("note"));
         v->addWidget(foot_);
 
         connect(under_, &QComboBox::currentIndexChanged, this,

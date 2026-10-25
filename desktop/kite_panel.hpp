@@ -44,6 +44,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include "account_widgets.hpp"
 #include "feed_status.hpp"
 
@@ -218,7 +219,7 @@ public:
             "Re-reads the snapshot already on disk. Makes no network call."));
 
         status_ = new QLabel;
-        status_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(status_, QStringLiteral("note"));
 
         bl->addWidget(fetch_);
         bl->addWidget(reread_);
@@ -239,7 +240,7 @@ public:
         funds_note_ = new QLabel(funds_page_);
         funds_note_->setWordWrap(true);
         funds_note_->setStyleSheet(QStringLiteral(
-            "color:#7F8C8D;font-size:11px;"));
+            "color:#8B949E;font-size:11px;"));
         fv->addWidget(funds_note_);
         fv->addStretch(1);
 
@@ -293,8 +294,8 @@ private:
         note->setWordWrap(true);
         note->setContentsMargins(14, 10, 14, 10);
         note->setStyleSheet(QStringLiteral(
-            "color:#9FB3C8;background:#161C22;font-size:11px;"
-            "border-bottom:1px solid #2C3E50;"));
+            "color:#8B949E;background:#161B22;font-size:11px;"
+            "border-bottom:1px solid #30363D;"));
         v->addWidget(note);
         v->addWidget(t, 1);
         *note_out = note;
@@ -378,9 +379,7 @@ private:
     [[nodiscard]] QPlainTextEdit* make_pane() {
         auto* p = new QPlainTextEdit;
         p->setReadOnly(true);
-        p->setStyleSheet(QStringLiteral(
-            "QPlainTextEdit{background:#11171C;color:#D6DBDF;"
-            "font-family:Consolas,monospace;font-size:12px;border:none;}"));
+        set_role(p, QStringLiteral("log"));
         return p;
     }
 
@@ -447,7 +446,7 @@ private:
         const bool stale = age_s > 900;
         head_->setText(QStringLiteral(
             "Snapshot taken <b>%1</b> (%2)%3<br>"
-            "<span style='color:#7F8C8D'>Every figure below is from that "
+            "<span style='color:#8B949E'>Every figure below is from that "
             "instant. Nothing here is live — the window has no network.</span>")
                 .arg(age)
                 .arg(when.toString(QStringLiteral("ddd dd MMM, HH:mm:ss")))

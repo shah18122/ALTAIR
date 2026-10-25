@@ -56,36 +56,36 @@ public:
         : QWidget(parent), role_(role), on_changed_(std::move(on_changed)) {
         setObjectName(QStringLiteral("brokerControlCenter"));
         setStyleSheet(QStringLiteral(R"QSS(
-            QWidget#brokerControlCenter { background:#0D1418; color:#E7EDF0; }
-            QLabel#brokerEyebrow { color:#D8A657; font-size:10px; font-weight:700; letter-spacing:2px; }
-            QLabel#brokerTitle { color:#F4F7F8; font-size:25px; font-weight:700; }
-            QLabel#brokerSubtitle { color:#91A2AC; font-size:12px; }
-            QLabel#brokerGuard { color:#9FB0B9; background:#141E23; border:1px solid #283940;
+            QWidget#brokerControlCenter { background:#0D1117; color:#E6EDF3; }
+            QLabel#brokerEyebrow { color:#E3A34A; font-size:10px; font-weight:700; letter-spacing:2px; }
+            QLabel#brokerTitle { color:#E6EDF3; font-size:25px; font-weight:700; }
+            QLabel#brokerSubtitle { color:#8B949E; font-size:12px; }
+            QLabel#brokerGuard { color:#8B949E; background:#161B22; border:1px solid #30363D;
                 border-radius:4px; padding:6px 9px; font-size:10px; font-weight:700; }
-            QFrame#routeRail { background:#121C21; border:1px solid #293A42; border-radius:8px; }
-            QFrame#brokerPrimaryCard { background:#162128; border:1px solid #B88845; border-radius:10px; }
-            QFrame#brokerSecondaryCard { background:#131D22; border:1px solid #2B3C44; border-radius:10px; }
-            QLabel#brokerMark { color:#0D1418; background:#D8A657; border-radius:5px;
+            QFrame#routeRail { background:#161B22; border:1px solid #30363D; border-radius:8px; }
+            QFrame#brokerPrimaryCard { background:#161B22; border:1px solid #B88845; border-radius:10px; }
+            QFrame#brokerSecondaryCard { background:#161B22; border:1px solid #30363D; border-radius:10px; }
+            QLabel#brokerMark { color:#0D1117; background:#E3A34A; border-radius:5px;
                 font-size:16px; font-weight:800; padding:7px; }
-            QLabel#brokerCardTitle { color:#F3F6F7; font-size:16px; font-weight:700; }
-            QLabel#brokerCardRole { color:#D8A657; font-size:9px; font-weight:700; letter-spacing:1px; }
-            QLabel#brokerCardDetail { color:#9AABB4; font-size:11px; }
-            QLabel#brokerCardScope { color:#71838D; font-size:10px; }
-            QPushButton#brokerPrimaryAction { background:#D8A657; color:#10171B; border:0;
+            QLabel#brokerCardTitle { color:#E6EDF3; font-size:16px; font-weight:700; }
+            QLabel#brokerCardRole { color:#E3A34A; font-size:9px; font-weight:700; letter-spacing:1px; }
+            QLabel#brokerCardDetail { color:#8B949E; font-size:11px; }
+            QLabel#brokerCardScope { color:#6E7681; font-size:10px; }
+            QPushButton#brokerPrimaryAction { background:#E3A34A; color:#0D1117; border:0;
                 border-radius:5px; padding:7px 12px; font-weight:700; }
-            QPushButton#brokerPrimaryAction:hover { background:#E4B66D; }
-            QPushButton#brokerSecondaryAction { background:#1C2930; color:#DCE5E9;
-                border:1px solid #344951; border-radius:5px; padding:7px 12px; font-weight:600; }
-            QPushButton#brokerSecondaryAction:hover { background:#26373F; border-color:#55717C; }
-            QLabel#brokerMetricLabel { color:#71838D; font-size:9px; font-weight:700; letter-spacing:1px; }
-            QLabel#brokerMetricValue { color:#DCE5E9; font-size:12px; font-weight:600; }
-            QLabel#brokerNotice { background:#10191E; color:#A8B7BE; padding:10px;
-                border-left:3px solid #D8A657; border-radius:3px; }
-            QTabWidget::pane { border:1px solid #26373F; background:#10181D; top:-1px; }
-            QTabBar::tab { background:#111A1F; color:#84969F; border:0; border-bottom:2px solid transparent;
+            QPushButton#brokerPrimaryAction:hover { background:#F0B765; }
+            QPushButton#brokerSecondaryAction { background:#21262D; color:#E6EDF3;
+                border:1px solid #30363D; border-radius:5px; padding:7px 12px; font-weight:600; }
+            QPushButton#brokerSecondaryAction:hover { background:#30363D; border-color:#8B949E; }
+            QLabel#brokerMetricLabel { color:#6E7681; font-size:9px; font-weight:700; letter-spacing:1px; }
+            QLabel#brokerMetricValue { color:#E6EDF3; font-size:12px; font-weight:600; }
+            QLabel#brokerNotice { background:#11161D; color:#8B949E; padding:10px;
+                border-left:3px solid #E3A34A; border-radius:3px; }
+            QTabWidget::pane { border:1px solid #30363D; background:#0D1117; top:-1px; }
+            QTabBar::tab { background:#0D1117; color:#8B949E; border:0; border-bottom:2px solid transparent;
                 padding:9px 14px; margin-right:2px; font-weight:600; }
-            QTabBar::tab:hover { color:#D7E0E4; background:#172228; }
-            QTabBar::tab:selected { color:#F0C078; border-bottom:2px solid #D8A657; background:#172228; }
+            QTabBar::tab:hover { color:#E6EDF3; background:#161B22; }
+            QTabBar::tab:selected { color:#F0B765; border-bottom:2px solid #E3A34A; background:#161B22; }
         )QSS"));
 
         auto* root = new QVBoxLayout(this);
@@ -123,12 +123,12 @@ public:
         route_layout->addWidget(route_caption);
         route_label_ = new QLabel(route);
         route_label_->setStyleSheet(QStringLiteral(
-            "color:#F0C078;font-size:12px;font-weight:700;padding-left:8px;"));
+            "color:#F0B765;font-size:12px;font-weight:700;padding-left:8px;"));
         route_layout->addWidget(route_label_);
         route_hint_ = new QLabel(route);
         route_hint_->setWordWrap(true);
         route_hint_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        route_hint_->setStyleSheet(QStringLiteral("color:#83959E;font-size:10px;"));
+        route_hint_->setStyleSheet(QStringLiteral("color:#8B949E;font-size:10px;"));
         route_layout->addWidget(route_hint_, 1);
         root->addWidget(route);
 

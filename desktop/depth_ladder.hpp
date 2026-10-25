@@ -38,6 +38,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include <book/l2_book.hpp>
 #include <feed/tick.hpp>
 
@@ -181,7 +182,7 @@ public:
 
         foot_ = new QLabel(this);
         foot_->setWordWrap(true);
-        foot_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(foot_, QStringLiteral("note"));
         v->addWidget(foot_);
 
         show_book(nullptr);

@@ -40,6 +40,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
@@ -130,7 +131,7 @@ public:
                 "it."),
             this);
         note->setWordWrap(true);
-        note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(note, QStringLiteral("note"));
         v->addWidget(note);
 
         table_ = new QTableWidget(0, 4, this);
@@ -157,7 +158,7 @@ public:
                 "version of proving it does."),
             this);
         how->setWordWrap(true);
-        how->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(how, QStringLiteral("note"));
         v->addWidget(how);
         v->addStretch();
 

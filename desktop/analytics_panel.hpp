@@ -36,6 +36,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include <analytics/rolling.hpp>
 #include <backtest/montecarlo.hpp>
 
@@ -72,7 +73,7 @@ public:
                 "nothing cached, nothing a literal."),
             this);
         note->setWordWrap(true);
-        note->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(note, QStringLiteral("note"));
         v->addWidget(note);
 
         run_ = new QPushButton(QStringLiteral("Run on real NIFTY daily"), this);
@@ -81,8 +82,7 @@ public:
 
         out_ = new QPlainTextEdit(this);
         out_->setReadOnly(true);
-        out_->setStyleSheet(QStringLiteral(
-            "background:#12161A;color:#D6DBDF;font-family:Consolas,monospace;"));
+        set_role(out_, QStringLiteral("log"));
         v->addWidget(out_, 1);
         run();
     }

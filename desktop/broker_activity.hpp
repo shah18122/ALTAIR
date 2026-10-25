@@ -6,6 +6,7 @@
 // displayed as unavailable; it is never promoted to a connected state.
 #pragma once
 
+#include "theme.hpp"
 #include <types/broker_log.hpp>
 
 #include <QComboBox>
@@ -259,7 +260,7 @@ public:
         orders_->addItems({QStringLiteral("KITE"), QStringLiteral("FYERS")});
         routes->addWidget(orders_);
         route_note_ = new QLabel(this);
-        route_note_->setStyleSheet(QStringLiteral("color:#9FB3C8;"));
+        set_role(route_note_, QStringLiteral("note"));
         routes->addWidget(route_note_, 1);
         root->addLayout(routes);
 

@@ -91,6 +91,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include "auth.hpp"
 
 #include <QByteArray>
@@ -491,9 +492,7 @@ public:
                 "not a position and it is not an order."),
             this);
         head->setWordWrap(true);
-        head->setStyleSheet(QStringLiteral(
-            "background:#1B3A4B;color:#CFE8F3;padding:8px;"
-            "border:1px solid #2E6E8E;"));
+        set_role(head, QStringLiteral("banner-info"));
         v->addWidget(head);
 
         auto* box = new QGroupBox(QStringLiteral("Request"), this);
@@ -579,16 +578,14 @@ public:
                                "position and every number here and still "
                                "cannot ask for a trade."),
                 this);
-            no->setStyleSheet(QStringLiteral("color:#F85149;"));
+            set_role(no, QStringLiteral("error"));
             no->setWordWrap(true);
             v->addWidget(no);
         }
 
         log_ = new QPlainTextEdit(this);
         log_->setReadOnly(true);
-        log_->setStyleSheet(QStringLiteral(
-            "background:#11171C;color:#D6DBDF;"
-            "font-family:Consolas,monospace;font-size:12px;border:none;"));
+        set_role(log_, QStringLiteral("log"));
         log_->setPlainText(QStringLiteral(
             "No request made in this session.\n\n"
             "Requests are appended to " ALTAIR_INTENT_FILE " and survive this\n"
