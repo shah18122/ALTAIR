@@ -9,6 +9,11 @@
 //      data/store/ticks/<day>/trades.csv    with --ticks: every print
 //      data/store/ticks/<day>/quotes.csv    with --ticks: every market-watch update
 //      data/store/ticks/<day>/books.csv     with --ticks: every book (5 or 50 levels)
+//      data/store/ticks/<day>/vol_1m.csv    each minute, per index and expiry: spot, India VIX,
+//                                           parity forward, ATM IV, the chain's own VIX (each
+//                                           expiry and 30-day), realised vol 15m/60m/session
+//      data/store/ticks/<day>/chain_iv_1m.csv  each minute, every option priced: mid or last,
+//                                           IV, delta, vega, OI
 //      data/store/ticks/<day>/_decode.json  what was read, dropped and missed
 //      data/store/tape_bars/<seg>/<inst>/1m/<day>.csv   the indices and the
 //                                           near futures, laid out like dataset/
@@ -53,6 +58,9 @@
 // same inputs, same id.
 #pragma once
 
+#include <analytics/greeks.hpp>
+#include <analytics/iv.hpp>
+#include <analytics/vix.hpp>
 #include <app/data_audit.hpp>
 #include <app/price_text.hpp>
 #include <live/tape.hpp>
@@ -340,6 +348,192 @@ public:
         return o + "]\n}\n";
     }
 
+    /// vol_1m.csv and chain_iv_1m.csv. One reading a minute, stamped at the
+    /// END of its minute (the moment it is known), as data/live/iv/ is.
+    ///
+    /// An option's price in a minute is the mid of the last best bid and ask
+    /// it showed (quote or book), else its last trade; a minute with neither
+    /// takes the previous minute's. Per index and expiry: the forward from
+    /// put-call parity at the strike where call and put are closest (the
+    /// options' own forward, as app/iv_record.hpp), the Black-76 IV of the
+    /// call and put there averaged (atm_iv), and the expiry's model-free
+    /// variance by the India VIX strip (analytics/vix.hpp) as a vol
+    /// (term_vol). chain_vix30 interpolates two such terms to 30 days, as NSE
+    /// does, leaving out terms of 7 days or less; it is empty with fewer than
+    /// two. IV, term_vol and RV are annualised fractions (0.15 is 15 vol);
+    /// the two VIX columns are index points. RV is from the index's 1-minute
+    /// closes, sqrt(mean r^2 * 375 * 252), over the last 15 and 60 returns
+    /// (empty until there are that many) and over the session so far.
+    struct VolViews { std::string vol, chain; std::size_t vol_rows = 0, chain_rows = 0; };
+
+    [[nodiscard]] VolViews vol_views(double rate = 0.065) const {
+        constexpr std::int64_t kExpirySec = 15 * 3600 + 30 * 60;   // options expire at the 15:30 close
+        constexpr double kYearSec = 365.0 * 86'400.0;
+        VolViews out;
+        out.vol = "time,underlying,spot,india_vix,expiry,days_to_expiry,forward,atm_strike,atm_iv,term_vol,strikes_used,"
+                  "chain_vix30,rv_15m,rv_60m,rv_session,source\n";
+        out.chain = "time,fyers,underlying,expiry,strike,right,price,price_from,forward,iv,delta,vega_1pt,oi,source\n";
+        const auto fx = [](double v, int dp) {
+            if (!std::isfinite(v)) return std::string{};
+            char b[48];
+            std::snprintf(b, sizeof b, "%.*f", dp, v);
+            return std::string(b);
+        };
+        const auto close_at = [&](const std::string& sym, std::int64_t m) -> std::int64_t {
+            const auto b = bars_.find(sym);
+            if (b == bars_.end()) return 0;
+            const auto x = b->second.find(m);
+            return x == b->second.end() ? 0 : x->second.c;
+        };
+        struct Px { double paise = 0.0; const char* from = ""; };
+        const auto price = [&](const std::string* sym, std::int64_t m) -> Px {
+            if (sym == nullptr) return {};
+            for (const std::int64_t at : {m, m - 60}) {
+                if (const auto t = tops_.find(*sym); t != tops_.end())
+                    if (const auto x = t->second.find(at); x != t->second.end())
+                        return {0.5 * static_cast<double>(x->second.bid + x->second.ask), "mid"};
+                if (const std::int64_t c = close_at(*sym, at); c > 0) return {static_cast<double>(c), "last"};
+            }
+            return {};
+        };
+        const auto oi_at = [&](const std::string& sym, std::int64_t m) -> std::string {
+            const auto b = bars_.find(sym);
+            if (b == bars_.end()) return {};
+            for (auto x = b->second.upper_bound(m); x != b->second.begin();) {
+                --x;
+                if (x->second.oi >= 0) return std::to_string(x->second.oi);
+            }
+            return {};
+        };
+
+        struct Pair { const std::string* call = nullptr; const std::string* put = nullptr; };
+        for (const auto& [und, spot_sym] : std::initializer_list<std::pair<const char*, const char*>>{
+                 {"NIFTY", "NSE:NIFTY50-INDEX"}, {"BANKNIFTY", "NSE:NIFTYBANK-INDEX"}}) {
+            std::map<std::int64_t, std::map<std::int64_t, Pair>> chain;   // expiry day -> strike (paise) -> legs
+            std::set<std::int64_t> minutes;
+            for (const auto& [sym, in] : inst_) {
+                const bool call = in.kind == lv::LiveKind::Call;
+                if (in.underlying != und || (!call && in.kind != lv::LiveKind::Put) || in.expiry_day <= 0 || !(in.strike > 0.0))
+                    continue;
+                auto& legs = chain[in.expiry_day][std::llround(in.strike * 100.0)];
+                (call ? legs.call : legs.put) = &sym;
+                if (const auto b = bars_.find(sym); b != bars_.end()) for (const auto& kv : b->second) minutes.insert(kv.first);
+                if (const auto t = tops_.find(sym); t != tops_.end()) for (const auto& kv : t->second) minutes.insert(kv.first);
+            }
+            // The index's 1-minute log returns, by the minute each ends in.
+            std::vector<std::int64_t> ret_t;
+            std::vector<double> sq_sum{0.0};   // prefix sums of r^2
+            if (const auto s = bars_.find(spot_sym); s != bars_.end()) {
+                std::int64_t prev = 0;
+                for (const auto& [t, b] : s->second) {
+                    minutes.insert(t);
+                    if (prev > 0 && b.c > 0) {
+                        const double r = std::log(static_cast<double>(b.c) / static_cast<double>(prev));
+                        ret_t.push_back(t);
+                        sq_sum.push_back(sq_sum.back() + r * r);
+                    }
+                    if (b.c > 0) prev = b.c;
+                }
+            }
+            const auto rv = [&](std::size_t n_have, std::size_t window) {
+                const std::size_t n = window == 0 ? n_have : window;
+                if (n < 2 || n_have < n) return std::string{};
+                return fx(std::sqrt((sq_sum[n_have] - sq_sum[n_have - n]) / static_cast<double>(n) * 375.0 * 252.0), 6);
+            };
+
+            for (const std::int64_t m : minutes) {
+                const std::int64_t end = m + 60;
+                const std::int64_t spot = close_at(spot_sym, m);
+                const std::int64_t vix = close_at("NSE:INDIAVIX-INDEX", m);
+                const std::size_t n_have = static_cast<std::size_t>(
+                    std::upper_bound(ret_t.begin(), ret_t.end(), m) - ret_t.begin());
+                const std::string stamp = da::format_audit_time(end, false);
+                const std::string head = stamp + "," + und + "," + (spot > 0 ? rupees(spot) : std::string{}) + ","
+                                         + (vix > 0 ? rupees(vix) : std::string{}) + ",";
+                const std::string tail = "," + rv(n_have, 15) + "," + rv(n_have, 60) + "," + rv(n_have, 0) + ",fyers_tape\n";
+                std::vector<std::string> rows;   // without chain_vix30 and the tail
+                std::vector<std::pair<double, VixTerm>> terms;
+                for (const auto& [expiry, strikes] : chain) {
+                    const double T = static_cast<double>(expiry * 86'400 + kExpirySec - end) / kYearSec;
+                    if (!(T > 0.0)) continue;
+                    std::vector<VixQuote> q;
+                    std::vector<std::pair<Px, Px>> px;
+                    std::vector<const Pair*> legs;
+                    for (const auto& [k, pr] : strikes) {
+                        const Px c = price(pr.call, m), p = price(pr.put, m);
+                        if (!(c.paise > 0.0) && !(p.paise > 0.0)) continue;
+                        q.push_back({Price{k}, Price{std::llround(c.paise)}, Price{std::llround(p.paise)}, c.paise > 0.0, p.paise > 0.0});
+                        px.emplace_back(c, p);
+                        legs.push_back(&pr);
+                    }
+                    // The parity forward, at the strike where call and put are closest.
+                    std::size_t atm = q.size();
+                    for (std::size_t i = 0; i < q.size(); ++i)
+                        if (q[i].has_call && q[i].has_put
+                            && (atm == q.size()
+                                || std::fabs(px[i].first.paise - px[i].second.paise)
+                                       < std::fabs(px[atm].first.paise - px[atm].second.paise)))
+                            atm = i;
+                    if (atm == q.size()) continue;
+                    const double K = static_cast<double>(q[atm].strike.raw());
+                    const double F = K + (px[atm].first.paise - px[atm].second.paise) * std::exp(rate * T);
+                    if (!(F > 0.0)) continue;
+                    const auto iv_of = [&](bool call, double paise, double strike) {
+                        const auto v = implied_vol_black76(call ? OptionRight::Call : OptionRight::Put, Price{std::llround(paise)},
+                                                           Price{std::llround(F)}, Price{std::llround(strike)}, Years{T}, rate);
+                        return v && v->vol.raw() > 0.0 && std::isfinite(v->vol.raw()) ? v->vol.raw()
+                                                                                        : std::numeric_limits<double>::quiet_NaN();
+                    };
+                    double sum = 0.0;
+                    int n = 0;
+                    for (const bool call : {true, false}) {
+                        const double v = iv_of(call, call ? px[atm].first.paise : px[atm].second.paise, K);
+                        if (std::isfinite(v)) { sum += v; ++n; }
+                    }
+                    const auto term = vix_term_variance(q.data(), q.size(), Years{T}, rate);
+                    const bool term_ok = term && term->variance > 0.0;
+                    if (term_ok && T > 7.0 / 365.0) terms.emplace_back(T, *term);
+                    rows.push_back(head + day_text(expiry) + "," + fx(T * 365.0, 4) + "," + fx(F / 100.0, 2) + ","
+                                   + rupees(q[atm].strike.raw()) + "," + (n > 0 ? fx(sum / n, 6) : std::string{}) + ","
+                                   + (term_ok ? fx(std::sqrt(term->variance), 6) : std::string{}) + ","
+                                   + (term_ok ? std::to_string(term->strikes_used) : std::string{}));
+                    // Every priced option of this expiry.
+                    for (std::size_t i = 0; i < q.size(); ++i) {
+                        for (const bool call : {true, false}) {
+                            const Px& o = call ? px[i].first : px[i].second;
+                            const std::string* sym = call ? legs[i]->call : legs[i]->put;
+                            if (!(o.paise > 0.0) || sym == nullptr) continue;
+                            const double strike = static_cast<double>(q[i].strike.raw());
+                            const double v = iv_of(call, o.paise, strike);
+                            std::string delta, vega;
+                            if (std::isfinite(v)) {
+                                const auto g = black76(call ? OptionRight::Call : OptionRight::Put, Price{std::llround(F)},
+                                                       Price{q[i].strike.raw()}, Years{T}, Vol{v}, rate);
+                                if (g) { delta = fx(g->delta, 4); vega = fx(g->vega / 10'000.0, 4); }   // rupees per vol point
+                            }
+                            out.chain += stamp + "," + *sym + "," + und + "," + day_text(expiry) + "," + rupees(q[i].strike.raw())
+                                         + "," + (call ? "CE" : "PE") + "," + fx(o.paise / 100.0, 2) + "," + o.from + ","
+                                         + fx(F / 100.0, 2) + "," + fx(v, 6) + "," + delta + "," + vega + "," + oi_at(*sym, m)
+                                         + ",fyers_tape\n";
+                            ++out.chain_rows;
+                        }
+                    }
+                }
+                // 30 days from the two terms around it (or the two nearest, extrapolated, as india_vix says).
+                std::string vix30;
+                if (terms.size() >= 2) {
+                    std::size_t hi = 1;
+                    while (hi + 1 < terms.size() && terms[hi].first < kVixTargetYears) ++hi;
+                    const auto v = india_vix(terms[hi - 1].second, Years{terms[hi - 1].first}, terms[hi].second, Years{terms[hi].first});
+                    if (v) vix30 = fx(*v, 4);
+                }
+                if (rows.empty() && spot > 0) rows.push_back(head + ",,,,,,");
+                for (const auto& r : rows) { out.vol += r + "," + vix30 + tail; ++out.vol_rows; }
+            }
+        }
+        return out;
+    }
+
 private:
     [[nodiscard]] static std::string volume_text(const MinuteBar& b, std::int64_t& prev) {
         if (b.vol_end < 0) return {};
@@ -417,6 +611,7 @@ private:
             const std::string* sym = name(q->token);
             if (sym == nullptr) return;
             ++st_.quotes;
+            if (q->has(kQuoteHasTop)) note_top(*sym, q->bid, q->ask, h.engine_time_ns > 0 ? h.engine_time_ns : wall_ns);
             if (quotes_) {
                 const auto p = [](bool on, std::int64_t v) { return on ? rupees(v) : std::string{}; };
                 const auto n = [](bool on, std::int64_t v) { return on ? std::to_string(v) : std::string{}; };
@@ -440,6 +635,8 @@ private:
         if (h.topic == kTopicBook) {
             ++st_.books;
             if (p.depth_levels > 5) ++st_.deep_books;
+            if (p.depth_levels > 0)
+                note_top(*sym, d->bids[0].price_paise, d->asks[0].price_paise, h.engine_time_ns > 0 ? h.engine_time_ns : wall_ns);
             if (books_) {
                 std::string bids, asks;
                 for (std::uint16_t k = 0; k < p.depth_levels; ++k) {
@@ -488,7 +685,18 @@ private:
         ++b.trades;
     }
 
+    /// The best bid and ask an option last showed in each minute (book or quote).
+    void note_top(const std::string& sym, std::int64_t bid, std::int64_t ask, std::int64_t ns) {
+        if (!(bid > 0) || ask < bid) return;
+        const auto it = inst_.find(sym);
+        if (it == inst_.end() || (it->second.kind != lv::LiveKind::Call && it->second.kind != lv::LiveKind::Put)) return;
+        const std::int64_t ist_s = ns / 1'000'000'000 + kIstSec;
+        tops_[sym][ist_s - ((ist_s % 60) + 60) % 60] = {bid, ask};
+    }
+
+    struct Top { std::int64_t bid = 0, ask = 0; };
     struct Seq { std::uint64_t last = 0; bool primed = false; };
+    std::map<std::string, std::map<std::int64_t, Top>> tops_;   ///< options only: fyers -> minute -> top
     fs::path dir_;
     std::optional<std::ofstream> trades_, quotes_, books_;
     DecodeStats st_;

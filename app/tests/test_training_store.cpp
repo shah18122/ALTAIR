@@ -4,7 +4,9 @@
 #include <app/activity_log.hpp>
 #include <app/training_store.hpp>
 
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -239,11 +241,141 @@ void test_snapshot(const fs::path& root) {
 
 } // namespace
 
+
+altair::QuotePayload top(std::uint32_t token, std::int64_t bid, std::int64_t ask) {
+    altair::QuotePayload q;
+    q.token = token;
+    q.flags = altair::kQuoteHasTop;
+    q.bid = bid; q.ask = ask; q.bid_qty = 75; q.ask_qty = 75;
+    return q;
+}
+
+std::vector<std::uint8_t> quote_frame(std::uint64_t seq, const altair::QuotePayload& q, std::int64_t at_ns) {
+    std::vector<std::uint8_t> out(altair::kFrameHeaderBytes + altair::kQuotePayloadBytes);
+    altair::FrameHeader h;
+    h.kind = altair::FrameKind::Delta;
+    h.channel = altair::Channel::State;
+    h.seq = seq;
+    h.topic = altair::kTopicQuote;
+    h.payload_len = static_cast<std::uint32_t>(altair::kQuotePayloadBytes);
+    h.engine_time_ns = at_ns;
+    (void)altair::encode_header(h, out.data(), out.size());
+    (void)altair::encode_quote(q, out.data() + altair::kFrameHeaderBytes, out.size() - altair::kFrameHeaderBytes);
+    return out;
+}
+
+// Field `col` (0-based) of the first line of `csv` that contains `key`.
+std::string field(const std::string& csv, const std::string& key, int col) {
+    const auto at = csv.find(key);
+    if (at == std::string::npos) return "<missing>";
+    const auto bol = csv.rfind('\n', at) + 1;
+    const std::string line = csv.substr(bol, csv.find('\n', at) - bol);
+    std::size_t from = 0;
+    for (int i = 0; i < col; ++i) {
+        from = line.find(',', from);
+        if (from == std::string::npos) return "<missing>";
+        ++from;
+    }
+    return line.substr(from, line.find(',', from) - from);
+}
+double fnum(const std::string& s) { return s.empty() || s[0] == '<' ? -1.0 : std::atof(s.c_str()); }
+
+void test_vol(const fs::path& root) {
+    std::printf("IV, VIX and RV a minute\n");
+    // A flat 15-vol chain on a 25,000 forward, two expiries, strikes 20,000..30,000 by 100.
+    constexpr double kVol = 0.15, kRate = 0.065, kF = 25'000.0;
+    const std::int64_t near = kDay + 10, next = kDay + 38;
+    std::vector<lv::LiveInstrument> u;
+    lv::LiveInstrument in;
+    in.token = lv::kLiveNiftyToken; in.fyers = "NSE:NIFTY50-INDEX"; in.symbol = "NIFTY 50"; in.underlying = "NIFTY";
+    u.push_back(in);
+    in.token = 7; in.fyers = "NSE:INDIAVIX-INDEX"; in.symbol = "INDIA VIX"; in.underlying = "INDIAVIX";
+    u.push_back(in);
+    std::uint32_t tok = 100;
+    for (const std::int64_t e : {near, next})
+        for (int k = 20'000; k <= 30'000; k += 100)
+            for (const bool call : {true, false}) {
+                lv::LiveInstrument o;
+                o.token = tok++;
+                o.symbol = "NIFTY" + std::to_string(e) + std::to_string(k) + (call ? "CE" : "PE");
+                o.fyers = "NSE:" + o.symbol;
+                o.underlying = "NIFTY";
+                o.kind = call ? lv::LiveKind::Call : lv::LiveKind::Put;
+                o.expiry_day = e;
+                o.strike = k;
+                u.push_back(o);
+            }
+    const fs::path ufile = root / "uni_vol.csv";
+    (void)lv::write_universe(ufile.string(), u);
+    const auto u2 = [&] { std::ifstream f(ufile); return lv::read_universe_stream(f); }();
+    check(u2.size() == u.size(), "the chain universe round-trips");
+
+    const fs::path tape = root / "tapes_vol" / "2026-10-26-091400.tape";
+    fs::create_directories(tape.parent_path());
+    const std::int64_t m0915_end = kDay * 86'400 + 9 * 3600 + 16 * 60;   // IST seconds
+    std::string trade_only;
+    {
+        lv::TapeWriter w(tape.string());
+        w.write(lv::TapeKind::Start, 1, lv::tape_pack({{"args", "date=2026-10-26\n"}, {"universe.csv", slurp(ufile)}}));
+        w.write(lv::TapeKind::Connected, 2);
+        std::vector<std::uint8_t> all;
+        const auto add = [&all](const std::vector<std::uint8_t>& f) { all.insert(all.end(), f.begin(), f.end()); };
+        using K = altair::FrameKind;
+        std::uint64_t tseq = 1, qseq = 1;
+        add(frame(K::Delta, tseq++, altair::kTopicTrades, trade(lv::kLiveNiftyToken, 25'000, 0, 0, k0915 + 10'000'000'000LL, 0)));
+        add(frame(K::Delta, tseq++, altair::kTopicTrades, trade(7, 14.5, 0, 0, k0915 + 11'000'000'000LL, 0)));
+        for (const auto& o : u) {
+            if (o.kind != lv::LiveKind::Call && o.kind != lv::LiveKind::Put) continue;
+            // Priced at the end of the minute the reading is for.
+            const double T = static_cast<double>(o.expiry_day * 86'400 + 15 * 3600 + 30 * 60 - m0915_end) / (365.0 * 86'400.0);
+            const auto g = altair::black76(o.kind == lv::LiveKind::Call ? altair::OptionRight::Call : altair::OptionRight::Put,
+                                           altair::Price{std::llround(kF * 100)}, altair::Price{std::llround(o.strike * 100)},
+                                           altair::Years{T}, altair::Vol{kVol}, kRate);
+            const std::int64_t P = std::llround(g->price);
+            if (P < 2) continue;   // a worthless wing shows no bid
+            if (o.expiry_day == near && o.strike == 25'500 && o.kind == lv::LiveKind::Call) {
+                trade_only = o.fyers;   // priced only by a trade
+                add(frame(K::Delta, tseq++, altair::kTopicTrades,
+                          trade(o.token, static_cast<double>(P) / 100.0, 75, 75, k0915 + 30'000'000'000LL)));
+                continue;
+            }
+            add(quote_frame(qseq++, top(o.token, P - 1, P + 1), k0915 + 30'000'000'000LL));
+        }
+        add(frame(K::Delta, tseq++, altair::kTopicTrades, trade(lv::kLiveNiftyToken, 25'025, 0, 0, k0915 + 70'000'000'000LL, 0)));
+        add(frame(K::Delta, tseq++, altair::kTopicTrades, trade(lv::kLiveNiftyToken, 25'000, 0, 0, k0915 + 130'000'000'000LL, 0)));
+        w.write(lv::TapeKind::Data, 3, all.data(), all.size());
+        (void)w.flush();
+    }
+    st::TapeDecoder dec;
+    check(dec.read(tape), "the chain tape reads");
+    const auto v = dec.vol_views();
+    const std::string near_key = "2026-10-26T09:16:00+05:30,NIFTY,25000,14.5,2026-11-05,";
+    const std::string next_key = "2026-10-26T09:16:00+05:30,NIFTY,25000,14.5,2026-12-03,";
+    check(std::fabs(fnum(field(v.vol, near_key, 6)) - kF) < 0.5, "the parity forward is the chain's forward");
+    check(std::fabs(fnum(field(v.vol, near_key, 8)) - kVol) < 1e-3 && std::fabs(fnum(field(v.vol, next_key, 8)) - kVol) < 1e-3,
+          "ATM IV of each expiry is the chain's vol");
+    check(std::fabs(fnum(field(v.vol, near_key, 9)) - kVol) < 5e-3, "the strip's model-free vol agrees on a flat smile");
+    check(std::fabs(fnum(field(v.vol, near_key, 11)) - 100.0 * kVol) < 0.3, "the 30-day chain VIX is 15 points");
+    check(field(v.vol, near_key, 12).empty() && field(v.vol, near_key, 14).empty(), "no RV before there are returns");
+    const std::string carry = "2026-10-26T09:17:00+05:30,NIFTY,25025,,2026-11-05,";
+    check(field(v.vol, carry, 6) != "<missing>", "a minute with no fresh quote carries the last minute's");
+    const double r = std::log(25'025.0 / 25'000.0);
+    const std::string late = "2026-10-26T09:18:00+05:30,NIFTY,25000,,,";
+    check(std::fabs(fnum(field(v.vol, late, 14)) - std::sqrt(r * r * 375.0 * 252.0)) < 1e-6 && field(v.vol, late, 12).empty(),
+          "session RV from the index's minute returns; the 15-minute window waits for 15 returns");
+    check(field(v.chain, "2026-10-26T09:16:00+05:30," + trade_only + ",", 7) == "last", "a trade-only option is priced at its last");
+    const std::string atm_ce = "2026-10-26T09:16:00+05:30,NSE:NIFTY" + std::to_string(near) + "25000CE,";
+    check(std::fabs(fnum(field(v.chain, atm_ce, 9)) - kVol) < 1e-3 && std::fabs(fnum(field(v.chain, atm_ce, 10)) - 0.5) < 0.05
+              && field(v.chain, atm_ce, 7) == "mid", "each option's IV and delta, from its mid");
+    check(v.chain_rows > 300 && v.vol_rows == 5, "every priced option a minute; one vol row per expiry a minute");
+}
+
 int main() {
     const fs::path root = fs::temp_directory_path() / ("altair_store_test_" + std::to_string(act::now_ms()));
     fs::create_directories(root);
     test_activity_log(root);
     test_decode(root);
+    test_vol(root);
     test_snapshot(root);
     std::error_code ec;
     fs::remove_all(root, ec);

@@ -29,7 +29,8 @@ void usage(const char* exe) {
         "  The training store: recorded FYERS sessions and dataset/ as one input.\n\n"
         "    %s decode --day YYYY-MM-DD [--tapes DIR] [--root DIR] [--ticks]\n"
         "        the day's tapes (default <root>/data/store/tapes/<day>) into\n"
-        "        <root>/data/store/ticks/<day>/ (bars_1m.csv, _decode.json; with --ticks\n"
+        "        <root>/data/store/ticks/<day>/ (bars_1m.csv, vol_1m.csv, chain_iv_1m.csv,\n"
+        "        _decode.json; with --ticks\n"
         "        also trades, quotes and books) and <root>/data/store/tape_bars/.\n\n"
         "    %s snapshot --cutoff YYYY-MM-DD --source NAME=DIR [--source ...] [--fill NAME=DIR ...]\n"
         "        [--out DIR] [--bhavcopy DIR] [--iv DIR] [--root DIR]\n"
@@ -77,6 +78,12 @@ int decode(const fs::path& root, const std::string& day, fs::path tapes, bool ti
         act::write(root, "store", "ERROR", "decode " + day + ": cannot write " + out.string());
         return 3;
     }
+    // IV, the chain's own VIX, India VIX and RV, a minute; every option's IV.
+    const auto vol = dec.vol_views();
+    if (!st::write_file(out / "vol_1m.csv", vol.vol) || !st::write_file(out / "chain_iv_1m.csv", vol.chain)) {
+        act::write(root, "store", "ERROR", "decode " + day + ": cannot write the vol files under " + out.string());
+        return 3;
+    }
     std::size_t series = 0;
     for (const auto& [key, csv] : dec.series_csv()) {
         if (!st::write_file(root / "data" / "store" / "tape_bars" / key / "1m" / (day + ".csv"), csv)) {
@@ -89,7 +96,8 @@ int decode(const fs::path& root, const std::string& day, fs::path tapes, bool ti
     const std::string summary = "decode " + day + ": " + std::to_string(s.tapes) + " tape(s), " + std::to_string(s.trades)
         + " trades, " + std::to_string(s.quotes) + " quotes, " + std::to_string(s.books) + " books ("
         + std::to_string(s.deep_books) + " over 5 levels), " + std::to_string(dec.bars().size()) + " instruments, "
-        + std::to_string(series) + " dataset series; missed by sequence: " + std::to_string(s.missed[altair::kTopicTrades])
+        + std::to_string(series) + " dataset series, " + std::to_string(vol.vol_rows) + " vol rows, "
+        + std::to_string(vol.chain_rows) + " option IVs; missed by sequence: " + std::to_string(s.missed[altair::kTopicTrades])
         + " trades, " + std::to_string(s.missed[altair::kTopicBook]) + " books; SIM/replay dropped "
         + std::to_string(s.simulated + s.replayed);
     std::printf("  %s\n", summary.c_str());

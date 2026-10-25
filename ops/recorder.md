@@ -11,7 +11,7 @@ Everything it does goes into one log.
          altair_price_service --live (unless the desktop's is already up) ─► 127.0.0.1:7421
          altair_feed_recorder ─► data\store\tapes\<day>\*.tape          (until 15:45)
 20:00  ALTAIR Nightly    ops\nightly.ps1
-         altair_store decode    ─► data\store\ticks\<day>\, data\store\tape_bars\
+         altair_store decode    ─► data\store\ticks\<day>\ (bars, IV/VIX/RV, option IVs), data\store\tape_bars\
          altair_iv_record       ─► data\live\iv\
          altair_fyers_history   ─► data\store\fyers\   (official candles, 7-day backfill)
          altair_store snapshot  ─► data\store\snapshots\<day>\   (one cutoff)
@@ -75,6 +75,26 @@ A live day is several GB of tapes. The tapes are kept: they're the only tick
 history there is. The nightly log reports free disk, and warns below 20 GB.
 The recorder stops by itself below 2 GB free.
 
+## IV, RV and VIX, every minute
+
+The nightly decode turns the day's tapes into two more files in
+`data\store\ticks\<day>\`, each reading stamped at the END of its minute
+(when it was known):
+
+| File | One row | Columns |
+|---|---|---|
+| `vol_1m.csv` | index × expiry × minute | spot, India VIX (as streamed), parity forward, ATM strike, ATM IV, the expiry's model-free vol by the India VIX strip (`term_vol`), the chain's own 30-day VIX (`chain_vix30`), RV over the last 15 and 60 minutes and the session so far |
+| `chain_iv_1m.csv` | option × minute | price (mid of the best bid/ask, else last trade), Black-76 IV against that expiry's forward, delta, vega per vol point, OI |
+
+IV, `term_vol` and RV are annualised fractions (0.15 is 15 vol); the VIX
+columns are index points. RV is `sqrt(mean r² × 375 × 252)` from the index's
+1-minute closes. A minute without a fresh price for an option uses the
+previous minute's; with neither it is left out. `chain_vix30` leaves out
+expiries of 7 days or less, as NSE does, and is empty with fewer than two
+other expiries. A minute with no option priced still gets a row with spot,
+India VIX and RV. `data\live\iv\` (the nearest expiry's ATM IV, which the
+models already read) is still written as before.
+
 ## One schema, one cutoff: how the sources merge
 
 Every bar in a snapshot is `time,open,high,low,close,volume,oi,source`:
@@ -125,7 +145,7 @@ the journals). Values that look like credentials (`access_token=`, `Bearer`,
 
 `shah18122/altair-data` (private). Only compact daily files go there: 1-minute
 bars of every instrument, the FYERS candles, IV, the reports and the log
-(`README.md` there has the layout). Tapes never go. The push script refuses
+(`README.md` there has the layout), now also `vol\` and `chain_iv\`. Tapes never go. The push script refuses
 any folder without the `.altair-data-repo` marker, refuses a clone whose
 origin is the public ALTAIR repo, and checks every file for credentials by
 name and by content before it commits. It pushes with your own git login and
