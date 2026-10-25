@@ -86,12 +86,14 @@ void usage(const char* exe) {
         "  %s --go [--port N] [--seconds N] [--tokens a,b,c]\n"
         "  %s --fyers [--go] [--until HH:MM] [--strikes N] [--depth-strikes N]\n"
         "      [--no-stocks] [--atm-nifty X] [--atm-banknifty X] [--depth50 N|off]\n"
+        "      [--expiries N]\n"
         "  %s --kite [--go] [same options as --fyers]\n"
         "  %s --live [--go] [same options as --fyers]\n"
         "  %s --sim [--date YYYY-MM-DD] [--speed N] [--from HH:MM] [--seed N]\n\n"
         "  --fyers             the LIVE TERMINAL feed from FYERS: NIFTY, BANKNIFTY,\n"
         "                      INDIA VIX, the near futures, both option chains\n"
-        "                      (ATM +/- --strikes, default 20) and the NIFTY 50, with\n"
+        "                      (ATM +/- --strikes, default 20; the nearest --expiries\n"
+        "                      of each, default 1, up to 4) and the NIFTY 50, with\n"
         "                      quotes and depth: the FYERS 50-level book for the\n"
         "                      scrip on screen (data/live/depth_request.csv, written\n"
         "                      by the desktop), else the near futures: --depth50 N\n"
@@ -1139,7 +1141,7 @@ int main(int argc, char** argv) {
     // defaulted to. Overridable, because P38 needs an option chain here.
     std::vector<std::uint32_t> sub_tokens{256265u, 260105u, 264969u};
     bool fyers = false, sim = false, kite = false, live_auto = false, stocks = true;
-    int until_min = 15 * 60 + 35, from_min = 9 * 60 + 15, strikes = 20, depth_strikes = 5;
+    int until_min = 15 * 60 + 35, from_min = 9 * 60 + 15, strikes = 20, depth_strikes = 5, expiries = 1;
     double speed = 1.0, atm_nifty = 0.0, atm_banknifty = 0.0;
     std::uint64_t seed = 20261001;
     std::string sim_date;   // YYYY-MM-DD: simulate that day instead of today
@@ -1195,6 +1197,8 @@ int main(int argc, char** argv) {
             strikes = std::atoi(argv[++i]);
         } else if (a == "--depth-strikes" && i + 1 < argc) {
             depth_strikes = std::atoi(argv[++i]);
+        } else if (a == "--expiries" && i + 1 < argc) {
+            expiries = std::atoi(argv[++i]);
         } else if (a == "--live-dir" && i + 1 < argc) {
             live_dir_arg = argv[++i];
         } else if (a == "--no-stocks") {
@@ -1220,9 +1224,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (until_min < 0 || from_min < 0 || !(speed > 0.0 && speed <= 1000.0) || strikes < 0 || strikes > 60
-        || depth_strikes < 0 || depth_strikes > strikes) {
+        || depth_strikes < 0 || depth_strikes > strikes || expiries < 1 || expiries > 4) {
         std::printf("--until/--from must be HH:MM, --speed 0..1000, --strikes 0..60, "
-                    "--depth-strikes 0..--strikes\n");
+                    "--depth-strikes 0..--strikes, --expiries 1..4\n");
         return 2;
     }
 
@@ -1284,6 +1288,7 @@ int main(int argc, char** argv) {
         uo.banknifty_spot = bnf;
         uo.strikes = strikes;
         uo.depth_strikes = depth_strikes;
+        uo.expiries = expiries;
         uo.stocks = stocks;
         auto uni = altair::live::build_universe(
             rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);

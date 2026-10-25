@@ -86,6 +86,14 @@ int main() {
     check(chain == 10, "ATM +/- 2 strikes on the nearest expiry, calls and puts (10 contracts)");
     check(chain_depth == 6, "the book only within ATM +/- 1 (6 contracts)");
     check(find(u, "NIFTY26OCT24000CE") == nullptr, "a later expiry is not mixed into the chain");
+    {
+        LiveUniverseOptions o2 = o;
+        o2.expiries = 2;
+        const auto u2 = build_universe(rows, stocks, o2);
+        check(find(u2, "NIFTY26OCT24000CE") != nullptr && find(u2, "NIFTY26O0624000CE") != nullptr,
+              "--expiries 2: the weekly and the next expiry, both centred on the same ATM");
+        check(u2.instruments.size() > u.instruments.size(), "--expiries 2 streams more contracts than 1");
+    }
     const auto* atm = find(u, "NIFTY26O0624000CE");
     check(atm && atm->fyers == "NSE:NIFTY26O0624000CE" && atm->kind == LiveKind::Call && atm->strike == 24000.0,
           "a weekly option keeps its symbol, prefixed NSE:");
