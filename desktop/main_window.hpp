@@ -34,6 +34,7 @@
 
 #include "theme.hpp"
 #include "news_ticker.hpp"
+#include "backtests_page.hpp"
 #include "chart/chart_widget.hpp"
 #include "analytics_panel.hpp"
 #include "atlas.hpp"
@@ -1549,6 +1550,12 @@ private:
             };
             pages_->addWidget(start);
         }
+        // Every backtest's trades in one place (desktop/backtests_page.hpp).
+#ifdef ALTAIR_SOURCE_DIR
+        pages_->addWidget(new BacktestsPage(QStringLiteral(ALTAIR_SOURCE_DIR)));
+#else
+        pages_->addWidget(new BacktestsPage(QDir::currentPath()));
+#endif
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

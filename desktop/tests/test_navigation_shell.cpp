@@ -77,7 +77,7 @@ void shell_laptop_geometry(altair::ui::MainWindow& window, altair::ui::Workspace
     }
     nav->set_mode(altair::ui::NavigationMode::Expanded);
     window.resize(1280, 720);
-    for (int page = 0; page < 39; ++page) {
+    for (int page = 0; page < static_cast<int>(altair::ui::kNavigationPages.size()); ++page) {
         window.show_page(page);
         QApplication::processEvents();
         check(window.size() == QSize(1280, 720), "all 39 page layouts stay within laptop viewport");
@@ -199,7 +199,7 @@ int main(int argc, char** argv) {
         check(!halt_action && !nav_toggle && !save_page, "Halt controls, Hide navigation and Save page are gone");
         check(nav->findChild<QPushButton*>(QStringLiteral("navMinimise")) && nav->findChild<QPushButton*>(QStringLiteral("navClose")),
               "minimise and close sit beside the ALTAIR name");
-        check(stack->count() == 39 && stack->currentIndex() == 2, "fresh workspace opens existing Terminal");
+        check(stack->count() == static_cast<int>(altair::ui::kNavigationPages.size()) && stack->currentIndex() == 2, "fresh workspace opens existing Terminal");
         for (int i = 0; i < 39; ++i) {
             const int destination = altair::ui::nav_destination(i);
             check(window.show_page(altair::ui::nav_page_id(i)) && stack->currentIndex() == destination &&

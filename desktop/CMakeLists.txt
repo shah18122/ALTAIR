@@ -64,6 +64,7 @@ qt_add_executable(altair_desktop
     workspace_navigation.hpp
     news_ticker.hpp
     news/rss.hpp
+    backtests_page.hpp
     workspace_pages.hpp
     workspace_layout.hpp
     tick_model.hpp
@@ -1022,6 +1023,24 @@ if(ALTAIR_BUILD_TESTS)
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
     if(WIN32)
         set_tests_properties(desktop_demo_trading PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
+    qt_add_executable(altair_backtests_test
+        tests/test_backtests.cpp
+        backtests_page.hpp
+        demo_trading_page.hpp
+        strategy_record.hpp)
+    target_link_libraries(altair_backtests_test PRIVATE
+        altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_backtests_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_backtests_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_backtests COMMAND altair_backtests_test)
+    set_tests_properties(desktop_backtests PROPERTIES TIMEOUT 60 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+    if(WIN32)
+        set_tests_properties(desktop_backtests PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 
