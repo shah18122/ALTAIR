@@ -48,6 +48,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_live_threshold_test PRIVATE altair_live)
     add_test(NAME live_threshold COMMAND altair_live_threshold_test)
 
+    add_executable(altair_live_straddle_test tests/test_straddle.cpp)
+    target_link_libraries(altair_live_straddle_test PRIVATE altair_live)
+    add_test(NAME live_straddle COMMAND altair_live_straddle_test)
+
     add_executable(altair_live_desk_trader_test tests/test_desk_trader.cpp)
     target_link_libraries(altair_live_desk_trader_test PRIVATE altair_live)
     add_test(NAME live_desk_trader COMMAND altair_live_desk_trader_test)
