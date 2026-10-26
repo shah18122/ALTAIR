@@ -29,10 +29,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <functional>
 #include <vector>
 
 namespace altair::ui {
@@ -116,11 +118,19 @@ namespace start_detail {
 
 class StartPage final : public QWidget {
 public:
+    /// A quick-start tile was pressed: a navigation page id
+    /// (desktop/navigation_registry.hpp) or "terminal.models". Set by the shell.
+    std::function<void(const QString&)> open;
+
     explicit StartPage(QString root, QWidget* parent = nullptr) : QWidget(parent), root_(std::move(root)) {
         setObjectName(QStringLiteral("startPage"));
         setAttribute(Qt::WA_StyledBackground, true);
         setStyleSheet(QStringLiteral("#startPage{background:#0D1117;} #startPage QLabel{color:#E6EDF3;} "
-                                     "QLabel#startCard{background:#131A22;border:1px solid #222A33;border-radius:6px;padding:14px;}"));
+                                     "QLabel#sectionKicker{color:#E3A34A;font-weight:700;letter-spacing:1px;} "
+                                     "QLabel#startCard{background:#161B22;border:1px solid #30363D;border-radius:10px;padding:16px;}"
+                                     "QPushButton#startTile{background:#161B22;border:1px solid #30363D;border-radius:10px;"
+                                     "padding:12px 14px;text-align:left;color:#E6EDF3;font-weight:600;}"
+                                     "QPushButton#startTile:hover{background:#1C2128;border-color:#E3A34A;color:#F0B765;}"));
         auto* outer = new QVBoxLayout(this);
         outer->setContentsMargins(0, 0, 0, 0);
         auto* scroll = new QScrollArea(this);
@@ -144,6 +154,37 @@ public:
             label->setMaximumWidth(1100);
             v->addWidget(label);
         };
+        // Quick start: the places a trading day begins, one click each.
+        auto* qs = new QLabel(QStringLiteral("QUICK START"), body);
+        qs->setObjectName(QStringLiteral("sectionKicker"));
+        v->addWidget(qs);
+        auto* tiles = new QHBoxLayout;
+        tiles->setSpacing(10);
+        const auto tile = [&](const QString& text, const QString& tip, const QString& target) {
+            auto* b = new QPushButton(text, body);
+            b->setObjectName(QStringLiteral("startTile"));
+            b->setToolTip(tip);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setProperty("target", target);
+            b->setMinimumHeight(54);
+            b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            QObject::connect(b, &QPushButton::clicked, this, [this, target] { if (open) open(target); });
+            tiles->addWidget(b);
+        };
+        tile(QStringLiteral("\u25B2  Terminal"), QStringLiteral("Market watch, option chain, depth, F1/F2 orders"),
+             QStringLiteral("market.terminal"));
+        tile(QStringLiteral("\u21C4  Brokers"), QStringLiteral("Log in to FYERS or Zerodha; the live feed follows"),
+             QStringLiteral("accounts.brokers"));
+        tile(QStringLiteral("\u25C6  Models \u00B7 Desk trader"), QStringLiteral("Terminal \u2192 Models: the live models and the paper Desk trader (Ctrl+M)"),
+             QStringLiteral("terminal.models"));
+        tile(QStringLiteral("\u265E  Demo Trading"), QStringLiteral("Replay strategies on real NSE data, paper only"),
+             QStringLiteral("strategies.demo-trading"));
+        tile(QStringLiteral("\u25C7  Model Atlas"), QStringLiteral("Every model, what it is for and what it does in the real market"),
+             QStringLiteral("models.atlas"));
+        auto* tile_box = new QWidget(body);
+        tile_box->setLayout(tiles);
+        tile_box->setMaximumWidth(1100);
+        v->addWidget(tile_box);
         // The one switch for the whole app (desktop/simple_mode.hpp).
         auto* sw = new QHBoxLayout;
         auto* sw_text = new QLabel(QStringLiteral(

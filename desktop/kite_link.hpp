@@ -35,6 +35,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include "auth.hpp"
 #include "broker_status.hpp"
 #include "credential_setup.hpp"
@@ -148,9 +149,7 @@ public:
                 "links no broker code."),
             this);
         head->setWordWrap(true);
-        head->setStyleSheet(QStringLiteral(
-            "background:#1B3A4B;color:#CFE8F3;padding:8px;"
-            "border:1px solid #2E6E8E;"));
+        set_role(head, QStringLiteral("banner-info"));
         v->addWidget(head);
 
         exe_ = find_kite_login();
@@ -162,10 +161,10 @@ public:
                 "client and is built by the <code>net</code> preset only. "
                 "Run <code>.\\build.bat net</code>. This is not a broken install; "
                 "a default build simply has no transport to Kite."));
-            where->setStyleSheet(QStringLiteral("color:#F85149;"));
+            set_role(where, QStringLiteral("error"));
         } else {
             where->setText(QStringLiteral("Using <code>%1</code>").arg(exe_));
-            where->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+            set_role(where, QStringLiteral("note"));
         }
         v->addWidget(where);
 
@@ -218,15 +217,13 @@ public:
             auto* no = new QLabel(
                 QStringLiteral("Linking a broker account requires the admin "
                                "role."), this);
-            no->setStyleSheet(QStringLiteral("color:#F85149;"));
+            set_role(no, QStringLiteral("error"));
             v->addWidget(no);
         }
 
         log_ = new QPlainTextEdit(this);
         log_->setReadOnly(true);
-        log_->setStyleSheet(QStringLiteral(
-            "background:#11171C;color:#D6DBDF;"
-            "font-family:Consolas,monospace;font-size:12px;border:none;"));
+        set_role(log_, QStringLiteral("log"));
         log_->setPlainText(QStringLiteral(
             "Nothing run yet.\n\n"
             "Anything shown here has its request_token redacted. The exchange\n"

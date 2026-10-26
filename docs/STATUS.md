@@ -1,6 +1,6 @@
 # Status
 
-Where ALTAIR stands, in one page. Updated 2026-10-24.
+Where ALTAIR stands, in one page. Updated 2026-10-25.
 
 The detailed history lives in [archive/SMIT.txt](archive/SMIT.txt) (plan and
 status to 2026-09-28) and [archive/change_by_codex.txt](archive/change_by_codex.txt)
@@ -12,7 +12,7 @@ descriptions and `git log`.
 | Area | State |
 |---|---|
 | **Market data** | FYERS is the primary feed: OAuth login, history, live socket (HSM, 5-level depth, 50-level TBT depth for the scrip on screen). Kite code is kept as a fallback. A FYERS token lasts one trading day. |
-| **Terminal** | GETS-style market watch, option chain with IV/Δ and vanna-volga, F1/F2 order windows, order/trade books, net position (Alt+F6), Simple / Advanced view. |
+| **Terminal** | GETS-style market watch, option chain with IV/Δ and vanna-volga, F1/F2 order windows, order/trade books, net position (Alt+F6), Simple / Advanced view. One theme for every page (desktop/theme.hpp), a collapsible sidebar (Ctrl+B), quick-start tiles on Start here, and a news bar of free RSS headlines across the top (fetched by `altair_news`, Ctrl+Shift+N to hide). |
 | **Paper trading** | Default everywhere. Fills at the live bid/ask with expenses, durable ledger, replayable sessions. |
 | **Real orders** | Off by default. Only through the Terminal's PAPER / LIVE switch (typed `LIVE`) and `altair_order_router`, with per-strategy switches, caps, day-loss stop and a kill switch. NSE/BSE only: MCX and currency are paper-only. See [../ops/live-terminal.md](../ops/live-terminal.md) and [../ops/go-live.md](../ops/go-live.md). |
 | **Auto strategies** | Arbitrage, OHL and option arbitrage can send real orders when their own switch is on and LIVE is armed. Every other model is paper-only. |

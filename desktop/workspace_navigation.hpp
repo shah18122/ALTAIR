@@ -4,6 +4,9 @@
 #include "navigation_state.hpp"
 #include "navigation_resize_handle.hpp"
 #include "atlas_data.hpp"
+#include "simple_mode.hpp"
+#include <QKeySequence>
+#include <QShortcut>
 #include <QDateTime>
 #include <QMenu>
 #include <QPushButton>
@@ -23,25 +26,32 @@ public:
     explicit WorkspaceNavigation(QWidget* parent = nullptr) : QWidget(parent) {
         setObjectName(QStringLiteral("workspaceNavigation"));
         setAccessibleName(QStringLiteral("Workspace navigation"));
+        // Same tokens as desktop/theme.hpp: the sidebar is the canvas with a
+        // hairline edge, the selected page carries the one accent.
         setStyleSheet(QStringLiteral(
-            "#workspaceNavigation{background:#0D1318;color:#D5DDE2;border-right:1px solid #1E2A32;}"
-            "#navBrand{background:transparent;border:0;border-bottom:1px solid #1E2A32;padding:2px 2px 10px 2px;}"
+            "#workspaceNavigation{background:#0D1117;color:#E6EDF3;border-right:1px solid #21262D;}"
+            "#navBrand{background:transparent;border:0;border-bottom:1px solid #21262D;padding:2px 2px 10px 2px;}"
             "#navBrandTitle{color:#F0B765;font-size:18px;font-weight:800;letter-spacing:3px;}"
-            "#navBrandSub{color:#6E8390;font-size:10px;letter-spacing:1px;}"
-            "#navSearch{color:#9FB0B9;background:#141D23;border:1px solid #24323B;"
+            "#navBrandSub{color:#6E7681;font-size:10px;letter-spacing:1px;}"
+            "#navSearch{color:#8B949E;background:#161B22;border:1px solid #30363D;"
             "border-radius:8px;padding:8px 10px;text-align:left;}"
-            "#navSearch:hover{background:#1A262E;border-color:#B47A3A;color:#D5DDE2;}"
-            "#navSearch:pressed{background:#10171C;}"
-            "#workspaceTree{background:#0D1318;color:#C9D4DA;border:0;font-size:12px;outline:0;}"
-            "#workspaceTree::item{height:28px;padding:1px 6px;border-radius:6px;margin:1px 2px;}"
+            "#navSearch:hover{background:#1C2128;border-color:#E3A34A;color:#E6EDF3;}"
+            "#navSearch:pressed{background:#11161D;}"
+            "#workspaceTree{background:#0D1117;color:#C9D1D9;border:0;font-size:12px;outline:0;}"
+            "#workspaceTree::item{height:30px;padding:1px 8px;border-radius:6px;margin:1px 2px;}"
             "#workspaceTree::item:selected{background:#2A2418;color:#F0B765;}"
-            "#workspaceTree::item:hover:!selected{background:#17222A;}"
-            "#workspaceTree::branch{background:#0D1318;}"
-            "#workspaceNavigation QToolButton{color:#C4D0D6;background:#141D23;"
-            "border:1px solid #24323B;border-radius:8px;padding:8px 2px;font-size:15px;}"
-            "#workspaceNavigation QToolButton:hover{background:#1D2A32;border-color:#B47A3A;}"
-            "#workspaceNavigation QToolButton:checked{color:#F0B765;background:#2A2418;border-color:#B47A3A;}"
-            "#workspaceNavigation QToolButton::menu-indicator{image:none;width:0;}"));
+            "#workspaceTree::item:hover:!selected{background:#161B22;color:#E6EDF3;}"
+            "#workspaceTree::branch{background:#0D1117;}"
+            "#workspaceNavigation QToolButton{color:#C9D1D9;background:#161B22;"
+            "border:1px solid #30363D;border-radius:8px;padding:9px 2px;font-size:15px;}"
+            "#workspaceNavigation QToolButton:hover{background:#1C2128;border-color:#E3A34A;}"
+            "#workspaceNavigation QToolButton:checked{color:#F0B765;background:#2A2418;border-color:#E3A34A;}"
+            "#workspaceNavigation QToolButton::menu-indicator{image:none;width:0;}"
+            "#navFooter{border-top:1px solid #21262D;}"
+            "#navFooter QPushButton#simpleSwitch{padding:5px 8px;}"
+            "QPushButton#navCollapse, QPushButton#navExpand{color:#8B949E;background:transparent;border:1px solid transparent;"
+            "border-radius:6px;font-size:13px;padding:4px;}"
+            "QPushButton#navCollapse:hover, QPushButton#navExpand:hover{color:#F0B765;background:#161B22;border-color:#30363D;}"));
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(8, 10, 8, 8);
         auto* brand = new QWidget(this);
@@ -61,11 +71,14 @@ public:
             b->setToolTip(tip);
             b->setFlat(true);
             b->setFixedSize(24, 22);
-            b->setStyleSheet(QStringLiteral("QPushButton{color:#8FA3AE;background:transparent;border:0;font-size:13px;}"
-                                            "QPushButton:hover{color:#F0B765;background:#1A262E;border-radius:4px;}"));
+            b->setStyleSheet(QStringLiteral("QPushButton{color:#8B949E;background:transparent;border:0;font-size:13px;}"
+                                            "QPushButton:hover{color:#F0B765;background:#161B22;border-radius:4px;}"));
             title_row->addWidget(b);
             return b;
         };
+        // Collapse to the icon rail (Ctrl+B); the rail's » brings it back.
+        auto* collapse = chrome_button(QStringLiteral("\u00AB"), QStringLiteral("navCollapse"), QStringLiteral("Collapse the sidebar to icons · Ctrl+B"));
+        connect(collapse, &QPushButton::clicked, this, [this] { set_mode(NavigationMode::Compact); });
         auto* minimise = chrome_button(QStringLiteral("\u2013"), QStringLiteral("navMinimise"), QStringLiteral("Minimise"));
         auto* close = chrome_button(QStringLiteral("\u2715"), QStringLiteral("navClose"), QStringLiteral("Close ALTAIR"));
         connect(minimise, &QPushButton::clicked, this, [this] { window()->showMinimized(); });
@@ -99,6 +112,13 @@ public:
         compact_ = new QWidget(this);
         auto* rail = new QVBoxLayout(compact_);
         rail->setContentsMargins(0, 0, 0, 0);
+        rail->setSpacing(6);
+        auto* expand = new QPushButton(QStringLiteral("\u00BB"), compact_);
+        expand->setObjectName(QStringLiteral("navExpand"));
+        expand->setToolTip(QStringLiteral("Expand the sidebar · Ctrl+B"));
+        expand->setFlat(true);
+        connect(expand, &QPushButton::clicked, this, [this] { set_mode(NavigationMode::Expanded); });
+        rail->addWidget(expand);
         for (const int gi : kNavigationGroupOrder) {
             const auto g = static_cast<std::size_t>(gi);
             const auto& group = kNavigationGroups[g];
@@ -117,9 +137,21 @@ public:
         }
         rail->addStretch();
         layout->addWidget(compact_, 1);
+        // One Simple / Advanced switch for the whole app, always one click away.
+        footer_ = new QWidget(this);
+        footer_->setObjectName(QStringLiteral("navFooter"));
+        auto* foot = new QVBoxLayout(footer_);
+        foot->setContentsMargins(0, 8, 0, 0);
+        foot->addWidget(simple_mode::button(footer_));
+        layout->addWidget(footer_);
+        auto* toggle = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
+        toggle->setContext(Qt::WindowShortcut);
+        connect(toggle, &QShortcut::activated, this, [this] {
+            set_mode(state_.mode == NavigationMode::Expanded ? NavigationMode::Compact : NavigationMode::Expanded);
+        });
         notice_ = new QLabel(this);
         notice_->setWordWrap(true);
-        notice_->setStyleSheet(QStringLiteral("color:#FFBE67;padding:4px;"));
+        notice_->setStyleSheet(QStringLiteral("color:#D29922;padding:4px;"));
         notice_->hide();
         layout->addWidget(notice_);
         resize_handle_ = new NavigationResizeHandle(this);
@@ -299,7 +331,7 @@ private:
             group_font.setPointSizeF(group_font.pointSizeF() * 0.85);
             group_font.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
             groups_[g]->setFont(0, group_font);
-            groups_[g]->setForeground(0, QColor(QStringLiteral("#7F95A1")));
+            groups_[g]->setForeground(0, QColor(QStringLiteral("#6E7681")));
             groups_[g]->setData(0, Qt::UserRole + 1, QString::fromUtf8(group.id));
             groups_[g]->setExpanded(state_.expanded.contains(QString::fromUtf8(group.id)));
         }
@@ -330,6 +362,7 @@ private:
         summary_->setVisible(expanded);
         tree_->setVisible(expanded);
         compact_->setVisible(!expanded);
+        if (footer_) footer_->setVisible(expanded);
         resize_handle_->setVisible(expanded);
         if (update_visibility) setVisible(state_.mode != NavigationMode::Hidden);
     }
@@ -341,6 +374,7 @@ private:
     QLabel* summary_ = nullptr;
     QPushButton* search_button_ = nullptr;
     QLabel* notice_ = nullptr;
+    QWidget* footer_ = nullptr;
     NavigationResizeHandle* resize_handle_ = nullptr;
     std::array<QTreeWidgetItem*, 7> groups_{};
     std::array<QTreeWidgetItem*, kNavigationPages.size()> pages_{};

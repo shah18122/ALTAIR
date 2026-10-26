@@ -32,6 +32,9 @@
 #include <core/time/timestamp.hpp>
 #include <feed/replay.hpp>
 
+#include "theme.hpp"
+#include "news_ticker.hpp"
+#include "backtests_page.hpp"
 #include "chart/chart_widget.hpp"
 #include "analytics_panel.hpp"
 #include "atlas.hpp"
@@ -96,6 +99,7 @@
 #include <QTableView>
 #include <QTimeZone>
 #include <QTimer>
+#include <QShortcut>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -132,13 +136,13 @@ namespace altair::ui {
 
     auto* c = new QLabel(QStringLiteral("<b>%1</b>").arg(card));
     c->setAlignment(Qt::AlignCenter);
-    c->setStyleSheet(QStringLiteral("color:#B9770B;"));
+    set_role(c, QStringLiteral("warn"));
     v->addWidget(c);
 
     auto* b = new QLabel(blocker);
     b->setAlignment(Qt::AlignCenter);
     b->setWordWrap(true);
-    b->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+    set_role(b, QStringLiteral("note"));
     b->setMaximumWidth(560);
     v->addWidget(b, 0, Qt::AlignHCenter);
 
@@ -212,6 +216,8 @@ public:
     }
 
     TickModel* model() const noexcept { return model_; }
+    /// The news bar. main() starts it; tests and scripted runs stay offline.
+    NewsTicker* news_ticker() const noexcept { return news_; }
 
     /// Open on a given nav page. For screenshots and for launching straight
     /// into the panel you are working on; the nav is still the normal way in.
@@ -589,6 +595,7 @@ private:
     std::int64_t tape_last_ns_ = 0;
     QString tape_error_;
     DepthLadder* ladder_ = nullptr;
+    NewsTicker* news_ = nullptr;
 
     void build_nav() {
         nav_ = new WorkspaceNavigation(this);
@@ -610,9 +617,9 @@ private:
         atlas_bar_ = new QWidget;
         atlas_bar_->setObjectName(QStringLiteral("atlasBackBar"));
         atlas_bar_->setStyleSheet(QStringLiteral(
-            "#atlasBackBar{background:#141D23;border-bottom:1px solid #24323B;}"
-            "#atlasBackBar QPushButton{color:#F0B765;background:#1A262E;border:1px solid #2F4A5A;border-radius:6px;padding:4px 10px;}"
-            "#atlasBackBar QPushButton:hover{border-color:#B47A3A;}"));
+            "#atlasBackBar{background:#161B22;border-bottom:1px solid #21262D;}"
+            "#atlasBackBar QPushButton{color:#F0B765;background:#21262D;border:1px solid #30363D;border-radius:6px;padding:4px 10px;}"
+            "#atlasBackBar QPushButton:hover{border-color:#E3A34A;}"));
         auto* bar = new QHBoxLayout(atlas_bar_);
         bar->setContentsMargins(10, 4, 10, 4);
         auto* back = new QPushButton(QStringLiteral("\u2190  Model Atlas"), atlas_bar_);
@@ -635,6 +642,13 @@ private:
         auto* rv = new QVBoxLayout(right);
         rv->setContentsMargins(0, 0, 0, 0);
         rv->setSpacing(0);
+        // The news bar, across the top of every page (desktop/news_ticker.hpp).
+#ifdef ALTAIR_SOURCE_DIR
+        news_ = new NewsTicker(QStringLiteral(ALTAIR_SOURCE_DIR), live_detail::find_helper(QStringLiteral("altair_news")), right);
+#else
+        news_ = new NewsTicker(QDir::currentPath(), live_detail::find_helper(QStringLiteral("altair_news")), right);
+#endif
+        rv->addWidget(news_);
         rv->addWidget(atlas_bar_);
         rv->addWidget(viewport, 1);
 
@@ -677,6 +691,14 @@ private:
         search->setShortcut(QKeySequence(QStringLiteral("Ctrl+K")));
         connect(search, &QAction::triggered, this, [this] { nav_->show_search(); });
         addAction(search);
+        // The news bar: shown unless the person hid it; Ctrl+Shift+N toggles.
+        news_->setVisible(nav_settings_->value(QStringLiteral("news/visible"), true).toBool());
+        news_->on_hidden = [this] { nav_settings_->setValue(QStringLiteral("news/visible"), false); };
+        auto* news_toggle = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+N")), this);
+        connect(news_toggle, &QShortcut::activated, this, [this] {
+            news_->setVisible(!news_->isVisible());
+            nav_settings_->setValue(QStringLiteral("news/visible"), news_->isVisible());
+        });
         nav_->on_state_changed = [this] { nav_->save_state(*nav_settings_); };
         show_page(nav_->current_page());
         nav_->save_state(*nav_settings_);
@@ -719,7 +741,7 @@ private:
         auto* hint = new QLabel(QStringLiteral(
             "Click a header to sort · double-click or right-click a header to "
             "filter"));
-        hint->setStyleSheet(QStringLiteral("color:#7F8C8D;padding:2px 4px;"));
+        set_role(hint, QStringLiteral("note"));
         v->addWidget(hint);
 
         // P11Q-03. The ladder sits BESIDE the grid, in a splitter, because
@@ -800,16 +822,8 @@ private:
         auto* zoom_all = new QPushButton(QStringLiteral("Fit"));
         for (QPushButton* b : {zoom_out, zoom_in}) {
             b->setFixedWidth(34);
-            b->setStyleSheet(QStringLiteral(
-                "QPushButton{background:#21262D;color:#C9D1D9;"
-                "border:1px solid #30363D;padding:4px;font-size:15px;"
-                "font-weight:600;}"
-                "QPushButton:hover{background:#30363D;}"));
+            b->setStyleSheet(QStringLiteral("font-size:15px;font-weight:600;padding:4px;"));
         }
-        zoom_all->setStyleSheet(QStringLiteral(
-            "QPushButton{background:#21262D;color:#C9D1D9;"
-            "border:1px solid #30363D;padding:4px 10px;}"
-            "QPushButton:hover{background:#30363D;}"));
         zoom_out->setToolTip(QStringLiteral("Zoom out  (wheel down)"));
         zoom_in->setToolTip(QStringLiteral("Zoom in  (wheel up)"));
         zoom_all->setToolTip(QStringLiteral("Show the whole series"));
@@ -1037,7 +1051,7 @@ private:
             auto* flow_notes = new QLabel(live_flow_notes_html());
             flow_notes->setWordWrap(true);
             flow_notes->setTextFormat(Qt::RichText);
-            flow_notes->setStyleSheet(QStringLiteral("color:#C9D1D9;padding:4px;"));
+            flow_notes->setContentsMargins(4, 4, 4, 4);
             v->addWidget(flow_notes);
 
             // P30-03. THE DIAGRAM SHOWS THE PIPE AND SAID NOTHING ABOUT WHAT
@@ -1053,8 +1067,8 @@ private:
                 "<h3>What is actually in dataset/</h3>")));
             auto* inv = new QLabel(page);
             inv->setStyleSheet(QStringLiteral(
-                "font-family:Consolas,monospace;color:#D6DBDF;"
-                "background:#11171C;padding:8px;"));
+                "font-family:'Cascadia Mono',Consolas,monospace;color:#C9D1D9;"
+                "background:#0B0F14;border:1px solid #21262D;border-radius:8px;padding:10px;"));
             inv->setText(dataset_inventory());
             v->addWidget(inv);
             v->addStretch();
@@ -1522,11 +1536,26 @@ private:
         pages_->addWidget(new AboutPage);
         {
 #ifdef ALTAIR_SOURCE_DIR
-            pages_->addWidget(new StartPage(QStringLiteral(ALTAIR_SOURCE_DIR)));
+            auto* start = new StartPage(QStringLiteral(ALTAIR_SOURCE_DIR));
 #else
-            pages_->addWidget(new StartPage(QDir::currentPath()));
+            auto* start = new StartPage(QDir::currentPath());
 #endif
+            start->open = [this](const QString& target) {
+                if (target == QLatin1String("terminal.models")) {
+                    show_page(QStringLiteral("market.terminal"));
+                    (void)show_terminal_view(QStringLiteral("models"));
+                    return;
+                }
+                (void)show_page(target);
+            };
+            pages_->addWidget(start);
         }
+        // Every backtest's trades in one place (desktop/backtests_page.hpp).
+#ifdef ALTAIR_SOURCE_DIR
+        pages_->addWidget(new BacktestsPage(QStringLiteral(ALTAIR_SOURCE_DIR)));
+#else
+        pages_->addWidget(new BacktestsPage(QDir::currentPath()));
+#endif
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
@@ -1602,7 +1631,7 @@ private:
         statusBar()->addWidget(broker_status_);
         halt_badge_ = new QLabel;
         halt_badge_->setObjectName(QStringLiteral("haltBadge"));
-        halt_badge_->setStyleSheet(QStringLiteral("color:#FFFFFF;background:#DA3633;font-weight:700;padding:1px 8px;border-radius:3px;"));
+        set_role(halt_badge_, QStringLiteral("pill-halt"));
         halt_badge_->setText(QStringLiteral("■ HALTED · F11+F12 to resume"));
         halt_badge_->hide();
         statusBar()->addPermanentWidget(halt_badge_);
@@ -1721,15 +1750,16 @@ private:
                    : (live_sim_ || live_replay_) ? QStringLiteral("#B9770B") : QStringLiteral("#238636");
         }
         pill_->setText(QStringLiteral("  %1  ").arg(text));
-        pill_->setStyleSheet(QStringLiteral("color:#FFFFFF;background:%1;font-weight:bold;border-radius:3px;")
-                                 .arg(colour));
+        // Refreshed every 500 ms: re-polish only when the colour changes.
+        set_style_sheet_if_changed(pill_, QStringLiteral("color:#FFFFFF;background:%1;font-weight:700;border-radius:9px;padding:1px 4px;")
+                                              .arg(colour));
 
         // Phase and clock from the FEED's time stamps, never the wall clock:
         // a SIM session at 30x runs its own day.
         const SessionPhase p = live_clock_.phase();
         phase_->setText(live_clock_.has_engine_time() ? QStringLiteral(" %1 ").arg(phase_label(p))
                                                       : QStringLiteral(" — "));
-        phase_->setStyleSheet(QStringLiteral("color:%1;font-weight:bold;").arg(phase_colour(p).name()));
+        set_style_sheet_if_changed(phase_, QStringLiteral("color:%1;font-weight:bold;").arg(phase_colour(p).name()));
         if (live_clock_.has_engine_time()) {
             const auto feed_time = QDateTime::fromMSecsSinceEpoch(live_ts_ns_ / 1'000'000, ist_tz());
             engine_clock_->setText(QStringLiteral(" feed %1 IST ")
