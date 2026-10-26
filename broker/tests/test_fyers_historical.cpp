@@ -43,6 +43,14 @@ int main() {
           "invalid OHLC range is refused");
     check(!parse(R"({"s":"ok","candles":[[2,1,2,1,1,1],[1,1,2,1,1,1]]})"),
           "nonascending timestamps are refused");
+    {
+        std::size_t dropped = 0;
+        const auto lenient = parse(R"({"s":"ok","candles":[[1,10,11,9,10,1],[2,10,9,8,10,1],[1,10,11,9,10,1],[3,10,12,9,11,5]]})", &dropped);
+        check(lenient && lenient->size() == 2 && dropped == 2 && (*lenient)[1].ts_ns == 3'000'000'000LL,
+              "with a counter, an impossible candle and a repeated stamp are left out and counted, the rest kept");
+        std::size_t none = 0;
+        check(!parse(R"({"s":"ok","candles":[[1,1,2,1,1]]})", &none), "a malformed body is refused even with a counter");
+    }
     check(!parse(R"({"s":"ok","candles":[[1,1,2,1,1]]})"),
           "short candle is refused");
     return failures == 0 ? 0 : 1;
