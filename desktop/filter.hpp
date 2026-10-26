@@ -47,6 +47,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include "tick_model.hpp"
 
 #include <QCheckBox>
@@ -321,7 +322,7 @@ public:
             layout->addWidget(operand_);
 
             error_ = new QLabel(this);
-            error_->setStyleSheet(QStringLiteral("color:#F85149;"));
+            set_role(error_, QStringLiteral("error"));
             error_->setVisible(false);
             layout->addWidget(error_);
         }

@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include "theme.hpp"
 #include "data/series_io.hpp"
 #include "model_job.hpp"
 #include <analytics/american.hpp>
@@ -341,9 +342,7 @@ public:
         out_ = new QPlainTextEdit(results_);
         out_->setObjectName(QStringLiteral("modelResultReport"));
         out_->setReadOnly(true);
-        out_->setStyleSheet(QStringLiteral(
-            "QPlainTextEdit{background:#11171C;color:#D6DBDF;"
-            "font-family:Consolas,monospace;font-size:12px;border:none;}"));
+        set_role(out_, QStringLiteral("log"));
         out_->setPlainText(title + QStringLiteral(
             "\n\nNot run yet. Press the button above.\n\n"
             "Nothing on this page is precomputed or cached: every figure is\n"
@@ -362,7 +361,7 @@ public:
         progress_->setMaximumWidth(120);
         row_->addWidget(progress_);
         job_status_ = new QLabel(QStringLiteral("Idle"), this);
-        job_status_->setStyleSheet(QStringLiteral("color:#7F8C8D;"));
+        set_role(job_status_, QStringLiteral("note"));
         row_->addWidget(job_status_);
         v->addLayout(row_);
         results_->addTab(summary_, QStringLiteral("Contract"));
@@ -415,7 +414,7 @@ public:
         row_->insertWidget(0, new QLabel(QStringLiteral("Instrument"), this));
         row_->insertWidget(1, symbols_);
         stale_ = new QLabel(this);
-        stale_->setStyleSheet(QStringLiteral("color:#B9770B;"));
+        set_role(stale_, QStringLiteral("warn"));
         row_->addWidget(stale_);
         connect(symbols_, &QComboBox::currentIndexChanged, this, [this] {
             jobs_.invalidate();

@@ -12,13 +12,18 @@
 // are set. A widget's own setStyleSheet() still wins over this one.
 #pragma once
 
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QColor>
+#include <QEvent>
 #include <QFont>
 #include <QPalette>
 #include <QString>
 #include <QStringList>
+#include <QStyle>
 #include <QStyleFactory>
+#include <QVariant>
+#include <QWidget>
 
 namespace altair::ui {
 
@@ -37,6 +42,13 @@ inline constexpr const char* kAccent     = "#E3A34A";
 inline constexpr const char* kAccentHi   = "#F0B765";
 inline constexpr const char* kSelection  = "#493D2C";  // accent at 25% on surface
 inline constexpr const char* kLink       = "#58A6FF";
+// Meaning. Up/ok, down/error, caution, information.
+inline constexpr const char* kUp         = "#3FB950";
+inline constexpr const char* kDown       = "#F85149";
+inline constexpr const char* kWarn       = "#D29922";
+inline constexpr const char* kInfo       = "#58A6FF";
+inline constexpr const char* kLive       = "#DA3633";  // real money
+inline constexpr const char* kHalted     = "#6E1B1B";
 } // namespace theme_token
 
 [[nodiscard]] inline QString app_style_sheet() {
@@ -120,6 +132,51 @@ QStatusBar { background:#0D1117; color:#8B949E; border-top:1px solid #21262D; }
 QStatusBar::item { border:0; }
 QDockWidget { color:#E6EDF3; }
 QDockWidget::title { background:#161B22; padding:6px 10px; border-bottom:1px solid #30363D; }
+
+/* ---- Variants: set with ui::set_variant(button, "primary"|"danger"|"quiet"|"buy"|"sell") ---- */
+QPushButton:checked { background:#2D333B; color:#F0B765; border-color:#E3A34A; }
+QPushButton[variant="primary"] { background:#E3A34A; color:#0D1117; border-color:#E3A34A; font-weight:600; }
+QPushButton[variant="primary"]:hover { background:#F0B765; border-color:#F0B765; }
+QPushButton[variant="danger"] { background:#DA3633; color:#FFFFFF; border-color:#DA3633; font-weight:600; }
+QPushButton[variant="danger"]:hover { background:#E5534B; border-color:#E5534B; }
+QPushButton[variant="quiet"] { background:transparent; color:#8B949E; border-color:transparent; }
+QPushButton[variant="quiet"]:hover { background:#21262D; color:#E6EDF3; }
+QPushButton[variant="quiet"]:checked { background:#2D333B; color:#F0B765; }
+QPushButton[variant="buy"] { background:#1F6FEB; color:#FFFFFF; border-color:#1F6FEB; font-weight:700; }
+QPushButton[variant="buy"]:hover { background:#388BFD; border-color:#388BFD; }
+QPushButton[variant="sell"] { background:#DA3633; color:#FFFFFF; border-color:#DA3633; font-weight:700; }
+QPushButton[variant="sell"]:hover { background:#E5534B; border-color:#E5534B; }
+QPushButton[variant="primary"]:disabled, QPushButton[variant="danger"]:disabled,
+QPushButton[variant="buy"]:disabled, QPushButton[variant="sell"]:disabled { background:#21262D; color:#6E7681; border-color:#30363D; }
+
+/* The PAPER / LIVE switch. ui::set_variant(button, "paper"|"live"|"halted"). */
+QPushButton[variant="paper"] { background:#12261A; color:#7EE787; border:1px solid #238636; font-weight:700; padding:5px 14px; }
+QPushButton[variant="paper"]:hover { background:#173320; border-color:#3FB950; }
+QPushButton[variant="live"] { background:#DA3633; color:#FFFFFF; border:1px solid #F85149; font-weight:700; padding:5px 14px; }
+QPushButton[variant="halted"] { background:#6E1B1B; color:#FFFFFF; border:1px solid #DA3633; font-weight:700; padding:5px 14px; }
+
+/* ---- Text roles: ui::set_role(label, "note"|"faint"|"error"|"warn"|"ok"|"info"|"kicker"|"title") ---- */
+QLabel[role="note"] { color:#8B949E; }
+QLabel[role="faint"] { color:#6E7681; }
+QLabel[role="error"] { color:#F85149; }
+QLabel[role="warn"] { color:#D29922; }
+QLabel[role="ok"] { color:#3FB950; }
+QLabel[role="info"] { color:#79C0FF; }
+QLabel#sectionKicker, QLabel[role="kicker"] { color:#E3A34A; font-weight:700; letter-spacing:1px; }
+QLabel[role="title"] { color:#E6EDF3; font-size:15px; font-weight:700; }
+/* Status pills: ui::set_role(label, "pill-ok"|"pill-warn"|"pill-bad"|"pill-halt"). */
+QLabel[role="pill-ok"] { color:#FFFFFF; background:#238636; font-weight:700; border-radius:9px; padding:1px 10px; }
+QLabel[role="pill-warn"] { color:#FFFFFF; background:#9E6A03; font-weight:700; border-radius:9px; padding:1px 10px; }
+QLabel[role="pill-bad"] { color:#FFFFFF; background:#DA3633; font-weight:700; border-radius:9px; padding:1px 10px; }
+QLabel[role="pill-halt"] { color:#FFFFFF; background:#DA3633; font-weight:700; border-radius:9px; padding:1px 10px; }
+/* Explanation banners above a panel: ui::set_role(label, "banner-info"|"banner-warn"). */
+QLabel[role="banner-info"] { background:#0C2238; color:#C9E3FF; border:1px solid #1F4B7A; border-radius:8px; padding:10px 12px; }
+QLabel[role="banner-warn"] { background:#2B2111; color:#F2DDB4; border:1px solid #6B4F1D; border-radius:8px; padding:10px 12px; }
+/* Logs and reports: ui::set_role(edit, "log"). */
+QPlainTextEdit[role="log"], QTextEdit[role="log"] { background:#0B0F14; color:#C9D1D9; border:1px solid #21262D;
+    border-radius:8px; font-family:"Cascadia Mono","Consolas","JetBrains Mono",monospace; font-size:12px; padding:6px; }
+/* A thin vertical rule between groups in a strip. */
+QFrame[role="rule"] { background:#30363D; border:0; min-width:1px; max-width:1px; margin:4px 2px; }
 )QSS");
 }
 
@@ -155,6 +212,48 @@ QDockWidget::title { background:#161B22; padding:6px 10px; border-bottom:1px sol
     return p;
 }
 
+/// Re-apply the stylesheet to `w` after a dynamic property changed. Cheap: one
+/// widget, not the whole window.
+inline void repolish(QWidget* w) {
+    if (w == nullptr) return;
+    w->style()->unpolish(w);
+    w->style()->polish(w);
+    w->update();
+}
+
+/// Set a styling property and repolish only when it actually changed, so a
+/// status refreshed every 500 ms costs nothing while it stays the same.
+inline void set_style_property(QWidget* w, const char* name, const QString& value) {
+    if (w == nullptr || w->property(name).toString() == value) return;
+    w->setProperty(name, value);
+    repolish(w);
+}
+inline void set_variant(QWidget* w, const QString& v) { set_style_property(w, "variant", v); }
+inline void set_role(QWidget* w, const QString& r) { set_style_property(w, "role", r); }
+
+/// setStyleSheet() re-polishes the widget and its children even when the
+/// text is identical; this skips that when nothing changed.
+inline void set_style_sheet_if_changed(QWidget* w, const QString& css) {
+    if (w != nullptr && w->styleSheet() != css) w->setStyleSheet(css);
+}
+
+/// Pixel scrolling for every list and table: Qt's default jumps a whole row
+/// per wheel notch, which reads as stutter on a long watch or option chain.
+class SmoothScrolling final : public QObject {
+public:
+    using QObject::QObject;
+protected:
+    bool eventFilter(QObject* o, QEvent* e) override {
+        if (e->type() == QEvent::Polish) {
+            if (auto* v = qobject_cast<QAbstractItemView*>(o)) {
+                v->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+                v->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+            }
+        }
+        return false;
+    }
+};
+
 /// Fusion + dark palette + stylesheet + a modern UI font stack.
 inline void apply_app_theme(QApplication& app) {
     if (auto* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
@@ -167,6 +266,7 @@ inline void apply_app_theme(QApplication& app) {
     if (font.pointSizeF() > 0 && font.pointSizeF() < 10.0) font.setPointSizeF(10.0);
     QApplication::setFont(font);
     app.setStyleSheet(app_style_sheet());
+    app.installEventFilter(new SmoothScrolling(&app));
 }
 
 } // namespace altair::ui

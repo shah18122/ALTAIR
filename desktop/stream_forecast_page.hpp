@@ -221,7 +221,7 @@ public:
         status_ = new QLabel("Select a timeframe and train. Future targets and current price are shown separately.", this);
         status_->setWordWrap(true); layout->addWidget(status_);
         output_ = new QPlainTextEdit(this); output_->setReadOnly(true);
-        output_->setStyleSheet("QPlainTextEdit{background:#11171C;color:#D6DBDF;font-family:Consolas;font-size:13px;border:0;}");
+        output_->setStyleSheet("QPlainTextEdit{background:#0B0F14;color:#C9D1D9;font-family:Consolas;font-size:13px;border:0;}");
         layout->addWidget(output_, 1);
         connect(train_, &QPushButton::clicked, this, [this] { begin_training(false); });
         connect(fetch_, &QPushButton::clicked, this, [this] { begin_training(true); });

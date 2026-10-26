@@ -62,6 +62,9 @@ qt_add_executable(altair_desktop
     navigation_state.hpp
     navigation_search.hpp
     workspace_navigation.hpp
+    news_ticker.hpp
+    news/rss.hpp
+    backtests_page.hpp
     workspace_pages.hpp
     workspace_layout.hpp
     tick_model.hpp
@@ -347,12 +350,25 @@ endforeach()
 # ── Tests ───────────────────────────────────────────────────────────────────
 # The UI's logic is testable without a window: a QCoreApplication is enough for
 # a model and a proxy, so gate 4 applies here exactly as it does to the engine.
+# altair_news: fetches the market RSS feeds for the news bar and prints JSON.
+# A separate process so the desktop keeps its "127.0.0.1 only, no TLS client"
+# property (the Qt6::Network paragraph above); it links no engine library.
+qt_add_executable(altair_news news/news_main.cpp news/rss.hpp)
+target_link_libraries(altair_news PRIVATE altair_flags Qt6::Core Qt6::Network)
+set_target_properties(altair_news PROPERTIES WIN32_EXECUTABLE OFF)
+add_dependencies(altair_desktop altair_news)
+
 # CX06 cold-path, read-only data audit. No broker, OMS or existing writer dependency.
 qt_add_executable(altair_bar_consistency data/bar_consistency.cpp)
 target_link_libraries(altair_bar_consistency PRIVATE altair_flags Qt6::Core)
 set_target_properties(altair_bar_consistency PROPERTIES WIN32_EXECUTABLE OFF)
 
 if(ALTAIR_BUILD_TESTS)
+    qt_add_executable(altair_news_test tests/test_news.cpp news/rss.hpp)
+    target_link_libraries(altair_news_test PRIVATE altair_flags Qt6::Core)
+    set_target_properties(altair_news_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_news COMMAND altair_news_test)
+
     qt_add_executable(altair_credential_setup_test
         tests/test_credential_setup.cpp
         credential_setup.hpp
@@ -1007,6 +1023,24 @@ if(ALTAIR_BUILD_TESTS)
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
     if(WIN32)
         set_tests_properties(desktop_demo_trading PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
+    qt_add_executable(altair_backtests_test
+        tests/test_backtests.cpp
+        backtests_page.hpp
+        demo_trading_page.hpp
+        strategy_record.hpp)
+    target_link_libraries(altair_backtests_test PRIVATE
+        altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_backtests_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_backtests_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_backtests COMMAND altair_backtests_test)
+    set_tests_properties(desktop_backtests PROPERTIES TIMEOUT 60 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+    if(WIN32)
+        set_tests_properties(desktop_backtests PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 

@@ -10,11 +10,15 @@
 
 #include "atlas_data.hpp"
 
+#include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileInfo>
 #include <QLabel>
 #include <QString>
 #include <QVBoxLayout>
+#include <cstdint>
 #include <cstring>
 
 namespace altair::ui {
@@ -183,31 +187,150 @@ inline constexpr Entry kByFile[] = {
     return {"See the model's page.", kBars, kResearch};
 }
 
+/// Is it trained, in one word, read from the same answer the ⓘ gives.
+enum class AtlasTraining : std::uint8_t {
+    Fitted,      ///< parameters estimated from data
+    Rule,        ///< a rule or procedure: parameters are chosen, not fitted
+    NotTrained,  ///< closed form, pricer, typed assumptions
+    NeedsData,   ///< built to be fitted to real fills, which are not recorded yet
+    NotBuilt,    ///< absent from this tree
+    Unknown,     ///< no written answer: see the model's page
+};
+
+[[nodiscard]] inline AtlasTraining atlas_training(const AtlasRow& row) noexcept {
+    if (row.status == AtlasStatus::Absent) return AtlasTraining::NotBuilt;
+    const char* t = atlas_info(row).trained;
+    const auto starts = [t](const char* p) { return std::strncmp(t, p, std::strlen(p)) == 0; };
+    if (starts("Not trained")) return AtlasTraining::NotTrained;
+    if (starts("See the model")) return AtlasTraining::Unknown;
+    if (starts("A rule") || starts("It IS the training") || starts("Simulated agents with fixed rules"))
+        return AtlasTraining::Rule;
+    if (std::strstr(t, "recorded fills") != nullptr || std::strstr(t, "recorded quotes and fills") != nullptr)
+        return AtlasTraining::NeedsData;
+    return AtlasTraining::Fitted;
+}
+
+[[nodiscard]] inline const char* atlas_training_text(AtlasTraining t) noexcept {
+    switch (t) {
+    case AtlasTraining::Fitted:     return "TRAINED";
+    case AtlasTraining::Rule:       return "RULE";
+    case AtlasTraining::NotTrained: return "NOT TRAINED";
+    case AtlasTraining::NeedsData:  return "NEEDS FILLS";
+    case AtlasTraining::NotBuilt:   return "—";
+    case AtlasTraining::Unknown:    return "SEE PAGE";
+    }
+    return "—";
+}
+
+/// Whether the model learns by walk-forward folds (the forecast curriculum
+/// and the live direction models), so its last training is on disk.
+[[nodiscard]] inline bool atlas_walk_forward(const AtlasRow& row) noexcept {
+    const char* t = atlas_info(row).trained;
+    return std::strstr(t, "walk-forward") != nullptr || std::strstr(t, "walk-f") != nullptr;
+}
+
+/// When the forecast curriculum last wrote its walk-forward logs under
+/// `root`/data/verified/forecast_log, or an invalid time when it never has.
+[[nodiscard]] inline QDateTime atlas_last_curriculum_run(const QString& root) {
+    QDateTime newest;
+    const QDir dir(root + QStringLiteral("/data/verified/forecast_log"));
+    for (const QFileInfo& f : dir.entryInfoList(QDir::Files))
+        if (!newest.isValid() || f.lastModified() > newest) newest = f.lastModified();
+    return newest;
+}
+
+/// The answer to "is it built, is it trained, and how", as rich text.
+/// `root` is the ALTAIR folder, for the date of the last walk-forward run.
+[[nodiscard]] inline QString atlas_build_train_html(const AtlasRow& row, const QString& root = {}) {
+    const auto dot = [](const char* colour, const QString& text) {
+        return QStringLiteral("<span style='color:%1'>\u25CF</span> %2").arg(QString::fromLatin1(colour), text);
+    };
+    QString built;
+    switch (row.status) {
+    case AtlasStatus::Implemented:
+        built = dot("#3FB950", QStringLiteral("<b>Built:</b> yes, the code is in <code>%1</code> and compiles with every build.")
+                                   .arg(QString::fromUtf8(row.file).toHtmlEscaped()));
+        break;
+    case AtlasStatus::Partial:
+        built = dot("#D29922", QStringLiteral("<b>Built:</b> partly. The primitive is in <code>%1</code>; the named model is not.")
+                                   .arg(QString::fromUtf8(row.file).toHtmlEscaped()));
+        break;
+    case AtlasStatus::Absent:
+        built = dot("#8B949E", QStringLiteral("<b>Built:</b> no, it is not in this tree."));
+        break;
+    }
+    QString trained;
+    switch (atlas_training(row)) {
+    case AtlasTraining::Fitted:
+        trained = dot("#3FB950", QStringLiteral("<b>Trained:</b> yes. Its parameters are estimated from data (how, below)."));
+        break;
+    case AtlasTraining::Rule:
+        trained = dot("#79C0FF", QStringLiteral("<b>Trained:</b> no fitted weights. It is a rule or procedure whose few parameters are "
+                                                "chosen and then tested walk-forward with costs."));
+        break;
+    case AtlasTraining::NotTrained:
+        trained = dot("#8B949E", QStringLiteral("<b>Trained:</b> not needed. It is a closed form, a pricer or a fixed rule."));
+        break;
+    case AtlasTraining::NeedsData:
+        trained = dot("#D29922", QStringLiteral("<b>Trained:</b> not yet. It is built to be fitted to real fills, and ALTAIR has none "
+                                                "recorded yet; until then it runs on its default parameters."));
+        break;
+    case AtlasTraining::NotBuilt:
+        trained = dot("#8B949E", QStringLiteral("<b>Trained:</b> no, there is nothing to train."));
+        break;
+    case AtlasTraining::Unknown:
+        trained = dot("#8B949E", QStringLiteral("<b>Trained:</b> see the model's page."));
+        break;
+    }
+    QString when;
+    if (atlas_walk_forward(row)) {
+        const QDateTime last = root.isEmpty() ? QDateTime{} : atlas_last_curriculum_run(root);
+        when = dot("#79C0FF", last.isValid()
+            ? QStringLiteral("<b>Last trained:</b> %1, the last walk-forward run of the forecast curriculum "
+                             "(data/verified/forecast_log/). Its page refits on demand.")
+                  .arg(last.toString(QStringLiteral("dd MMM yyyy, HH:mm")))
+            : QStringLiteral("<b>Last trained:</b> no walk-forward log on this PC yet. Run "
+                             "<code>altair_forecast_curriculum</code> to train it; its page also refits on demand."));
+    } else if (atlas_training(row) == AtlasTraining::Fitted) {
+        when = dot("#79C0FF", QStringLiteral("<b>When:</b> fitted when its page or the engine runs it "
+                                             "(the schedule is under How it is trained)."));
+    }
+    return QStringLiteral("<div style='background:#161B22;border:1px solid #30363D;padding:8px'>%1<br>%2%3</div>")
+        .arg(built, trained, when.isEmpty() ? QString{} : QStringLiteral("<br>") + when);
+}
+
 /// The ⓘ as one block of rich text.
-[[nodiscard]] inline QString atlas_info_html(const AtlasRow& row) {
+[[nodiscard]] inline QString atlas_info_html(const AtlasRow& row, const QString& root = {}) {
     const AtlasInfo i = atlas_info(row);
     return QStringLiteral(
         "<div style='color:#E6EDF3'><b style='font-size:15px;color:#F0B765'>%1</b>"
-        "<span style='color:#8FA3AE'> &nbsp;·&nbsp; %2 &nbsp;·&nbsp; %3</span><br><br>"
+        "<span style='color:#8B949E'> &nbsp;·&nbsp; %2 &nbsp;·&nbsp; %3</span><br><br>"
+        "%9<br>"
         "<b>What it is for.</b> %4<br><br>"
         "<b>How it is trained.</b> %5<br><br>"
         "<b>On what data.</b> %6<br><br>"
         "<b>In the real market.</b> %7<br><br>"
-        "<span style='color:#8FA3AE'>Code: <code>%8</code></span></div>")
+        "<span style='color:#8B949E'>Code: <code>%8</code></span></div>")
         .arg(QString::fromUtf8(row.model).toHtmlEscaped(), QString::fromUtf8(row.family).toHtmlEscaped(),
              QString::fromUtf8(atlas_status_text(row.status)), QString::fromUtf8(row.what).toHtmlEscaped(),
              QString::fromUtf8(i.trained).toHtmlEscaped(), QString::fromUtf8(i.data).toHtmlEscaped(),
              QString::fromUtf8(i.market).toHtmlEscaped(),
-             QString::fromUtf8(row.file[0] != 0 ? row.file : "(none)"));
+             QString::fromUtf8(row.file[0] != 0 ? row.file : "(none)"),
+             atlas_build_train_html(row, root));
 }
 
 /// The ⓘ window for a row.
 inline void show_atlas_info(QWidget* parent, const AtlasRow& row) {
+#ifdef ALTAIR_SOURCE_DIR
+    const QString root = QStringLiteral(ALTAIR_SOURCE_DIR);
+#else
+    const QString root = QDir::currentPath();
+#endif
     QDialog d(parent);
     d.setObjectName(QStringLiteral("atlasInfoDialog"));
     d.setWindowTitle(QStringLiteral("About this model · %1").arg(QString::fromUtf8(row.model)));
     auto* v = new QVBoxLayout(&d);
-    auto* text = new QLabel(atlas_info_html(row), &d);
+    auto* text = new QLabel(atlas_info_html(row, root), &d);
     text->setTextFormat(Qt::RichText);
     text->setWordWrap(true);
     text->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -215,7 +338,7 @@ inline void show_atlas_info(QWidget* parent, const AtlasRow& row) {
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &d);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &d, &QDialog::reject);
     v->addWidget(buttons);
-    d.resize(640, 420);
+    d.resize(680, 520);
     d.exec();
 }
 

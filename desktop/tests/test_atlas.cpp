@@ -160,6 +160,35 @@ int main(int argc, char** argv)
     check(panel.visible_rows() == static_cast<int>(altair::ui::kAtlasCount),
           "clearing the search restores the full list");
 
+    // Built / trained, as the Trained column and the ⓘ say it.
+    {
+        using namespace altair::ui;
+        bool every_row_answers = true, absent_not_built = true;
+        int fitted = 0, not_trained = 0;
+        for (const auto& r : kAtlasRows) {
+            const AtlasTraining t = atlas_training(r);
+            every_row_answers = every_row_answers && std::strlen(atlas_training_text(t)) > 0
+                                && atlas_build_train_html(r).contains(QStringLiteral("Built:"))
+                                && atlas_build_train_html(r).contains(QStringLiteral("Trained:"));
+            if (r.status == AtlasStatus::Absent) absent_not_built = absent_not_built && t == AtlasTraining::NotBuilt;
+            fitted += t == AtlasTraining::Fitted;
+            not_trained += t == AtlasTraining::NotTrained;
+        }
+        check(every_row_answers, "every row says whether it is built and whether it is trained");
+        check(absent_not_built, "an absent model is never called trained");
+        check(fitted > 0 && not_trained > 0, "both trained and not-trained models are told apart");
+        const AtlasRow* logit = nullptr;
+        for (const auto& r : kAtlasRows) if (std::strcmp(r.model, "Logistic regression") == 0) logit = &r;
+        check(logit != nullptr && atlas_training(*logit) == AtlasTraining::Fitted && atlas_walk_forward(*logit)
+                  && atlas_build_train_html(*logit).contains(QStringLiteral("Last trained")),
+              "a walk-forward model says when it was last trained (or that it has no log yet)");
+        check(atlas_info_html(*logit).contains(QStringLiteral("How it is trained")),
+              "the full answer still says how it was trained and on what data");
+        auto* tree = panel.tree();
+        check(tree->columnCount() == 5 && tree->headerItem()->text(2) == QStringLiteral("Trained"),
+              "the table has a Trained column; no column was removed");
+    }
+
     std::printf("\n%s\n", failures == 0 ? "all checks passed"
                                         : "THERE WERE FAILURES");
     return failures == 0 ? 0 : 1;

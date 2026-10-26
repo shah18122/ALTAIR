@@ -70,7 +70,7 @@ public:
                 "actually has.<br>"
                 "<span style='color:#3FB950'>%1 built</span> · "
                 "<span style='color:#B9770B'>%2 partial</span> · "
-                "<span style='color:#7F8C8D'>%3 absent</span> "
+                "<span style='color:#8B949E'>%3 absent</span> "
                 "&nbsp;of %4 entries. "
                 "The absences are listed on purpose: a catalogue that shows "
                 "only what exists teaches you that everything exists.<br>"
@@ -99,7 +99,7 @@ public:
         auto* collapse = new QPushButton(QStringLiteral("Collapse"), this);
         row->addWidget(expand);
         row->addWidget(collapse);
-        info_ = new QPushButton(QStringLiteral("\u24D8  About this model"), this);
+        info_ = new QPushButton(QStringLiteral("\u24D8  Info: built, trained, how"), this);
         info_->setObjectName(QStringLiteral("atlasInfoButton"));
         info_->setToolTip(QStringLiteral("What the selected model is for, how it was trained, on what data, and what it does in the real market"));
         info_->setEnabled(false);
@@ -107,9 +107,10 @@ public:
         v->addLayout(row);
 
         tree_ = new QTreeWidget(this);
-        tree_->setColumnCount(4);
+        tree_->setColumnCount(5);
         tree_->setHeaderLabels({QStringLiteral("Model"),
                                 QStringLiteral("Status"),
+                                QStringLiteral("Trained"),
                                 QStringLiteral("Where it lives"),
                                 QStringLiteral("What it answers")});
         tree_->setAlternatingRowColors(true);
@@ -120,12 +121,14 @@ public:
 
         note_ = new QLabel(
             QStringLiteral(
-                "Double-click a row to open its stable model detail state. Every file path "
+                "Double-click a row to open its stable model detail state; \u24D8 says whether it is built, "
+                "whether and how it was trained, and on what data. Trained: TRAINED is fitted to data, RULE has "
+                "chosen parameters tested walk-forward, NOT TRAINED needs no fit, NEEDS FILLS waits for real fills. Every file path "
                 "above is checked at configure time, so this table cannot "
                 "quietly describe a tree that has moved on."),
             this);
         note_->setWordWrap(true);
-        note_->setStyleSheet(QStringLiteral("color:#7F8C8D;padding:4px;"));
+        note_->setStyleSheet(QStringLiteral("color:#8B949E;padding:4px;"));
         v->addWidget(note_);
 
         connect(find_, &QLineEdit::textChanged, this,
@@ -206,8 +209,11 @@ private:
             auto* it = new QTreeWidgetItem(fam);
             it->setText(0, QString::fromUtf8(r.model));
             it->setText(1, QString::fromUtf8(atlas_status_text(r.status)));
-            it->setText(2, QString::fromUtf8(r.file));
-            it->setText(3, QString::fromUtf8(r.what));
+            const AtlasTraining training = atlas_training(r);
+            it->setText(2, QString::fromUtf8(atlas_training_text(training)));
+            it->setToolTip(2, QString::fromUtf8(atlas_info(r).trained));
+            it->setText(3, QString::fromUtf8(r.file));
+            it->setText(4, QString::fromUtf8(r.what));
             it->setData(0, Qt::UserRole, r.page);
             it->setData(0, Qt::UserRole + 1,
                         QVariant::fromValue<qulonglong>(atlas_model_id(r)));
@@ -223,9 +229,15 @@ private:
                 it->setForeground(1, QColor(QStringLiteral("#B9770B")));
                 break;
             case AtlasStatus::Absent:
-                it->setForeground(1, QColor(QStringLiteral("#7F8C8D")));
-                it->setForeground(0, QColor(QStringLiteral("#7F8C8D")));
+                it->setForeground(1, QColor(QStringLiteral("#8B949E")));
+                it->setForeground(0, QColor(QStringLiteral("#8B949E")));
                 break;
+            }
+            switch (training) {
+            case AtlasTraining::Fitted: it->setForeground(2, QColor(QStringLiteral("#3FB950"))); break;
+            case AtlasTraining::Rule: it->setForeground(2, QColor(QStringLiteral("#79C0FF"))); break;
+            case AtlasTraining::NeedsData: it->setForeground(2, QColor(QStringLiteral("#D29922"))); break;
+            default: it->setForeground(2, QColor(QStringLiteral("#8B949E"))); break;
             }
             it->setToolTip(0, QStringLiteral(
                 "Model ID: atlas.%1\nDouble-click to open this exact model detail state.")
@@ -235,7 +247,8 @@ private:
         tree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
         tree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
         tree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-        tree_->header()->setSectionResizeMode(3, QHeaderView::Stretch);
+        tree_->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+        tree_->header()->setSectionResizeMode(4, QHeaderView::Stretch);
     }
 
     void apply_filter() {
@@ -253,7 +266,7 @@ private:
                 bool match = q.isEmpty();
                 if (!match) {
                     match = fam->text(0).contains(q, Qt::CaseInsensitive);
-                    for (int c = 0; c < 4 && !match; ++c) {
+                    for (int c = 0; c < tree_->columnCount() && !match; ++c) {
                         match = it->text(c).contains(q, Qt::CaseInsensitive);
                     }
                 }

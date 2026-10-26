@@ -47,9 +47,9 @@ public:
              const QString& foot = QString(), QWidget* parent = nullptr)
         : QFrame(parent) {
         setFrameShape(QFrame::NoFrame);
-        QString bg = QStringLiteral("#161C22");
+        QString bg = QStringLiteral("#161B22");
         QString fg = QStringLiteral("#E6EDF3");
-        QString edge = QStringLiteral("#2C3E50");
+        QString edge = QStringLiteral("#30363D");
         if (tone > 0 && tone != 2) {
             fg = QStringLiteral("#3FB950");
             edge = QStringLiteral("#1E6B3A");
@@ -57,11 +57,11 @@ public:
             fg = QStringLiteral("#F85149");
             edge = QStringLiteral("#8C2F2F");
         } else if (tone == 2) {
-            bg = QStringLiteral("#1B2733");
-            edge = QStringLiteral("#3D6E9E");
+            bg = QStringLiteral("#1F1B14");
+            edge = QStringLiteral("#7A5E2C");
         }
         setStyleSheet(QStringLiteral(
-            "QFrame{background:%1;border:1px solid %2;border-radius:4px;}")
+            "QFrame{background:%1;border:1px solid %2;border-radius:10px;}")
                           .arg(bg, edge));
 
         auto* v = new QVBoxLayout(this);
@@ -70,7 +70,7 @@ public:
 
         auto* l = new QLabel(label.toUpper(), this);
         l->setStyleSheet(QStringLiteral(
-            "color:#7F8C8D;font-size:10px;letter-spacing:1px;border:none;"));
+            "color:#8B949E;font-size:10px;letter-spacing:1px;border:none;"));
         v->addWidget(l);
 
         auto* n = new QLabel(value, this);
@@ -88,7 +88,7 @@ public:
             auto* f = new QLabel(foot, this);
             f->setWordWrap(true);
             f->setStyleSheet(QStringLiteral(
-                "color:#6E7B8B;font-size:10px;border:none;"));
+                "color:#6E7681;font-size:10px;border:none;"));
             v->addWidget(f);
         }
     }
@@ -143,14 +143,14 @@ private:
     t->horizontalHeader()->setStretchLastSection(true);
     t->setSortingEnabled(true);
     t->setStyleSheet(QStringLiteral(
-        "QTableWidget{background:#11171C;alternate-background-color:#141B21;"
-        "color:#D6DBDF;gridline-color:#232C35;border:none;"
-        "font-family:'Segoe UI',sans-serif;font-size:12px;}"
-        "QHeaderView::section{background:#1B2733;color:#9FB3C8;"
-        "padding:6px;border:none;border-right:1px solid #232C35;"
-        "font-size:11px;letter-spacing:1px;}"
+        "QTableWidget{background:#0D1117;alternate-background-color:#11161D;"
+        "color:#E6EDF3;gridline-color:#21262D;border:1px solid #30363D;border-radius:8px;"
+        "font-size:12px;}"
+        "QHeaderView::section{background:#161B22;color:#8B949E;"
+        "padding:6px;border:none;border-bottom:1px solid #30363D;border-right:1px solid #21262D;"
+        "font-size:11px;font-weight:600;letter-spacing:1px;}"
         "QTableWidget::item{padding:4px 6px;}"
-        "QTableWidget::item:selected{background:#2C3E50;color:#FFFFFF;}"));
+        "QTableWidget::item:selected{background:#493D2C;color:#FFFFFF;}"));
     return t;
 }
 
@@ -178,15 +178,15 @@ inline void account_cell(QTableWidget* t, int row, int col,
 [[nodiscard]] inline QString action_button_css(bool primary) {
     return primary
         ? QStringLiteral(
-              "QPushButton{background:#1F6FEB;color:#FFFFFF;border:none;"
-              "padding:8px 16px;border-radius:4px;font-weight:600;}"
-              "QPushButton:hover{background:#388BFD;}"
-              "QPushButton:disabled{background:#30363D;color:#6E7B8B;}")
+              "QPushButton{background:#E3A34A;color:#0D1117;border:1px solid #E3A34A;"
+              "padding:8px 16px;border-radius:6px;font-weight:600;}"
+              "QPushButton:hover{background:#F0B765;border-color:#F0B765;}"
+              "QPushButton:disabled{background:#21262D;color:#6E7681;border-color:#30363D;}")
         : QStringLiteral(
-              "QPushButton{background:#21262D;color:#C9D1D9;"
-              "border:1px solid #30363D;padding:8px 16px;border-radius:4px;}"
-              "QPushButton:hover{background:#30363D;}"
-              "QPushButton:disabled{color:#6E7B8B;}");
+              "QPushButton{background:#21262D;color:#E6EDF3;"
+              "border:1px solid #363B42;padding:8px 16px;border-radius:6px;}"
+              "QPushButton:hover{background:#292E36;border-color:#8B949E;}"
+              "QPushButton:disabled{color:#6E7681;}");
 }
 
 } // namespace altair::ui
