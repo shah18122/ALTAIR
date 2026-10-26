@@ -2,6 +2,8 @@
 #
 #   ALTAIR Recorder   Mon-Fri 08:50  ops\record_session.ps1 -Go   (records the session to 15:45)
 #   ALTAIR Nightly    Mon-Fri 20:00  ops\nightly.ps1 -Go          (store, snapshot, retrain, push)
+#   ALTAIR Chain Open  Mon-Fri 09:20 ops\chain_snapshot.ps1 -Go   (every NIFTY/BANKNIFTY strike, by REST)
+#   ALTAIR Chain Close Mon-Fri 15:27 ops\chain_snapshot.ps1 -Go   (the same at the close)
 #
 # Both run whether or not the ALTAIR desktop is open, start late if the PC was
 # asleep or off at their time (StartWhenAvailable), and wake the PC for it.
@@ -22,13 +24,15 @@ param(
     [switch]$Remove,
     [switch]$WhetherLoggedOn,
     [string]$RecordAt = '08:50',
-    [string]$NightlyAt = '20:00'
+    [string]$NightlyAt = '20:00',
+    [string]$ChainOpenAt = '09:20',
+    [string]$ChainCloseAt = '15:27'
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 . "$PSScriptRoot\altair_log.ps1"
-$names = @('ALTAIR Recorder', 'ALTAIR Nightly')
+$names = @('ALTAIR Recorder', 'ALTAIR Nightly', 'ALTAIR Chain Open', 'ALTAIR Chain Close')
 
 if ($Remove) {
     foreach ($n in $names) {
@@ -46,7 +50,11 @@ $tasks = @(
     @{ name = 'ALTAIR Recorder'; at = $RecordAt; script = 'record_session.ps1'; hours = 8
        what = 'Records the whole FYERS session (ticks, quotes, 5/50-level books) to data\store\tapes, whether or not ALTAIR is open.' },
     @{ name = 'ALTAIR Nightly'; at = $NightlyAt; script = 'nightly.ps1'; hours = 10
-       what = 'Stores the day, merges dataset\ and FYERS into one snapshot at one cutoff, retrains with the leak check, pushes the compact data.' }
+       what = 'Stores the day, merges dataset\ and FYERS into one snapshot at one cutoff, retrains with the leak check, pushes the compact data.' },
+    @{ name = 'ALTAIR Chain Open'; at = $ChainOpenAt; script = 'chain_snapshot.ps1'; hours = 1
+       what = 'Quotes every NIFTY and BANKNIFTY strike (weeklies and monthlies) and the futures by FYERS REST, independent of the recorder.' },
+    @{ name = 'ALTAIR Chain Close'; at = $ChainCloseAt; script = 'chain_snapshot.ps1'; hours = 1
+       what = 'Quotes every NIFTY and BANKNIFTY strike (weeklies and monthlies) and the futures by FYERS REST at the close.' }
 )
 foreach ($t in $tasks) {
     $arg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\ops\$($t.script)`" -Go"

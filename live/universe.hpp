@@ -20,7 +20,8 @@
 //   * NIFTY 50, NIFTY BANK, INDIA VIX;
 //   * the nearest two NIFTY and BANKNIFTY futures;
 //   * the nearest NIFTY and BANKNIFTY expiries, ATM +/- `strikes` (CE and PE);
-//     `expiries` of them each (default 1; the feed recorder streams 3);
+//     `expiries` of them each (default 1; the feed recorder streams 3), plus
+//     with `monthly` the nearest monthly expiry when it is not among them;
 //   * the NIFTY 50 stocks.
 // Depth (5 levels) for the futures, the options within +/- `depth_strikes`
 // and the stocks; indices have no book.
@@ -221,6 +222,7 @@ struct LiveUniverseOptions {
     int depth_strikes = 5;              ///< each side of ATM with the 5-level book
     int futures = 2;                    ///< nearest N futures per index
     int expiries = 1;                   ///< nearest N option expiries per index (the recorder asks for more)
+    bool monthly = false;               ///< also the nearest MONTHLY expiry (the last of its month), if not among them
     bool stocks = true;
     bool stock_futures = true;          ///< the stocks' near and next futures (stat-arb trades and rolls them)
     bool bse_twins = true;              ///< the same stocks on BSE: the cross-exchange arbitrage's other leg
@@ -245,11 +247,22 @@ inline void add_chains(const std::vector<LiveKiteRow>& rows, const std::string& 
     if (!(spot > 0.0)) { rep.notes.push_back(under + ": no spot to centre the chain on"); return; }
     // The nearest --expiries of them (NIFTY: the weeklies and the monthly among
     // them; BANKNIFTY: monthlies only), each centred on the same spot.
-    int n = 0;
+    std::set<std::int64_t> chosen;
     for (const std::int64_t e : expiries) {
-        if (n++ >= std::max(1, o.expiries)) break;
-        add_chain(rows, under, spot, o, group, rep, e);
+        if (static_cast<int>(chosen.size()) >= std::max(1, o.expiries)) break;
+        chosen.insert(e);
     }
+    // --monthly: the nearest expiry that is the last of its calendar month, so
+    // NIFTY's monthly is streamed even when three weeklies come before it.
+    if (o.monthly)
+        for (auto it = expiries.begin(); it != expiries.end(); ++it) {
+            const auto next = std::next(it);
+            if (next == expiries.end() || day_text(*next).substr(0, 7) != day_text(*it).substr(0, 7)) {
+                chosen.insert(*it);
+                break;
+            }
+        }
+    for (const std::int64_t e : chosen) add_chain(rows, under, spot, o, group, rep, e);
 }
 
 inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& under, double spot,

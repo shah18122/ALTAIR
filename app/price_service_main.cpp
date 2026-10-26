@@ -86,14 +86,16 @@ void usage(const char* exe) {
         "  %s --go [--port N] [--seconds N] [--tokens a,b,c]\n"
         "  %s --fyers [--go] [--until HH:MM] [--strikes N] [--depth-strikes N]\n"
         "      [--no-stocks] [--atm-nifty X] [--atm-banknifty X] [--depth50 N|off]\n"
-        "      [--expiries N]\n"
+        "      [--expiries N] [--monthly]\n"
         "  %s --kite [--go] [same options as --fyers]\n"
         "  %s --live [--go] [same options as --fyers]\n"
         "  %s --sim [--date YYYY-MM-DD] [--speed N] [--from HH:MM] [--seed N]\n\n"
         "  --fyers             the LIVE TERMINAL feed from FYERS: NIFTY, BANKNIFTY,\n"
         "                      INDIA VIX, the near futures, both option chains\n"
         "                      (ATM +/- --strikes, default 20; the nearest --expiries\n"
-        "                      of each, default 1, up to 4) and the NIFTY 50, with\n"
+        "                      of each, default 1, up to 4; --monthly adds the\n"
+        "                      nearest monthly when it is not among them) and the\n"
+        "                      NIFTY 50, with\n"
         "                      quotes and depth: the FYERS 50-level book for the\n"
         "                      scrip on screen (data/live/depth_request.csv, written\n"
         "                      by the desktop), else the near futures: --depth50 N\n"
@@ -1142,6 +1144,7 @@ int main(int argc, char** argv) {
     std::vector<std::uint32_t> sub_tokens{256265u, 260105u, 264969u};
     bool fyers = false, sim = false, kite = false, live_auto = false, stocks = true;
     int until_min = 15 * 60 + 35, from_min = 9 * 60 + 15, strikes = 20, depth_strikes = 5, expiries = 1;
+    bool monthly = false;
     double speed = 1.0, atm_nifty = 0.0, atm_banknifty = 0.0;
     std::uint64_t seed = 20261001;
     std::string sim_date;   // YYYY-MM-DD: simulate that day instead of today
@@ -1197,6 +1200,8 @@ int main(int argc, char** argv) {
             strikes = std::atoi(argv[++i]);
         } else if (a == "--depth-strikes" && i + 1 < argc) {
             depth_strikes = std::atoi(argv[++i]);
+        } else if (a == "--monthly") {
+            monthly = true;
         } else if (a == "--expiries" && i + 1 < argc) {
             expiries = std::atoi(argv[++i]);
         } else if (a == "--live-dir" && i + 1 < argc) {
@@ -1289,6 +1294,7 @@ int main(int argc, char** argv) {
         uo.strikes = strikes;
         uo.depth_strikes = depth_strikes;
         uo.expiries = expiries;
+        uo.monthly = monthly;
         uo.stocks = stocks;
         auto uni = altair::live::build_universe(
             rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);

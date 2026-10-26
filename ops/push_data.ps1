@@ -19,6 +19,7 @@
 #   vol\<yyyy>\<day>.csv.gz         each minute: spot, India VIX, forward, ATM IV and the chain's
 #                                   VIX per expiry, realised vol (data\store\ticks\<day>\vol_1m.csv)
 #   chain_iv\<yyyy>\<day>.csv.gz    each minute, every option: price, IV, delta, vega, OI
+#   chain_snap\<day>\<HHMM>.csv.gz  the twice-daily REST snapshot of every strike (ops\chain_snapshot.ps1)
 #   reports\<day>\                  decode report, snapshot manifest + conflicts (gz), run.json,
 #                                   forecast_curriculum.txt, leak_check.csv
 #   logs\altair-<day>.log           the activity log (credentials already masked)
@@ -79,6 +80,9 @@ $s = 'data/store'
 if (Test-Path "$s/ticks/$Day/bars_1m.csv") { Copy-Gz "$s/ticks/$Day/bars_1m.csv" "$repo/bars/$yyyy/$Day.csv.gz"; $copied.Add("bars/$yyyy/$Day.csv.gz") }
 if (Test-Path "$s/ticks/$Day/vol_1m.csv") { Copy-Gz "$s/ticks/$Day/vol_1m.csv" "$repo/vol/$yyyy/$Day.csv.gz"; $copied.Add("vol/$yyyy/$Day.csv.gz") }
 if (Test-Path "$s/ticks/$Day/chain_iv_1m.csv") { Copy-Gz "$s/ticks/$Day/chain_iv_1m.csv" "$repo/chain_iv/$yyyy/$Day.csv.gz"; $copied.Add("chain_iv/$yyyy/$Day.csv.gz") }
+Get-ChildItem "$s/chain_snap/$Day" -File -Filter '*.csv' -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Gz $_.FullName "$repo/chain_snap/$Day/$($_.Name).gz"; $copied.Add("chain_snap/$Day/$($_.Name).gz")
+}
 if (Test-Path "$s/ticks/$Day/_decode.json") { Copy-Plain "$s/ticks/$Day/_decode.json" "$repo/reports/$Day/decode.json"; $copied.Add("reports/$Day/decode.json") }
 Get-ChildItem "$s/fyers" -Recurse -File -Filter "$Day.csv" -ErrorAction SilentlyContinue | ForEach-Object {
     $rel = $_.FullName.Substring((Resolve-Path "$s/fyers").Path.Length + 1)

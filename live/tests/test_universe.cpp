@@ -93,6 +93,12 @@ int main() {
         check(find(u2, "NIFTY26OCT24000CE") != nullptr && find(u2, "NIFTY26O0624000CE") != nullptr,
               "--expiries 2: the weekly and the next expiry, both centred on the same ATM");
         check(u2.instruments.size() > u.instruments.size(), "--expiries 2 streams more contracts than 1");
+        LiveUniverseOptions o3 = o;
+        o3.monthly = true;
+        const auto u3 = build_universe(rows, stocks, o3);
+        check(find(u3, "NIFTY26O0624000CE") != nullptr && find(u3, "NIFTY26OCT24000CE") != nullptr
+                  && u3.instruments.size() == u2.instruments.size(),
+              "--monthly adds the month's last expiry to the nearest weekly");
     }
     const auto* atm = find(u, "NIFTY26O0624000CE");
     check(atm && atm->fyers == "NSE:NIFTY26O0624000CE" && atm->kind == LiveKind::Call && atm->strike == 24000.0,

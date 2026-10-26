@@ -8,7 +8,8 @@
 #      already runs one, that one is recorded. Otherwise it starts
 #      altair_price_service --live with the RECORDER'S universe: NIFTY and
 #      BANKNIFTY spot, INDIA VIX, the near futures, the nearest -Expiries
-#      option expiries ATM +/- -Strikes (NIFTY's weeklies among them), the
+#      option expiries ATM +/- -Strikes (NIFTY's weeklies among them) plus the
+#      nearest monthly if it is further out, the
 #      NIFTY 50 and their futures, with the 5-level book on -DepthStrikes each
 #      side and FYERS's 50-level book on the slots the plan allows;
 #   3. if the feed stops (no FYERS login yet, a drop), tries again every
@@ -48,7 +49,7 @@ foreach ($exe in @($recorder, $service)) {
 }
 
 $feedArgs = @('--live', '--go', '--until', $Until, '--strikes', "$Strikes", '--depth-strikes', "$DepthStrikes",
-              '--expiries', "$Expiries", '--depth50', $Depth50)
+              '--expiries', "$Expiries", '--monthly', '--depth50', $Depth50)
 $recArgs = @('--until', $Until, '--go')
 if (-not $Go) {
     Write-Host "DRY RUN. With -Go this runs:"
