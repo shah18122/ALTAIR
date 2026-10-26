@@ -198,6 +198,49 @@ struct LiveKiteRow {
     return rows;
 }
 
+/// Add to `rows` the index futures and options of `unders` from FYERS's
+/// public F&O master (public.fyers.in/sym_details/NSE_FO.csv: no header;
+/// 0 fytoken, 3 lot, 4 tick, 8 expiry (epoch, the 15:30 close), 9 ticker,
+/// 12 exchange token, 13 underlying, 15 strike, 16 CE/PE/XX), as Kite rows:
+/// a Kite master on disk goes stale (weeklies listed after it was written
+/// are missing), FYERS's is current every day. A contract already in `rows`
+/// (same trading symbol) is left as it is. The token is Kite's own formula,
+/// exchange token * 256 + 2 (NFO). Returns how many rows were added.
+inline std::size_t add_fyers_fo(std::vector<LiveKiteRow>& rows, std::istream& in, const std::set<std::string>& unders) {
+    std::set<std::string> have;
+    for (const auto& r : rows) have.insert(r.symbol);
+    std::size_t added = 0;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const auto f = split_csv(line);
+        if (f.size() < 17 || !unders.contains(f[13]) || f[9].rfind("NSE:", 0) != 0) continue;
+        const std::string sym = f[9].substr(4);
+        if (have.contains(sym)) continue;
+        const unsigned long long xtok = std::strtoull(f[12].c_str(), nullptr, 10);
+        const long long expiry = std::atoll(f[8].c_str());
+        if (xtok == 0 || xtok > 0xFFFFFFull || expiry <= 0) continue;
+        LiveKiteRow r;
+        r.exchange_token = static_cast<std::uint32_t>(xtok);
+        r.token = static_cast<std::uint32_t>(xtok * 256 + 2);
+        r.symbol = sym;
+        r.name = f[13];
+        const bool fut = f[16] == "XX";
+        if (!fut && f[16] != "CE" && f[16] != "PE") continue;
+        r.type = fut ? "FUT" : f[16];
+        r.segment = fut ? "NFO-FUT" : "NFO-OPT";
+        r.exchange = "NFO";
+        r.expiry_day = (expiry + 19'800) / 86'400;   // the IST date of the expiry
+        r.strike = fut ? 0.0 : std::atof(f[15].c_str());
+        r.tick = std::atof(f[4].c_str());
+        r.lot = std::atoll(f[3].c_str());
+        have.insert(sym);
+        rows.push_back(std::move(r));
+        ++added;
+    }
+    return added;
+}
+
 /// One stock of config/universe_nifty50.csv: symbol and FYERS ticker.
 struct LiveStock { std::string symbol, fyers, sector; };
 

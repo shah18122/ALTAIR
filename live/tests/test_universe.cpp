@@ -100,6 +100,30 @@ int main() {
                   && u3.instruments.size() == u2.instruments.size(),
               "--monthly adds the month's last expiry to the nearest weekly");
     }
+    {
+        // FYERS's F&O master adds the weeklies a stale Kite master lacks.
+        const long long exp = 20'739LL * 86'400 + 36'000;   // 2026-10-13 15:30 IST
+        std::ostringstream fo;
+        for (const char* side : {"CE", "PE"})
+            fo << "1011261013" << side[0] << ",NIFTY 13 Oct 26 24000 " << side << ",14,65,0.05,,0915-1530:,2026-10-01," << exp
+               << ",NSE:NIFTY26O1324000" << side << ",10,11," << (side[0] == 'C' ? 41001 : 41002)
+               << ",NIFTY,26000,24000.0," << side << ",101000000026000,None,0,0.0\r\n";
+        fo << "x,NIFTY 27 Oct 26 24000 CE,14,65,0.05,,,,1793095800,NSE:NIFTY26OCT24000CE,10,11,99,NIFTY,26000,24000.0,CE,,None,0,0.0\n";
+        fo << "x,SBIN FUT,11,750,0.05,,,,1793095800,NSE:SBIN26OCTFUT,10,11,98,SBIN,1,-1.0,XX,,None,0,0.0\n";
+        auto rows2 = rows;
+        std::istringstream fin(fo.str());
+        const std::size_t added = add_fyers_fo(rows2, fin, {"NIFTY", "BANKNIFTY"});
+        check(added == 2, "the FYERS F&O master adds the missing weekly's call and put, not a contract already listed or a stock");
+        const auto& w = rows2.back();
+        check(w.symbol == "NIFTY26O1324000PE" && w.token == 41002u * 256 + 2 && w.segment == "NFO-OPT" && w.type == "PE"
+                  && w.expiry_day == parse_day("2026-10-13") && w.strike == 24000.0 && w.lot == 65,
+              "an added weekly is a Kite row: Kite's token formula, the IST expiry date");
+        LiveUniverseOptions o4 = o;
+        o4.today = parse_day("2026-10-07");
+        const auto u4 = build_universe(rows2, stocks, o4);
+        check(find(u4, "NIFTY26O1324000CE") != nullptr && find(u4, "NIFTY26O1324000CE")->fyers == "NSE:NIFTY26O1324000CE",
+              "after the Kite master's last weekly, the chain is the FYERS-listed weekly");
+    }
     const auto* atm = find(u, "NIFTY26O0624000CE");
     check(atm && atm->fyers == "NSE:NIFTY26O0624000CE" && atm->kind == LiveKind::Call && atm->strike == 24000.0,
           "a weekly option keeps its symbol, prefixed NSE:");
