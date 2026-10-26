@@ -14,9 +14,10 @@
 #               the day and any of the last -BackfillDays it is missing, into
 #               data\store\fyers\ (laid out like dataset\). Needs today's FYERS login;
 #               without it this step is skipped and logged.
-#   4. SNAPSHOT altair_store snapshot --cutoff <day>: dataset\ (your files), then
-#               FYERS (wins beyond 1 bp, every such bar listed), then the tape bars
-#               (fill gaps only); bhavcopy and recorded IV cut at the same day.
+#   4. SNAPSHOT altair_store snapshot --cutoff <day>: FYERS candles, then the tape
+#               bars (fill gaps only); recorded IV cut at the same day. FYERS data
+#               only by default: -WithDataset puts dataset\ under FYERS (FYERS wins
+#               beyond 1 bp, every such bar listed); -WithBhavcopy adds the NSE bhavcopy.
 #               data\store\snapshots\<day>\ and its _snapshot.json (id, rule, inputs).
 #   5. RETRAIN  altair_forecast_curriculum on that snapshot only, with --leak-check,
 #               into data\store\runs\<day>\. Promoted to data\store\runs\LATEST.txt
@@ -37,6 +38,8 @@ param(
     [switch]$NoRetrain,
     [int]$BackfillDays = 7,
     [int]$KeepSnapshots = 10,
+    [switch]$WithDataset,
+    [switch]$WithBhavcopy,
     [string]$Bin = 'build\net\app'
 )
 
@@ -87,27 +90,9 @@ if (Test-Path $tapes) {
 }
 
 # ---- 3. FYERS candles ------------------------------------------------------------
-function Get-NearFuture([string]$Under) {
-    $u = 'data\live\universe.csv'
-    if (Test-Path $u) {
-        $f = Import-Csv $u | Where-Object { $_.kind -eq 'future' -and $_.underlying -eq $Under -and $_.fyers -like 'NSE:*' -and $_.expiry -ge $Day } |
-            Sort-Object expiry | Select-Object -First 1
-        if ($f) { return $f.fyers }
-    }
-    # The monthly expiry is the last Tuesday; the day after it, the next month is near.
-    $last = (Get-Date -Year $date.Year -Month $date.Month -Day 1).AddMonths(1).AddDays(-1)
-    while ($last.DayOfWeek -ne 'Tuesday') { $last = $last.AddDays(-1) }
-    $m = if ($date.Date -gt $last.Date) { $date.AddMonths(1) } else { $date }
-    return "NSE:$Under" + $m.ToString('yy') + $m.ToString('MMM', [Globalization.CultureInfo]::InvariantCulture).ToUpper() + 'FUT'
-}
-$series = @(
-    @{ key = 'spot\nifty'; sym = 'NSE:NIFTY50-INDEX'; cont = $false },
-    @{ key = 'spot\banknifty'; sym = 'NSE:NIFTYBANK-INDEX'; cont = $false },
-    @{ key = 'spot\indiavix'; sym = 'NSE:INDIAVIX-INDEX'; cont = $false },
-    @{ key = 'fut\nifty'; sym = (Get-NearFuture 'NIFTY'); cont = $true },
-    @{ key = 'fut\banknifty'; sym = (Get-NearFuture 'BANKNIFTY'); cont = $true }
-)
-$tfs = @(@{ res = '1'; dir = '1m' }, @{ res = '5'; dir = '5m' }, @{ res = '15'; dir = '15m' }, @{ res = '60'; dir = '60m' }, @{ res = 'D'; dir = '1d' })
+. "$PSScriptRoot\nightly_series.ps1"
+$series = Get-AltairSeries $date
+$tfs = Get-AltairTimeframes
 $fetched = 0; $failed = 0; $refused = $false
 for ($k = $BackfillDays; $k -ge 0 -and -not $refused; $k--) {
     $d = $date.AddDays(-$k)
@@ -132,7 +117,7 @@ for ($k = $BackfillDays; $k -ge 0 -and -not $refused; $k--) {
     }
 }
 if ($refused) {
-    Write-AltairLog nightly WARN "FYERS candles skipped: no valid FYERS session today (log in on Brokers). The snapshot uses dataset\ and the tapes."
+    Write-AltairLog nightly WARN "FYERS candles skipped: no valid FYERS session today (log in on Brokers). The snapshot uses the FYERS candles already on disk and the tapes."
 } else {
     Write-AltairLog nightly $(if ($failed -eq 0) { 'INFO' } else { 'WARN' }) "FYERS candles: $fetched file(s) fetched, $failed failed or empty (holidays answer empty)"
 }
@@ -143,9 +128,13 @@ if (Test-Path $snap) {
     Write-AltairLog nightly INFO "snapshot $Day already exists: kept (snapshots are never rebuilt over)"
     $status.snapshot = 0
 } else {
-    $status.snapshot = Invoke-Step snapshot $exe.store @('snapshot', '--cutoff', $Day,
-        '--source', 'dataset=dataset', '--source', "fyers=$store\fyers", '--fill', "tape=$store\tape_bars",
-        '--bhavcopy', 'data\bhavcopy', '--iv', 'data\live\iv')
+    # FYERS data only, as Smit asked: dataset\ (other vendors) and the NSE
+    # bhavcopy join only with -WithDataset / -WithBhavcopy.
+    $a = @('snapshot', '--cutoff', $Day)
+    if ($WithDataset) { $a += @('--source', 'dataset=dataset') }
+    $a += @('--source', "fyers=$store\fyers", '--fill', "tape=$store\tape_bars", '--iv', 'data\live\iv')
+    if ($WithBhavcopy) { $a += @('--bhavcopy', 'data\bhavcopy') }
+    $status.snapshot = Invoke-Step snapshot $exe.store $a
 }
 
 # ---- 5. retrain ------------------------------------------------------------------
@@ -157,8 +146,8 @@ if ($NoRetrain) {
     $snapId = (Get-Content (Join-Path $snap '_snapshot.json') -Raw | ConvertFrom-Json).id
     $run = Join-Path $store "runs\$Day"
     New-Item -ItemType Directory -Force -Path $run | Out-Null
-    $a = @('--dataset', $snap, '--out', $run, '--bhavcopy', (Join-Path $snap '_inputs\bhavcopy'),
-           '--recorded-iv', (Join-Path $snap '_inputs\iv'), '--leak-check')
+    $a = @('--dataset', $snap, '--out', $run, '--recorded-iv', (Join-Path $snap '_inputs\iv'), '--leak-check')
+    if ($WithBhavcopy) { $a += @('--bhavcopy', (Join-Path $snap '_inputs\bhavcopy')) }
     if ($Only -ne '') { $a += @('--only', $Only) }
     Write-AltairLog nightly INFO "retrain on snapshot $snapId (cutoff $Day): altair_forecast_curriculum $($a -join ' ')"
     $t0 = Get-Date

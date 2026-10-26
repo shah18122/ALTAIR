@@ -31,8 +31,9 @@ git clone https://github.com/shah18122/altair-data S:\altair-data
 # the two scheduled tasks:
 powershell -ExecutionPolicy Bypass -File ops\install_tasks.ps1          # dry run: shows what it registers
 powershell -ExecutionPolicy Bypass -File ops\install_tasks.ps1 -Go
-# first night only: fill the gap since dataset\ ends (2026-09-25)
-powershell -ExecutionPolicy Bypass -File ops\nightly.ps1 -Go -BackfillDays 45
+# first night only: all the FYERS price history there is (spot 1m from 2018, futures from 2019)
+powershell -ExecutionPolicy Bypass -File ops\fetch_fyers_history.ps1 -Go
+powershell -ExecutionPolicy Bypass -File ops\nightly.ps1 -Go
 ```
 
 **Every morning:** log in to FYERS once (Brokers page, or
@@ -102,8 +103,10 @@ Every bar in a snapshot is `time,open,high,low,close,volume,oi,source`:
 - A stamp in another offset, or with seconds, is converted and floored first.
 - An absent volume or OI is left empty. It's never written as 0.
 
-Sources go lowest priority first: `dataset` (your files), then `fyers`
-(official candles). `tape` (bars built from the recording) only fills gaps.
+By default the snapshot is FYERS data only: `fyers` (official candles), with
+`tape` (bars built from the recording) filling gaps. `nightly.ps1 -WithDataset`
+adds your `dataset\` files under FYERS, and `-WithBhavcopy` the NSE bhavcopy.
+With more than one source they go lowest priority first: `dataset`, then `fyers`.
 For the same bar time:
 
 | Case | Result |
