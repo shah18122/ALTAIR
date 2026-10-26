@@ -7,6 +7,7 @@
 #include <random>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -265,6 +266,43 @@ void test_hedge_fund_rules() {
     check(!vrp_run(market(0.2, 0.1, 0.1, 1, 100), bad).has_value(), "a profit target of the whole credit: refused");
 }
 
+void test_model_limits() {
+    // A model line on vega: one lot's vega fits, three do not, so each trade is cut to what fits.
+    auto p = policy();
+    p.lots = 3;
+    const auto base = vrp_run(market(0.20, 0.10, 0.10, 31), p);
+    if (!base || base->trades.empty()) { check(false, "the model-limit market trades"); return; }
+    const auto& t0 = base->trades.front();
+    const double T0 = static_cast<double>(t0.expiry - 20'000) / 365.0;   // the first entry is at day 20,000
+    const double lot_vega = vrp_detail::straddle_vega_point(t0.fwd_in, t0.strike, T0, t0.iv_in, kRate) * p.lot_size;
+    p.max_vega = 1.5 * lot_vega;
+    const auto capped = vrp_run(market(0.20, 0.10, 0.10, 31), p);
+    check(capped && !capped->trades.empty() && capped->trades.front().qty == p.lot_size,
+          "max_vega of 1.5 lots' vega: three lots asked, one sold");
+    p.max_vega = 0.5 * lot_vega;
+    const auto none = vrp_run(market(0.20, 0.10, 0.10, 31), p);
+    bool reason = false;
+    for (const auto& s : none ? none->signals : std::vector<VrpSignal>{}) { reason = reason || (s.blocked != nullptr); }
+    check(none && none->trades.empty() && reason, "one lot already over the vega line: nothing sold, the reason recorded");
+
+    // A stress ceiling on realised vol: a 60 % market under a 30 % ceiling is never sold.
+    auto q = policy();
+    q.rv_ceiling = 0.30;
+    const auto calm = vrp_run(market(0.80, 0.60, 0.10, 32), q);
+    check(calm && calm->trades.empty(), "realised vol above the stress ceiling: no entries");
+
+    // A triggered revision: a losing model (calm forecast, wild market) stops after the drawdown limit.
+    auto d = policy();
+    const auto free_run = vrp_run(market(0.12, 0.25, 0.05, 13), d);
+    d.max_drawdown = 1.0;   // one rupee: the first losing trade trips it
+    const auto halted = vrp_run(market(0.12, 0.25, 0.05, 13), d);
+    check(free_run && halted && halted->trades.size() < free_run->trades.size() && !halted->trades.empty(),
+          "closed trades past the drawdown limit: no new entries until re-validated");
+    auto bad = policy();
+    bad.max_vega = -1.0;
+    check(!vrp_run(market(0.2, 0.1, 0.1, 1, 100), bad).has_value(), "a negative model limit: refused");
+}
+
 } // namespace
 
 int main() {
@@ -277,6 +315,7 @@ int main() {
     test_unquoted_strike_still_closes();
     test_gamma_desk_numbers();
     test_hedge_fund_rules();
+    test_model_limits();
     std::printf("Volatility premium: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

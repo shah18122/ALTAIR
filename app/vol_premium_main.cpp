@@ -25,6 +25,8 @@
 //   har-2-unhedged    no futures hedge
 //   har-2-vixveto skip entries the INDIA VIX direction forecast calls UP
 //                 (--vix-log: the forecast curriculum's per-forecast log)
+//   har-0-limits  har-0 under the model limits (strategies/vol_premium.hpp):
+//                 --rv-ceiling, --max-drawdown, --max-vega
 //
 // Expenses come from config/charges.toml (app/demo_costs.hpp) and are refused
 // while that schedule is unverified, unless --unverified-costs.
@@ -67,7 +69,8 @@ void usage(const char* exe) {
         "    %s [--dataset DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
         "       [--source synthetic|bhavcopy] [--bhavcopy-dir DIR] [--min-sessions N] [--exit-sessions N]\n"
         "       [--slippage-pts P] [--rate R] [--vix-log FILE] [--vix-model NAME] [--events FILE]\n"
-        "       [--monthly-halt RS] [--unverified-costs]\n\n"
+        "       [--monthly-halt RS] [--unverified-costs]\n"
+        "       [--rv-ceiling V] [--max-drawdown RS] [--max-vega RS]\n\n"
         "    --source S            synthetic (default; VIX-priced) or bhavcopy (NSE closes)\n"
         "    --bhavcopy-dir DIR    default data/bhavcopy (ops/fetch_bhavcopy.ps1 fills it)\n"
         "    --min-sessions N      sessions to expiry at entry (default 10)\n"
@@ -79,7 +82,10 @@ void usage(const char* exe) {
         "                          which skips a straddle whose life spans one\n"
         "    --monthly-halt RS     adds har-0-halt: no new entries for the rest of a month once closed trades\n"
         "                          lose RS rupees in it (Chen & Sebastian's monthly loss rule)\n"
-        "    --unverified-costs    price expenses from an UNVERIFIED config/charges.toml, stamped\n", exe);
+        "    --unverified-costs    price expenses from an UNVERIFIED config/charges.toml, stamped\n"
+        "    --rv-ceiling V        har-0-limits: no entry above this trailing 20-session realised vol (default 0 = off)\n"
+        "    --max-drawdown RS     har-0-limits: no entries once closed trades draw down this many rupees (default 100000; 0 = off)\n"
+        "    --max-vega RS         har-0-limits: rupees per vol point the straddle may carry (default 0 = off)\n", exe);
 }
 
 bool parse_double(std::string_view s, double& out) {
@@ -148,6 +154,7 @@ int main(int argc, char** argv) {
     fs::path root = "dataset", out = "data/verified", bhav_dir = "data/bhavcopy";
     std::string which = "both", source = "synthetic", vix_log, vix_model = "Hedge", events_file;
     double rate = 0.065, slip = 1.0, min_s = 10, exit_s = 1, month_halt = 0.0;
+    double rv_ceiling = 0.0, max_dd = 100'000.0, max_vega = 0.0;
     bool unverified = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
@@ -166,6 +173,9 @@ int main(int argc, char** argv) {
         if (a == "--slippage-pts" && has) { if (!parse_double(argv[++i], slip) || slip < 0.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--min-sessions" && has) { if (!parse_double(argv[++i], min_s) || min_s < 2 || min_s > 60) { usage(argv[0]); return 2; } continue; }
         if (a == "--exit-sessions" && has) { if (!parse_double(argv[++i], exit_s) || exit_s < 0 || exit_s > 20) { usage(argv[0]); return 2; } continue; }
+        if (a == "--rv-ceiling" && has) { if (!parse_double(argv[++i], rv_ceiling) || rv_ceiling < 0.0 || rv_ceiling > 5.0) { usage(argv[0]); return 2; } continue; }
+        if (a == "--max-drawdown" && has) { if (!parse_double(argv[++i], max_dd) || max_dd < 0.0) { usage(argv[0]); return 2; } continue; }
+        if (a == "--max-vega" && has) { if (!parse_double(argv[++i], max_vega) || max_vega < 0.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--unverified-costs") { unverified = true; continue; }
         usage(argv[0]);
         return 2;
@@ -312,6 +322,13 @@ int main(int argc, char** argv) {
     }
     if (!events.empty()) {
         variants.push_back({"har-0-noevents", "har-0, skipping a straddle whose life spans scheduled news", base(0.0), false, true});
+    }
+    {
+        auto p = base(0.0);
+        p.rv_ceiling = rv_ceiling;
+        p.max_drawdown = max_dd;
+        p.max_vega = max_vega;
+        variants.push_back({"har-0-limits", "har-0 under the model limits: realised-vol ceiling, drawdown halt, vega line", p, false});
     }
     if (!vix_log.empty()) {
         variants.push_back({"har-2-vixveto", "har-2, skipping days the " + vix_model + " model calls INDIA VIX UP", base(0.02), true});
