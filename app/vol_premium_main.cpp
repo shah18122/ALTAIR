@@ -282,7 +282,7 @@ int main(int argc, char** argv) {
     std::set<std::string> opened;
     std::ofstream signals(dir / "signals.csv", std::ios::trunc);
     signals << "instrument,date,expiry,sessions,implied_vol,har_vol,spread,realised_vol_after,cost_vols,breakeven_pts,"
-               "implied_daily_move\n";
+               "implied_daily_move,p_loss_expiry\n";
     std::ofstream eval(dir / "forecast_eval.csv", std::ios::trunc);
     eval << "instrument,horizon,days,har_rmse_vol_pts,trailing_rmse_vol_pts,har_bias_vol_pts,implied_minus_realised_vol_pts,"
             "share_implied_above_realised\n";
@@ -492,7 +492,8 @@ int main(int argc, char** argv) {
                             << fixed(100 * s.iv, 2) << ',' << fixed(100 * s.rv_fcst, 2) << ',' << fixed(100 * (s.iv - s.rv_fcst), 2)
                             << ',' << (n == s.sessions ? fixed(100 * std::sqrt(fut / static_cast<double>(n) * 252.0), 2) : std::string{})
                             << ',' << fixed(100 * s.cost_vols, 2) << ',' << fixed(s.breakeven_move, 1) << ','
-                            << fixed(s.daily_move, 1) << '\n';
+                            << fixed(s.daily_move, 1) << ','
+                            << (std::isfinite(s.p_loss_expiry) ? fixed(s.p_loss_expiry, 3) : std::string{}) << '\n';
                 }
                 signals_written = true;
             }
@@ -527,7 +528,7 @@ int main(int argc, char** argv) {
                 o << "instrument,variant,entry_date,exit_date,expiry,strike,forward_in,implied_vol,har_vol,realised_vol,"
                      "call_in,put_in,credit,call_out,put_out,debit,qty,option_pnl,hedge_orders,hedge_pnl,gross_pnl,expenses,"
                      "net_pnl,exit_reason,source,costs,brokerage,stt,exchange_txn,sebi,stamp,ipft,gst,locked_vol,"
-                     "breakeven_pts,gamma_theta,cost_vols\n";
+                     "breakeven_pts,gamma_theta,cost_vols,p_loss_in\n";
             }
             for (const auto& [name, pr] : rows) {
                 if (name != in.name) { continue; }
@@ -545,7 +546,7 @@ int main(int argc, char** argv) {
                            : std::string{",,,,,,"})
                   << ',' << (std::isfinite(t.locked_vol) ? fixed(100 * t.locked_vol, 2) : std::string{}) << ','
                   << fixed(t.breakeven_in, 1) << ',' << fixed(t.gamma_theta_in, 6) << ',' << fixed(100 * t.cost_vols, 2)
-                  << '\n';
+                  << ',' << (std::isfinite(t.p_loss_in) ? fixed(t.p_loss_in, 3) : std::string{}) << '\n';
             }
         }
     }

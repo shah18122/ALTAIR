@@ -172,6 +172,8 @@ void test_gamma_desk_numbers() {
           "locked-in vol is IV sold minus P&L over vega, below the sale when the trade won");
     const auto& s = every->signals.front();
     check(s.daily_move > 0.0 && s.breakeven_move > 0.0, "each signal carries the implied daily move and breakeven");
+    check(s.p_loss_expiry > 0.0 && s.p_loss_expiry < 1.0 && t.p_loss_in > 0.0 && t.p_loss_in < 1.0,
+          "signal and trade carry the model's probability of loss at expiry");
 
     // Slippage so large it eats the whole 10-point edge: with costs counted in vols, nothing is sold.
     auto cp = policy();

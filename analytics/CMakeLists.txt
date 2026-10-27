@@ -115,6 +115,12 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_gamma_trading_test PRIVATE altair_analytics altair_flags)
     add_test(NAME analytics_gamma_trading COMMAND altair_gamma_trading_test)
 
+    # Nations' option math: asymmetric spot-vol slope, probability of loss at
+    # expiry, skew premium in rupees, compounded yield.
+    add_executable(altair_option_math_test tests/test_option_math.cpp)
+    target_link_libraries(altair_option_math_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME analytics_option_math COMMAND altair_option_math_test)
+
     # P14-04/05. Kalman filter, Joseph form, validated on the NIFTY
     # spot-versus-futures pair where the hedge ratio is known to be 1.
     add_executable(altair_kalman_test tests/test_kalman.cpp)

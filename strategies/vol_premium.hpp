@@ -36,6 +36,7 @@
 #pragma once
 
 #include <analytics/gamma_trading.hpp>
+#include <analytics/option_math.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/iv.hpp>
 
@@ -110,6 +111,7 @@ struct VrpTrade {
     double gamma_theta_in = 0.0;   ///< |gamma| per rupee of daily theta at entry (lower suits a seller)
     double cost_vols = 0.0;        ///< round-trip slippage in vol points (fraction, like iv_in)
     double locked_vol = std::numeric_limits<double>::quiet_NaN();   ///< iv_in - gross / vega: the vol actually earned
+    double p_loss_in = std::numeric_limits<double>::quiet_NaN();    ///< model P(loss) at expiry if left unhedged
     std::vector<VrpFill> fills;
     const char* exit_reason = "expiry";
 };
@@ -124,6 +126,7 @@ struct VrpSignal {
     double cost_vols = 0.0;        ///< round-trip slippage in vol points (fraction)
     double breakeven_move = 0.0;   ///< gamma breakeven move, index points per day
     double daily_move = 0.0;       ///< the move the IV prices in for one session, index points
+    double p_loss_expiry = std::numeric_limits<double>::quiet_NaN();   ///< model P(fwd ends outside strike +/- credit)
 };
 
 struct VrpResult {
@@ -342,6 +345,7 @@ struct StraddleRisk {
         }
         s.daily_move = implied_daily_move(m.spot[i], iv);
         const double credit = q.call + q.put - 2.0 * p.slippage_pts;
+        s.p_loss_expiry = straddle_loss_probability(fwd, k, T, iv, credit);
         const double need = p.entry_spread + (p.cost_in_vols ? (risk_ok ? s.cost_vols : std::numeric_limits<double>::infinity()) : 0.0);
         if (iv - rvf >= need && credit > 0.0) {
             if (m.veto && m.veto(i)) {
@@ -359,6 +363,7 @@ struct StraddleRisk {
                 t.iv_in = iv;
                 t.rv_fcst = rvf;
                 t.qty = qty;
+                t.p_loss_in = s.p_loss_expiry;
                 if (risk_ok) {
                     t.vega_pt_in = risk.vega_pt;
                     t.breakeven_in = s.breakeven_move;
