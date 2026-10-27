@@ -421,6 +421,20 @@ if(TARGET altair_charges_toml)
     endif()
 endif()
 
+# Avellaneda-Stoikov quoting on FYERS one-minute futures bars, paper only, and
+# the HMM stress regime, walk-forward. Neither reads config/charges.toml, so
+# both build without toml++.
+add_executable(altair_as_mm as_mm_main.cpp)
+target_link_libraries(altair_as_mm PRIVATE altair_models altair_strategies altair_flags)
+target_include_directories(altair_as_mm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+add_executable(altair_regimes regimes_main.cpp)
+target_link_libraries(altair_regimes PRIVATE altair_models altair_flags)
+target_include_directories(altair_regimes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(ALTAIR_BUILD_TESTS)
+    add_test(NAME as_mm_help COMMAND altair_as_mm --help)
+    add_test(NAME regimes_help COMMAND altair_regimes --help)
+endif()
+
 if(TARGET altair_charges_toml)
     add_executable(altair_band_option_demo band_option_demo_main.cpp)
     target_link_libraries(altair_band_option_demo PRIVATE altair_models altair_strategies altair_charges_toml altair_flags)
