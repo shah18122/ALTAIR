@@ -26,6 +26,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_basis_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_basis COMMAND altair_basis_test)
 
+    add_executable(altair_meta_book_test tests/test_meta_book.cpp)
+    target_link_libraries(altair_meta_book_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_meta_book COMMAND altair_meta_book_test)
+
     add_executable(altair_parity_test tests/test_parity.cpp)
     target_link_libraries(altair_parity_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_parity COMMAND altair_parity_test)

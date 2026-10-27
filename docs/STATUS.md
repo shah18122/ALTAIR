@@ -31,6 +31,12 @@ Honest results on real NSE data, after costs. Details in
 - **No forecaster beats "no change" after costs**, on any track or timeframe
   (last retrain on data to 2026-09-24).
 - `altair_trader` (one model over every model) loses to buy and hold on NIFTY.
+- `altair_trader combos` is the meta-trader: every model's output is a
+  variable, 12 sell-only strategies (futures, straddles, strangles, futures
+  delta hedges, stops, hold to expiry) at 8 times of day, rules of up to two
+  conditions searched walk-forward with a placebo, a deflated Sharpe, a holdout
+  and a leak check. FYERS data only (`ops/fetch_fyers_meta.ps1`). Option legs
+  are model-priced until recorded chains exist, and reported apart. Paper only.
 - The paper replications in [`research/models/`](../research/models) and
   [`research/execution/`](../research/execution) showed no tradable edge. They
   are kept as research, outside the production folders.
