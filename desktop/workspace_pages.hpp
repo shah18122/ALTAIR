@@ -25,5 +25,13 @@ public:
         return currentWidget() ? currentWidget()->minimumSizeHint().expandedTo(currentWidget()->minimumSize())
                                : QSize(0, 0);
     }
+    /// The current page only. QStackedLayout asks EVERY page, which laid out
+    /// each hidden page's word-wrapped text on every resize and on first show.
+    bool hasHeightForWidth() const override {
+        return currentWidget() != nullptr && currentWidget()->hasHeightForWidth();
+    }
+    int heightForWidth(int width) const override {
+        return currentWidget() != nullptr ? currentWidget()->heightForWidth(width) : -1;
+    }
 };
 } // namespace altair::ui

@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "trade_reason.hpp"
 #include "trade_stats.hpp"
 
 #include <QComboBox>
@@ -56,32 +57,7 @@ struct StrategyTotals {
 
 namespace strategy_record_detail {
 
-/// One CSV line: commas, double quotes, doubled quotes inside them.
-[[nodiscard]] inline QStringList split(const QString& line) {
-    QStringList out;
-    QString cell;
-    bool quoted = false;
-    for (qsizetype i = 0; i < line.size(); ++i) {
-        const QChar c = line[i];
-        if (quoted) {
-            if (c == QLatin1Char('"')) {
-                if (i + 1 < line.size() && line[i + 1] == QLatin1Char('"')) { cell += c; ++i; }
-                else quoted = false;
-            } else {
-                cell += c;
-            }
-        } else if (c == QLatin1Char('"')) {
-            quoted = true;
-        } else if (c == QLatin1Char(',')) {
-            out << cell;
-            cell.clear();
-        } else {
-            cell += c;
-        }
-    }
-    out << cell;
-    return out;
-}
+[[nodiscard]] inline QStringList split(const QString& line) { return csv_split(line); }
 
 } // namespace strategy_record_detail
 
@@ -219,6 +195,8 @@ public:
     }
 
     void set_root(const QString& root) { root_ = root; refresh(); }
+    void set_strategy(const QString& strategy) { strategy_ = strategy; refresh(); }
+    [[nodiscard]] QString strategy() const { return strategy_; }
     void set_real(bool real) { mode_->setCurrentIndex(real ? 1 : 0); refresh(); }
     [[nodiscard]] QTableWidget* trips_table() const noexcept { return trips_; }
     [[nodiscard]] QTableWidget* held_table() const noexcept { return held_; }
@@ -228,7 +206,10 @@ public:
     [[nodiscard]] QString trip_detail(int r) const {
         if (r < 0 || r >= static_cast<int>(shown_.size())) return {};
         const auto& t = shown_[static_cast<std::size_t>(r)];
-        return trip_detail_html(t.date, t.symbol, t.side, t.qty, t.entry, t.exit, t.gross, t.expenses, t.net, t.why_in, t.why_out);
+        // The reasoning first (desktop/trade_reason.hpp), then gross walked to net.
+        return trade_reason_html(root_, TradeContext{t.model, t.symbol, t.date, t.entry_time, t.exit_time, t.why_in, t.why_out})
+               + QStringLiteral("<hr>")
+               + trip_detail_html(t.date, t.symbol, t.side, t.qty, t.entry, t.exit, t.gross, t.expenses, t.net, t.why_in, t.why_out);
     }
     [[nodiscard]] QString state_text() const { return state_->text(); }
 
@@ -311,8 +292,8 @@ private:
         const QString html = trip_detail(r);
         if (html.isEmpty()) return;
         QDialog d(this);
-        d.setWindowTitle(QStringLiteral("Round trip"));
-        d.resize(900, 420);
+        d.setWindowTitle(QStringLiteral("Round trip: why, fills, forecasts, costs"));
+        d.resize(920, 640);
         auto* v = new QVBoxLayout(&d);
         auto* b = new QTextBrowser(&d);
         b->setObjectName(QStringLiteral("tripDetail"));

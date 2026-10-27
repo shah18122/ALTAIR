@@ -30,9 +30,9 @@ void registry_contract() {
         "Forecast", "Strategies", "Overnight Gap", "Options", "Basis", "Flagging",
         "Microstructure", "Sizing & Limits", "Cointegration", "Memory", "Link Kite",
         "Neural", "Features", "Arbitrage", "Model Atlas", "FYERS Primary", "Brokers",
-        "Demo Trading", "Threshold", "About", "Start here", "Backtests"};
+        "Demo Trading", "Threshold", "About", "Start here", "Backtests", "Daily findings", "Work log"};
     check(nav_page_names() == expected,
-          "all legacy labels plus Brokers, Demo Trading, Threshold, About, Start here and Backtests are registered");
+          "all legacy labels plus Brokers, Demo Trading, Threshold, About, Start here, Backtests, Daily findings and Work log are registered");
     QSet<QString> ids;
     QSet<int> order;
     for (int i = 0; i < expected.size(); ++i) {
@@ -41,14 +41,14 @@ void registry_contract() {
               "label and stable ID resolve to the same legacy page");
     }
     for (const int i : kNavigationOrder) order.insert(i);
-    check(ids.size() == 40 && order.size() == 21 && !ids.contains(QString{}),
-          "40 identities and 21 sidebar destinations");
+    check(ids.size() == 42 && order.size() == 23 && !ids.contains(QString{}),
+          "42 identities and 23 sidebar destinations");
     check(kNavigationOrder.front() == 38, "Start here heads the sidebar");
     // The model pages open from the Model Atlas, not the sidebar.
     for (const int model_page : {9, 10, 16, 17, 18, 27, 29, 30, 13, 7, 24, 26, 25, 23})
         check(!nav_listed(model_page) && nav_visible(model_page), "a model page is off the sidebar but still a route");
-    for (const int kept : {2, 34, 12, 21, 35, 36, 31, 32, 15, 14, 4, 37, 39})
-        check(nav_listed(kept), "trading, risk, Atlas, Threshold, About and Backtests stay in the sidebar");
+    for (const int kept : {2, 34, 12, 21, 35, 36, 31, 32, 15, 14, 4, 37, 39, 40, 41})
+        check(nav_listed(kept), "trading, risk, Atlas, Threshold, About, Backtests, Daily findings and Work log stay in the sidebar");
     for (const int hidden : {0, 1, 5, 28, 33})
         check(!order.contains(hidden) && !nav_visible(hidden), "removed routes never appear in traversal");
     check(nav_page_index(QStringLiteral("  MODEL   ATLAS ")) == 32 &&
@@ -59,7 +59,7 @@ void registry_contract() {
           nav_page_index(QStringLiteral("accounts.brokers")) == 34 &&
           nav_page_index(QStringLiteral("strategies.demo-trading")) == 35 &&
           nav_page_index(QStringLiteral("not a page")) == -1 &&
-          nav_page_id(-1).isEmpty() && nav_page_id(40).isEmpty(), "lookup boundary behavior");
+          nav_page_id(-1).isEmpty() && nav_page_id(42).isEmpty(), "lookup boundary behavior");
 }
 void tree_and_menu() {
     WorkspaceNavigation nav;
@@ -89,7 +89,7 @@ void tree_and_menu() {
     nav.populate_menu(&menu);
     QList<QAction*> actions;
     routes(&menu, actions);
-    check(actions.size() == 21 + nav.recent_pages().size(), "seven native submenus and recent routes expose sidebar pages");
+    check(actions.size() == 23 + nav.recent_pages().size(), "seven native submenus and recent routes expose sidebar pages");
     int checked = 0;
     for (auto* action : actions) checked += action->isChecked() ? 1 : 0;
     check(checked >= 1, "workspace menus visibly mark the current route");
@@ -112,7 +112,7 @@ void tree_and_menu() {
             check(invoked == entry->data().toInt(), "compact popup retains page mapping");
         }
     }
-    check(compact_routes == 21, "all sidebar pages reachable in compact mode");
+    check(compact_routes == 23, "all sidebar pages reachable in compact mode");
     int compact_checked = 0;
     for (auto* button : buttons)
         for (auto* entry : button->menu()->actions())
@@ -203,7 +203,7 @@ void search_keyboard() {
     search.show();
     auto* query = search.findChild<QLineEdit*>();
     auto* results = search.findChild<QListWidget*>();
-    check(results->count() == 35, "search exposes every canonical destination, model pages included");
+    check(results->count() == 37, "search exposes every canonical destination, model pages included");
     for (const auto& alias : {QStringLiteral("Kite"), QStringLiteral("FYERS"), QStringLiteral("Link Kite")}) {
         query->setText(alias);
         check(results->count() == 1 && results->item(0)->data(Qt::UserRole).toInt() == 34,
@@ -274,18 +274,18 @@ void schema_migration_and_layout() {
 }
 void recent_route_order() {
     WorkspaceNavigation nav;
-    for (int i = 0; i < 40; ++i) nav.select_page(i);
+    for (int i = 0; i < 42; ++i) nav.select_page(i);
     nav.select_page(2);
     nav.select_page(32);
     const auto recent = nav.recent_pages();
-    check(recent.size() == 35 && recent[0] == "models.atlas" && recent[1] == "market.terminal",
-          "recent history contains 35 canonical identities without duplicates");
+    check(recent.size() == 37 && recent[0] == "models.atlas" && recent[1] == "market.terminal",
+          "recent history contains 37 canonical identities without duplicates");
     QMenu menu;
     nav.populate_menu(&menu);
     QMenu* recent_menu = nullptr;
     for (auto* action : menu.actions())
         if (action->text() == "Recent pages") recent_menu = action->menu();
-    check(recent_menu && recent_menu->actions().size() == 35, "recent submenu contains full bounded visible history");
+    check(recent_menu && recent_menu->actions().size() == 37, "recent submenu contains full bounded visible history");
     int activated = -1;
     nav.activate = [&](int index) { activated = index; };
     if (recent_menu) for (auto* action : recent_menu->actions()) {

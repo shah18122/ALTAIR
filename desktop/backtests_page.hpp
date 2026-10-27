@@ -15,6 +15,7 @@
 
 #include "demo_trading_page.hpp"
 #include "strategy_record.hpp"
+#include "trade_reason.hpp"
 #include "theme.hpp"
 #include "trade_stats.hpp"
 
@@ -59,8 +60,8 @@ namespace backtests_detail {
 /// The rows as trade_stats wants them. Net from a net column, or gross minus
 /// expenses; a row with neither stays unpriced.
 [[nodiscard]] inline std::vector<TradeStatRow> stat_rows(const demo_detail::Csv& csv) {
-    const int net = find_column(csv, {"net_pnl", "net", "pnl_net", "net_rupees", "net_inr", "net_rs_per_lot", "net_rs", "net_per_trade"});
-    const int gross = find_column(csv, {"gross_pnl", "gross", "pnl_gross", "pnl"});
+    const int net = find_column(csv, {"net_pnl", "net", "pnl_net", "net_rupees", "net_inr", "net_rs_per_lot", "net_rs_per_unit", "net_rs", "net_per_trade"});
+    const int gross = find_column(csv, {"gross_pnl", "gross", "pnl_gross", "gross_rs_per_unit", "pnl"});
     const int exp = find_column(csv, {"expenses", "costs", "cost", "charges"});
     const int date = find_column(csv, {"exit_date", "date", "day", "exit_day", "exit_time", "exit", "entry_date", "entry_time", "time"});
     std::vector<TradeStatRow> out;
@@ -139,8 +140,11 @@ namespace backtests_detail {
 
 class BacktestsPage final : public QWidget {
 public:
-    explicit BacktestsPage(QString root, QWidget* parent = nullptr) : QWidget(parent), root_(std::move(root)) {
-        setObjectName(QStringLiteral("backtestsPage"));
+    /// `only`: show just the logs whose path contains one of these words
+    /// (case-insensitive), for a strategy page's own trade tab; empty is all.
+    explicit BacktestsPage(QString root, QWidget* parent = nullptr, QStringList only = {})
+        : QWidget(parent), root_(std::move(root)), only_(std::move(only)) {
+        setObjectName(only_.isEmpty() ? QStringLiteral("backtestsPage") : QStringLiteral("backtestsFiltered"));
         auto* v = new QVBoxLayout(this);
         v->setContentsMargins(16, 14, 16, 12);
         v->setSpacing(10);
@@ -227,12 +231,13 @@ public:
         connect(table_, &QTableView::doubleClicked, this, [this](const QModelIndex& index) {
             const QModelIndex src = proxy_->mapToSource(index);
             QDialog d(this);
-            d.setWindowTitle(QStringLiteral("Trade"));
+            d.setWindowTitle(QStringLiteral("Trade: why, fills, forecasts, every column"));
             auto* l = new QVBoxLayout(&d);
             auto* text = new QTextBrowser(&d);
-            text->setHtml(DemoTradingPage::trade_detail_html(model_, src.row()));
+            text->setObjectName(QStringLiteral("tradeReason"));
+            text->setHtml(trade_html(src.row()));
             l->addWidget(text);
-            d.resize(560, 620);
+            d.resize(760, 680);
             d.exec();
         });
         rescan();
@@ -242,6 +247,13 @@ public:
     void rescan() {
         const QString keep = current() ? current()->path : QString{};
         logs_ = find_backtest_logs(root_);
+        if (!only_.isEmpty())
+            std::erase_if(logs_, [this](const BacktestLog& log) {
+                const QString rel = QDir(root_).relativeFilePath(log.path);
+                for (const QString& w : only_)
+                    if (rel.contains(w, Qt::CaseInsensitive)) return false;
+                return true;
+            });
         const QSignalBlocker block(list_);
         list_->clear();
         int select = logs_.empty() ? -1 : 0;
@@ -255,8 +267,12 @@ public:
             if (log.path == keep) select = static_cast<int>(i);
         }
         if (logs_.empty()) {
-            heading_->setText(QStringLiteral("<b>No trade logs yet.</b> Run a backtest from <b>Demo Trading</b> or "
-                                             "<b>Threshold</b>, or let the live models paper-trade; their trades appear here."));
+            heading_->setText(only_.isEmpty()
+                                  ? QStringLiteral("<b>No trade logs yet.</b> Run a backtest from <b>Demo Trading</b> or "
+                                                   "<b>Threshold</b>, or let the live models paper-trade; their trades appear here.")
+                                  : QStringLiteral("<b>No saved runs for this strategy yet.</b> Build and save one on the "
+                                                   "<b>Study trades</b> tab, or run it from Demo Trading; it appears here and on "
+                                                   "the Backtests page."));
             stats_->clear();
             model_->set({});
             chart_->set({}, QString{}, false);
@@ -268,6 +284,13 @@ public:
     }
 
     [[nodiscard]] int log_count() const noexcept { return static_cast<int>(logs_.size()); }
+    /// The reasoning (desktop/trade_reason.hpp), then every column of trade `row`.
+    [[nodiscard]] QString trade_html(int row) const {
+        const auto& csv = model_->csv();
+        if (row < 0 || row >= static_cast<int>(csv.rows.size())) return {};
+        return trade_reason_html(root_, trade_context_from_row(csv.header, csv.rows[static_cast<std::size_t>(row)]))
+               + QStringLiteral("<hr>") + DemoTradingPage::trade_detail_html(model_, row);
+    }
     [[nodiscard]] int trade_count() const { return model_->rowCount(); }
     [[nodiscard]] QString stats_text() const { return stats_->text(); }
     bool select_log(int i) {
@@ -284,6 +307,7 @@ protected:
 
 private:
     QString root_;
+    QStringList only_;
     std::vector<BacktestLog> logs_;
     QListWidget* list_ = nullptr;
     QLabel* heading_ = nullptr;
