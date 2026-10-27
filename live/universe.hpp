@@ -20,6 +20,8 @@
 //   * NIFTY 50, NIFTY BANK, INDIA VIX;
 //   * the nearest two NIFTY and BANKNIFTY futures;
 //   * the nearest NIFTY and BANKNIFTY expiries, ATM +/- `strikes` (CE and PE);
+//     `expiries` of them each (default 1; the feed recorder streams 3), plus
+//     with `monthly` the nearest monthly expiry when it is not among them;
 //   * the NIFTY 50 stocks.
 // Depth (5 levels) for the futures, the options within +/- `depth_strikes`
 // and the stocks; indices have no book.
@@ -196,6 +198,49 @@ struct LiveKiteRow {
     return rows;
 }
 
+/// Add to `rows` the index futures and options of `unders` from FYERS's
+/// public F&O master (public.fyers.in/sym_details/NSE_FO.csv: no header;
+/// 0 fytoken, 3 lot, 4 tick, 8 expiry (epoch, the 15:30 close), 9 ticker,
+/// 12 exchange token, 13 underlying, 15 strike, 16 CE/PE/XX), as Kite rows:
+/// a Kite master on disk goes stale (weeklies listed after it was written
+/// are missing), FYERS's is current every day. A contract already in `rows`
+/// (same trading symbol) is left as it is. The token is Kite's own formula,
+/// exchange token * 256 + 2 (NFO). Returns how many rows were added.
+inline std::size_t add_fyers_fo(std::vector<LiveKiteRow>& rows, std::istream& in, const std::set<std::string>& unders) {
+    std::set<std::string> have;
+    for (const auto& r : rows) have.insert(r.symbol);
+    std::size_t added = 0;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const auto f = split_csv(line);
+        if (f.size() < 17 || !unders.contains(f[13]) || f[9].rfind("NSE:", 0) != 0) continue;
+        const std::string sym = f[9].substr(4);
+        if (have.contains(sym)) continue;
+        const unsigned long long xtok = std::strtoull(f[12].c_str(), nullptr, 10);
+        const long long expiry = std::atoll(f[8].c_str());
+        if (xtok == 0 || xtok > 0xFFFFFFull || expiry <= 0) continue;
+        LiveKiteRow r;
+        r.exchange_token = static_cast<std::uint32_t>(xtok);
+        r.token = static_cast<std::uint32_t>(xtok * 256 + 2);
+        r.symbol = sym;
+        r.name = f[13];
+        const bool fut = f[16] == "XX";
+        if (!fut && f[16] != "CE" && f[16] != "PE") continue;
+        r.type = fut ? "FUT" : f[16];
+        r.segment = fut ? "NFO-FUT" : "NFO-OPT";
+        r.exchange = "NFO";
+        r.expiry_day = (expiry + 19'800) / 86'400;   // the IST date of the expiry
+        r.strike = fut ? 0.0 : std::atof(f[15].c_str());
+        r.tick = std::atof(f[4].c_str());
+        r.lot = std::atoll(f[3].c_str());
+        have.insert(sym);
+        rows.push_back(std::move(r));
+        ++added;
+    }
+    return added;
+}
+
 /// One stock of config/universe_nifty50.csv: symbol and FYERS ticker.
 struct LiveStock { std::string symbol, fyers, sector; };
 
@@ -219,6 +264,8 @@ struct LiveUniverseOptions {
     int strikes = 20;                   ///< each side of ATM, subscribed
     int depth_strikes = 5;              ///< each side of ATM with the 5-level book
     int futures = 2;                    ///< nearest N futures per index
+    int expiries = 1;                   ///< nearest N option expiries per index (the recorder asks for more)
+    bool monthly = false;               ///< also the nearest MONTHLY expiry (the last of its month), if not among them
     bool stocks = true;
     bool stock_futures = true;          ///< the stocks' near and next futures (stat-arb trades and rolls them)
     bool bse_twins = true;              ///< the same stocks on BSE: the cross-exchange arbitrage's other leg
@@ -232,14 +279,37 @@ struct LiveUniverse {
 namespace detail {
 
 inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& under, double spot,
-                      const LiveUniverseOptions& o, const std::string& group, LiveUniverse& rep) {
-    std::int64_t expiry = 0;
-    for (const auto& r : rows) {
-        if (r.segment != "NFO-OPT" || r.name != under || r.expiry_day < o.today) continue;
-        if (expiry == 0 || r.expiry_day < expiry) expiry = r.expiry_day;
-    }
-    if (expiry == 0) { rep.notes.push_back(under + ": no option expiry on or after today in the master"); return; }
+                      const LiveUniverseOptions& o, const std::string& group, LiveUniverse& rep, std::int64_t expiry);
+
+inline void add_chains(const std::vector<LiveKiteRow>& rows, const std::string& under, double spot,
+                       const LiveUniverseOptions& o, const std::string& group, LiveUniverse& rep) {
+    std::set<std::int64_t> expiries;
+    for (const auto& r : rows)
+        if (r.segment == "NFO-OPT" && r.name == under && r.expiry_day >= o.today) expiries.insert(r.expiry_day);
+    if (expiries.empty()) { rep.notes.push_back(under + ": no option expiry on or after today in the master"); return; }
     if (!(spot > 0.0)) { rep.notes.push_back(under + ": no spot to centre the chain on"); return; }
+    // The nearest --expiries of them (NIFTY: the weeklies and the monthly among
+    // them; BANKNIFTY: monthlies only), each centred on the same spot.
+    std::set<std::int64_t> chosen;
+    for (const std::int64_t e : expiries) {
+        if (static_cast<int>(chosen.size()) >= std::max(1, o.expiries)) break;
+        chosen.insert(e);
+    }
+    // --monthly: the nearest expiry that is the last of its calendar month, so
+    // NIFTY's monthly is streamed even when three weeklies come before it.
+    if (o.monthly)
+        for (auto it = expiries.begin(); it != expiries.end(); ++it) {
+            const auto next = std::next(it);
+            if (next == expiries.end() || day_text(*next).substr(0, 7) != day_text(*it).substr(0, 7)) {
+                chosen.insert(*it);
+                break;
+            }
+        }
+    for (const std::int64_t e : chosen) add_chain(rows, under, spot, o, group, rep, e);
+}
+
+inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& under, double spot,
+                      const LiveUniverseOptions& o, const std::string& group, LiveUniverse& rep, std::int64_t expiry) {
     std::set<double> strikes;
     for (const auto& r : rows)
         if (r.segment == "NFO-OPT" && r.name == under && r.expiry_day == expiry && r.strike > 0.0) strikes.insert(r.strike);
@@ -310,8 +380,8 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
             rep.instruments.push_back(std::move(in));
         }
     }
-    detail::add_chain(rows, "NIFTY", o.nifty_spot, o, "NIFTY options", rep);
-    detail::add_chain(rows, "BANKNIFTY", o.banknifty_spot, o, "BANKNIFTY options", rep);
+    detail::add_chains(rows, "NIFTY", o.nifty_spot, o, "NIFTY options", rep);
+    detail::add_chains(rows, "BANKNIFTY", o.banknifty_spot, o, "BANKNIFTY options", rep);
 
     if (o.stocks) {
         std::map<std::string, const LiveKiteRow*> eq;
