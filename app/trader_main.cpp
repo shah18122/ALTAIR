@@ -12,6 +12,8 @@
 //     BANKNIFTY: realised from the dataset's five-minute bars, INDIA VIX, the
 //     bhavcopy's 30-day ATM IV and, once recorded long enough, the FYERS
 //     chain's. Each joins as of the decision, standardised on past steps only.
+//   * The hidden Markov model's regime (models/hmm_regime.hpp): P(stress)
+//     walk-forward on each index's daily closes, joined the same way.
 //
 // WHAT IT DOES, EACH STEP, IN ORDER (models/meta_learners.hpp):
 //   1. the last step's outcome is now known: every candidate scores the call
@@ -61,6 +63,7 @@
 #include <app/forecast_tracks.hpp>
 #include <app/ivrv_feed.hpp>
 #include <models/curriculum_feeds.hpp>
+#include <models/hmm_regime.hpp>
 #include <models/meta_learners.hpp>
 #include <models/meta_trader.hpp>
 #include <risk/charges_toml.hpp>
@@ -643,6 +646,20 @@ int main(int argc, char** argv) {
             data.vol_daily.push_back(iv::rv_daily_feed(inst + " RV", s, inst == "NIFTY" && !vix.empty() ? &vix : nullptr));
             data.vol_intraday.push_back(data.vol_daily.back());
             data.vol_intraday.push_back(iv::rv_intraday_feed(inst + " RV today", five, s));
+            // The HMM's regime (models/hmm_regime.hpp): P(stress) walk-forward on
+            // the daily closes, known at each close.
+            {
+                std::vector<std::int64_t> bt, rday;
+                std::vector<double> bc, rret;
+                for (const auto& b : five) { bt.push_back(b.t); bc.push_back(b.c); }
+                altair::daily_log_returns(bt, bc, rday, rret);
+                const auto reg = altair::walk_forward_regimes(rday, rret);
+                if (!reg.empty()) {
+                    data.vol_daily.push_back(altair::regime_daily_feed(inst + " regime", reg));
+                    data.vol_intraday.push_back(data.vol_daily.back());
+                    vol_text += "  " + inst + ": HMM regime on " + std::to_string(reg.size()) + " days\n";
+                }
+            }
             altair::bhavcopy::LoadReport br;
             const auto bhav = iv::iv_from_bhavcopy(altair::bhavcopy::load_dir(bhav_dir, inst, br));
             if (!bhav.empty()) {

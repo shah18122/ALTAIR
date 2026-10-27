@@ -85,6 +85,12 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_residual_reversion_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_residual_reversion COMMAND altair_residual_reversion_test)
 
+    # Avellaneda-Stoikov quoting on futures bars: flat every session, the cap
+    # held, a reason on every fill, and nothing decided from a later bar.
+    add_executable(altair_as_market_maker_test tests/test_as_market_maker.cpp)
+    target_link_libraries(altair_as_market_maker_test PRIVATE altair_strategies altair_flags)
+    add_test(NAME strategies_as_market_maker COMMAND altair_as_market_maker_test)
+
     add_executable(altair_stat_arb_test tests/test_stat_arb.cpp)
     target_link_libraries(altair_stat_arb_test PRIVATE altair_strategies altair_flags)
     add_test(NAME strategies_stat_arb COMMAND altair_stat_arb_test)
