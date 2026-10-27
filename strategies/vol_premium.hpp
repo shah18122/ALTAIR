@@ -14,6 +14,16 @@
 // Hedged, the P&L is close to (implied variance - realised variance) x vega
 // -- the premium -- rather than a bet on direction.
 //
+// HOW IT HEDGES, AND WHAT IT LOCKED IN (Gleadall, Option Gamma Trading). By
+// default the delta is reset at every close. With `hedge_band` set, it is
+// reset only once the forward has moved that fraction of the day's gamma
+// breakeven move, sqrt(2 theta / gamma), since the last hedge -- 0.5 is the
+// desk's rule, `hedge_band_down` a tighter band for falls, when IV rises
+// against the short vega too. Every trade reports the vol it actually locked
+// in (IV sold minus P&L over vega), the breakeven move and the gamma/theta
+// ratio at entry, and the round-trip slippage in vol points; with
+// `cost_in_vols` that cost is added to the entry spread.
+//
 // THE MARKET IS AN INTERFACE. Quotes, forwards and listed strikes come from
 // the caller: synthetic Black-76 at INDIA VIX for the dataset, or NSE
 // bhavcopy closes when the files are there (app/bhavcopy.hpp). The engine
@@ -25,6 +35,7 @@
 
 #pragma once
 
+#include <analytics/gamma_trading.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/iv.hpp>
 
@@ -70,6 +81,13 @@ struct VrpPolicy {
     double stop_multiple = 0.0;      ///< buy back once the straddle costs this x the credit; 0 = never
     bool hedge = true;
     double slippage_pts = 1.0;       ///< premium points given up per option fill
+    /// Re-hedge only once the forward has moved this fraction of the day's
+    /// gamma breakeven move since the last hedge; 0 = at every close.
+    double hedge_band = 0.0;
+    /// The same for falls; 0 = `hedge_band`. Smaller hedges falls sooner.
+    double hedge_band_down = 0.0;
+    /// Add the round-trip slippage, in vol points, to `entry_spread`.
+    bool cost_in_vols = false;
 };
 
 struct VrpFill {
@@ -87,6 +105,11 @@ struct VrpTrade {
     double iv_in = 0.0, rv_fcst = 0.0, rv_real = 0.0;   ///< annualised
     double qty = 0.0;
     double option_pnl = 0.0, hedge_pnl = 0.0, gross = 0.0;
+    double vega_pt_in = 0.0;       ///< straddle vega per unit, rupees per vol point, at entry
+    double breakeven_in = 0.0;     ///< gamma breakeven move at entry, index points per day
+    double gamma_theta_in = 0.0;   ///< |gamma| per rupee of daily theta at entry (lower suits a seller)
+    double cost_vols = 0.0;        ///< round-trip slippage in vol points (fraction, like iv_in)
+    double locked_vol = std::numeric_limits<double>::quiet_NaN();   ///< iv_in - gross / vega: the vol actually earned
     std::vector<VrpFill> fills;
     const char* exit_reason = "expiry";
 };
@@ -98,6 +121,9 @@ struct VrpSignal {
     std::size_t sessions = 0;
     double iv = 0.0, rv_fcst = 0.0;
     bool entered = false, vetoed = false;
+    double cost_vols = 0.0;        ///< round-trip slippage in vol points (fraction)
+    double breakeven_move = 0.0;   ///< gamma breakeven move, index points per day
+    double daily_move = 0.0;       ///< the move the IV prices in for one session, index points
 };
 
 struct VrpResult {
@@ -165,12 +191,35 @@ inline constexpr double kYearDays = 365.0;
     return d;
 }
 
+/// The short straddle's Greeks per unit, in desk units, against the forward.
+struct StraddleRisk {
+    double gamma = 0.0;          ///< per rupee of forward (long straddle sign: positive)
+    double theta_day = 0.0;      ///< rupees per calendar day the straddle decays (positive)
+    double vega_pt = 0.0;        ///< rupees per vol point
+};
+
+/// NaN-free only when both legs price.
+[[nodiscard]] inline bool straddle_risk(double fwd, double strike, double T, double iv, double rate,
+                                        StraddleRisk& out) noexcept {
+    out = {};
+    for (const bool call : {true, false}) {
+        const auto g = black76(call ? OptionRight::Call : OptionRight::Put,
+                               Price{static_cast<std::int64_t>(std::llround(fwd * 100.0))},
+                               Price{static_cast<std::int64_t>(std::llround(strike * 100.0))}, Years{T}, Vol{iv}, rate);
+        if (!g) { return false; }
+        out.gamma += g->gamma * 100.0;                       // 1/paise -> 1/rupee
+        out.theta_day += -theta_per_day(g->theta) / 100.0;   // paise per year -> rupees per day decayed
+        out.vega_pt += vega_per_vol_point(g->vega) / 100.0;  // paise per 1.0 vol -> rupees per point
+    }
+    return out.gamma > 0.0 && out.vega_pt > 0.0;
+}
+
 } // namespace vrp_detail
 
 [[nodiscard]] inline std::expected<VrpResult, VrpError> vrp_run(const VrpMarket& m, const VrpPolicy& p) {
     if (!(p.lot_size > 0.0) || p.lots < 1 || p.min_sessions == 0 || p.exit_sessions >= p.min_sessions
         || !(p.stop_multiple == 0.0 || p.stop_multiple > 1.0) || !(p.slippage_pts >= 0.0) || !std::isfinite(p.rate)
-        || !std::isfinite(p.entry_spread)) {
+        || !std::isfinite(p.entry_spread) || !(p.hedge_band >= 0.0) || !(p.hedge_band_down >= 0.0)) {
         return std::unexpected(VrpError::BadPolicy);
     }
     if (m.day.empty() || m.spot.size() != m.day.size() || m.expiries.empty() || !m.quote || !m.forward
@@ -183,10 +232,20 @@ inline constexpr double kYearDays = 365.0;
     bool open = false;
     VrpTrade t;
     long lots = 0;
-    double last_fwd = 0.0, last_iv = 0.0;
-    const auto rehedge = [&](std::size_t i, double fwd, double iv) {
+    double last_fwd = 0.0, last_iv = 0.0, hedge_fwd = 0.0;
+    const auto rehedge = [&](std::size_t i, double fwd, double iv, bool force) {
         if (!p.hedge) { return; }
         const double T = years(m.day[i], t.expiry);
+        if (!force && p.hedge_band > 0.0) {
+            StraddleRisk r;
+            if (straddle_risk(fwd, t.strike, T, iv, p.rate, r)) {
+                const double down = p.hedge_band_down > 0.0 ? p.hedge_band_down : p.hedge_band;
+                if (!outside_band(short_gamma_bands(r.theta_day, r.gamma, p.hedge_band, down), fwd - hedge_fwd)) {
+                    return;   // inside the band: let the gamma run
+                }
+            }   // a straddle that will not price is hedged as before, never left alone
+        }
+        hedge_fwd = fwd;
         const double d = straddle_delta(fwd, t.strike, T, iv, p.rate);
         if (!std::isfinite(d)) { return; }
         const long want = std::lround(qty * d / p.lot_size);   // the short straddle is -qty x d; the hedge holds +qty x d
@@ -213,6 +272,7 @@ inline constexpr double kYearDays = 365.0;
         }
         t.rv_real = i > t.entry ? std::sqrt(ss / static_cast<double>(i - t.entry) * 252.0) : 0.0;
         t.gross = t.option_pnl + t.hedge_pnl;
+        t.locked_vol = locked_in_vol(t.iv_in, t.gross / t.qty, t.vega_pt_in);
         t.exit_reason = why;
         out.trades.push_back(t);
         open = false;
@@ -251,7 +311,7 @@ inline constexpr double kYearDays = 365.0;
                 close(i, q, fwd, "stop");
                 continue;
             }
-            rehedge(i, fwd, last_iv);
+            rehedge(i, fwd, last_iv, false);
             continue;
         }
         // Flat: price the candidate at today's close.
@@ -274,8 +334,16 @@ inline constexpr double kYearDays = 365.0;
         const double rvf = m.rv_forecast(i, left);
         if (!std::isfinite(iv) || !std::isfinite(rvf)) { continue; }
         VrpSignal s{i, expiry, left, iv, rvf, false, false};
+        StraddleRisk risk;
+        const bool risk_ok = straddle_risk(fwd, k, T, iv, p.rate, risk);
+        if (risk_ok) {
+            s.cost_vols = premium_in_vol(4.0 * p.slippage_pts, risk.vega_pt);   // two legs in, two out
+            s.breakeven_move = gamma_breakeven_move(risk.theta_day, risk.gamma);
+        }
+        s.daily_move = implied_daily_move(m.spot[i], iv);
         const double credit = q.call + q.put - 2.0 * p.slippage_pts;
-        if (iv - rvf >= p.entry_spread && credit > 0.0) {
+        const double need = p.entry_spread + (p.cost_in_vols ? (risk_ok ? s.cost_vols : std::numeric_limits<double>::infinity()) : 0.0);
+        if (iv - rvf >= need && credit > 0.0) {
             if (m.veto && m.veto(i)) {
                 s.vetoed = true;
             } else {
@@ -291,11 +359,17 @@ inline constexpr double kYearDays = 365.0;
                 t.iv_in = iv;
                 t.rv_fcst = rvf;
                 t.qty = qty;
+                if (risk_ok) {
+                    t.vega_pt_in = risk.vega_pt;
+                    t.breakeven_in = s.breakeven_move;
+                    t.gamma_theta_in = gamma_theta_ratio(risk.gamma, risk.theta_day);
+                    t.cost_vols = s.cost_vols;
+                }
                 open = true;
                 lots = 0;
                 last_fwd = fwd;
                 last_iv = iv;
-                rehedge(i, fwd, iv);
+                rehedge(i, fwd, iv, true);
             }
         }
         out.signals.push_back(s);

@@ -247,6 +247,20 @@ int main(int argc, char** argv) {
         p.hedge = false;
         variants.push_back({"har-2-unhedged", "har-2 without the futures hedge", p, false});
     }
+    {
+        // Gleadall, Option Gamma Trading: re-hedge at half the gamma breakeven
+        // move, sooner on falls (IV rises with them), instead of every close.
+        auto p = base(0.0);
+        p.hedge_band = 0.5;
+        p.hedge_band_down = 0.3;
+        variants.push_back({"har-0-band", "har-0, re-hedged at 0.5x the gamma breakeven move (0.3x on falls)", p, false});
+    }
+    {
+        // Gleadall, Option Market Making: the round trip is a cost in vol points.
+        auto p = base(0.0);
+        p.cost_in_vols = true;
+        variants.push_back({"har-0-netcost", "har-0, with the round-trip slippage in vol points added to the spread", p, false});
+    }
     if (!vix_log.empty()) {
         variants.push_back({"har-2-vixveto", "har-2, skipping days the " + vix_model + " model calls INDIA VIX UP", base(0.02), true});
     }
@@ -267,7 +281,8 @@ int main(int argc, char** argv) {
     std::map<std::string, std::vector<std::pair<std::string, Priced>>> by_variant;
     std::set<std::string> opened;
     std::ofstream signals(dir / "signals.csv", std::ios::trunc);
-    signals << "instrument,date,expiry,sessions,implied_vol,har_vol,spread,realised_vol_after\n";
+    signals << "instrument,date,expiry,sessions,implied_vol,har_vol,spread,realised_vol_after,cost_vols,breakeven_pts,"
+               "implied_daily_move\n";
     std::ofstream eval(dir / "forecast_eval.csv", std::ios::trunc);
     eval << "instrument,horizon,days,har_rmse_vol_pts,trailing_rmse_vol_pts,har_bias_vol_pts,implied_minus_realised_vol_pts,"
             "share_implied_above_realised\n";
@@ -476,7 +491,8 @@ int main(int argc, char** argv) {
                     signals << in.name << ',' << iso_day(m.day[s.i]) << ',' << iso_day(s.expiry) << ',' << s.sessions << ','
                             << fixed(100 * s.iv, 2) << ',' << fixed(100 * s.rv_fcst, 2) << ',' << fixed(100 * (s.iv - s.rv_fcst), 2)
                             << ',' << (n == s.sessions ? fixed(100 * std::sqrt(fut / static_cast<double>(n) * 252.0), 2) : std::string{})
-                            << '\n';
+                            << ',' << fixed(100 * s.cost_vols, 2) << ',' << fixed(s.breakeven_move, 1) << ','
+                            << fixed(s.daily_move, 1) << '\n';
                 }
                 signals_written = true;
             }
@@ -510,7 +526,8 @@ int main(int argc, char** argv) {
             if (fresh) {
                 o << "instrument,variant,entry_date,exit_date,expiry,strike,forward_in,implied_vol,har_vol,realised_vol,"
                      "call_in,put_in,credit,call_out,put_out,debit,qty,option_pnl,hedge_orders,hedge_pnl,gross_pnl,expenses,"
-                     "net_pnl,exit_reason,source,costs,brokerage,stt,exchange_txn,sebi,stamp,ipft,gst\n";
+                     "net_pnl,exit_reason,source,costs,brokerage,stt,exchange_txn,sebi,stamp,ipft,gst,locked_vol,"
+                     "breakeven_pts,gamma_theta,cost_vols\n";
             }
             for (const auto& [name, pr] : rows) {
                 if (name != in.name) { continue; }
@@ -525,7 +542,10 @@ int main(int argc, char** argv) {
                   << ',' << t.exit_reason << ',' << source << ',' << cost_tag
                   << ',' << (pr.priced ? fixed(pr.c.brokerage, 2) + ',' + fixed(pr.c.stt, 2) + ',' + fixed(pr.c.exchange, 2) + ','
                                  + fixed(pr.c.sebi, 2) + ',' + fixed(pr.c.stamp, 2) + ',' + fixed(pr.c.ipft, 2) + ',' + fixed(pr.c.gst, 2)
-                           : std::string{",,,,,,"}) << '\n';
+                           : std::string{",,,,,,"})
+                  << ',' << (std::isfinite(t.locked_vol) ? fixed(100 * t.locked_vol, 2) : std::string{}) << ','
+                  << fixed(t.breakeven_in, 1) << ',' << fixed(t.gamma_theta_in, 6) << ',' << fixed(100 * t.cost_vols, 2)
+                  << '\n';
             }
         }
     }

@@ -24,6 +24,7 @@
 #include "helper_process.hpp"
 
 #if ALTAIR_HAVE_CHARGES_TOML
+#include <analytics/gamma_trading.hpp>
 #include <risk/charges_toml.hpp>
 #endif
 
@@ -458,23 +459,33 @@ private:
         sim_days_->setRange(0.0, 365.0);
         sim_days_->setValue(0.0);
         sim_days_->setSuffix(QStringLiteral(" days fwd"));
+        sim_link_ = new QDoubleSpinBox(page);
+        sim_link_->setRange(0.0, 10.0);
+        sim_link_->setSingleStep(0.5);
+        sim_link_->setValue(0.0);
+        sim_link_->setSuffix(QStringLiteral(" vol pts per 1% fall"));
+        sim_link_->setToolTip(QStringLiteral(
+            "Index IV rises when the index falls. Each row's IV shift gets this many vol points per 1% fall "
+            "(and loses as many per 1% rise), so a short straddle is stressed the way NIFTY actually moves."));
         h->addWidget(new QLabel(QStringLiteral("Underlying"), page));
         h->addWidget(sim_under_);
         h->addWidget(sim_range_);
         h->addWidget(sim_step_);
         h->addWidget(sim_vol_);
         h->addWidget(sim_days_);
+        h->addWidget(sim_link_);
         h->addStretch();
         v->addLayout(h);
         sim_model_ = new GetsTableModel(gets_simulation_columns(), this);
         v->addWidget(make_view(page, sim_model_, QStringLiteral("getsSimulation")), 1);
         v->addWidget(note(page, QStringLiteral(
             "Every leg of the chosen underlying revalued at each spot move, with the IV shift and "
-            "days forward applied. Futures and cash move one-for-one with spot. P&L is against current "
+            "days forward applied, plus the linked IV move per 1% fall when set. Futures and cash move "
+            "one-for-one with spot. P&L is against current "
             "LTPs; P&L at expiry is the payoff. Model values, rounded to the paisa.")));
         const auto rerun = [this] { run_simulation(); };
         connect(sim_under_, &QComboBox::currentIndexChanged, this, rerun);
-        for (auto* s : {sim_range_, sim_step_, sim_vol_, sim_days_})
+        for (auto* s : {sim_range_, sim_step_, sim_vol_, sim_days_, sim_link_})
             connect(s, &QDoubleSpinBox::valueChanged, this, rerun);
         tabs_->addTab(page, QStringLiteral("Simulation"));
     }
@@ -679,8 +690,11 @@ private:
         const double range = sim_range_->value();
         const double step = sim_step_->value();
         const int n = static_cast<int>(std::floor(range / step + 1e-9));
-        for (int i = -n; i <= n; ++i)
-            shifts.push_back(BookShift{static_cast<double>(i) * step, sim_vol_->value(), sim_days_->value()});
+        for (int i = -n; i <= n; ++i) {
+            const double pct = static_cast<double>(i) * step;
+            shifts.push_back(BookShift{pct, sim_vol_->value() + linked_vol_points(pct, sim_link_->value()),
+                                       sim_days_->value()});
+        }
         BookParams p = book_.params;
         sim_model_->set_rows(gets_simulation_rows(simulate_book(book_.legs, book_.views, u, *spot, p, shifts)));
     }
@@ -905,6 +919,7 @@ private:
     QDoubleSpinBox* sim_step_{};
     QDoubleSpinBox* sim_vol_{};
     QDoubleSpinBox* sim_days_{};
+    QDoubleSpinBox* sim_link_{};
     GetsTableModel* sim_model_{};
     GetsTableModel* expense_model_{};
     GetsTableModel* funds_model_{};
