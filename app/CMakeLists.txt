@@ -452,8 +452,8 @@ if(TARGET altair_charges_toml)
 
     # altair_trader: one model over every model's out-of-sample output,
     # refitted and traded day by day on the index futures.
-    add_executable(altair_trader trader_main.cpp)
-    target_link_libraries(altair_trader PRIVATE altair_models altair_charges_toml altair_flags)
+    add_executable(altair_trader trader_main.cpp trader_combos.cpp)
+    target_link_libraries(altair_trader PRIVATE altair_models altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_trader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
     # The owner's threshold strategies (threshold_strategy/), on paper.

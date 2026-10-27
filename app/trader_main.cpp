@@ -536,6 +536,8 @@ void usage(const char* exe) {
         "usage: %s [--logs DIR] [--out DIR] [--dataset DIR] [--bhavcopy DIR] [--recorded-iv DIR] [--lots N]\n"
         "          [--unverified-costs] [--half-life DAYS] [--min-days N] [--daily-only] [--no-ivrv] [--all-tracks]\n"
         "          [--leak-check]\n"
+        "       %s combos --fyers DIR ...   the meta-trader: every model as a variable, every sell-only\n"
+        "                strategy at every time of day, searched walk-forward (combos --help)\n"
         "  --logs        the forecast curriculum's forecast_log/ (default data/verified/forecast_log)\n"
         "  --out         where to write (default data/verified/altair_trader)\n"
         "  --dataset     five-minute bars for realised vol, and the session after the last close (default dataset)\n"
@@ -548,12 +550,16 @@ void usage(const char* exe) {
         "  --leak-check  rerun every arm with another future after two cuts; every decision up to each\n"
         "                cut must be the same (exit 3 if not)\n"
         "  --unverified-costs  price expenses while config/charges.toml is unverified\n",
-        exe);
+        exe, exe);
 }
 
 } // namespace
 
+int combos_main(int argc, char** argv);   // app/trader_combos.cpp
+
 int main(int argc, char** argv) {
+    // `altair_trader combos ...`: the meta-trader's combination search
+    if (argc > 1 && std::string(argv[1]) == "combos") return combos_main(argc - 1, argv + 1);
     fs::path logs = "data/verified/forecast_log", out = "data/verified/altair_trader", dataset = "dataset";
     fs::path bhav_dir = "data/bhavcopy", recorded_dir = "data/live/iv";
     bool unverified = false, daily_only = false, ivrv_on = true, leak_check = false, all_tracks = false;
