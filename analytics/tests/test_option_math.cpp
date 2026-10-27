@@ -73,12 +73,37 @@ void test_skew_premium_and_yield() {
     check(std::isnan(annualised_yield(-1.5, 12.0)), "a yield below -100% is refused");
 }
 
+// Mullaney: sell at 0.25 delta or less, and only with a 75% chance of success.
+void test_strangle_odds() {
+    const double F = 24000.0, T = 30.0 / 365.0, iv = 0.14;
+    const double kp = strike_for_delta(false, F, T, iv, 0.16), kc = strike_for_delta(true, F, T, iv, 0.16);
+    const auto d = [&](bool call, double k) {
+        const auto g = black76(call ? OptionRight::Call : OptionRight::Put, Price{static_cast<std::int64_t>(F * 100)},
+                               Price{static_cast<std::int64_t>(std::llround(k * 100))}, Years{T}, Vol{iv}, 0.0);
+        return g ? std::fabs(g->delta) : -1.0;
+    };
+    check(kp < F && kc > F && std::fabs(d(false, kp) - 0.16) < 1e-3 && std::fabs(d(true, kc) - 0.16) < 1e-3,
+          "strike_for_delta lands on the asked delta, puts below and calls above");
+    const double straddle_credit = 2.0 * 0.3989 * F * iv * std::sqrt(T);   // ATM straddle ~ 0.8 sd
+    const double pop_straddle = short_strangle_pop(F, F, F, T, iv, straddle_credit);
+    check(std::fabs(pop_straddle - (1.0 - straddle_loss_probability(F, F, T, iv, straddle_credit))) < 1e-12,
+          "a strangle with one strike is the straddle");
+    check(pop_straddle > 0.5 && pop_straddle < 0.65, "the ATM straddle wins about 58% of the time held to expiry");
+    const double d75 = strangle_delta_for_pop(F, T, iv, 0.75);
+    std::printf("    leg delta for a 75%% win rate: %.2f (ATM straddle: %.1f%%)\n", d75, 100.0 * pop_straddle);
+    check(d75 > 0.05 && d75 < 0.40, "a 75% win rate needs legs well out of the money");
+    check(strangle_delta_for_pop(F, T, iv, 0.5) == 0.5, "a 50% target is met by the straddle itself");
+    check(std::isnan(strangle_delta_for_pop(F, T, iv, 1.0)) && std::isnan(strike_for_delta(true, F, T, iv, 1.0)),
+          "impossible asks: NaN");
+}
+
 } // namespace
 
 int main() {
     test_vol_slope();
     test_probabilities();
     test_skew_premium_and_yield();
+    test_strangle_odds();
     if (failures) { std::printf("%d check(s) FAILED\n", failures); return 1; }
     std::printf("all option_math checks passed\n");
     return 0;

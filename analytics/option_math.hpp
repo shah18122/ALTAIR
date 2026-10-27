@@ -37,6 +37,18 @@ namespace altair {
 
 namespace option_math_detail {
 inline constexpr double kOmNaN = std::numeric_limits<double>::quiet_NaN();
+
+/// N^-1(p) by bisection on norm_cdf: slow but exact to 1e-12, and only ever
+/// called once per strike choice.
+inline double om_norm_inv(double p) noexcept {
+    if (!(p > 0.0 && p < 1.0)) { return kOmNaN; }
+    double lo = -12.0, hi = 12.0;
+    for (int k = 0; k < 100 && hi - lo > 1e-13; ++k) {
+        const double mid = 0.5 * (lo + hi);
+        (detail::norm_cdf(mid) < p ? lo : hi) = mid;
+    }
+    return 0.5 * (lo + hi);
+}
 }
 
 /// IV's response to spot, split by direction. Both numbers are positive on an
@@ -115,6 +127,53 @@ struct VolSlope {
         return g ? g->price / 100.0 : option_math_detail::kOmNaN;
     };
     return px(iv_strike) - px(iv_atm);
+}
+
+/// The strike whose Black-76 (undiscounted) delta is `delta_abs` (0..1, sign
+/// ignored): a 0.16 put, a 0.25 call. Mullaney sells at 0.25 delta or less.
+[[nodiscard]] inline double strike_for_delta(bool call, double fwd, double years, double iv, double delta_abs) noexcept {
+    if (!(fwd > 0.0) || !(years > 0.0) || !(iv > 0.0) || !(delta_abs > 0.0 && delta_abs < 1.0)) {
+        return option_math_detail::kOmNaN;
+    }
+    const double sd = iv * std::sqrt(years);
+    const double d1 = call ? option_math_detail::om_norm_inv(delta_abs) : -option_math_detail::om_norm_inv(delta_abs);
+    return fwd * std::exp(-d1 * sd + 0.5 * sd * sd);
+}
+
+/// The model's chance a short strangle (put `k_put`, call `k_call`, sold for
+/// `credit` per unit) is a winner held to expiry unhedged: the forward ends
+/// inside k_put - credit .. k_call + credit. k_put == k_call is the straddle.
+[[nodiscard]] inline double short_strangle_pop(double fwd, double k_put, double k_call, double years, double iv,
+                                               double credit) noexcept {
+    if (!(credit > 0.0) || !(k_put > 0.0) || !(k_call >= k_put)) { return option_math_detail::kOmNaN; }
+    const double lo = prob_below(fwd, k_put - credit, years, iv);
+    const double hi = prob_below(fwd, k_call + credit, years, iv);
+    if (!std::isfinite(lo) || !std::isfinite(hi)) { return option_math_detail::kOmNaN; }
+    return hi - lo;
+}
+
+/// The largest leg delta (in 0.01 steps, 0.50 = the straddle) at which a
+/// symmetric-delta short strangle, priced flat at `iv`, still wins with at
+/// least `target_pop` probability -- Mullaney's "at least 75 percent". NaN if
+/// even 0.01-delta legs fall short.
+[[nodiscard]] inline double strangle_delta_for_pop(double fwd, double years, double iv, double target_pop,
+                                                   double rate = 0.0) noexcept {
+    if (!(target_pop > 0.0 && target_pop < 1.0)) { return option_math_detail::kOmNaN; }
+    const auto px = [&](bool call, double k) {
+        const auto g = black76(call ? OptionRight::Call : OptionRight::Put,
+                               Price{static_cast<std::int64_t>(std::llround(fwd * 100.0))},
+                               Price{static_cast<std::int64_t>(std::llround(k * 100.0))}, Years{years}, Vol{iv}, rate);
+        return g ? g->price / 100.0 : option_math_detail::kOmNaN;
+    };
+    for (int c = 50; c >= 1; --c) {
+        const double d = c / 100.0;
+        const double kp = c == 50 ? fwd : strike_for_delta(false, fwd, years, iv, d);
+        const double kc = c == 50 ? fwd : strike_for_delta(true, fwd, years, iv, d);
+        if (!std::isfinite(kp) || !std::isfinite(kc)) { return option_math_detail::kOmNaN; }
+        const double pop = short_strangle_pop(fwd, kp, kc, years, iv, px(false, kp) + px(true, kc));
+        if (std::isfinite(pop) && pop >= target_pop) { return d; }
+    }
+    return option_math_detail::kOmNaN;
 }
 
 /// Compounded annual yield of a per-period yield earned `periods_per_year`
