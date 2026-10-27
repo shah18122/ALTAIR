@@ -35,6 +35,7 @@
 #include "theme.hpp"
 #include "news_ticker.hpp"
 #include "backtests_page.hpp"
+#include "trade_log_tabs.hpp"
 #include "chart/chart_widget.hpp"
 #include "analytics_panel.hpp"
 #include "atlas.hpp"
@@ -340,6 +341,12 @@ public:
         // own source list or link against a moc generated for a different
         // target. RTTI is on and this is a UI action, not a hot path.
         auto* page = dynamic_cast<ComputePage*>(pages_->currentWidget());
+        // A study page in trade-log tabs (desktop/trade_log_tabs.hpp): its first tab.
+        if (auto* tabs = qobject_cast<QTabWidget*>(pages_->currentWidget());
+            page == nullptr && tabs != nullptr && tabs->objectName() == QLatin1String("tradeLogTabs")) {
+            page = dynamic_cast<ComputePage*>(tabs->widget(0));
+            if (page != nullptr) tabs->setCurrentIndex(0);
+        }
         if (page == nullptr) { return false; }
         page->button()->click();
         return true;
@@ -596,6 +603,15 @@ private:
     QString tape_error_;
     DepthLadder* ladder_ = nullptr;
     NewsTicker* news_ = nullptr;
+
+    /// The tree that holds data/ (the source tree in a build, else the working directory).
+    [[nodiscard]] static QString source_root() {
+#ifdef ALTAIR_SOURCE_DIR
+        return QStringLiteral(ALTAIR_SOURCE_DIR);
+#else
+        return QDir::currentPath();
+#endif
+    }
 
     void build_nav() {
         nav_ = new WorkspaceNavigation(this);
@@ -1086,7 +1102,13 @@ private:
         pages_->addWidget(new CostPanel);
         pages_->addWidget(new AnalyticsPanel);
 
-        pages_->addWidget(new ChainPanel);
+        // Pair Trading, with the engine's pair trades and the saved pairs runs
+        // beside it (desktop/trade_log_tabs.hpp).
+        pages_->addWidget(with_trade_logs(new ChainPanel,
+            {{}, {QStringLiteral("Pairs BANKNIFTY/NIFTY")}, {QStringLiteral("pairs")},
+             QStringLiteral("The models engine's BANKNIFTY/NIFTY futures pair: every paper round trip, and real fills when "
+                            "LIVE is on. Double-click one for why it was taken.")},
+            QStringLiteral(ALTAIR_DATASET_DIR), source_root()));
 
         // P25-02. Was a blocked_page. Still true that no filings are
         // ingested, and the page says so first — but leaving the arithmetic
@@ -1278,7 +1300,12 @@ private:
                         });
                 });
         (void)strat_page->add_symbols();
-        pages_->addWidget(strat_page);
+        pages_->addWidget(with_trade_logs(strat_page,
+            {{Study::Momentum, Study::MeanReversion}, engine_strategy_names(),
+             {QStringLiteral("study/momentum"), QStringLiteral("study/mean_reversion"), QStringLiteral("altair_trader"),
+              QStringLiteral("band_option"), QStringLiteral("vol_premium"), QStringLiteral("resid_reversion"),
+              QStringLiteral("threshold")}, {}},
+            ds, source_root()));
 
         // P22-03. Reads 140 monthly files to rebuild 2,873 sessions, so it
         // stays behind a button like every other page here.
@@ -1298,7 +1325,8 @@ private:
                         });
                 });
         (void)on_page->add_symbols();
-        pages_->addWidget(on_page);
+        pages_->addWidget(with_trade_logs(on_page, {{Study::Overnight}, {}, {QStringLiteral("overnight")}, {}}, ds,
+                                          source_root()));
 
         // P23-01. Cheap enough to run on press without a warning.
         auto* opt_page = new ComputePage(
@@ -1323,7 +1351,8 @@ private:
                             return basis_report(ds);
                         });
                 });
-        pages_->addWidget(basis_page);
+        // Basis measures; it has no trading rule yet, so only saved runs.
+        pages_->addWidget(with_trade_logs(basis_page, {{}, {}, {QStringLiteral("basis")}, {}}, ds, source_root()));
 
         auto* flag_page = new ComputePage(
             QStringLiteral("FLAGGING — P23-06"),

@@ -59,6 +59,20 @@ struct UiStamped {
         if (!ok || !(close > 0.0)) { continue; }
 
         const QString stamp = col[0].trimmed();
+        // A bare trading day is midnight IST. Worked out from the day number:
+        // QDateTime read it as local midnight, and the local-zone lookup cost
+        // about 40 us a row, which made the Terminal's daily files the
+        // slowest part of opening the window.
+        if (stamp.size() == 10 && stamp[4] == QLatin1Char('-') && stamp[7] == QLatin1Char('-')) {
+            const QDate day = QDate::fromString(stamp, Qt::ISODate);
+            if (day.isValid()) {
+                constexpr std::int64_t kIstMs = (5LL * 3600LL + 30LL * 60LL) * 1000LL;
+                const std::int64_t ms = (day.toJulianDay() - 2440588LL) * 86'400'000LL - kIstMs;
+                out.closes.push_back(close);
+                out.stamps_ns.push_back(ms * 1'000'000LL);
+                continue;
+            }
+        }
         QDateTime dt = QDateTime::fromString(stamp, Qt::ISODate);
         if (!dt.isValid()) {
             dt = QDateTime::fromString(stamp.left(10),
