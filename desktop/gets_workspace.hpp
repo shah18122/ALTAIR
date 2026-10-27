@@ -23,8 +23,9 @@
 #include "gets_tables.hpp"
 #include "helper_process.hpp"
 
-#if ALTAIR_HAVE_CHARGES_TOML
 #include <analytics/gamma_trading.hpp>
+
+#if ALTAIR_HAVE_CHARGES_TOML
 #include <risk/charges_toml.hpp>
 #endif
 
