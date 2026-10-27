@@ -154,6 +154,9 @@ QPushButton[variant="paper"] { background:#12261A; color:#7EE787; border:1px sol
 QPushButton[variant="paper"]:hover { background:#173320; border-color:#3FB950; }
 QPushButton[variant="live"] { background:#DA3633; color:#FFFFFF; border:1px solid #F85149; font-weight:700; padding:5px 14px; }
 QPushButton[variant="halted"] { background:#6E1B1B; color:#FFFFFF; border:1px solid #DA3633; font-weight:700; padding:5px 14px; }
+QFrame#tradingModeBar { background:#238636; }
+QFrame#tradingModeBar[mode="live"] { background:#DA3633; }
+QFrame#tradingModeBar[mode="halted"] { background:#6E1B1B; }
 
 /* ---- Text roles: ui::set_role(label, "note"|"faint"|"error"|"warn"|"ok"|"info"|"kicker"|"title") ---- */
 QLabel[role="note"] { color:#8B949E; }

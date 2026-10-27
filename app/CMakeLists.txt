@@ -278,6 +278,20 @@ endif()
 # Data audit: dataset/ checked across timeframes, against its other sources
 # (_superseded_*) and against broker candles (ops/broker_audit.ps1). Offline:
 # it reads files and writes data/verified/ (data_audit.xlsx + merged CSVs).
+# The training store: tapes decoded, dataset/ and FYERS merged into one
+# snapshot at one cutoff (app/training_store.hpp). Offline, no credential.
+add_executable(altair_store store_main.cpp)
+target_link_libraries(altair_store PRIVATE altair_live altair_flags)
+target_include_directories(altair_store PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_definitions(altair_store PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+if(ALTAIR_BUILD_TESTS)
+    add_executable(altair_training_store_test tests/test_training_store.cpp)
+    target_link_libraries(altair_training_store_test PRIVATE altair_live altair_flags)
+    target_include_directories(altair_training_store_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME training_store COMMAND altair_training_store_test)
+    add_test(NAME store_help COMMAND altair_store --help)
+endif()
+
 add_executable(altair_data_audit data_audit_main.cpp)
 target_link_libraries(altair_data_audit PRIVATE altair_flags)
 target_include_directories(altair_data_audit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -350,6 +364,15 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
     target_link_libraries(altair_tune PRIVATE altair_live altair_charges_toml altair_flags)
     target_include_directories(altair_tune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_tune PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    # Everything the price service publishes, recorded to tapes all session
+    # (a scheduled task runs it whether or not the desktop is open).
+    add_executable(altair_feed_recorder feed_recorder_main.cpp)
+    target_link_libraries(altair_feed_recorder PRIVATE altair_live altair_flags Boost::headers Threads::Threads)
+    target_include_directories(altair_feed_recorder PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_feed_recorder PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        target_link_libraries(altair_feed_recorder PRIVATE ws2_32 mswsock)
+    endif()
     # Each minute's ATM implied vol from the recorded FYERS chain.
     add_executable(altair_iv_record iv_record_main.cpp)
     target_link_libraries(altair_iv_record PRIVATE altair_live altair_flags)
@@ -358,6 +381,7 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
         add_test(NAME live_engine_help COMMAND altair_live_engine --help)
         add_test(NAME tune_help COMMAND altair_tune --help)
         add_test(NAME iv_record_help COMMAND altair_iv_record --help)
+        add_test(NAME feed_recorder_dry_run COMMAND altair_feed_recorder --seconds 5)
         add_executable(altair_iv_record_test tests/test_iv_record.cpp)
         target_link_libraries(altair_iv_record_test PRIVATE altair_live altair_flags)
         target_include_directories(altair_iv_record_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -421,6 +445,20 @@ if(TARGET altair_charges_toml)
     endif()
 endif()
 
+# Avellaneda-Stoikov quoting on FYERS one-minute futures bars, paper only, and
+# the HMM stress regime, walk-forward. Neither reads config/charges.toml, so
+# both build without toml++.
+add_executable(altair_as_mm as_mm_main.cpp)
+target_link_libraries(altair_as_mm PRIVATE altair_models altair_strategies altair_flags)
+target_include_directories(altair_as_mm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+add_executable(altair_regimes regimes_main.cpp)
+target_link_libraries(altair_regimes PRIVATE altair_models altair_flags)
+target_include_directories(altair_regimes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(ALTAIR_BUILD_TESTS)
+    add_test(NAME as_mm_help COMMAND altair_as_mm --help)
+    add_test(NAME regimes_help COMMAND altair_regimes --help)
+endif()
+
 if(TARGET altair_charges_toml)
     add_executable(altair_band_option_demo band_option_demo_main.cpp)
     target_link_libraries(altair_band_option_demo PRIVATE altair_models altair_strategies altair_charges_toml altair_flags)
@@ -428,8 +466,8 @@ if(TARGET altair_charges_toml)
 
     # altair_trader: one model over every model's out-of-sample output,
     # refitted and traded day by day on the index futures.
-    add_executable(altair_trader trader_main.cpp)
-    target_link_libraries(altair_trader PRIVATE altair_models altair_charges_toml altair_flags)
+    add_executable(altair_trader trader_main.cpp trader_combos.cpp)
+    target_link_libraries(altair_trader PRIVATE altair_models altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_trader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
     # The owner's threshold strategies (threshold_strategy/), on paper.

@@ -165,6 +165,7 @@ int main(int argc, char** argv) {
     const auto authorization = altair::fyers::authorization_header(
         session->client.c_str(), session->access.c_str());
     if (!authorization) return 2;
+    std::size_t dropped_total = 0, empty_chunks = 0;
     const auto fetch = [&](std::string_view iv)
         -> std::optional<std::vector<altair::RawCandle>> {
         const auto chunks = altair::fyers_history::chunk_requests(iv, from, to);
@@ -191,8 +192,18 @@ int main(int argc, char** argv) {
                             message ? ": " : "", message ? message->c_str() : "");
                 return std::nullopt;
             }
-            const auto parsed = altair::fyers_history::parse(response->body);
-            if (!parsed || parsed->empty()) {
+            std::size_t bad = 0;
+            const auto parsed = altair::fyers_history::parse(response->body, &bad);
+            if (bad > 0) {
+                std::printf("FYERS history %s to %s: %zu impossible or out-of-order candle(s) left out\n",
+                            chunk.from.c_str(), chunk.to.c_str(), bad);
+                dropped_total += bad;
+            }
+            if (parsed && parsed->empty()) {   // a holiday stretch, or before FYERS's data starts
+                ++empty_chunks;
+                continue;
+            }
+            if (!parsed) {
                 const auto message = json_string(response->body, "message");
                 std::printf("FYERS history response refused validation%s%s\n",
                             message ? ": " : "", message ? message->c_str() : "");
@@ -200,12 +211,13 @@ int main(int argc, char** argv) {
             }
             for (const auto& candle : *parsed) {
                 if (all.empty() || candle.ts_ns > all.back().ts_ns) all.push_back(candle);
-                else if (candle.ts_ns != all.back().ts_ns) {
-                    std::printf("FYERS returned out-of-order candles across chunks\n");
-                    return std::nullopt;
-                }
+                else if (candle.ts_ns != all.back().ts_ns) ++dropped_total;   // out of order across chunks
             }
         }
+        if (dropped_total > 0 || empty_chunks > 0)
+            std::printf("FYERS history: %zu candle(s) left out as impossible, %zu empty chunk(s)\n",
+                        dropped_total, empty_chunks);
+        if (all.empty()) return std::nullopt;
         return all;
     };
     if (single) {

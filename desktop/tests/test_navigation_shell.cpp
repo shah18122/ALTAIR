@@ -131,6 +131,88 @@ void halt_chord(altair::ui::MainWindow& window) {
     chord->key(Qt::Key_F11, false, false);
     chord->key(Qt::Key_F12, false, false);
 }
+void workstation(altair::ui::MainWindow& window, QStackedWidget* stack) {
+    // Ctrl+K: type, Enter, there.
+    auto* palette = window.palette();
+    check(palette != nullptr, "Ctrl+K has a command palette");
+    if (palette == nullptr) return;
+    window.open_palette();
+    palette->type(QStringLiteral("model atl"));
+    check(palette->first_title() == QStringLiteral("Model Atlas") && palette->run_first() && stack->currentIndex() == 32,
+          "typing a few letters finds the Model Atlas; Enter opens it");
+    window.open_palette();
+    palette->type(QStringLiteral("daily find"));
+    check(palette->run_first() && stack->currentIndex() == 40, "the palette reaches Daily findings");
+    window.open_palette();
+    palette->type(QStringLiteral("garch"));
+    check(palette->shown_count() > 0, "Atlas models are in the palette");
+    palette->type(QStringLiteral("zzzzqqq"));
+    check(palette->shown_count() == 0 && !palette->run_first(), "no match runs nothing");
+    palette->hide();
+    bool trades = false;
+    window.open_palette();
+    for (const char* q : {"halt", "live on", "buy", "sell", "order"}) {
+        palette->type(QString::fromLatin1(q));
+        const QString t = palette->first_title().toLower();
+        trades = trades || t.startsWith(QStringLiteral("halt")) || t.contains(QStringLiteral("live on"));
+    }
+    palette->hide();
+    check(!trades, "nothing in the palette halts, arms LIVE or places an order");
+
+    // Layouts.
+    auto* nav = static_cast<altair::ui::WorkspaceNavigation*>(window.findChild<QWidget*>(QStringLiteral("workspaceNavigation")));
+    window.apply_layout(altair::ui::builtin_layouts()[1]);
+    check(stack->currentIndex() == 2 && nav->mode() == altair::ui::NavigationMode::Compact && window.news_ticker()->isVisible(),
+          "the Trading layout opens the Terminal with the sidebar collapsed and the news on");
+    window.apply_layout(altair::ui::builtin_layouts()[2]);
+    check(stack->currentIndex() == 39 && nav->mode() == altair::ui::NavigationMode::Expanded && !window.news_ticker()->isVisible(),
+          "the Review layout opens Backtests, sidebar out, news off");
+    window.show_page(QStringLiteral("strategies.basis"));
+    check(window.save_current_layout(QStringLiteral("  my   basis ")) && !window.save_current_layout(QStringLiteral("   ")),
+          "a layout saves under a name; an empty name is refused");
+    const auto mine = window.saved_layouts();
+    check(mine.size() == 1 && mine[0].name == QStringLiteral("my basis") && mine[0].page == QStringLiteral("strategies.basis")
+              && !mine[0].news,
+          "the saved layout remembers the page and the news bar");
+    window.apply_layout(altair::ui::builtin_layouts()[0]);
+    check(stack->currentIndex() == 40 && window.news_ticker()->isVisible(), "the Morning layout opens Daily findings with the news");
+    window.apply_layout(mine[0]);
+    check(stack->currentIndex() == 22 && !window.news_ticker()->isVisible(), "a saved layout restores");
+    window.apply_layout(altair::ui::builtin_layouts()[1]);
+    nav->set_mode(altair::ui::NavigationMode::Expanded);
+
+    // PAPER / LIVE / HALTED on every page.
+    auto* terminal = window.findChild<altair::ui::TerminalPage*>();
+    auto* edge = window.findChild<QFrame*>(QStringLiteral("tradingModeBar"));
+    auto* sw = window.findChild<QPushButton*>(QStringLiteral("tradingModeSwitch"));
+    QApplication::processEvents();
+    window.show_page(QStringLiteral("models.atlas"));
+    QElapsedTimer waited;
+    waited.start();
+    while (waited.elapsed() < 700) QApplication::processEvents(QEventLoop::AllEvents, 50);
+    check(window.trading_mode() == QStringLiteral("PAPER") && edge != nullptr && edge->isVisible()
+              && edge->property("mode").toString() == QStringLiteral("paper") && sw != nullptr && sw->isVisible()
+              && sw->text().startsWith(QStringLiteral("PAPER")),
+          "away from the Terminal, the edge and the status bar say PAPER");
+    window.set_halt_answer([] { return false; });
+    if (sw != nullptr) sw->click();
+    check(terminal != nullptr && !terminal->halted(), "the switch asks first; No keeps trading");
+    window.set_halt_answer([] { return true; });
+    if (sw != nullptr) sw->click();
+    waited.restart();
+    while (waited.elapsed() < 700) QApplication::processEvents(QEventLoop::AllEvents, 50);
+    check(terminal != nullptr && terminal->halted() && window.trading_mode() == QStringLiteral("HALTED")
+              && edge->property("mode").toString() == QStringLiteral("halted") && sw->text().contains(QStringLiteral("HALTED"))
+              && sw->toolTip().contains(QStringLiteral("status bar switch")),
+          "Yes halts from any page; the edge and switch say HALTED and why");
+    window.set_resume_answer([] { return QStringLiteral("checked again"); });
+    if (sw != nullptr) sw->click();
+    waited.restart();
+    while (waited.elapsed() < 700) QApplication::processEvents(QEventLoop::AllEvents, 50);
+    check(terminal != nullptr && !terminal->halted() && sw->text().startsWith(QStringLiteral("PAPER"))
+              && sw->toolTip().contains(QStringLiteral("Last halt")),
+          "the switch resumes with a reason; its tooltip keeps the last halt");
+}
 void atlas_back(altair::ui::MainWindow& window, QStackedWidget* stack) {
     const altair::ui::AtlasRow* forecast = nullptr;
     for (const auto& r : altair::ui::kAtlasRows) if (r.page == 18) { forecast = &r; break; }
@@ -219,6 +301,19 @@ int main(int argc, char** argv) {
                   && stack->currentWidget()->findChild<QWidget*>(QStringLiteral("arbRecord_Option arbitrage record")) != nullptr
                   && stack->currentWidget()->findChildren<QWidget*>(QStringLiteral("strategyRecord")).size() == 2,
               "Arbitrage shows the NSE-BSE and option arbitrage records, demo and real");
+        for (const char* page : {"strategies.overview", "strategies.overnight", "strategies.pair-trading", "strategies.basis"}) {
+            window.show_page(QString::fromLatin1(page));
+            auto* tabs = qobject_cast<QTabWidget*>(stack->currentWidget());
+            check(tabs != nullptr && tabs->objectName() == QStringLiteral("tradeLogTabs") && tabs->tabText(0) == QStringLiteral("Study")
+                      && tabs->tabText(tabs->count() - 1) == QStringLiteral("Saved runs"),
+                  "a strategy page opens on its study with its trades in tabs beside it");
+        }
+        window.show_page(QStringLiteral("strategies.overview"));
+        check(window.compute_current(), "the study's own button still runs from the trade tabs");
+        window.show_page(QStringLiteral("models.findings"));
+        check(stack->currentWidget()->objectName() == QStringLiteral("dailyFindings"), "Daily findings has its page");
+        window.show_page(QStringLiteral("system.work-log"));
+        check(stack->currentWidget()->objectName() == QStringLiteral("workLog"), "Work log has its page");
         window.show_page(QStringLiteral("system.data-flow"));
         check(stack->currentWidget()->findChild<QWidget*>(QStringLiteral("liveDataflow")) != nullptr,
               "Data Flow shows today's live path");
@@ -230,6 +325,7 @@ int main(int argc, char** argv) {
         check(!f11 && !global_escape, "F11 is no longer a full-screen toggle; no window Escape action");
         halt_chord(window);
         atlas_back(window, stack);
+        workstation(window, stack);
         window.show_page(QStringLiteral("accounts.brokers"));
         QApplication::processEvents();
         auto* brokers = window.findChild<QWidget*>(QStringLiteral("brokerControlCenter"));

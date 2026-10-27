@@ -65,6 +65,28 @@ int main() {
               std::unexpected(altair::StreamForecastError::FitFailed)};
     check(daily && daily->target_ns == 0,
           "daily horizon does not invent a calendar-date target without a session calendar");
+    constexpr std::int64_t quarter = 15 * minute;
+    std::vector<std::int64_t> q_ends(prices.size());
+    for (std::size_t i = 0; i < q_ends.size(); ++i)
+        q_ends[i] = (static_cast<std::int64_t>(i) + 1) * quarter;
+    const auto hour = altair::fit_stream_forecast(prices, q_ends, quarter, 4);
+    check(hour && hour->horizon_bars == 4 && hour->chosen_depth >= 2 && hour->chosen_depth <= 5,
+          "15m bars fit a 4-bar (one hour) target and select a depth from 2 to 5");
+    const auto ahead = hour ? hour->predict(tail, q_ends.back())
+        : std::expected<altair::ForwardEstimate, altair::StreamForecastError>{
+              std::unexpected(altair::StreamForecastError::FitFailed)};
+    check(ahead && ahead->target_ns == q_ends.back() + 60 * minute,
+          "15m four-bar forecast targets one hour after issue");
+    auto gapped = q_ends;
+    for (std::size_t i = 600; i < gapped.size(); ++i) gapped[i] += quarter;
+    const auto one_gap = altair::fit_stream_forecast(prices, gapped, quarter, 1);
+    const auto four_gap = altair::fit_stream_forecast(prices, gapped, quarter, 4);
+    check(one_gap && four_gap && four_gap->skipped_windows == one_gap->skipped_windows + 3,
+          "a missing bar skips every multi-bar target that would straddle it");
+    check(!altair::fit_stream_forecast(prices, q_ends, quarter, 0), "zero-bar horizon refused");
+    check(!altair::fit_stream_forecast(std::span<const double>(prices.data(), daily_ends.size()),
+                                       daily_ends, day, 4),
+          "daily fit refuses a multi-session horizon it cannot date");
     const auto begin = std::chrono::steady_clock::now();
     double accumulator = 0.0;
     for (int i = 0; i < 10000; ++i) accumulator += fit->predict(tail, ends.back() + i)->predicted;

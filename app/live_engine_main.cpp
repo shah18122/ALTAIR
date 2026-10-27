@@ -61,6 +61,7 @@
 #include <live/ledger.hpp>
 #include <live/arbitrage.hpp>
 #include <live/desk_trader.hpp>
+#include <live/straddle.hpp>
 #include <live/models.hpp>
 #include <live/option_arb.hpp>
 #include <live/threshold.hpp>
@@ -492,6 +493,18 @@ int main(int argc, char** argv) {
     const auto bv = vol_inputs("BANKNIFTY", brv, note);
     std::printf("  HAR sigma today: NIFTY %.3f %%, BANKNIFTY %.3f %%; session share %.2f / %.2f\n", 100 * nv.sigma_day,
                 100 * bv.sigma_day, nv.intraday_share, bv.intraday_share);
+    // INDIA VIX for the straddle sellers: the last close before today and
+    // HAR's forecast of today's close (fitted in logs on closes before today).
+    lv::LiveStraddleInputs nst{nv}, bst{bv};
+    {
+        std::vector<double> vc;
+        for (const auto& [d, c] : daily_closes(root / "dataset/spot/indiavix/1d", today)) if (c > 0.0) vc.push_back(c);
+        if (!vc.empty()) nst.vix_close = bst.vix_close = vc.back();
+        if (vc.size() > 60)
+            if (const auto f = altair::har_forecast(vc, vc.size() - 1, 1))
+                nst.vix_forecast = bst.vix_forecast = f->variance;   // HAR on the VIX level: its "variance" is the forecast level
+        std::printf("  INDIA VIX close %.2f, HAR forecast of today's close %.2f\n", nst.vix_close, nst.vix_forecast);
+    }
 
     const auto nd = daily_closes(root / "dataset/spot/nifty/1d", today);
     const auto bd = daily_closes(root / "dataset/spot/banknifty/1d", today);
@@ -565,6 +578,9 @@ int main(int argc, char** argv) {
     engine.add_model(std::make_unique<lv::LiveStrangleModel>(nv, 2.0));
     engine.add_model(std::make_unique<lv::LiveStrangleModel>(bv, 0.0));
     engine.add_model(std::make_unique<lv::LiveStrangleModel>(bv, 2.0));
+    // Sell the ATM straddle when forecast IV >= forecast RV, read on every tick (live/straddle.hpp).
+    engine.add_model(std::make_unique<lv::LiveStraddleModel>(nst));
+    engine.add_model(std::make_unique<lv::LiveStraddleModel>(bst));
     for (std::size_t i = 0; i <= dir->names.size(); ++i)
         engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dirs, i));
     if (dir->names.empty()) engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dirs, 0));

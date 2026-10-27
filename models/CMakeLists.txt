@@ -72,6 +72,12 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_curriculum_feeds_test PRIVATE altair_models altair_flags)
     add_test(NAME models_curriculum_feeds COMMAND altair_curriculum_feeds_test)
 
+    # The HMM regime walk-forward: stress found where it is, and no row
+    # changed by data after it.
+    add_executable(altair_hmm_regime_test tests/test_hmm_regime.cpp)
+    target_link_libraries(altair_hmm_regime_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_hmm_regime COMMAND altair_hmm_regime_test)
+
     add_executable(altair_magnitude_test tests/test_magnitude.cpp)
     target_link_libraries(altair_magnitude_test PRIVATE altair_models altair_flags)
     add_test(NAME models_magnitude COMMAND altair_magnitude_test)
@@ -79,6 +85,9 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_meta_trader_test tests/test_meta_trader.cpp)
     target_link_libraries(altair_meta_trader_test PRIVATE altair_models altair_flags)
     add_test(NAME models_meta_trader COMMAND altair_meta_trader_test)
+    add_executable(altair_combo_search_test tests/test_combo_search.cpp)
+    target_link_libraries(altair_combo_search_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_combo_search COMMAND altair_combo_search_test)
     add_executable(altair_meta_learners_test tests/test_meta_learners.cpp)
     target_link_libraries(altair_meta_learners_test PRIVATE altair_models altair_flags)
     add_test(NAME models_meta_learners COMMAND altair_meta_learners_test)

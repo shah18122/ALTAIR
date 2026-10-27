@@ -78,6 +78,12 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_vix_test PRIVATE altair_analytics altair_flags)
     add_test(NAME vix COMMAND altair_vix_test)
 
+    # Avellaneda-Stoikov: the closed-form quotes, the sell-only ask for
+    # options, and k recovered from exponential excursions.
+    add_executable(altair_avellaneda_stoikov_test tests/test_avellaneda_stoikov.cpp)
+    target_link_libraries(altair_avellaneda_stoikov_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME avellaneda_stoikov COMMAND altair_avellaneda_stoikov_test)
+
     add_executable(altair_derivatives_test tests/test_derivatives.cpp)
     target_link_libraries(altair_derivatives_test PRIVATE altair_analytics altair_flags)
     add_test(NAME derivatives COMMAND altair_derivatives_test)

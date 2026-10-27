@@ -23,6 +23,8 @@ struct ForwardEstimate {
 struct StreamForecastModel {
     Gbdt model;
     std::int64_t interval_ns = 0, observed_through_ns = 0;
+    /// Bars ahead the label spans (4 at 15m = the next hour). Always 1 for daily.
+    std::size_t horizon_bars = 1;
     double residual90_bps = 0.0, rmse_bps = 0.0, naive_rmse_bps = 0.0;
     std::size_t training_rows = 0, validation_rows = 0, scored_rows = 0;
     std::size_t skipped_windows = 0, chosen_depth = 0;
@@ -34,7 +36,9 @@ struct StreamForecastModel {
     predict(std::span<const double, 21> closes, std::int64_t issued_ns) const noexcept {
         const bool daily = interval_ns >= 86'400'000'000'000LL;
         if (interval_ns <= 0 || issued_ns < observed_through_ns || model.binner.edge.size() != 8 ||
-            (!daily && issued_ns > std::numeric_limits<std::int64_t>::max() - interval_ns))
+            horizon_bars == 0 || (daily && horizon_bars != 1) ||
+            (!daily && interval_ns > (std::numeric_limits<std::int64_t>::max() - issued_ns) /
+                                         static_cast<std::int64_t>(horizon_bars)))
             return std::unexpected(StreamForecastError::BadInput);
         std::array<double, 8> features{};
         double scale = 0.0;
@@ -50,7 +54,7 @@ struct StreamForecastModel {
         out.low = out.current * std::exp((out.move_bps - residual90_bps) / 10000.0);
         out.high = out.current * std::exp((out.move_bps + residual90_bps) / 10000.0);
         out.issued_ns = issued_ns;
-        out.target_ns = daily ? 0 : issued_ns + interval_ns;
+        out.target_ns = daily ? 0 : issued_ns + interval_ns * static_cast<std::int64_t>(horizon_bars);
         if (!std::isfinite(out.predicted) || !std::isfinite(out.low) ||
             !std::isfinite(out.high) || out.low <= 0.0 || out.low > out.predicted || out.high < out.predicted)
             return std::unexpected(StreamForecastError::NonFinite);
@@ -79,12 +83,16 @@ struct StreamForecastModel {
 };
 
 /// Chronological 60/20/20 fit, model selection, then untouched calibration.
-/// Select depth 2 or 3 by validation RMSE; test/calibration never selects depth.
+/// Select depth 2..5 by validation RMSE; test/calibration never selects depth.
 /// Stamps are completed-bar END times. Input order is strict, gaps skip windows.
+/// The label is the log return over the next `horizon_bars` bars; labels that
+/// overlap a partition boundary are purged so no target leaks across it.
 [[nodiscard]] inline std::expected<StreamForecastModel, StreamForecastError>
 fit_stream_forecast(std::span<const double> closes, std::span<const std::int64_t> ends,
-                    std::int64_t interval_ns) {
-    if (closes.size() != ends.size() || interval_ns <= 0)
+                    std::int64_t interval_ns, std::size_t horizon_bars = 1) {
+    const bool daily = interval_ns >= 86'400'000'000'000LL;
+    if (closes.size() != ends.size() || interval_ns <= 0 || horizon_bars == 0 ||
+        horizon_bars > 120 || (daily && horizon_bars != 1))
         return std::unexpected(StreamForecastError::BadInput);
     if (closes.size() < 600) return std::unexpected(StreamForecastError::InsufficientHistory);
     for (std::size_t i = 0; i < closes.size(); ++i) {
@@ -96,14 +104,16 @@ fit_stream_forecast(std::span<const double> closes, std::span<const std::int64_t
     std::vector<double> labels, scales;
     StreamForecastModel out;
     out.interval_ns = interval_ns;
+    out.horizon_bars = horizon_bars;
     out.observed_through_ns = ends.back();
-    for (std::size_t i = 20; i + 1 < closes.size(); ++i) {
-        // Intraday features and target must each represent one matching bar.
-        // Never turn an overnight or missing-bar move into a one-minute input.
-        bool continuous = interval_ns >= 86'400'000'000'000LL;
+    for (std::size_t i = 20; i + horizon_bars < closes.size(); ++i) {
+        // Intraday features and target must each represent matching bars.
+        // Never turn an overnight or missing-bar move into an intraday input
+        // or let a multi-bar target straddle the session break.
+        bool continuous = daily;
         if (!continuous) {
-            continuous = ends[i + 1] - ends[i] == interval_ns;
-            for (std::size_t j = i - 19; continuous && j <= i; ++j)
+            continuous = true;
+            for (std::size_t j = i - 19; continuous && j <= i + horizon_bars; ++j)
                 continuous = ends[j] - ends[j - 1] == interval_ns;
         }
         if (!continuous) { ++out.skipped_windows; continue; }
@@ -112,7 +122,7 @@ fit_stream_forecast(std::span<const double> closes, std::span<const std::int64_t
         if (!StreamForecastModel::make_features(std::span<const double, 21>(closes.data() + i - 20, 21), x, scale))
             return std::unexpected(StreamForecastError::BadInput);
         all.x.insert(all.x.end(), x.begin(), x.end());
-        labels.push_back(10000.0 * (std::log(closes[i + 1]) - std::log(closes[i])));
+        labels.push_back(10000.0 * (std::log(closes[i + horizon_bars]) - std::log(closes[i])));
         scales.push_back(scale);
         ++all.rows;
     }
@@ -125,7 +135,7 @@ fit_stream_forecast(std::span<const double> closes, std::span<const std::int64_t
     std::vector<double> y(train_end);
     for (std::size_t i = 0; i < train_end; ++i) y[i] = labels[i] / scales[i];
     double best = std::numeric_limits<double>::infinity();
-    for (std::size_t depth : {2u, 3u}) {
+    for (std::size_t depth : {2u, 3u, 4u, 5u}) {
         GbdtParams params;
         params.trees = 64;
         params.max_depth = depth;
@@ -134,8 +144,8 @@ fit_stream_forecast(std::span<const double> closes, std::span<const std::int64_t
         auto fitted = fit_gbdt(train, y, params);
         if (!fitted) continue;
         double loss = 0.0;
-        // One purged label at each partition boundary.
-        for (std::size_t i = train_end + 1; i < valid_end; ++i) {
+        // Purge the labels that overlap each partition boundary.
+        for (std::size_t i = train_end + horizon_bars; i < valid_end; ++i) {
             const double error = fitted->predict_row(all.x.data() + i * 8) * scales[i] - labels[i];
             loss += error * error;
         }
@@ -148,7 +158,7 @@ fit_stream_forecast(std::span<const double> closes, std::span<const std::int64_t
     if (!std::isfinite(best)) return std::unexpected(StreamForecastError::FitFailed);
     std::vector<double> errors;
     double squared = 0.0, naive = 0.0;
-    for (std::size_t i = valid_end + 1; i < all.rows; ++i) {
+    for (std::size_t i = valid_end + horizon_bars; i < all.rows; ++i) {
         const double error = out.model.predict_row(all.x.data() + i * 8) * scales[i] - labels[i];
         if (!std::isfinite(error)) return std::unexpected(StreamForecastError::NonFinite);
         errors.push_back(std::fabs(error));
@@ -158,7 +168,7 @@ fit_stream_forecast(std::span<const double> closes, std::span<const std::int64_t
     std::sort(errors.begin(), errors.end());
     out.scored_rows = errors.size();
     out.training_rows = train_end;
-    out.validation_rows = valid_end - train_end - 1;
+    out.validation_rows = valid_end - train_end - horizon_bars;
     out.rmse_bps = std::sqrt(squared / static_cast<double>(errors.size()));
     out.naive_rmse_bps = std::sqrt(naive / static_cast<double>(errors.size()));
     // Empirical 90th percentile, no distributional or tick-level coverage claim.

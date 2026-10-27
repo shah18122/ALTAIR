@@ -42,6 +42,10 @@
 
 #include "data/bar_csv.hpp"
 
+#include <QApplication>
+#include <QPointer>
+#include <QShowEvent>
+#include <QThreadPool>
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -84,17 +88,46 @@ public:
         out_->setReadOnly(true);
         set_role(out_, QStringLiteral("log"));
         v->addWidget(out_, 1);
-        run();
+    }
+
+protected:
+    // The first run waits for the page to be opened: its bootstraps took
+    // over a second of the window's start, for a page most sessions never
+    // open.
+    void showEvent(QShowEvent* e) override {
+        QWidget::showEvent(e);
+        if (!ran_) run();
     }
 
 private Q_SLOTS:
     void run() {
+        ran_ = true;
+        if (busy_) return;
+        busy_ = true;
+        run_->setEnabled(false);
+        out_->setPlainText(QStringLiteral("Running 10,000 bootstrap paths on real NIFTY daily…"));
+        // Off the UI thread: the bootstraps take a couple of seconds. The
+        // report reads only its own data, and the text comes back queued.
+        QPointer<AnalyticsPanel> self(this);
+        QThreadPool::globalInstance()->start([self] {
+            const QString o = report();
+            QMetaObject::invokeMethod(qApp, [self, o] {
+                if (self == nullptr) return;
+                self->busy_ = false;
+                self->run_->setEnabled(true);
+                self->out_->setPlainText(o);
+            }, Qt::QueuedConnection);
+        });
+    }
+
+public:
+    /// The page's text, from the real daily NIFTY series. Pure: safe on any thread.
+    [[nodiscard]] static QString report() {
         const LoadResult d = load_bars_csv(
             QStringLiteral(ALTAIR_DATASET_DIR "/spot/nifty/1d/all.csv"),
             24LL * 3600 * 1'000'000'000LL, DailyStamp::SessionClose, true);
         if (!d.ok() || d.bars.size() < 500) {
-            out_->setPlainText(QStringLiteral("no daily series: %1").arg(d.error));
-            return;
+            return QStringLiteral("no daily series: %1").arg(d.error);
         }
         std::vector<double> r;
         r.reserve(d.bars.size());
@@ -224,12 +257,14 @@ private Q_SLOTS:
             "says the worst\n  drawdown is smaller than it was sizes you "
             "bigger than the market allows.\n");
 
-        out_->setPlainText(o);
+        return o;
     }
 
 private:
     QPushButton* run_ = nullptr;
     QPlainTextEdit* out_ = nullptr;
+    bool ran_ = false;
+    bool busy_ = false;
 };
 
 } // namespace altair::ui

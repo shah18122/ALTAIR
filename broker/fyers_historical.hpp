@@ -104,8 +104,15 @@ inline bool number(std::string_view text, std::size_t& at, double& value) {
 } // namespace detail
 
 /// Parse {"s":"ok","candles":[[epoch_s,o,h,l,c,v], ...]}.
+///
+/// Strict by default: one impossible candle (high below open or close, low
+/// above them, a price <= 0, a fractional volume) or a stamp out of order
+/// refuses the whole response. With `dropped`, such candles are left out
+/// and counted instead: FYERS's own history holds a few (2019-09-23, NIFTY
+/// 5m), and one must not cost years of bars. A malformed body is refused
+/// either way.
 [[nodiscard]] inline std::expected<std::vector<RawCandle>, Error>
-parse(std::string_view body) {
+parse(std::string_view body, std::size_t* dropped = nullptr) {
     const auto status = body.find("\"s\"");
     if (status == std::string_view::npos) return std::unexpected(Error::Malformed);
     const auto colon = body.find(':', status + 3);
@@ -147,8 +154,16 @@ parse(std::string_view body) {
             || field[3] <= 0 || field[4] <= 0 || field[5] < 0
             || std::floor(field[5]) != field[5]
             || field[2] < std::max(field[1], field[4])
-            || field[3] > std::min(field[1], field[4]))
-            return std::unexpected(Error::BadField);
+            || field[3] > std::min(field[1], field[4])) {
+            if (dropped == nullptr) return std::unexpected(Error::BadField);
+            ++*dropped;
+            continue;
+        }
+        if (dropped != nullptr && !output.empty()
+            && static_cast<std::int64_t>(field[0]) * 1'000'000'000LL <= output.back().ts_ns) {
+            ++*dropped;   // a repeated or out-of-order stamp: the first one stays
+            continue;
+        }
         RawCandle candle{};
         candle.ts_ns = static_cast<std::int64_t>(field[0]) * 1'000'000'000LL;
         candle.open = field[1]; candle.high = field[2]; candle.low = field[3];

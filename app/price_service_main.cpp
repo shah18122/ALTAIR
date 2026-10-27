@@ -86,12 +86,16 @@ void usage(const char* exe) {
         "  %s --go [--port N] [--seconds N] [--tokens a,b,c]\n"
         "  %s --fyers [--go] [--until HH:MM] [--strikes N] [--depth-strikes N]\n"
         "      [--no-stocks] [--atm-nifty X] [--atm-banknifty X] [--depth50 N|off]\n"
+        "      [--expiries N] [--monthly]\n"
         "  %s --kite [--go] [same options as --fyers]\n"
         "  %s --live [--go] [same options as --fyers]\n"
         "  %s --sim [--date YYYY-MM-DD] [--speed N] [--from HH:MM] [--seed N]\n\n"
         "  --fyers             the LIVE TERMINAL feed from FYERS: NIFTY, BANKNIFTY,\n"
         "                      INDIA VIX, the near futures, both option chains\n"
-        "                      (ATM +/- --strikes, default 20) and the NIFTY 50, with\n"
+        "                      (ATM +/- --strikes, default 20; the nearest --expiries\n"
+        "                      of each, default 1, up to 4; --monthly adds the\n"
+        "                      nearest monthly when it is not among them) and the\n"
+        "                      NIFTY 50, with\n"
         "                      quotes and depth: the FYERS 50-level book for the\n"
         "                      scrip on screen (data/live/depth_request.csv, written\n"
         "                      by the desktop), else the near futures: --depth50 N\n"
@@ -560,7 +564,7 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
     const fs::path dir = fs::path(live_dir) / "fyers_masters";
     std::error_code ec;
     fs::create_directories(dir, ec);
-    for (const char* seg : {"NSE_CM", "BSE_CM", "NSE_CD", "BSE_CD", "MCX_COM"}) {
+    for (const char* seg : {"NSE_CM", "BSE_CM", "NSE_CD", "BSE_CD", "MCX_COM", "NSE_FO"}) {
         if (!fetch) break;
         const fs::path path = dir / (std::string(seg) + ".csv");
         const auto stamp = fs::last_write_time(path, ec);
@@ -1139,7 +1143,8 @@ int main(int argc, char** argv) {
     // defaulted to. Overridable, because P38 needs an option chain here.
     std::vector<std::uint32_t> sub_tokens{256265u, 260105u, 264969u};
     bool fyers = false, sim = false, kite = false, live_auto = false, stocks = true;
-    int until_min = 15 * 60 + 35, from_min = 9 * 60 + 15, strikes = 20, depth_strikes = 5;
+    int until_min = 15 * 60 + 35, from_min = 9 * 60 + 15, strikes = 20, depth_strikes = 5, expiries = 1;
+    bool monthly = false;
     double speed = 1.0, atm_nifty = 0.0, atm_banknifty = 0.0;
     std::uint64_t seed = 20261001;
     std::string sim_date;   // YYYY-MM-DD: simulate that day instead of today
@@ -1195,6 +1200,10 @@ int main(int argc, char** argv) {
             strikes = std::atoi(argv[++i]);
         } else if (a == "--depth-strikes" && i + 1 < argc) {
             depth_strikes = std::atoi(argv[++i]);
+        } else if (a == "--monthly") {
+            monthly = true;
+        } else if (a == "--expiries" && i + 1 < argc) {
+            expiries = std::atoi(argv[++i]);
         } else if (a == "--live-dir" && i + 1 < argc) {
             live_dir_arg = argv[++i];
         } else if (a == "--no-stocks") {
@@ -1220,9 +1229,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (until_min < 0 || from_min < 0 || !(speed > 0.0 && speed <= 1000.0) || strikes < 0 || strikes > 60
-        || depth_strikes < 0 || depth_strikes > strikes) {
+        || depth_strikes < 0 || depth_strikes > strikes || expiries < 1 || expiries > 4) {
         std::printf("--until/--from must be HH:MM, --speed 0..1000, --strikes 0..60, "
-                    "--depth-strikes 0..--strikes\n");
+                    "--depth-strikes 0..--strikes, --expiries 1..4\n");
         return 2;
     }
 
@@ -1275,24 +1284,32 @@ int main(int argc, char** argv) {
         if (!(nifty > 0.0)) { nifty = altair::live_sources::sim_close(ds + "/spot/nifty/1d", sim_date); std::printf("NIFTY ATM from the last close in dataset/: %.2f\n", nifty); }
         if (!(bnf > 0.0)) { bnf = altair::live_sources::sim_close(ds + "/spot/banknifty/1d", sim_date); std::printf("BANKNIFTY ATM from the last close in dataset/: %.2f\n", bnf); }
 
+        const std::string live_dir = live_dir_arg.empty() ? src + "/data/live" : live_dir_arg;
+        // FYERS's own names for cash scrips, and its F&O master (fetched for a
+        // FYERS feed, at most once in 20 hours; a SIM only reads the copy on disk).
+        const auto cash_names = fyers_cash_names(live_dir, mode == "fyers" || mode == "fyers-dry");
         std::string err;
-        const auto rows = altair::live::read_kite_master(src + "/data/instruments.csv", err);
+        auto rows = altair::live::read_kite_master(src + "/data/instruments.csv", err);
         if (!err.empty()) { std::printf("%s\n", err.c_str()); return 2; }
+        // The index contracts listed since data/instruments.csv was written
+        // (each new weekly), from FYERS's master.
+        if (std::ifstream fo(live_dir + "/fyers_masters/NSE_FO.csv", std::ios::binary); fo) {
+            const std::size_t n = altair::live::add_fyers_fo(rows, fo, {"NIFTY", "BANKNIFTY"});
+            std::printf("FYERS F&O master: %zu NIFTY/BANKNIFTY contract(s) not in data/instruments.csv added\n", n);
+        }
         altair::live::LiveUniverseOptions uo;
         uo.today = today;
         uo.nifty_spot = nifty;
         uo.banknifty_spot = bnf;
         uo.strikes = strikes;
         uo.depth_strikes = depth_strikes;
+        uo.expiries = expiries;
+        uo.monthly = monthly;
         uo.stocks = stocks;
         auto uni = altair::live::build_universe(
             rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);
-        const std::string live_dir = live_dir_arg.empty() ? src + "/data/live" : live_dir_arg;
         g_depth_request = live_dir + "/depth_request.csv";
         const std::string watch_path = live_dir + "/watchlist.csv";
-        // FYERS's own names for cash scrips (fetched for a FYERS feed; a SIM
-        // only reads the copy on disk, if any).
-        const auto cash_names = fyers_cash_names(live_dir, mode == "fyers" || mode == "fyers-dry");
         // The market watch's added scrips (data/live/watchlist.csv).
         std::vector<std::uint32_t> watched = altair::live::read_watchlist(watch_path);
         altair::live::add_watchlist(uni.instruments, rows, watched, uni.notes, &cash_names);

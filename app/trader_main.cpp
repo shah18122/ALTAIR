@@ -12,6 +12,8 @@
 //     BANKNIFTY: realised from the dataset's five-minute bars, INDIA VIX, the
 //     bhavcopy's 30-day ATM IV and, once recorded long enough, the FYERS
 //     chain's. Each joins as of the decision, standardised on past steps only.
+//   * The hidden Markov model's regime (models/hmm_regime.hpp): P(stress)
+//     walk-forward on each index's daily closes, joined the same way.
 //
 // WHAT IT DOES, EACH STEP, IN ORDER (models/meta_learners.hpp):
 //   1. the last step's outcome is now known: every candidate scores the call
@@ -61,6 +63,7 @@
 #include <app/forecast_tracks.hpp>
 #include <app/ivrv_feed.hpp>
 #include <models/curriculum_feeds.hpp>
+#include <models/hmm_regime.hpp>
 #include <models/meta_learners.hpp>
 #include <models/meta_trader.hpp>
 #include <risk/charges_toml.hpp>
@@ -536,6 +539,8 @@ void usage(const char* exe) {
         "usage: %s [--logs DIR] [--out DIR] [--dataset DIR] [--bhavcopy DIR] [--recorded-iv DIR] [--lots N]\n"
         "          [--unverified-costs] [--half-life DAYS] [--min-days N] [--daily-only] [--no-ivrv] [--all-tracks]\n"
         "          [--leak-check]\n"
+        "       %s combos --fyers DIR ...   the meta-trader: every model as a variable, every sell-only\n"
+        "                strategy at every time of day, searched walk-forward (combos --help)\n"
         "  --logs        the forecast curriculum's forecast_log/ (default data/verified/forecast_log)\n"
         "  --out         where to write (default data/verified/altair_trader)\n"
         "  --dataset     five-minute bars for realised vol, and the session after the last close (default dataset)\n"
@@ -548,12 +553,16 @@ void usage(const char* exe) {
         "  --leak-check  rerun every arm with another future after two cuts; every decision up to each\n"
         "                cut must be the same (exit 3 if not)\n"
         "  --unverified-costs  price expenses while config/charges.toml is unverified\n",
-        exe);
+        exe, exe);
 }
 
 } // namespace
 
+int combos_main(int argc, char** argv);   // app/trader_combos.cpp
+
 int main(int argc, char** argv) {
+    // `altair_trader combos ...`: the meta-trader's combination search
+    if (argc > 1 && std::string(argv[1]) == "combos") return combos_main(argc - 1, argv + 1);
     fs::path logs = "data/verified/forecast_log", out = "data/verified/altair_trader", dataset = "dataset";
     fs::path bhav_dir = "data/bhavcopy", recorded_dir = "data/live/iv";
     bool unverified = false, daily_only = false, ivrv_on = true, leak_check = false, all_tracks = false;
@@ -637,6 +646,20 @@ int main(int argc, char** argv) {
             data.vol_daily.push_back(iv::rv_daily_feed(inst + " RV", s, inst == "NIFTY" && !vix.empty() ? &vix : nullptr));
             data.vol_intraday.push_back(data.vol_daily.back());
             data.vol_intraday.push_back(iv::rv_intraday_feed(inst + " RV today", five, s));
+            // The HMM's regime (models/hmm_regime.hpp): P(stress) walk-forward on
+            // the daily closes, known at each close.
+            {
+                std::vector<std::int64_t> bt, rday;
+                std::vector<double> bc, rret;
+                for (const auto& b : five) { bt.push_back(b.t); bc.push_back(b.c); }
+                altair::daily_log_returns(bt, bc, rday, rret);
+                const auto reg = altair::walk_forward_regimes(rday, rret);
+                if (!reg.empty()) {
+                    data.vol_daily.push_back(altair::regime_daily_feed(inst + " regime", reg));
+                    data.vol_intraday.push_back(data.vol_daily.back());
+                    vol_text += "  " + inst + ": HMM regime on " + std::to_string(reg.size()) + " days\n";
+                }
+            }
             altair::bhavcopy::LoadReport br;
             const auto bhav = iv::iv_from_bhavcopy(altair::bhavcopy::load_dir(bhav_dir, inst, br));
             if (!bhav.empty()) {

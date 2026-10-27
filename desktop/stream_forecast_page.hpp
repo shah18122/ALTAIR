@@ -76,7 +76,8 @@ private:
 
 /// Cold worker input: copied strings, no widgets. Bar ends are known at fit time.
 inline ForecastTrainingResult train_forecast_page(const QString& root, const QString& symbol,
-                                                  const QString& interval, bool fetch) {
+                                                  const QString& interval, bool fetch,
+                                                  std::size_t horizon_bars = 1) {
     constexpr int kTrainingBars = 12000;
     ForecastTrainingResult result;
     const auto width = interval_ns_for(interval);
@@ -192,11 +193,20 @@ inline ForecastTrainingResult train_forecast_page(const QString& root, const QSt
     std::vector<double> prices;
     std::vector<std::int64_t> ends;
     for (auto it = bars.cbegin(); it != bars.cend(); ++it) { ends.push_back(it.key()); prices.push_back(it.value()); }
-    auto fitted = fit_stream_forecast(prices, ends, width);
+    auto fitted = fit_stream_forecast(prices, ends, width, horizon_bars);
     if (!fitted) { result.error = QStringLiteral("Fit refused: need 600 valid bars and 500 usable target windows (error %1)").arg(static_cast<int>(fitted.error())); return result; }
     result.fitted = std::move(*fitted);
     std::copy(prices.end() - 21, prices.end(), result.tail.begin());
     return result;
+}
+
+/// Bars in the chosen horizon: 0 seconds means the next bar. Daily stays one
+/// session, and a horizon shorter than the bar rounds up to one bar.
+inline std::size_t horizon_bars_for(const QString& interval, int seconds) {
+    const auto width = interval_ns_for(interval);
+    if (seconds <= 0 || width <= 0 || width >= 86'400'000'000'000LL) return 1;
+    const auto span = static_cast<std::int64_t>(seconds) * 1'000'000'000LL;
+    return static_cast<std::size_t>(std::max<std::int64_t>(1, (span + width - 1) / width));
 }
 
 class StreamForecastPage final : public QWidget {
@@ -212,10 +222,15 @@ public:
         for (std::size_t i = 0; i < count; ++i) symbols_->addItem(symbols[i].label, symbols[i].dir);
         interval_ = new QComboBox(this);
         for (const QString& value : {"1m", "5m", "15m", "60m", "1d"}) interval_->addItem(value, value);
+        interval_->setCurrentIndex(interval_->findData(QStringLiteral("15m")));
+        horizon_ = new QComboBox(this);
+        horizon_->addItem("Next bar", 0);
+        horizon_->addItem("Next 1 hour", 3600);
+        horizon_->setCurrentIndex(1);
         train_ = new QPushButton("Train from history", this);
         fetch_ = new QPushButton("Fetch recent + train", this);
         stream_ = new QPushButton("Connect price stream", this);
-        controls->addWidget(symbols_); controls->addWidget(interval_);
+        controls->addWidget(symbols_); controls->addWidget(interval_); controls->addWidget(horizon_);
         controls->addWidget(train_); controls->addWidget(fetch_); controls->addWidget(stream_);
         layout->addLayout(controls);
         status_ = new QLabel("Select a timeframe and train. Future targets and current price are shown separately.", this);
@@ -237,6 +252,12 @@ public:
         };
         connect(symbols_, &QComboBox::currentIndexChanged, this, invalidate);
         connect(interval_, &QComboBox::currentIndexChanged, this, invalidate);
+        connect(horizon_, &QComboBox::currentIndexChanged, this, invalidate);
+        const auto daily_horizon = [this] {
+            horizon_->setEnabled(interval_->currentData().toString() != QStringLiteral("1d"));
+        };
+        connect(interval_, &QComboBox::currentIndexChanged, this, daily_horizon);
+        daily_horizon();
         connect(client_, &PriceClient::tradeUpdated, this, [this](unsigned token) { on_trade(token); });
         connect(client_, &PriceClient::statusChanged, this, [this] {
             const bool connected = client_->connected();
@@ -267,11 +288,12 @@ private:
         fitted_.reset(); latest_.reset(); output_->clear(); pending_ = false; live_ = false;
         const QString symbol = symbols_->currentData().toString(), interval = interval_->currentData().toString();
         token_ = quant_symbol_by_dir(symbol).kite_token;
+        const auto horizon = horizon_bars_for(interval, horizon_->currentData().toInt());
         train_->setEnabled(false); fetch_->setEnabled(false);
         status_->setText("Training in background: chronological fit / selection / calibration. Navigation remains available.");
         auto result = std::make_shared<ForecastTrainingResult>();
-        worker_ = QThread::create([result, root = root_, symbol, interval, fetch] {
-            *result = train_forecast_page(root, symbol, interval, fetch);
+        worker_ = QThread::create([result, root = root_, symbol, interval, fetch, horizon] {
+            *result = train_forecast_page(root, symbol, interval, fetch, horizon);
         });
         auto* thread = worker_.data();
         connect(thread, &QThread::finished, this,
@@ -283,12 +305,14 @@ private:
             end_ = fitted_->observed_through_ns; last_tick_ = 0;
             continuity_.reset_warmup();
             missed_ = client_->missed_trades(); received_ = 0;
-            metrics_ = QString("Fit %1 | validation %2 | calibration %3 bars | depth %4\n"
+            metrics_ = QString("Target: close %11 bar(s) ahead\n"
+                               "Fit %1 | validation %2 | calibration %3 bars | depth %4 (searched 2-5)\n"
                                "Calibration RMSE: model %5 bps / random walk %6 bps\n"
                                "Loaded %7 bars; older bars outside 12,000-bar window %8; excluded partial/session bars %9; skipped target gaps %10\n")
                 .arg(fitted_->training_rows).arg(fitted_->validation_rows).arg(fitted_->scored_rows).arg(fitted_->chosen_depth)
                 .arg(fitted_->rmse_bps, 0, 'f', 3).arg(fitted_->naive_rmse_bps, 0, 'f', 3)
-                .arg(result->loaded).arg(result->older).arg(result->excluded).arg(fitted_->skipped_windows);
+                .arg(result->loaded).arg(result->older).arg(result->excluded).arg(fitted_->skipped_windows)
+                .arg(fitted_->horizon_bars);
             if (result->revised > 0 || result->duplicate_stamps > 0)
                 metrics_ += QString("Broker fetch revised %1 stored bar(s), largest change %2 bp; %3 repeated stamp(s) in the files kept their later row\n")
                     .arg(result->revised).arg(result->max_revision_bp, 0, 'f', 2).arg(result->duplicate_stamps);
@@ -312,6 +336,7 @@ private:
         if (!price) return;
         const auto now = QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
         const auto ts = price->exchange_ts_ns, width = fitted_->interval_ns;
+        const auto reach = width * static_cast<std::int64_t>(fitted_->horizon_bars);
         if (width >= 86'400'000'000'000LL) {
             const QString message = "Daily projection is anchored to the last completed daily bar; a session calendar is needed to resolve its next close.";
             if (live_status_ != message) { live_status_ = message; dirty_ = true; }
@@ -325,7 +350,7 @@ private:
         const auto at = QDateTime::fromMSecsSinceEpoch(ts / 1'000'000LL, ist);
         const auto open = QDateTime(at.date(), QTime(9, 15), ist).toMSecsSinceEpoch() * 1'000'000LL;
         const auto close = QDateTime(at.date(), QTime(15, 30), ist).toMSecsSinceEpoch() * 1'000'000LL;
-        if (ts < open || ts + width > close) {
+        if (ts < open || ts + reach > close) {
             latest_.reset(); live_status_ = "No intraday target inside this session. Daily mode uses historical completed bars."; dirty_ = true; return;
         }
         const auto bucket_end = open + ((ts - open) / width + 1) * width;
@@ -420,7 +445,8 @@ private:
         text += metrics_ + QString("\nLive trade updates evaluated: %1\n").arg(received_);
         text += "\nTargets are scaled by trailing volatility for fitting, then restored to basis points and price; input features remain raw return bps.\n"
                 "The band is a held-out completed-bar 90th-percentile residual, not a guaranteed coverage rate.\n"
-                "Intraday live inference uses the current unfinished bar and targets issue time + interval; this tick-phase horizon has not been calibrated on historical tick snapshots.\n"
+                "Intraday live inference uses the current unfinished bar and targets issue time + horizon; this tick-phase horizon has not been calibrated on historical tick snapshots.\n"
+                "A horizon that would end after 15:30 gives no live forecast; labels never straddle the session break.\n"
                 "Daily labels use the next available completed session; its target date is unresolved without an exchange calendar.\n"
                 "A forecast is an estimate. Accuracy and trading usefulness require forward evaluation.\n";
         output_->setPlainText(text);
@@ -428,7 +454,7 @@ private:
     PriceClient* client_;
     ForecastStreamContinuity continuity_;
     QString root_, metrics_, live_status_;
-    QComboBox *symbols_, *interval_;
+    QComboBox *symbols_, *interval_, *horizon_;
     QPushButton *train_, *fetch_, *stream_;
     QLabel* status_;
     QPlainTextEdit* output_;

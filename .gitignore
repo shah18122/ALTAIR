@@ -131,8 +131,16 @@ data/verified/
 # Pair-trading closes fetched from FYERS (ops/fetch_pairs.ps1): broker data,
 # regenerable, not ours to publish.
 data/pairs/
+# The meta-trader's FYERS history (ops/fetch_fyers_meta.ps1): broker data,
+# regenerable, not ours to publish.
+data/fyers_meta/
 # NSE F&O bhavcopy files (ops/fetch_bhavcopy.ps1): bulky, fetched per machine.
 data/bhavcopy/
+# The training store (ops/record_session.ps1, ops/nightly.ps1): recorded FYERS
+# sessions (GBs a day), FYERS candles, snapshots and model runs. Broker data
+# pulled with a credential: it never enters this public repo. The compact part
+# goes to the PRIVATE data repo (ops/push_data.ps1) when one is configured.
+data/store/
 
 # P36 hygiene. OPERATIONAL STATE, NOT SOURCE -- and git must not be able to
 # DELIVER either of these.
