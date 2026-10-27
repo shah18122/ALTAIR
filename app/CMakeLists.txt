@@ -327,6 +327,15 @@ add_executable(altair_magnitude magnitude_main.cpp)
 target_link_libraries(altair_magnitude PRIVATE altair_models altair_analytics altair_flags)
 target_include_directories(altair_magnitude PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# Nations' volatility slope: INDIA VIX change per 1% index bucket, and the
+# asymmetric spot-vol betas (analytics/option_math.hpp).
+add_executable(altair_vol_slope vol_slope_main.cpp)
+target_link_libraries(altair_vol_slope PRIVATE altair_analytics altair_flags)
+target_include_directories(altair_vol_slope PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(ALTAIR_BUILD_TESTS)
+    add_test(NAME vol_slope_help COMMAND altair_vol_slope --help)
+endif()
+
 # Order-book study over recorded FYERS depth (book/depth_study.hpp).
 add_executable(altair_depth_study depth_study_main.cpp)
 target_link_libraries(altair_depth_study PRIVATE altair_flags)

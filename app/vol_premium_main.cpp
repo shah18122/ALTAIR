@@ -66,7 +66,8 @@ void usage(const char* exe) {
         "  Sell the at-the-money monthly straddle when implied vol beats a HAR forecast; delta hedged.\n\n"
         "    %s [--dataset DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
         "       [--source synthetic|bhavcopy] [--bhavcopy-dir DIR] [--min-sessions N] [--exit-sessions N]\n"
-        "       [--slippage-pts P] [--rate R] [--vix-log FILE] [--vix-model NAME] [--unverified-costs]\n\n"
+        "       [--slippage-pts P] [--rate R] [--vix-log FILE] [--vix-model NAME] [--events FILE]\n"
+        "       [--monthly-halt RS] [--unverified-costs]\n\n"
         "    --source S            synthetic (default; VIX-priced) or bhavcopy (NSE closes)\n"
         "    --bhavcopy-dir DIR    default data/bhavcopy (ops/fetch_bhavcopy.ps1 fills it)\n"
         "    --min-sessions N      sessions to expiry at entry (default 10)\n"
@@ -74,6 +75,10 @@ void usage(const char* exe) {
         "    --slippage-pts P      premium points given up per option fill (default 1.0)\n"
         "    --vix-log FILE        forecast_log/india_vix_daily.csv from altair_forecast_curriculum\n"
         "    --vix-model NAME      the model whose INDIA VIX call vetoes entries (default Hedge)\n"
+        "    --events FILE         date,event CSV of scheduled news (config/scheduled_events.csv); adds har-0-noevents,\n"
+        "                          which skips a straddle whose life spans one\n"
+        "    --monthly-halt RS     adds har-0-halt: no new entries for the rest of a month once closed trades\n"
+        "                          lose RS rupees in it (Chen & Sebastian's monthly loss rule)\n"
         "    --unverified-costs    price expenses from an UNVERIFIED config/charges.toml, stamped\n", exe);
 }
 
@@ -127,6 +132,7 @@ struct Variant {
     std::string id, text;
     altair::VrpPolicy p;
     bool veto = false;
+    bool events = false;   ///< skip entries whose holding window spans a scheduled event
 };
 
 struct Priced {
@@ -140,8 +146,8 @@ struct Priced {
 
 int main(int argc, char** argv) {
     fs::path root = "dataset", out = "data/verified", bhav_dir = "data/bhavcopy";
-    std::string which = "both", source = "synthetic", vix_log, vix_model = "Hedge";
-    double rate = 0.065, slip = 1.0, min_s = 10, exit_s = 1;
+    std::string which = "both", source = "synthetic", vix_log, vix_model = "Hedge", events_file;
+    double rate = 0.065, slip = 1.0, min_s = 10, exit_s = 1, month_halt = 0.0;
     bool unverified = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
@@ -154,6 +160,8 @@ int main(int argc, char** argv) {
         if (a == "--bhavcopy-dir" && has) { bhav_dir = argv[++i]; continue; }
         if (a == "--vix-log" && has) { vix_log = argv[++i]; continue; }
         if (a == "--vix-model" && has) { vix_model = argv[++i]; continue; }
+        if (a == "--events" && has) { events_file = argv[++i]; continue; }
+        if (a == "--monthly-halt" && has) { if (!parse_double(argv[++i], month_halt) || !(month_halt > 0.0)) { usage(argv[0]); return 2; } continue; }
         if (a == "--rate" && has) { if (!parse_double(argv[++i], rate) || std::fabs(rate) > 1.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--slippage-pts" && has) { if (!parse_double(argv[++i], slip) || slip < 0.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--min-sessions" && has) { if (!parse_double(argv[++i], min_s) || min_s < 2 || min_s > 60) { usage(argv[0]); return 2; } continue; }
@@ -223,6 +231,20 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Scheduled news: one "YYYY-MM-DD,what" per line; '#' lines and the header skipped.
+    std::set<std::int64_t> events;
+    if (!events_file.empty()) {
+        std::ifstream in(events_file);
+        if (!in) { std::printf("  --events %s: cannot open\n", events_file.c_str()); return 2; }
+        for (std::string line; std::getline(in, line);) {
+            if (line.size() < 10 || line[0] == '#' || line.rfind("date", 0) == 0) { continue; }
+            const auto day = altair::bhavcopy::detail::date(line.substr(0, 10));
+            if (!day) { std::printf("  --events %s: bad date in \"%s\"\n", events_file.c_str(), line.c_str()); return 2; }
+            events.insert(*day);
+        }
+        if (events.empty()) { std::printf("  --events %s lists no dates; fill it in first\n", events_file.c_str()); return 2; }
+    }
+
     std::vector<Variant> variants;
     const auto base = [&](double spread) {
         altair::VrpPolicy p;
@@ -247,6 +269,50 @@ int main(int argc, char** argv) {
         p.hedge = false;
         variants.push_back({"har-2-unhedged", "har-2 without the futures hedge", p, false});
     }
+    {
+        // Gleadall, Option Gamma Trading: re-hedge at half the gamma breakeven
+        // move, sooner on falls (IV rises with them), instead of every close.
+        auto p = base(0.0);
+        p.hedge_band = 0.5;
+        p.hedge_band_down = 0.3;
+        variants.push_back({"har-0-band", "har-0, re-hedged at 0.5x the gamma breakeven move (0.3x on falls)", p, false});
+    }
+    {
+        // Gleadall, Option Market Making: the round trip is a cost in vol points.
+        auto p = base(0.0);
+        p.cost_in_vols = true;
+        variants.push_back({"har-0-netcost", "har-0, with the round-trip slippage in vol points added to the spread", p, false});
+    }
+    {
+        // Ianieri, Option Theory and Trading: judge IV against the volatility
+        // cone, not one forecast. Sell only when it sits in the top 30% of the
+        // realised vols this index has delivered over the same sessions.
+        auto p = base(0.0);
+        p.min_cone_rank = 0.7;
+        variants.push_back({"har-0-cone70", "har-0, and IV at or above the 70th percentile of the volatility cone", p, false});
+    }
+    {
+        // Chen & Sebastian, The Option Trader's Hedge Fund: book about 55% of
+        // the credit, or 25% inside five sessions (the sale had edge).
+        auto p = base(0.0);
+        p.take_profit = 0.55;
+        p.quick_profit = 0.25;
+        p.quick_sessions = 5;
+        variants.push_back({"har-0-tp55", "har-0, bought back at 55% of the credit earned, or 25% within 5 sessions", p, false});
+    }
+    {
+        auto p = base(0.0);
+        p.calm_trend_only = true;
+        variants.push_back({"har-0-calm", "har-0, only while 5-session realised vol is at or below 20-session", p, false});
+    }
+    if (month_halt > 0.0) {
+        auto p = base(0.0);
+        p.monthly_loss_halt = month_halt;
+        variants.push_back({"har-0-halt", "har-0, standing aside for the rest of a month once closed trades lose Rs " + fixed(month_halt, 0), p, false});
+    }
+    if (!events.empty()) {
+        variants.push_back({"har-0-noevents", "har-0, skipping a straddle whose life spans scheduled news", base(0.0), false, true});
+    }
     if (!vix_log.empty()) {
         variants.push_back({"har-2-vixveto", "har-2, skipping days the " + vix_model + " model calls INDIA VIX UP", base(0.02), true});
     }
@@ -267,7 +333,8 @@ int main(int argc, char** argv) {
     std::map<std::string, std::vector<std::pair<std::string, Priced>>> by_variant;
     std::set<std::string> opened;
     std::ofstream signals(dir / "signals.csv", std::ios::trunc);
-    signals << "instrument,date,expiry,sessions,implied_vol,har_vol,spread,realised_vol_after\n";
+    signals << "instrument,date,expiry,sessions,implied_vol,har_vol,spread,realised_vol_after,cost_vols,breakeven_pts,"
+               "implied_daily_move,p_loss_expiry,iv_cone_rank,vol_trend\n";
     std::ofstream eval(dir / "forecast_eval.csv", std::ios::trunc);
     eval << "instrument,horizon,days,har_rmse_vol_pts,trailing_rmse_vol_pts,har_bias_vol_pts,implied_minus_realised_vol_pts,"
             "share_implied_above_realised\n";
@@ -462,6 +529,7 @@ int main(int argc, char** argv) {
                 const auto days = m.day;
                 mv.veto = [days, &vix_up](std::size_t i) { return vix_up.contains(days[i]); };
             }
+            if (v.events) { mv.events = events; }
             const auto r = altair::vrp_run(mv, p);
             if (!r) {
                 std::printf("  %s %s: refused: %s\n", in.name.c_str(), v.id.c_str(), altair::vrp_error_text(r.error()));
@@ -476,7 +544,11 @@ int main(int argc, char** argv) {
                     signals << in.name << ',' << iso_day(m.day[s.i]) << ',' << iso_day(s.expiry) << ',' << s.sessions << ','
                             << fixed(100 * s.iv, 2) << ',' << fixed(100 * s.rv_fcst, 2) << ',' << fixed(100 * (s.iv - s.rv_fcst), 2)
                             << ',' << (n == s.sessions ? fixed(100 * std::sqrt(fut / static_cast<double>(n) * 252.0), 2) : std::string{})
-                            << '\n';
+                            << ',' << fixed(100 * s.cost_vols, 2) << ',' << fixed(s.breakeven_move, 1) << ','
+                            << fixed(s.daily_move, 1) << ','
+                            << (std::isfinite(s.p_loss_expiry) ? fixed(s.p_loss_expiry, 3) : std::string{}) << ','
+                            << (std::isfinite(s.cone_rank) ? fixed(s.cone_rank, 3) : std::string{}) << ','
+                            << fixed(s.vol_trend, 3) << '\n';
                 }
                 signals_written = true;
             }
@@ -510,7 +582,8 @@ int main(int argc, char** argv) {
             if (fresh) {
                 o << "instrument,variant,entry_date,exit_date,expiry,strike,forward_in,implied_vol,har_vol,realised_vol,"
                      "call_in,put_in,credit,call_out,put_out,debit,qty,option_pnl,hedge_orders,hedge_pnl,gross_pnl,expenses,"
-                     "net_pnl,exit_reason,source,costs,brokerage,stt,exchange_txn,sebi,stamp,ipft,gst\n";
+                     "net_pnl,exit_reason,source,costs,brokerage,stt,exchange_txn,sebi,stamp,ipft,gst,locked_vol,"
+                     "breakeven_pts,gamma_theta,cost_vols,p_loss_in,iv_cone_rank,vol_trend\n";
             }
             for (const auto& [name, pr] : rows) {
                 if (name != in.name) { continue; }
@@ -525,7 +598,12 @@ int main(int argc, char** argv) {
                   << ',' << t.exit_reason << ',' << source << ',' << cost_tag
                   << ',' << (pr.priced ? fixed(pr.c.brokerage, 2) + ',' + fixed(pr.c.stt, 2) + ',' + fixed(pr.c.exchange, 2) + ','
                                  + fixed(pr.c.sebi, 2) + ',' + fixed(pr.c.stamp, 2) + ',' + fixed(pr.c.ipft, 2) + ',' + fixed(pr.c.gst, 2)
-                           : std::string{",,,,,,"}) << '\n';
+                           : std::string{",,,,,,"})
+                  << ',' << (std::isfinite(t.locked_vol) ? fixed(100 * t.locked_vol, 2) : std::string{}) << ','
+                  << fixed(t.breakeven_in, 1) << ',' << fixed(t.gamma_theta_in, 6) << ',' << fixed(100 * t.cost_vols, 2)
+                  << ',' << (std::isfinite(t.p_loss_in) ? fixed(t.p_loss_in, 3) : std::string{})
+                  << ',' << (std::isfinite(t.cone_rank_in) ? fixed(t.cone_rank_in, 3) : std::string{}) << ','
+                  << fixed(t.vol_trend_in, 3) << '\n';
             }
         }
     }

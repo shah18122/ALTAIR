@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <random>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -145,6 +146,125 @@ void test_unquoted_strike_still_closes() {
           "the unquoted trade is bought back at intrinsic");
 }
 
+void test_gamma_desk_numbers() {
+    // Gleadall: the hedge band, the locked-in vol and the cost in vols.
+    const auto every = vrp_run(market(0.20, 0.10, 0.10, 31), policy());
+    auto bp = policy();
+    bp.hedge_band = 0.5;
+    const auto band = vrp_run(market(0.20, 0.10, 0.10, 31), bp);
+    check(every && band && every->trades.size() == band->trades.size(), "a hedge band changes the hedging, not the entries");
+    if (!every || !band) { return; }
+    std::size_t fe = 0, fb = 0;
+    for (const auto& t : every->trades) { fe += t.fills.size(); }
+    for (const auto& t : band->trades) { fb += t.fills.size(); }
+    std::printf("    hedge orders: every close %zu, half-breakeven band %zu\n", fe, fb);
+    check(fb < fe, "the half-breakeven band re-hedges less often than every close");
+    for (const auto& t : band->trades) {
+        long net = 0;
+        for (const auto& f : t.fills) { net += f.lots; }
+        if (net != 0) { check(false, "a banded trade leaves the futures hedge open"); return; }
+    }
+    check(true, "every banded trade closes its futures hedge flat");
+
+    const auto& t = every->trades.front();
+    check(t.vega_pt_in > 0.0 && t.breakeven_in > 0.0 && t.gamma_theta_in > 0.0, "entry Greeks recorded on the trade");
+    check(std::fabs(t.locked_vol - (t.iv_in - t.gross / t.qty / t.vega_pt_in / 100.0)) < 1e-12
+              && (t.gross > 0.0) == (t.locked_vol < t.iv_in),
+          "locked-in vol is IV sold minus P&L over vega, below the sale when the trade won");
+    const auto& s = every->signals.front();
+    check(s.daily_move > 0.0 && s.breakeven_move > 0.0, "each signal carries the implied daily move and breakeven");
+    check(s.p_loss_expiry > 0.0 && s.p_loss_expiry < 1.0 && t.p_loss_in > 0.0 && t.p_loss_in < 1.0,
+          "signal and trade carry the model's probability of loss at expiry");
+
+    check(std::isnan(s.cone_rank) || (s.cone_rank >= 0.0 && s.cone_rank <= 1.0), "the cone rank is a share or NaN");
+    auto hp = policy();
+    hp.min_cone_rank = 1.01;   // nothing ranks above every window
+    const auto high = vrp_run(market(0.20, 0.10, 0.10, 31), hp);
+    check(high && high->trades.empty() && !high->signals.empty(), "a cone-rank floor no IV can reach blocks every entry");
+
+    // A scheduled event inside every holding window vetoes every entry; one
+    // dated before the first day vetoes nothing.
+    auto em = market(0.20, 0.10, 0.10, 31);
+    for (const auto e : em.expiries) { em.events.insert(e); }
+    const auto evr = vrp_run(em, policy());
+    bool all_vetoed = evr && evr->trades.empty() && !evr->signals.empty();
+    if (evr) { for (const auto& sg : evr->signals) { all_vetoed = all_vetoed && (!(sg.iv - sg.rv_fcst >= 0.02) || sg.vetoed); } }
+    check(all_vetoed, "news on the expiry day vetoes the straddle that would hold through it");
+    auto old = market(0.20, 0.10, 0.10, 31);
+    old.events.insert(old.day.front() - 10);
+    const auto oldr = vrp_run(old, policy());
+    check(oldr && oldr->trades.size() == every->trades.size(), "news already past vetoes nothing");
+
+    // Slippage so large it eats the whole 10-point edge: with costs counted in vols, nothing is sold.
+    auto cp = policy();
+    cp.slippage_pts = 400.0;
+    cp.cost_in_vols = true;
+    const auto costly = vrp_run(market(0.20, 0.10, 0.10, 31), cp);
+    check(costly && costly->trades.empty() && !costly->signals.empty() && costly->signals.front().cost_vols > 0.10,
+          "a round trip that costs more vols than the edge blocks the entry");
+    auto neg = policy();
+    neg.hedge_band = -0.1;
+    check(!vrp_run(market(0.2, 0.1, 0.1, 1, 100), neg).has_value(), "a negative band: refused");
+}
+
+// Chen & Sebastian: profit targets, the monthly loss halt, and selling only
+// while realised vol is calm or falling.
+void test_hedge_fund_rules() {
+    const auto base = vrp_run(market(0.20, 0.10, 0.10, 31), policy());
+    auto tp = policy();
+    tp.take_profit = 0.3;
+    const auto tgt = vrp_run(market(0.20, 0.10, 0.10, 31), tp);
+    std::size_t hits = 0, held_b = 0, held_t = 0;
+    if (tgt) { for (const auto& t : tgt->trades) { hits += std::string_view{t.exit_reason} == "profit target"; held_t += t.exit - t.entry; } }
+    if (base) { for (const auto& t : base->trades) { held_b += t.exit - t.entry; } }
+    check(base && tgt && hits > 0, "a 30% profit target books some winners early");
+    check(base && tgt && static_cast<double>(held_t) / static_cast<double>(tgt->trades.size())
+                             < static_cast<double>(held_b) / static_cast<double>(base->trades.size()),
+          "...and trades are held fewer sessions on average");
+
+    auto qp = policy();
+    qp.quick_profit = 0.1;
+    const auto quick = vrp_run(market(0.20, 0.10, 0.10, 31), qp);
+    bool quick_ok = static_cast<bool>(quick);
+    if (quick) { for (const auto& t : quick->trades) { quick_ok = quick_ok && (std::string_view{t.exit_reason} != "quick profit" || t.exit - t.entry <= qp.quick_sessions); } }
+    check(quick_ok, "a quick-profit exit only fires within its sessions of entry");
+
+    // Losing market, a one-rupee monthly halt: no entry in a month whose
+    // closed trades are already down.
+    auto hp = policy();
+    hp.monthly_loss_halt = 1.0;
+    const auto hm = market(0.12, 0.25, 0.05, 13);
+    const auto halt = vrp_run(hm, hp);
+    bool respected = static_cast<bool>(halt);
+    bool any_halted = false;
+    if (halt) {
+        for (std::size_t k = 0; k < halt->trades.size(); ++k) {
+            const auto& t = halt->trades[k];
+            double closed = 0.0;
+            for (std::size_t j = 0; j < k; ++j) {
+                const auto& u = halt->trades[j];
+                if (vrp_detail::month_key(hm.day[u.exit]) == vrp_detail::month_key(hm.day[t.entry])) { closed += u.gross; }
+            }
+            respected = respected && closed > -1.0;
+        }
+        for (const auto& sg : halt->signals) { any_halted = any_halted || sg.halted; }
+    }
+    const auto loose = vrp_run(hm, policy());
+    check(respected && any_halted && loose && halt->trades.size() < loose->trades.size(),
+          "the monthly loss halt keeps the seller out for the rest of a losing month");
+
+    auto cp = policy();
+    cp.calm_trend_only = true;
+    const auto calm = vrp_run(market(0.20, 0.10, 0.10, 31), cp);
+    bool calm_ok = calm && !calm->trades.empty();
+    if (calm) { for (const auto& t : calm->trades) { calm_ok = calm_ok && t.vol_trend_in <= 1.0; } }
+    check(calm_ok, "calm-trend-only sells only when 5-session RV is at or below 20-session RV");
+
+    auto bad = policy();
+    bad.take_profit = 1.0;
+    check(!vrp_run(market(0.2, 0.1, 0.1, 1, 100), bad).has_value(), "a profit target of the whole credit: refused");
+}
+
 } // namespace
 
 int main() {
@@ -155,6 +275,8 @@ int main() {
     test_hedge_cuts_risk();
     test_veto_and_refusals();
     test_unquoted_strike_still_closes();
+    test_gamma_desk_numbers();
+    test_hedge_fund_rules();
     std::printf("Volatility premium: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
