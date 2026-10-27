@@ -81,7 +81,7 @@ struct TradeLogSpec {
         v->addWidget(record, 1);
         if (pick != nullptr)
             QObject::connect(pick, &QComboBox::currentTextChanged, record, [record](const QString& m) { record->set_strategy(m); });
-        tabs->addTab(w, QStringLiteral("Paper & real trades"));
+        tabs->addTab(w, QStringLiteral("Paper && real trades"));
     }
     if (!spec.saved.isEmpty()) tabs->addTab(new BacktestsPage(root, nullptr, spec.saved), QStringLiteral("Saved runs"));
     return tabs;

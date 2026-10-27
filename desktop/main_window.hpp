@@ -36,6 +36,10 @@
 #include "news_ticker.hpp"
 #include "backtests_page.hpp"
 #include "trade_log_tabs.hpp"
+#include "daily_findings_page.hpp"
+#include "work_log_page.hpp"
+#include "command_palette.hpp"
+#include "saved_layouts.hpp"
 #include "chart/chart_widget.hpp"
 #include "analytics_panel.hpp"
 #include "atlas.hpp"
@@ -102,6 +106,8 @@
 #include <QTimer>
 #include <QShortcut>
 #include <QToolBar>
+#include <QToolButton>
+#include <QInputDialog>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -399,8 +405,8 @@ public:
         }
         if (d.exec() == QDialog::Accepted) (void)resume(d.reason());
     }
-    bool halt_now() {
-        const bool ok = terminal_ != nullptr && terminal_->halt_trading(user_, QStringLiteral("F11+F12 on the desktop"));
+    bool halt_now(const QString& how = QStringLiteral("F11+F12 on the desktop")) {
+        const bool ok = terminal_ != nullptr && terminal_->halt_trading(user_, how);
         statusBar()->showMessage(ok ? QStringLiteral("HALTED: no new orders or entries. F11+F12 again to resume.")
                                     : QStringLiteral("HALT NOT WRITTEN: data/kill_request.json could not be written."), 15000);
         refresh_status();
@@ -420,6 +426,64 @@ public:
     /// Tests: answer the resume dialog with this reason ("" = stay halted).
     void set_resume_answer(std::function<QString()> f) { resume_answer_ = std::move(f); }
     [[nodiscard]] HaltChord* halt_chord_filter() const noexcept { return chord_; }
+
+    // ---- PAPER / LIVE / HALTED on every page ---------------------------------
+    /// "PAPER", "LIVE" or "HALTED", as the top edge and the status bar show it.
+    [[nodiscard]] QString trading_mode() const {
+        if (terminal_ == nullptr) return QStringLiteral("PAPER");
+        return terminal_->halted() ? QStringLiteral("HALTED") : terminal_->live_on() ? QStringLiteral("LIVE") : QStringLiteral("PAPER");
+    }
+    /// Tests: answer the halt question ("" = keep trading).
+    void set_halt_answer(std::function<bool()> f) { halt_answer_ = std::move(f); }
+
+    // ---- Ctrl+K --------------------------------------------------------------
+    [[nodiscard]] CommandPalette* palette() const noexcept { return palette_; }
+    void open_palette() {
+        palette_->set_entries(palette_entries());
+        palette_->open_over(this);
+    }
+
+    // ---- layouts -------------------------------------------------------------
+    /// Arrange the window as `l` says. Presentation only.
+    void apply_layout(const SavedLayout& l) {
+        nav_->set_mode(l.sidebar_compact ? NavigationMode::Compact : NavigationMode::Expanded);
+        news_->setVisible(l.news);
+        nav_settings_->setValue(QStringLiteral("news/visible"), l.news);
+        if (l.simple >= 0) simple_mode::set(l.simple == 1);
+        if (auto* split = terminal_->findChild<QSplitter*>(QString{}, Qt::FindDirectChildrenOnly);
+            split != nullptr && l.terminal_sizes.size() == split->count()) {
+            QList<int> sizes;
+            for (const QString& v : l.terminal_sizes) sizes << std::max(1, v.toInt());
+            split->setSizes(sizes);
+            (void)save_terminal_layout(split, *nav_settings_);
+        }
+        (void)show_page(l.page);
+        if (!l.terminal_view.isEmpty()) (void)show_terminal_view(l.terminal_view);
+        nav_->save_state(*nav_settings_);
+        statusBar()->showMessage(QStringLiteral("Layout: %1").arg(l.name), 4000);
+    }
+    /// The window as it is now, under `name`.
+    [[nodiscard]] SavedLayout current_layout(const QString& name) const {
+        SavedLayout l;
+        l.name = name;
+        l.page = nav_page_id(pages_->currentIndex());
+        l.sidebar_compact = nav_->mode() == NavigationMode::Compact;
+        l.news = news_->isVisible();
+        l.simple = simple_mode::on() ? 1 : 0;
+        if (auto* split = terminal_->findChild<QSplitter*>(QString{}, Qt::FindDirectChildrenOnly))
+            for (const int v : split->sizes()) l.terminal_sizes << QString::number(v);
+        return l;
+    }
+    /// Save the window as it is under `name`; false for an empty name.
+    bool save_current_layout(const QString& name) {
+        const QString n = name.simplified();
+        if (n.isEmpty()) return false;
+        save_layout(*nav_settings_, current_layout(n));
+        nav_settings_->sync();
+        statusBar()->showMessage(QStringLiteral("Saved layout %1").arg(n), 4000);
+        return true;
+    }
+    [[nodiscard]] std::vector<SavedLayout> saved_layouts() const { return load_layouts(*nav_settings_); }
 
     /// Select a chart data source by index. Same reason as `show_page`:
     /// starting where the work is, without simulating a click.
@@ -604,6 +668,109 @@ private:
     DepthLadder* ladder_ = nullptr;
     NewsTicker* news_ = nullptr;
 
+    std::function<bool()> halt_answer_;
+
+    void refresh_mode() {
+        if (mode_btn_ == nullptr || mode_bar_ == nullptr) return;
+        const QString mode = trading_mode();
+        if (mode == mode_shown_) return;
+        mode_shown_ = mode;
+        set_style_property(mode_bar_, "mode", mode.toLower());
+        if (mode == QLatin1String("HALTED")) {
+            const QString why = terminal_->halt_summary();
+            nav_settings_->setValue(QStringLiteral("safety/last_halt"), why);
+            mode_btn_->setText(QStringLiteral("\u25A0 HALTED \u00B7 resume\u2026"));
+            set_variant(mode_btn_, QStringLiteral("halted"));
+            mode_btn_->setToolTip(QStringLiteral("%1.\nNo new orders or entries. Click (or F11+F12) to resume; an admin gives the reason.").arg(why));
+        } else {
+            const QString last = nav_settings_ != nullptr ? nav_settings_->value(QStringLiteral("safety/last_halt")).toString() : QString{};
+            const bool live = mode == QLatin1String("LIVE");
+            mode_btn_->setText(live ? QStringLiteral("\u25CF LIVE \u00B7 real orders") : QStringLiteral("PAPER \u00B7 no real orders"));
+            set_variant(mode_btn_, live ? QStringLiteral("live") : QStringLiteral("paper"));
+            mode_btn_->setToolTip(QStringLiteral("%1\nClick to HALT all trading now (asks first). F11+F12 does the same.%2")
+                                      .arg(live ? QStringLiteral("LIVE: orders go to FYERS within the Terminal's caps.")
+                                                : QStringLiteral("PAPER: the models trade on paper; nothing reaches a broker."),
+                                           last.isEmpty() ? QString{} : QStringLiteral("\nLast halt: ") + last));
+        }
+    }
+
+    void mode_clicked() {
+        if (terminal_ == nullptr) return;
+        if (terminal_->halted()) { halt_chord(); return; }
+        const bool yes = halt_answer_ ? halt_answer_()
+            : QMessageBox::question(this, QStringLiteral("Halt all trading"),
+                                    QStringLiteral("Halt all trading now?\n\nOpen orders are cancelled at the broker, nothing new is "
+                                                   "sent and LIVE switches off. An admin resumes with a reason."),
+                                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+        if (yes) (void)halt_now(QStringLiteral("status bar switch"));
+    }
+
+    void fill_layout_menu(QMenu* m) {
+        m->clear();
+        for (const auto& l : builtin_layouts())
+            m->addAction(l.name, this, [this, l] { apply_layout(l); });
+        const auto mine = saved_layouts();
+        if (!mine.empty()) {
+            m->addSeparator();
+            for (const auto& l : mine) m->addAction(l.name, this, [this, l] { apply_layout(l); });
+        }
+        m->addSeparator();
+        m->addAction(QStringLiteral("Save this layout\u2026"), this, [this] {
+            bool ok = false;
+            const QString n = QInputDialog::getText(this, QStringLiteral("Save layout"), QStringLiteral("Name"), QLineEdit::Normal, {}, &ok);
+            if (ok) (void)save_current_layout(n);
+        });
+        if (!mine.empty()) {
+            auto* del = m->addMenu(QStringLiteral("Delete a saved layout"));
+            for (const auto& l : mine)
+                del->addAction(l.name, this, [this, n = l.name] {
+                    remove_layout(*nav_settings_, n);
+                    nav_settings_->sync();
+                });
+        }
+    }
+
+    [[nodiscard]] std::vector<PaletteEntry> palette_entries() {
+        std::vector<PaletteEntry> e;
+        for (const int i : kNavigationOrder) {
+            const auto& p = kNavigationPages[static_cast<std::size_t>(i)];
+            e.push_back({QString::fromUtf8(p.label), QStringLiteral("Page"),
+                         QString::fromUtf8(kNavigationGroups[static_cast<std::size_t>(p.group)].label), [this, i] { show_page(i); }});
+        }
+        for (int i = 0; i < static_cast<int>(kNavigationPages.size()); ++i) {
+            if (nav_listed(i) || !nav_visible(i)) continue;   // the model pages, reached from the Atlas
+            const auto& p = kNavigationPages[static_cast<std::size_t>(i)];
+            e.push_back({QString::fromUtf8(p.label), QStringLiteral("Page"), QStringLiteral("model page"), [this, i] { show_page(i); }});
+        }
+        for (const auto& [view, label] : {std::pair{"watch", "Terminal: market watch"}, std::pair{"chain", "Terminal: option chain"},
+                                         std::pair{"models", "Terminal: models"}, std::pair{"positions", "Terminal: net positions"},
+                                         std::pair{"operations", "Terminal: operations"}})
+            e.push_back({QString::fromUtf8(label), QStringLiteral("View"), QString{}, [this, v = QString::fromLatin1(view)] {
+                             show_page(QStringLiteral("market.terminal"));
+                             (void)show_terminal_view(v);
+                         }});
+        for (const auto& row : kAtlasRows) {
+            const QString id = QStringLiteral("atlas.%1").arg(QString::number(static_cast<qulonglong>(atlas_model_id(row)), 16));
+            e.push_back({QString::fromUtf8(row.model), QStringLiteral("Model"), QString::fromUtf8(row.family),
+                         [this, id] { if (!open_model(id)) show_page(32); }});
+        }
+        for (const auto& l : builtin_layouts())
+            e.push_back({QStringLiteral("Layout: ") + l.name, QStringLiteral("Layout"), QString{}, [this, l] { apply_layout(l); }});
+        for (const auto& l : saved_layouts())
+            e.push_back({QStringLiteral("Layout: ") + l.name, QStringLiteral("Layout"), QStringLiteral("saved"), [this, l] { apply_layout(l); }});
+        e.push_back({QStringLiteral("Show or hide the news bar"), QStringLiteral("Action"), QStringLiteral("Ctrl+Shift+N"), [this] {
+                         news_->setVisible(!news_->isVisible());
+                         nav_settings_->setValue(QStringLiteral("news/visible"), news_->isVisible());
+                     }});
+        e.push_back({QStringLiteral("Collapse or expand the sidebar"), QStringLiteral("Action"), QStringLiteral("Ctrl+B"), [this] {
+                         nav_->set_mode(nav_->mode() == NavigationMode::Expanded ? NavigationMode::Compact : NavigationMode::Expanded);
+                     }});
+        e.push_back({QStringLiteral("Simple view"), QStringLiteral("Action"), QString{}, [] { simple_mode::set(true); }});
+        e.push_back({QStringLiteral("Advanced view"), QStringLiteral("Action"), QString{}, [] { simple_mode::set(false); }});
+        e.push_back({QStringLiteral("Search pages in the sidebar"), QStringLiteral("Action"), QString{}, [this] { nav_->show_search(); }});
+        return e;
+    }
+
     /// The tree that holds data/ (the source tree in a build, else the working directory).
     [[nodiscard]] static QString source_root() {
 #ifdef ALTAIR_SOURCE_DIR
@@ -664,6 +831,11 @@ private:
 #else
         news_ = new NewsTicker(QDir::currentPath(), live_detail::find_helper(QStringLiteral("altair_news")), right);
 #endif
+        // The window's top edge says PAPER, LIVE or HALTED on every page.
+        mode_bar_ = new QFrame(right);
+        mode_bar_->setObjectName(QStringLiteral("tradingModeBar"));
+        mode_bar_->setFixedHeight(3);
+        rv->addWidget(mode_bar_);
         rv->addWidget(news_);
         rv->addWidget(atlas_bar_);
         rv->addWidget(viewport, 1);
@@ -702,10 +874,12 @@ private:
                     statusBar()->showMessage(QStringLiteral("Terminal layout could not be saved."), 15000);
             });
         }
-        // Search has one visible home in the sidebar; Ctrl+K reaches it too.
-        auto* search = new QAction(QStringLiteral("Find workspace"), this);
+        // Ctrl+K: the command palette (desktop/command_palette.hpp). The
+        // sidebar keeps its own page search.
+        palette_ = new CommandPalette(this);
+        auto* search = new QAction(QStringLiteral("Command palette"), this);
         search->setShortcut(QKeySequence(QStringLiteral("Ctrl+K")));
-        connect(search, &QAction::triggered, this, [this] { nav_->show_search(); });
+        connect(search, &QAction::triggered, this, [this] { open_palette(); });
         addAction(search);
         // The news bar: shown unless the person hid it; Ctrl+Shift+N toggles.
         news_->setVisible(nav_settings_->value(QStringLiteral("news/visible"), true).toBool());
@@ -1585,6 +1759,10 @@ private:
 #else
         pages_->addWidget(new BacktestsPage(QDir::currentPath()));
 #endif
+        // 40, 41: the day's findings, and all the work done (desktop/daily_findings_page.hpp,
+        // desktop/work_log_page.hpp).
+        pages_->addWidget(new DailyFindingsPage(source_root()));
+        pages_->addWidget(new WorkLogPage(source_root()));
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
@@ -1664,6 +1842,21 @@ private:
         halt_badge_->setText(QStringLiteral("■ HALTED · F11+F12 to resume"));
         halt_badge_->hide();
         statusBar()->addPermanentWidget(halt_badge_);
+        // PAPER / LIVE / HALTED, on every page, and the kill switch with it.
+        mode_btn_ = new QPushButton(QStringLiteral("PAPER"));
+        mode_btn_->setObjectName(QStringLiteral("tradingModeSwitch"));
+        mode_btn_->setCursor(Qt::PointingHandCursor);
+        connect(mode_btn_, &QPushButton::clicked, this, [this] { mode_clicked(); });
+        statusBar()->addPermanentWidget(mode_btn_);
+        layout_btn_ = new QToolButton;
+        layout_btn_->setObjectName(QStringLiteral("layoutMenu"));
+        layout_btn_->setText(QStringLiteral("▦ Layout"));
+        layout_btn_->setToolTip(QStringLiteral("Morning, Trading, Review, or one you saved"));
+        layout_btn_->setPopupMode(QToolButton::InstantPopup);
+        auto* layouts = new QMenu(layout_btn_);
+        connect(layouts, &QMenu::aboutToShow, this, [this, layouts] { fill_layout_menu(layouts); });
+        layout_btn_->setMenu(layouts);
+        statusBar()->addPermanentWidget(layout_btn_);
         statusBar()->addPermanentWidget(who_);
         statusBar()->addPermanentWidget(phase_);
         statusBar()->addPermanentWidget(engine_clock_);
@@ -1751,6 +1944,7 @@ private:
             refresh_broker_pill();
         }
         if (halt_badge_ != nullptr && terminal_ != nullptr) halt_badge_->setVisible(terminal_->halted());
+        refresh_mode();
         who_->setText(QStringLiteral(" %1 (%2) ").arg(user_, role_name(role_)));
 
         // THE LIVE FEED, as the Terminal's stream sees it. SIM and REPLAY are
@@ -1826,6 +2020,11 @@ private:
     HaltChord* chord_ = nullptr;
     std::function<QString()> resume_answer_;
     QLabel* halt_badge_ = nullptr;
+    QFrame* mode_bar_ = nullptr;          ///< the window's top edge: PAPER, LIVE or HALTED
+    QPushButton* mode_btn_ = nullptr;     ///< the same in the status bar; a click halts (asks) or resumes
+    QToolButton* layout_btn_ = nullptr;   ///< the Layout menu
+    CommandPalette* palette_ = nullptr;   ///< Ctrl+K
+    QString mode_shown_;
 
     ChartWidget* chart_ = nullptr;
     QComboBox* source_ = nullptr;

@@ -102,8 +102,8 @@ template <class Keep>
         QStringList r = csv_split(line);
         if (!keep(head, r)) continue;
         out.push_back(std::move(r));
-        if (static_cast<int>(out.size()) > limit + 1) out.erase(out.begin() + 1);
     }
+    if (static_cast<int>(out.size()) > limit + 1) out.erase(out.begin() + 1, out.end() - limit);
     return out;
 }
 

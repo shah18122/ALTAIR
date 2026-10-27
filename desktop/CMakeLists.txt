@@ -68,6 +68,10 @@ qt_add_executable(altair_desktop
     study_trades.hpp
     trade_reason.hpp
     trade_log_tabs.hpp
+    command_palette.hpp
+    saved_layouts.hpp
+    daily_findings_page.hpp
+    work_log_page.hpp
     workspace_pages.hpp
     workspace_layout.hpp
     tick_model.hpp
@@ -1072,6 +1076,29 @@ if(ALTAIR_BUILD_TESTS)
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
     if(WIN32)
         set_tests_properties(desktop_trade_logs PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
+    # Daily findings, the Work log, the palette's matching and saved layouts.
+    qt_add_executable(altair_workstation_test
+        tests/test_workstation.cpp
+        command_palette.hpp
+        daily_findings_page.hpp
+        saved_layouts.hpp
+        work_log_page.hpp
+        trade_reason.hpp
+        demo_trading_page.hpp
+        strategy_record.hpp)
+    target_link_libraries(altair_workstation_test PRIVATE
+        altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(altair_workstation_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(altair_workstation_test PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME desktop_workstation COMMAND altair_workstation_test)
+    set_tests_properties(desktop_workstation PROPERTIES TIMEOUT 60 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
+    if(WIN32)
+        set_tests_properties(desktop_workstation PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 

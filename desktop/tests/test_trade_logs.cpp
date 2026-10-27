@@ -6,6 +6,7 @@
 #include "../trade_log_tabs.hpp"
 
 #include <QApplication>
+#include <QThreadPool>
 #include <QTemporaryDir>
 #include <QTextBrowser>
 
@@ -145,12 +146,13 @@ int main(int argc, char** argv) {
                                                    {QStringLiteral("overnight")}, {}},
                                            root.filePath("dataset"), root.path());
         check(tabs->count() == 4 && tabs->widget(0) == study && tabs->tabText(1) == QStringLiteral("Study trades")
-                  && tabs->tabText(2) == QStringLiteral("Paper & real trades") && tabs->tabText(3) == QStringLiteral("Saved runs"),
+                  && tabs->tabText(2) == QStringLiteral("Paper && real trades") && tabs->tabText(3) == QStringLiteral("Saved runs"),
               "Study, Study trades, Paper & real trades, Saved runs");
         auto* panel = dynamic_cast<StudyTradesPanel*>(tabs->findChild<QWidget*>(QStringLiteral("studyTrades")));
         bool done = false;
         if (panel != nullptr) panel->build([&done] { done = true; });
-        for (int i = 0; i < 400 && !done; ++i) QApplication::processEvents(QEventLoop::AllEvents, 10);
+        QThreadPool::globalInstance()->waitForDone(10000);
+        for (int i = 0; i < 50 && !done; ++i) QApplication::processEvents();
         check(done && panel->trip_count() == 119 && panel->summary_text().contains(QStringLiteral("119 round trips")),
               "Build fills the table off the UI thread");
         check(panel != nullptr && !panel->save().isEmpty()
