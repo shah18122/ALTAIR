@@ -67,7 +67,7 @@ void usage(const char* exe) {
         "    %s [--dataset DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
         "       [--source synthetic|bhavcopy] [--bhavcopy-dir DIR] [--min-sessions N] [--exit-sessions N]\n"
         "       [--slippage-pts P] [--rate R] [--vix-log FILE] [--vix-model NAME] [--events FILE]\n"
-        "       [--unverified-costs]\n\n"
+        "       [--monthly-halt RS] [--unverified-costs]\n\n"
         "    --source S            synthetic (default; VIX-priced) or bhavcopy (NSE closes)\n"
         "    --bhavcopy-dir DIR    default data/bhavcopy (ops/fetch_bhavcopy.ps1 fills it)\n"
         "    --min-sessions N      sessions to expiry at entry (default 10)\n"
@@ -77,6 +77,8 @@ void usage(const char* exe) {
         "    --vix-model NAME      the model whose INDIA VIX call vetoes entries (default Hedge)\n"
         "    --events FILE         date,event CSV of scheduled news (config/scheduled_events.csv); adds har-0-noevents,\n"
         "                          which skips a straddle whose life spans one\n"
+        "    --monthly-halt RS     adds har-0-halt: no new entries for the rest of a month once closed trades\n"
+        "                          lose RS rupees in it (Chen & Sebastian's monthly loss rule)\n"
         "    --unverified-costs    price expenses from an UNVERIFIED config/charges.toml, stamped\n", exe);
 }
 
@@ -145,7 +147,7 @@ struct Priced {
 int main(int argc, char** argv) {
     fs::path root = "dataset", out = "data/verified", bhav_dir = "data/bhavcopy";
     std::string which = "both", source = "synthetic", vix_log, vix_model = "Hedge", events_file;
-    double rate = 0.065, slip = 1.0, min_s = 10, exit_s = 1;
+    double rate = 0.065, slip = 1.0, min_s = 10, exit_s = 1, month_halt = 0.0;
     bool unverified = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
@@ -159,6 +161,7 @@ int main(int argc, char** argv) {
         if (a == "--vix-log" && has) { vix_log = argv[++i]; continue; }
         if (a == "--vix-model" && has) { vix_model = argv[++i]; continue; }
         if (a == "--events" && has) { events_file = argv[++i]; continue; }
+        if (a == "--monthly-halt" && has) { if (!parse_double(argv[++i], month_halt) || !(month_halt > 0.0)) { usage(argv[0]); return 2; } continue; }
         if (a == "--rate" && has) { if (!parse_double(argv[++i], rate) || std::fabs(rate) > 1.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--slippage-pts" && has) { if (!parse_double(argv[++i], slip) || slip < 0.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--min-sessions" && has) { if (!parse_double(argv[++i], min_s) || min_s < 2 || min_s > 60) { usage(argv[0]); return 2; } continue; }
@@ -288,6 +291,25 @@ int main(int argc, char** argv) {
         p.min_cone_rank = 0.7;
         variants.push_back({"har-0-cone70", "har-0, and IV at or above the 70th percentile of the volatility cone", p, false});
     }
+    {
+        // Chen & Sebastian, The Option Trader's Hedge Fund: book about 55% of
+        // the credit, or 25% inside five sessions (the sale had edge).
+        auto p = base(0.0);
+        p.take_profit = 0.55;
+        p.quick_profit = 0.25;
+        p.quick_sessions = 5;
+        variants.push_back({"har-0-tp55", "har-0, bought back at 55% of the credit earned, or 25% within 5 sessions", p, false});
+    }
+    {
+        auto p = base(0.0);
+        p.calm_trend_only = true;
+        variants.push_back({"har-0-calm", "har-0, only while 5-session realised vol is at or below 20-session", p, false});
+    }
+    if (month_halt > 0.0) {
+        auto p = base(0.0);
+        p.monthly_loss_halt = month_halt;
+        variants.push_back({"har-0-halt", "har-0, standing aside for the rest of a month once closed trades lose Rs " + fixed(month_halt, 0), p, false});
+    }
     if (!events.empty()) {
         variants.push_back({"har-0-noevents", "har-0, skipping a straddle whose life spans scheduled news", base(0.0), false, true});
     }
@@ -312,7 +334,7 @@ int main(int argc, char** argv) {
     std::set<std::string> opened;
     std::ofstream signals(dir / "signals.csv", std::ios::trunc);
     signals << "instrument,date,expiry,sessions,implied_vol,har_vol,spread,realised_vol_after,cost_vols,breakeven_pts,"
-               "implied_daily_move,p_loss_expiry,iv_cone_rank\n";
+               "implied_daily_move,p_loss_expiry,iv_cone_rank,vol_trend\n";
     std::ofstream eval(dir / "forecast_eval.csv", std::ios::trunc);
     eval << "instrument,horizon,days,har_rmse_vol_pts,trailing_rmse_vol_pts,har_bias_vol_pts,implied_minus_realised_vol_pts,"
             "share_implied_above_realised\n";
@@ -525,7 +547,8 @@ int main(int argc, char** argv) {
                             << ',' << fixed(100 * s.cost_vols, 2) << ',' << fixed(s.breakeven_move, 1) << ','
                             << fixed(s.daily_move, 1) << ','
                             << (std::isfinite(s.p_loss_expiry) ? fixed(s.p_loss_expiry, 3) : std::string{}) << ','
-                            << (std::isfinite(s.cone_rank) ? fixed(s.cone_rank, 3) : std::string{}) << '\n';
+                            << (std::isfinite(s.cone_rank) ? fixed(s.cone_rank, 3) : std::string{}) << ','
+                            << fixed(s.vol_trend, 3) << '\n';
                 }
                 signals_written = true;
             }
@@ -560,7 +583,7 @@ int main(int argc, char** argv) {
                 o << "instrument,variant,entry_date,exit_date,expiry,strike,forward_in,implied_vol,har_vol,realised_vol,"
                      "call_in,put_in,credit,call_out,put_out,debit,qty,option_pnl,hedge_orders,hedge_pnl,gross_pnl,expenses,"
                      "net_pnl,exit_reason,source,costs,brokerage,stt,exchange_txn,sebi,stamp,ipft,gst,locked_vol,"
-                     "breakeven_pts,gamma_theta,cost_vols,p_loss_in,iv_cone_rank\n";
+                     "breakeven_pts,gamma_theta,cost_vols,p_loss_in,iv_cone_rank,vol_trend\n";
             }
             for (const auto& [name, pr] : rows) {
                 if (name != in.name) { continue; }
@@ -579,7 +602,8 @@ int main(int argc, char** argv) {
                   << ',' << (std::isfinite(t.locked_vol) ? fixed(100 * t.locked_vol, 2) : std::string{}) << ','
                   << fixed(t.breakeven_in, 1) << ',' << fixed(t.gamma_theta_in, 6) << ',' << fixed(100 * t.cost_vols, 2)
                   << ',' << (std::isfinite(t.p_loss_in) ? fixed(t.p_loss_in, 3) : std::string{})
-                  << ',' << (std::isfinite(t.cone_rank_in) ? fixed(t.cone_rank_in, 3) : std::string{}) << '\n';
+                  << ',' << (std::isfinite(t.cone_rank_in) ? fixed(t.cone_rank_in, 3) : std::string{}) << ','
+                  << fixed(t.vol_trend_in, 3) << '\n';
             }
         }
     }

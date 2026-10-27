@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <random>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -206,6 +207,64 @@ void test_gamma_desk_numbers() {
     check(!vrp_run(market(0.2, 0.1, 0.1, 1, 100), neg).has_value(), "a negative band: refused");
 }
 
+// Chen & Sebastian: profit targets, the monthly loss halt, and selling only
+// while realised vol is calm or falling.
+void test_hedge_fund_rules() {
+    const auto base = vrp_run(market(0.20, 0.10, 0.10, 31), policy());
+    auto tp = policy();
+    tp.take_profit = 0.3;
+    const auto tgt = vrp_run(market(0.20, 0.10, 0.10, 31), tp);
+    std::size_t hits = 0, held_b = 0, held_t = 0;
+    if (tgt) { for (const auto& t : tgt->trades) { hits += std::string_view{t.exit_reason} == "profit target"; held_t += t.exit - t.entry; } }
+    if (base) { for (const auto& t : base->trades) { held_b += t.exit - t.entry; } }
+    check(base && tgt && hits > 0, "a 30% profit target books some winners early");
+    check(base && tgt && static_cast<double>(held_t) / static_cast<double>(tgt->trades.size())
+                             < static_cast<double>(held_b) / static_cast<double>(base->trades.size()),
+          "...and trades are held fewer sessions on average");
+
+    auto qp = policy();
+    qp.quick_profit = 0.1;
+    const auto quick = vrp_run(market(0.20, 0.10, 0.10, 31), qp);
+    bool quick_ok = static_cast<bool>(quick);
+    if (quick) { for (const auto& t : quick->trades) { quick_ok = quick_ok && (std::string_view{t.exit_reason} != "quick profit" || t.exit - t.entry <= qp.quick_sessions); } }
+    check(quick_ok, "a quick-profit exit only fires within its sessions of entry");
+
+    // Losing market, a one-rupee monthly halt: no entry in a month whose
+    // closed trades are already down.
+    auto hp = policy();
+    hp.monthly_loss_halt = 1.0;
+    const auto hm = market(0.12, 0.25, 0.05, 13);
+    const auto halt = vrp_run(hm, hp);
+    bool respected = static_cast<bool>(halt);
+    bool any_halted = false;
+    if (halt) {
+        for (std::size_t k = 0; k < halt->trades.size(); ++k) {
+            const auto& t = halt->trades[k];
+            double closed = 0.0;
+            for (std::size_t j = 0; j < k; ++j) {
+                const auto& u = halt->trades[j];
+                if (vrp_detail::month_key(hm.day[u.exit]) == vrp_detail::month_key(hm.day[t.entry])) { closed += u.gross; }
+            }
+            respected = respected && closed > -1.0;
+        }
+        for (const auto& sg : halt->signals) { any_halted = any_halted || sg.halted; }
+    }
+    const auto loose = vrp_run(hm, policy());
+    check(respected && any_halted && loose && halt->trades.size() < loose->trades.size(),
+          "the monthly loss halt keeps the seller out for the rest of a losing month");
+
+    auto cp = policy();
+    cp.calm_trend_only = true;
+    const auto calm = vrp_run(market(0.20, 0.10, 0.10, 31), cp);
+    bool calm_ok = calm && !calm->trades.empty();
+    if (calm) { for (const auto& t : calm->trades) { calm_ok = calm_ok && t.vol_trend_in <= 1.0; } }
+    check(calm_ok, "calm-trend-only sells only when 5-session RV is at or below 20-session RV");
+
+    auto bad = policy();
+    bad.take_profit = 1.0;
+    check(!vrp_run(market(0.2, 0.1, 0.1, 1, 100), bad).has_value(), "a profit target of the whole credit: refused");
+}
+
 } // namespace
 
 int main() {
@@ -217,6 +276,7 @@ int main() {
     test_veto_and_refusals();
     test_unquoted_strike_still_closes();
     test_gamma_desk_numbers();
+    test_hedge_fund_rules();
     std::printf("Volatility premium: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

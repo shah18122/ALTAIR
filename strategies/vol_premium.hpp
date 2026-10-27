@@ -41,6 +41,7 @@
 #include <analytics/greeks.hpp>
 #include <analytics/iv.hpp>
 
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -97,6 +98,19 @@ struct VrpPolicy {
     /// Enter only when the IV ranks at least this high in the volatility cone
     /// (past realised vols over the same number of sessions); 0 = off.
     double min_cone_rank = 0.0;
+    /// Chen & Sebastian, The Option Trader's Hedge Fund: take the money once
+    /// the trade (options plus hedge) has earned this share of the credit; 0 = off.
+    double take_profit = 0.0;
+    /// ...and sooner: this share of the credit within `quick_sessions` of entry
+    /// means the sale had edge, so book it; 0 = off.
+    double quick_profit = 0.0;
+    std::size_t quick_sessions = 5;
+    /// Once closed trades lose this many rupees (gross) in a calendar month, no
+    /// new entries until the next month (the book's 6% "piranha" rule); 0 = off.
+    double monthly_loss_halt = 0.0;
+    /// Sell only while realised vol is stable or falling: the 5-session RV at
+    /// or below the 20-session RV ("stable or declining market volatility").
+    bool calm_trend_only = false;
 };
 
 struct VrpFill {
@@ -121,6 +135,7 @@ struct VrpTrade {
     double locked_vol = std::numeric_limits<double>::quiet_NaN();   ///< iv_in - gross / vega: the vol actually earned
     double p_loss_in = std::numeric_limits<double>::quiet_NaN();    ///< model P(loss) at expiry if left unhedged
     double cone_rank_in = std::numeric_limits<double>::quiet_NaN(); ///< IV's rank in the vol cone at entry, 0..1
+    double vol_trend_in = std::numeric_limits<double>::quiet_NaN(); ///< 5-session RV / 20-session RV at entry
     std::vector<VrpFill> fills;
     const char* exit_reason = "expiry";
 };
@@ -137,6 +152,8 @@ struct VrpSignal {
     double daily_move = 0.0;       ///< the move the IV prices in for one session, index points
     double p_loss_expiry = std::numeric_limits<double>::quiet_NaN();   ///< model P(fwd ends outside strike +/- credit)
     double cone_rank = std::numeric_limits<double>::quiet_NaN();       ///< IV's rank among past `sessions`-day realised vols
+    double vol_trend = std::numeric_limits<double>::quiet_NaN();       ///< 5-session RV / 20-session RV; above 1 = vol rising
+    bool halted = false;                                                ///< the monthly loss halt was in force that day
 };
 
 struct VrpResult {
@@ -227,12 +244,34 @@ struct StraddleRisk {
     return out.gamma > 0.0 && out.vega_pt > 0.0;
 }
 
+/// Calendar month of a day count, as year * 12 + month.
+inline int month_key(std::int64_t day) {
+    const std::chrono::year_month_day ymd{std::chrono::sys_days{std::chrono::days{day}}};
+    return static_cast<int>(ymd.year()) * 12 + static_cast<int>(static_cast<unsigned>(ymd.month()));
+}
+
+/// Short over long realised vol from the closes up to day i; NaN without
+/// `longer` returns before it.
+inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size_t shorter = 5, std::size_t longer = 20) {
+    if (i < longer) { return std::numeric_limits<double>::quiet_NaN(); }
+    double s_short = 0.0, s_long = 0.0;
+    for (std::size_t k = i + 1 - longer; k <= i; ++k) {
+        const double r = std::log(spot[k] / spot[k - 1]);
+        s_long += r * r;
+        if (k + shorter > i) { s_short += r * r; }
+    }
+    const double v = (s_short / static_cast<double>(shorter)) / (s_long / static_cast<double>(longer));
+    return std::isfinite(v) ? std::sqrt(v) : std::numeric_limits<double>::quiet_NaN();
+}
+
 } // namespace vrp_detail
 
 [[nodiscard]] inline std::expected<VrpResult, VrpError> vrp_run(const VrpMarket& m, const VrpPolicy& p) {
     if (!(p.lot_size > 0.0) || p.lots < 1 || p.min_sessions == 0 || p.exit_sessions >= p.min_sessions
         || !(p.stop_multiple == 0.0 || p.stop_multiple > 1.0) || !(p.slippage_pts >= 0.0) || !std::isfinite(p.rate)
-        || !std::isfinite(p.entry_spread) || !(p.hedge_band >= 0.0) || !(p.hedge_band_down >= 0.0)) {
+        || !std::isfinite(p.entry_spread) || !(p.hedge_band >= 0.0) || !(p.hedge_band_down >= 0.0)
+        || !(p.take_profit >= 0.0 && p.take_profit < 1.0) || !(p.quick_profit >= 0.0 && p.quick_profit < 1.0)
+        || (p.quick_profit > 0.0 && p.quick_sessions == 0) || !(p.monthly_loss_halt >= 0.0)) {
         return std::unexpected(VrpError::BadPolicy);
     }
     if (m.day.empty() || m.spot.size() != m.day.size() || m.expiries.empty() || !m.quote || !m.forward
@@ -246,6 +285,9 @@ struct StraddleRisk {
     VrpTrade t;
     long lots = 0;
     double last_fwd = 0.0, last_iv = 0.0, hedge_fwd = 0.0;
+    int halt_month = -1;           ///< the month whose closed losses hit the halt
+    int pnl_month = -1;
+    double month_pnl = 0.0;        ///< gross P&L of trades closed in `pnl_month`
     const auto rehedge = [&](std::size_t i, double fwd, double iv, bool force) {
         if (!p.hedge) { return; }
         const double T = years(m.day[i], t.expiry);
@@ -287,6 +329,10 @@ struct StraddleRisk {
         t.gross = t.option_pnl + t.hedge_pnl;
         t.locked_vol = locked_in_vol(t.iv_in, t.gross / t.qty, t.vega_pt_in);
         t.exit_reason = why;
+        const int mk = month_key(m.day[i]);
+        if (mk != pnl_month) { pnl_month = mk; month_pnl = 0.0; }
+        month_pnl += t.gross;
+        if (p.monthly_loss_halt > 0.0 && month_pnl <= -p.monthly_loss_halt) { halt_month = mk; }
         out.trades.push_back(t);
         open = false;
     };
@@ -324,6 +370,16 @@ struct StraddleRisk {
                 close(i, q, fwd, "stop");
                 continue;
             }
+            // Trade P&L per unit if bought back now: options at the offer plus the hedge.
+            const double earned = t.credit - (q.call + q.put + 2.0 * p.slippage_pts) + t.hedge_pnl / t.qty;
+            if (p.quick_profit > 0.0 && i - t.entry <= p.quick_sessions && earned >= p.quick_profit * t.credit) {
+                close(i, q, fwd, "quick profit");
+                continue;
+            }
+            if (p.take_profit > 0.0 && earned >= p.take_profit * t.credit) {
+                close(i, q, fwd, "profit target");
+                continue;
+            }
             rehedge(i, fwd, last_iv, false);
             continue;
         }
@@ -357,9 +413,12 @@ struct StraddleRisk {
         const double credit = q.call + q.put - 2.0 * p.slippage_pts;
         s.p_loss_expiry = straddle_loss_probability(fwd, k, T, iv, credit);
         s.cone_rank = cone_rank(m.spot, i, left, iv);
+        s.vol_trend = rv_trend(m.spot, i);
+        s.halted = halt_month >= 0 && month_key(m.day[i]) == halt_month;
+        const bool calm_ok = !p.calm_trend_only || (std::isfinite(s.vol_trend) && s.vol_trend <= 1.0);
         const bool cone_ok = !(p.min_cone_rank > 0.0) || (std::isfinite(s.cone_rank) && s.cone_rank >= p.min_cone_rank);
         const double need = p.entry_spread + (p.cost_in_vols ? (risk_ok ? s.cost_vols : std::numeric_limits<double>::infinity()) : 0.0);
-        if (iv - rvf >= need && credit > 0.0 && cone_ok) {
+        if (iv - rvf >= need && credit > 0.0 && cone_ok && calm_ok && !s.halted) {
             const auto ev = m.events.lower_bound(m.day[i]);
             if ((m.veto && m.veto(i)) || (ev != m.events.end() && *ev <= expiry)) {
                 s.vetoed = true;
@@ -378,6 +437,7 @@ struct StraddleRisk {
                 t.qty = qty;
                 t.p_loss_in = s.p_loss_expiry;
                 t.cone_rank_in = s.cone_rank;
+                t.vol_trend_in = s.vol_trend;
                 if (risk_ok) {
                     t.vega_pt_in = risk.vega_pt;
                     t.breakeven_in = s.breakeven_move;
