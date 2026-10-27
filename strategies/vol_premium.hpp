@@ -37,6 +37,7 @@
 
 #include <analytics/gamma_trading.hpp>
 #include <analytics/option_math.hpp>
+#include <analytics/vol_cone.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/iv.hpp>
 
@@ -70,6 +71,10 @@ struct VrpMarket {
     std::function<double(std::size_t, std::size_t)> rv_forecast;
     /// Optional: true vetoes an entry at day i (e.g. a forecast that INDIA VIX rises).
     std::function<bool(std::size_t)> veto;
+    /// Optional: scheduled news (budget, policy, results) on a calendar day.
+    /// An entry at day i is vetoed when one falls on or after day i and on or
+    /// before the expiry it would sell: Ianieri's "sell outside expected news".
+    std::set<std::int64_t> events;
 };
 
 struct VrpPolicy {
@@ -89,6 +94,9 @@ struct VrpPolicy {
     double hedge_band_down = 0.0;
     /// Add the round-trip slippage, in vol points, to `entry_spread`.
     bool cost_in_vols = false;
+    /// Enter only when the IV ranks at least this high in the volatility cone
+    /// (past realised vols over the same number of sessions); 0 = off.
+    double min_cone_rank = 0.0;
 };
 
 struct VrpFill {
@@ -112,6 +120,7 @@ struct VrpTrade {
     double cost_vols = 0.0;        ///< round-trip slippage in vol points (fraction, like iv_in)
     double locked_vol = std::numeric_limits<double>::quiet_NaN();   ///< iv_in - gross / vega: the vol actually earned
     double p_loss_in = std::numeric_limits<double>::quiet_NaN();    ///< model P(loss) at expiry if left unhedged
+    double cone_rank_in = std::numeric_limits<double>::quiet_NaN(); ///< IV's rank in the vol cone at entry, 0..1
     std::vector<VrpFill> fills;
     const char* exit_reason = "expiry";
 };
@@ -127,6 +136,7 @@ struct VrpSignal {
     double breakeven_move = 0.0;   ///< gamma breakeven move, index points per day
     double daily_move = 0.0;       ///< the move the IV prices in for one session, index points
     double p_loss_expiry = std::numeric_limits<double>::quiet_NaN();   ///< model P(fwd ends outside strike +/- credit)
+    double cone_rank = std::numeric_limits<double>::quiet_NaN();       ///< IV's rank among past `sessions`-day realised vols
 };
 
 struct VrpResult {
@@ -346,9 +356,12 @@ struct StraddleRisk {
         s.daily_move = implied_daily_move(m.spot[i], iv);
         const double credit = q.call + q.put - 2.0 * p.slippage_pts;
         s.p_loss_expiry = straddle_loss_probability(fwd, k, T, iv, credit);
+        s.cone_rank = cone_rank(m.spot, i, left, iv);
+        const bool cone_ok = !(p.min_cone_rank > 0.0) || (std::isfinite(s.cone_rank) && s.cone_rank >= p.min_cone_rank);
         const double need = p.entry_spread + (p.cost_in_vols ? (risk_ok ? s.cost_vols : std::numeric_limits<double>::infinity()) : 0.0);
-        if (iv - rvf >= need && credit > 0.0) {
-            if (m.veto && m.veto(i)) {
+        if (iv - rvf >= need && credit > 0.0 && cone_ok) {
+            const auto ev = m.events.lower_bound(m.day[i]);
+            if ((m.veto && m.veto(i)) || (ev != m.events.end() && *ev <= expiry)) {
                 s.vetoed = true;
             } else {
                 s.entered = true;
@@ -364,6 +377,7 @@ struct StraddleRisk {
                 t.rv_fcst = rvf;
                 t.qty = qty;
                 t.p_loss_in = s.p_loss_expiry;
+                t.cone_rank_in = s.cone_rank;
                 if (risk_ok) {
                     t.vega_pt_in = risk.vega_pt;
                     t.breakeven_in = s.breakeven_move;

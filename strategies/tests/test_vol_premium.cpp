@@ -175,6 +175,25 @@ void test_gamma_desk_numbers() {
     check(s.p_loss_expiry > 0.0 && s.p_loss_expiry < 1.0 && t.p_loss_in > 0.0 && t.p_loss_in < 1.0,
           "signal and trade carry the model's probability of loss at expiry");
 
+    check(std::isnan(s.cone_rank) || (s.cone_rank >= 0.0 && s.cone_rank <= 1.0), "the cone rank is a share or NaN");
+    auto hp = policy();
+    hp.min_cone_rank = 1.01;   // nothing ranks above every window
+    const auto high = vrp_run(market(0.20, 0.10, 0.10, 31), hp);
+    check(high && high->trades.empty() && !high->signals.empty(), "a cone-rank floor no IV can reach blocks every entry");
+
+    // A scheduled event inside every holding window vetoes every entry; one
+    // dated before the first day vetoes nothing.
+    auto em = market(0.20, 0.10, 0.10, 31);
+    for (const auto e : em.expiries) { em.events.insert(e); }
+    const auto evr = vrp_run(em, policy());
+    bool all_vetoed = evr && evr->trades.empty() && !evr->signals.empty();
+    if (evr) { for (const auto& sg : evr->signals) { all_vetoed = all_vetoed && (!(sg.iv - sg.rv_fcst >= 0.02) || sg.vetoed); } }
+    check(all_vetoed, "news on the expiry day vetoes the straddle that would hold through it");
+    auto old = market(0.20, 0.10, 0.10, 31);
+    old.events.insert(old.day.front() - 10);
+    const auto oldr = vrp_run(old, policy());
+    check(oldr && oldr->trades.size() == every->trades.size(), "news already past vetoes nothing");
+
     // Slippage so large it eats the whole 10-point edge: with costs counted in vols, nothing is sold.
     auto cp = policy();
     cp.slippage_pts = 400.0;

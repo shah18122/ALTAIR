@@ -1,0 +1,5 @@
+# Scheduled market-moving news for altair_vol_premium --events.
+# One row per event day, YYYY-MM-DD in IST. Fill from the official calendars
+# (Union Budget, RBI MPC decision days, general election results). Left empty on
+# purpose: no dates are guessed here.
+date,event

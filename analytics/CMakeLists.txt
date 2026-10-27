@@ -121,6 +121,12 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_option_math_test PRIVATE altair_analytics altair_flags)
     add_test(NAME analytics_option_math COMMAND altair_option_math_test)
 
+    # Ianieri's volatility cone: realised-vol windows by horizon, and where an
+    # IV ranks among them, point in time.
+    add_executable(altair_vol_cone_test tests/test_vol_cone.cpp)
+    target_link_libraries(altair_vol_cone_test PRIVATE altair_analytics altair_flags)
+    add_test(NAME analytics_vol_cone COMMAND altair_vol_cone_test)
+
     # P14-04/05. Kalman filter, Joseph form, validated on the NIFTY
     # spot-versus-futures pair where the hedge ratio is known to be 1.
     add_executable(altair_kalman_test tests/test_kalman.cpp)
