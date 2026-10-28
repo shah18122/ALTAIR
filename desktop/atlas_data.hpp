@@ -248,6 +248,11 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "analytics/hmm.hpp", 17,
              "Assumes the market is in one of a few hidden states and infers "
              "which, and how long it usually stays."},
+    AtlasRow{"3. Time series & volatility", "HMM regime, walk-forward",
+             AtlasStatus::Implemented, "models/hmm_regime.hpp", 17,
+             "The probability that today is the high-volatility state, refitted "
+             "monthly on past closes only. An input to altair_trader and to the "
+             "Avellaneda-Stoikov quoter (altair_regimes writes it per day)."},
     AtlasRow{"3. Time series & volatility", "Markov regime chain",
              AtlasStatus::Implemented, "models/markov.hpp", 17,
              "Counts how often the market moves from one return bucket to "
@@ -317,6 +322,11 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "oms/shortfall.hpp", 12,
              "The trade-off between trading fast (costly impact) and slow "
              "(costly risk), solved rather than guessed."},
+    AtlasRow{"4. Microstructure & execution", "Avellaneda-Stoikov market making",
+             AtlasStatus::Implemented, "strategies/as_market_maker.hpp", -1,
+             "Where to quote a bid and an ask around the mid given what you "
+             "already hold. Index futures only, paper; options get only the "
+             "sell-side ask. On 1-minute bars it loses even before costs."},
     AtlasRow{"4. Microstructure & execution", "HJB optimal execution",
              AtlasStatus::Implemented, "research/execution/hjb_execution.hpp", 12,
              "Forsyth's version of the same trade-off: nonlinear impact, a "
