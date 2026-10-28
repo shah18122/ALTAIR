@@ -4,7 +4,7 @@
 // research/models/quantum_oscillator.hpp says volatility given a log move x over T is
 //     sigma_x^2 = sigma^2 + x^2 / (2T).
 // Read as an option smile, with x = ln(K / F), it predicts the wings from the
-// floor with no free slope. Each bhavcopy day, for the first monthly expiry
+// floor with no free slope. Each saved FYERS chain day, for the first monthly expiry
 // 14-60 days out: out-of-the-money closes (puts below the future, calls above)
 // within 10 % of it, inverted under Black-76 on the same-expiry future. Then:
 //   * flat         every strike at the ATM strike's IV (the no-smile baseline)
@@ -14,11 +14,13 @@
 //                  b > 0 is a smile, b < 0 the frown research/models/quantum_walk.hpp implies)
 // RMSE in vol points against the market, averaged over days.
 //
-// Read-only; writes nothing. Fetch the files with ops/fetch_bhavcopy.ps1.
+// Read-only; writes nothing. The chains are altair_fyers_chain's (app/fyers_chain.hpp);
+// --bhavcopy reads the NSE bhavcopy instead (opt-in, not FYERS data).
 
 #include <analytics/iv.hpp>
 #include <research/models/quantum_oscillator.hpp>
 #include <app/bhavcopy.hpp>
+#include <app/fyers_chain.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -31,19 +33,24 @@
 namespace fs = std::filesystem;
 
 int main(int argc, char** argv) {
-    fs::path dir = "data/bhavcopy";
+    fs::path dir = "data/bhavcopy", chain_dir = "data/store/fyers_chain";
+    bool use_bhavcopy = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
+        if (a == "--fyers-chain" && i + 1 < argc) { chain_dir = argv[++i]; continue; }
+        if (a == "--bhavcopy") { use_bhavcopy = true; continue; }
         if (a == "--bhavcopy-dir" && i + 1 < argc) { dir = argv[++i]; continue; }
-        std::printf("usage: %s [--bhavcopy-dir DIR]   (default data/bhavcopy)\n", argv[0]);
+        std::printf("usage: %s [--fyers-chain DIR] [--bhavcopy] [--bhavcopy-dir DIR]\n"
+                    "  (default the FYERS chains in data/store/fyers_chain; --bhavcopy is opt-in, not FYERS data)\n", argv[0]);
         return a == "--help" || a == "-h" ? 0 : 2;
     }
     constexpr double kRate = 0.065;
-    std::printf("Orrell eq. 8 smile on NSE option closes (%s)\n", dir.string().c_str());
+    std::printf("Orrell eq. 8 smile on real option closes (%s)\n", use_bhavcopy ? "NSE bhavcopy, opt-in" : "FYERS chains");
     for (const std::string sym : {"NIFTY", "BANKNIFTY"}) {
-        altair::bhavcopy::LoadReport rep;
-        const auto days = altair::bhavcopy::load_dir(dir, sym, rep);
-        if (days.empty()) { std::printf("  %s: no bhavcopy under %s\n", sym.c_str(), dir.string().c_str()); continue; }
+        std::string note;
+        const auto days = altair::fyers_chain::load_source(use_bhavcopy, chain_dir, dir, sym, note);
+        std::printf("  %s\n", note.c_str());
+        if (days.empty()) { continue; }
         std::size_t n = 0, beats_flat = 0, atm_beats_flat = 0;
         double e_flat = 0, e_atm = 0, e_orr = 0, e_free = 0, e_lo_atm = 0, e_hi_atm = 0;
         std::vector<double> slope;
@@ -96,7 +103,7 @@ int main(int argc, char** argv) {
         if (n == 0) { std::printf("  %s: no day had a usable smile\n", sym.c_str()); continue; }
         std::sort(slope.begin(), slope.end());
         const double dn = static_cast<double>(n);
-        std::printf("  %s: %zu days (%zu files)\n", sym.c_str(), n, rep.files);
+        std::printf("  %s: %zu days with a usable smile\n", sym.c_str(), n);
         std::printf("    RMSE, vol points: flat %.2f  Orrell ATM-anchored %.2f  Orrell fitted %.2f  free slope %.2f\n",
                     100 * e_flat / dn, 100 * e_atm / dn, 100 * e_orr / dn, 100 * e_free / dn);
         std::printf("    Orrell ATM-anchored beats flat on %.1f %% of days; fitted on %.1f %%\n", 100.0 * static_cast<double>(atm_beats_flat) / dn,

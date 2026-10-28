@@ -32,7 +32,10 @@ Honest results on real NSE data, after costs. Details in
   t ≈ 3.5 figure came from NSE bhavcopy, which is no longer used: FYERS data
   only (2026-10-26). FYERS does not serve expired option contracts, so option
   results can only be rebuilt from chains ALTAIR records itself from 2026-10
-  on. Paper only until then.
+  on. Paper only until then. `altair_fyers_chain` saves the chains daily at
+  15:45 (`ops/fyers_chain.ps1`, registered by `ops/install_tasks.ps1`) into
+  `data/store/fyers_chain/`, and the option research tools read them by
+  default; the bhavcopy is opt-in only.
   Validation checklist and model limits:
   [research/vol-premium-validation.md](research/vol-premium-validation.md).
 - **No forecaster beats "no change" after costs**, on any track or timeframe
