@@ -74,7 +74,7 @@ void usage(const char* exe) {
         "       [--source fyers|synthetic|bhavcopy] [--fyers-chain DIR] [--chain-snap DIR] [--bhavcopy-dir DIR]\n"
         "       [--min-sessions N] [--exit-sessions N]\n"
         "       [--slippage-pts P] [--rate R] [--vix-log FILE] [--vix-model NAME] [--events FILE]\n"
-        "       [--monthly-halt RS] [--unverified-costs]\n"
+        "       [--monthly-halt RS] [--max-risk RS] [--unverified-costs]\n"
         "       [--rv-ceiling V] [--max-drawdown RS] [--max-vega RS]\n\n"
         "    --source S            fyers (default: the chains altair_fyers_chain saved), synthetic (VIX-priced),\n"
         "                          or bhavcopy (NSE closes; opt-in, not FYERS data)\n"
@@ -90,6 +90,7 @@ void usage(const char* exe) {
         "                          which skips a straddle whose life spans one\n"
         "    --monthly-halt RS     adds har-0-halt: no new entries for the rest of a month once closed trades\n"
         "                          lose RS rupees in it (Chen & Sebastian's monthly loss rule)\n"
+        "    --max-risk RS         adds har-0-risk: no sale when a 3-sd move to expiry would lose more than RS\n"
         "    --unverified-costs    price expenses from an UNVERIFIED config/charges.toml, stamped\n"
         "    --rv-ceiling V        har-0-limits: no entry above this trailing 20-session realised vol (default 0 = off)\n"
         "    --max-drawdown RS     har-0-limits: no entries once closed trades draw down this many rupees (default 100000; 0 = off)\n"
@@ -162,7 +163,7 @@ int main(int argc, char** argv) {
     fs::path root = "dataset", out = "data/verified", bhav_dir = "data/bhavcopy";
     fs::path chain_dir = "data/store/fyers_chain", snap_dir = "data/store/chain_snap";
     std::string which = "both", source = "fyers", vix_log, vix_model = "Hedge", events_file;
-    double rate = 0.065, slip = 1.0, min_s = 10, exit_s = 1, month_halt = 0.0;
+    double rate = 0.065, slip = 1.0, min_s = 10, exit_s = 1, month_halt = 0.0, max_risk = 0.0;
     double rv_ceiling = 0.0, max_dd = 100'000.0, max_vega = 0.0;
     bool unverified = false;
     for (int i = 1; i < argc; ++i) {
@@ -179,6 +180,7 @@ int main(int argc, char** argv) {
         if (a == "--vix-log" && has) { vix_log = argv[++i]; continue; }
         if (a == "--vix-model" && has) { vix_model = argv[++i]; continue; }
         if (a == "--events" && has) { events_file = argv[++i]; continue; }
+        if (a == "--max-risk" && has) { if (!parse_double(argv[++i], max_risk) || !(max_risk > 0.0)) { usage(argv[0]); return 2; } continue; }
         if (a == "--monthly-halt" && has) { if (!parse_double(argv[++i], month_halt) || !(month_halt > 0.0)) { usage(argv[0]); return 2; } continue; }
         if (a == "--rate" && has) { if (!parse_double(argv[++i], rate) || std::fabs(rate) > 1.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--slippage-pts" && has) { if (!parse_double(argv[++i], slip) || slip < 0.0) { usage(argv[0]); return 2; } continue; }
@@ -325,6 +327,17 @@ int main(int argc, char** argv) {
         auto p = base(0.0);
         p.calm_trend_only = true;
         variants.push_back({"har-0-calm", "har-0, only while 5-session realised vol is at or below 20-session", p, false});
+    }
+    {
+        // Mullaney: no short puts into a downtrend.
+        auto p = base(0.0);
+        p.uptrend_only = true;
+        variants.push_back({"har-0-uptrend", "har-0, only while the index is at or above its 50-session average", p, false});
+    }
+    if (max_risk > 0.0) {
+        auto p = base(0.0);
+        p.max_risk = max_risk;
+        variants.push_back({"har-0-risk", "har-0, only when a 3-sd move to expiry would lose at most Rs " + fixed(max_risk, 0), p, false});
     }
     if (month_halt > 0.0) {
         auto p = base(0.0);
