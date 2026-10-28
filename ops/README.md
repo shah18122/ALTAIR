@@ -23,7 +23,8 @@ at 09:14 with a position open, or at 15:25 with a feed down.
 
 The `.ps1` scripts here fetch data on Windows (bhavcopy, universe, pairs,
 depth tapes), record and store each session (`record_session`, `nightly`,
-`push_data`, `install_tasks`; see `recorder.md`) and audit the broker account. Research notes and paper
+`push_data`, `install_tasks`; see `recorder.md`), save the option chains from FYERS
+before they expire (`chain_snapshot`, `fyers_chain`) and audit the broker account. Research notes and paper
 references moved to [`../docs/research/`](../docs/research).
 
 ## The rule these three share

@@ -1,9 +1,10 @@
-# ops/install_tasks.ps1 -- register ALTAIR's two Windows scheduled tasks (or remove them).
+# ops/install_tasks.ps1 -- register ALTAIR's Windows scheduled tasks (or remove them).
 #
 #   ALTAIR Recorder   Mon-Fri 08:50  ops\record_session.ps1 -Go   (records the session to 15:45)
 #   ALTAIR Nightly    Mon-Fri 20:00  ops\nightly.ps1 -Go          (store, snapshot, retrain, push)
 #   ALTAIR Chain Open  Mon-Fri 09:20 ops\chain_snapshot.ps1 -Go   (every NIFTY/BANKNIFTY strike, by REST)
 #   ALTAIR Chain Close Mon-Fri 15:27 ops\chain_snapshot.ps1 -Go   (the same at the close)
+#   ALTAIR FYERS Chain Mon-Fri 15:45 ops\fyers_chain.ps1 -Go      (the chains' one-minute bars and closes)
 #
 # Both run whether or not the ALTAIR desktop is open, start late if the PC was
 # asleep or off at their time (StartWhenAvailable), and wake the PC for it.
@@ -26,13 +27,14 @@ param(
     [string]$RecordAt = '08:50',
     [string]$NightlyAt = '20:00',
     [string]$ChainOpenAt = '09:20',
-    [string]$ChainCloseAt = '15:27'
+    [string]$ChainCloseAt = '15:27',
+    [string]$FyersChainAt = '15:45'
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 . "$PSScriptRoot\altair_log.ps1"
-$names = @('ALTAIR Recorder', 'ALTAIR Nightly', 'ALTAIR Chain Open', 'ALTAIR Chain Close')
+$names = @('ALTAIR Recorder', 'ALTAIR Nightly', 'ALTAIR Chain Open', 'ALTAIR Chain Close', 'ALTAIR FYERS Chain')
 
 if ($Remove) {
     foreach ($n in $names) {
@@ -54,7 +56,9 @@ $tasks = @(
     @{ name = 'ALTAIR Chain Open'; at = $ChainOpenAt; script = 'chain_snapshot.ps1'; hours = 1
        what = 'Quotes every NIFTY and BANKNIFTY strike (weeklies and monthlies) and the futures by FYERS REST, independent of the recorder.' },
     @{ name = 'ALTAIR Chain Close'; at = $ChainCloseAt; script = 'chain_snapshot.ps1'; hours = 1
-       what = 'Quotes every NIFTY and BANKNIFTY strike (weeklies and monthlies) and the futures by FYERS REST at the close.' }
+       what = 'Quotes every NIFTY and BANKNIFTY strike (weeklies and monthlies) and the futures by FYERS REST at the close.' },
+    @{ name = 'ALTAIR FYERS Chain'; at = $FyersChainAt; script = 'fyers_chain.ps1'; hours = 1
+       what = 'Saves the NIFTY and BANKNIFTY chains (one-minute bars and closes) from FYERS history before the contracts expire; fills the last 7 days.' }
 )
 foreach ($t in $tasks) {
     $arg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\ops\$($t.script)`" -Go"

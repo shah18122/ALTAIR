@@ -1,7 +1,7 @@
-// app/vol_of_vol_main.cpp -- altair_vol_of_vol: sell vol-of-vol on NSE closes.
+// app/vol_of_vol_main.cpp -- altair_vol_of_vol: sell vol-of-vol on real option closes.
 //
-// strategies/vol_of_vol.hpp on the NSE F&O bhavcopy (app/bhavcopy.hpp; fetch
-// with ops/fetch_bhavcopy.ps1): each week, short the 25-delta strangle of the
+// strategies/vol_of_vol.hpp on the FYERS chains altair_fyers_chain saves
+// (app/fyers_chain.hpp; the NSE bhavcopy only with --bhavcopy): each week, short the 25-delta strangle of the
 // first monthly expiry at least 10 sessions out, long the ATM straddle lots
 // that cancel its vega, delta hedged with futures at every close. Three
 // variants side by side, so the result can be read against its own controls:
@@ -17,6 +17,7 @@
 // Writes <out>/vol_of_vol/: trades_<instrument>_<variant>.csv, summary.csv.
 
 #include <app/bhavcopy.hpp>
+#include <app/fyers_chain.hpp>
 #include <app/demo_costs.hpp>
 #include <app/spec_today.hpp>
 #include <risk/charges_toml.hpp>
@@ -42,9 +43,10 @@ namespace dc = altair::demo_costs;
 void usage(const char* exe) {
     std::printf(
         "  Sell vol-of-vol: short the 25-delta strangle, long the ATM straddle, vega-neutral, delta hedged.\n\n"
-        "    %s [--bhavcopy-dir DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
+        "    %s [--fyers-chain DIR] [--bhavcopy] [--bhavcopy-dir DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
         "       [--strangle-lots N] [--hold N] [--slippage-pts P] [--rate R] [--unverified-costs]\n\n"
-        "    --bhavcopy-dir DIR    default data/bhavcopy (ops/fetch_bhavcopy.ps1 fills it)\n"
+        "    --fyers-chain DIR     FYERS chains saved by altair_fyers_chain (default data/store/fyers_chain)\n"
+        "    --bhavcopy            NSE bhavcopy instead (opt-in, not FYERS data); --bhavcopy-dir, default data/bhavcopy\n"
         "    --out DIR             default data/verified\n"
         "    --strangle-lots N     lots of the short strangle (default 5); the straddle is sized to its vega\n"
         "    --hold N              closes each position is held before it is rolled (default 5)\n"
@@ -82,8 +84,9 @@ struct Variant { std::string id; vov::VovGate gate; int side; };
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path out = "data/verified", bhav_dir = "data/bhavcopy";
+    fs::path out = "data/verified", bhav_dir = "data/bhavcopy", chain_dir = "data/store/fyers_chain";
     std::string which = "both";
+    bool use_bhavcopy = false;
     double rate = 0.065, slip = 1.0, lots = 5, hold = 5;
     bool unverified = false;
     for (int i = 1; i < argc; ++i) {
@@ -93,6 +96,8 @@ int main(int argc, char** argv) {
         if (a == "--out" && has) { out = argv[++i]; continue; }
         if (a == "--instrument" && has) { which = argv[++i]; continue; }
         if (a == "--bhavcopy-dir" && has) { bhav_dir = argv[++i]; continue; }
+        if (a == "--fyers-chain" && has) { chain_dir = argv[++i]; continue; }
+        if (a == "--bhavcopy") { use_bhavcopy = true; continue; }
         if (a == "--rate" && has) { if (!parse_double(argv[++i], rate) || std::fabs(rate) > 1.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--slippage-pts" && has) { if (!parse_double(argv[++i], slip) || slip < 0.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--strangle-lots" && has) { if (!parse_double(argv[++i], lots) || lots < 1 || lots > 100) { usage(argv[0]); return 2; } continue; }
@@ -136,14 +141,11 @@ int main(int argc, char** argv) {
     for (const auto& name : names) {
         const auto lot = altair::spec_today::lot_size("config/lot_size_history.csv", name);
         if (!lot) { std::printf("  %s: no verified lot size -- not run\n", name.c_str()); continue; }
-        altair::bhavcopy::LoadReport br;
-        const auto bhav = std::make_shared<std::map<std::int64_t, altair::bhavcopy::Day>>(altair::bhavcopy::load_dir(bhav_dir, name, br));
-        std::printf("  %s bhavcopy: %zu files, %zu option and %zu futures rows, %zu untraded skipped\n", name.c_str(), br.files,
-                    br.option_rows, br.future_rows, br.untraded);
-        if (bhav->empty()) {
-            std::printf("  %s: no bhavcopy under %s -- run ops\\fetch_bhavcopy.ps1 -Go first\n", name.c_str(), bhav_dir.string().c_str());
-            continue;
-        }
+        std::string note;
+        const auto bhav = std::make_shared<std::map<std::int64_t, altair::bhavcopy::Day>>(
+            altair::fyers_chain::load_source(use_bhavcopy, chain_dir, bhav_dir, name, note));
+        std::printf("  %s\n", note.c_str());
+        if (bhav->empty()) { continue; }
         vov::VovMarket m;
         for (const auto& [day, bd] : *bhav) {
             if (bd.fut.empty()) continue;

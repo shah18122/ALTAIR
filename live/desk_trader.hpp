@@ -146,7 +146,7 @@ namespace desk_detail {
     using namespace desk_detail;
     DeskVolReading r;
     std::ifstream in(signals_csv);
-    if (!in) { r.why = "no " + signals_csv.string() + ": run altair_vol_premium --source bhavcopy"; return r; }
+    if (!in) { r.why = "no " + signals_csv.string() + ": run altair_vol_premium (FYERS chains: altair_fyers_chain saves them)"; return r; }
     std::string line;
     std::getline(in, line);
     const auto head = split(line);

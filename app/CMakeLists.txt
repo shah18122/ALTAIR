@@ -105,6 +105,16 @@ if(ALTAIR_HAVE_NET)
     target_compile_definitions(altair_fyers_history PRIVATE
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+    # Saves the day's NIFTY / BANKNIFTY option chains from FYERS before they
+    # expire (app/fyers_chain.hpp): FYERS history refuses expired contracts, so
+    # this record is the only chain history ALTAIR will have.
+    add_executable(altair_fyers_chain fyers_chain_main.cpp)
+    target_link_libraries(altair_fyers_chain PRIVATE
+        altair_broker_net altair_instruments altair_flags)
+    target_include_directories(altair_fyers_chain PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_fyers_chain PRIVATE
+        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
     # P2-12c. Fills dataset/ from the historical candle API. Separate binary
     # from `altair` for the same reason altair_kite_login is: a tool that reads
     # a live trading credential should not be inside the process that places
@@ -184,7 +194,7 @@ if(ALTAIR_HAVE_NET)
     install(TARGETS
         altair_kite_login altair_fyers_login altair_kite_fetch
         altair_kite_account altair_fyers_account altair_kite_update altair_kite_ticker
-        altair_kite_quote altair_fyers_history altair_fyers_webhook altair_fyers_ticker
+        altair_kite_quote altair_fyers_history altair_fyers_chain altair_fyers_webhook altair_fyers_ticker
         altair_fyers_quotes
         RUNTIME DESTINATION "${_altair_helper_destination}")
     if(TARGET altair_price_service)
@@ -311,12 +321,12 @@ endif()
 # keeps score, refits on 6, 12, 24 ... days. Offline: reads dataset/, writes
 # data/verified/forecast_curriculum.xlsx and per-forecast logs.
 add_executable(altair_forecast_curriculum forecast_curriculum_main.cpp)
-target_link_libraries(altair_forecast_curriculum PRIVATE altair_models altair_flags)
+target_link_libraries(altair_forecast_curriculum PRIVATE altair_instruments altair_models altair_flags)
 target_include_directories(altair_forecast_curriculum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 # Orrell's eq. 8 smile against NSE option closes (research/models/quantum_oscillator.hpp).
 add_executable(altair_quantum_smile quantum_smile_main.cpp)
-target_link_libraries(altair_quantum_smile PRIVATE altair_research altair_flags)
+target_link_libraries(altair_quantum_smile PRIVATE altair_instruments altair_research altair_flags)
 target_include_directories(altair_quantum_smile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 if(ALTAIR_BUILD_TESTS)
     add_test(NAME quantum_smile_help COMMAND altair_quantum_smile --help)
@@ -476,7 +486,7 @@ if(TARGET altair_charges_toml)
     # altair_trader: one model over every model's out-of-sample output,
     # refitted and traded day by day on the index futures.
     add_executable(altair_trader trader_main.cpp trader_combos.cpp)
-    target_link_libraries(altair_trader PRIVATE altair_models altair_strategies altair_charges_toml altair_flags)
+    target_link_libraries(altair_trader PRIVATE altair_instruments altair_models altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_trader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
     # The owner's threshold strategies (threshold_strategy/), on paper.
@@ -495,13 +505,13 @@ if(TARGET altair_charges_toml)
     # The variance premium, sold delta hedged: HAR forecast against implied
     # vol, on VIX-priced options or NSE bhavcopy closes.
     add_executable(altair_vol_premium vol_premium_main.cpp)
-    target_link_libraries(altair_vol_premium PRIVATE altair_analytics altair_strategies altair_charges_toml altair_flags)
+    target_link_libraries(altair_vol_premium PRIVATE altair_instruments altair_analytics altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_vol_premium PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
     # Sell vol-of-vol on NSE closes (strategies/vol_of_vol.hpp): short the
     # 25-delta strangle, long the ATM straddle, vega-neutral, delta hedged.
     add_executable(altair_vol_of_vol vol_of_vol_main.cpp)
-    target_link_libraries(altair_vol_of_vol PRIVATE altair_analytics altair_strategies altair_charges_toml altair_flags)
+    target_link_libraries(altair_vol_of_vol PRIVATE altair_instruments altair_analytics altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_vol_of_vol PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME vol_of_vol_help COMMAND altair_vol_of_vol --help)
 
@@ -551,6 +561,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_bhavcopy_test PRIVATE altair_flags)
     target_include_directories(altair_bhavcopy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME bhavcopy COMMAND altair_bhavcopy_test)
+    add_executable(altair_fyers_chain_test tests/test_fyers_chain.cpp)
+    target_link_libraries(altair_fyers_chain_test PRIVATE altair_instruments altair_flags)
+    target_include_directories(altair_fyers_chain_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME fyers_chain COMMAND altair_fyers_chain_test)
     # End to end on the real dataset/: one daily track (INDIA VIX), every
     # direction and band model, zero look-ahead refusals or the exit code says
     # so. ~30 s optimised, several minutes under the Debug ASan build. Writes
