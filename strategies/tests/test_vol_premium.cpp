@@ -260,6 +260,19 @@ void test_hedge_fund_rules() {
     if (calm) { for (const auto& t : calm->trades) { calm_ok = calm_ok && t.vol_trend_in <= 1.0; } }
     check(calm_ok, "calm-trend-only sells only when 5-session RV is at or below 20-session RV");
 
+    auto up = policy();
+    up.uptrend_only = true;
+    const auto upr = vrp_run(market(0.20, 0.10, 0.10, 31), up);
+    bool up_ok = static_cast<bool>(upr);
+    if (upr) { for (const auto& sg : upr->signals) { up_ok = up_ok && (!sg.entered || sg.over_ma50 >= 1.0); } }
+    check(up_ok, "uptrend-only enters only at or above the 50-session average");
+
+    auto rk = policy();
+    rk.max_risk = 1.0;
+    const auto rkr = vrp_run(market(0.20, 0.10, 0.10, 31), rk);
+    check(rkr && rkr->trades.empty() && !rkr->signals.empty() && rkr->signals.front().risk > 1.0,
+          "a one-rupee risk cap: a 3-sd move would lose more, so nothing is sold");
+
     auto bad = policy();
     bad.take_profit = 1.0;
     check(!vrp_run(market(0.2, 0.1, 0.1, 1, 100), bad).has_value(), "a profit target of the whole credit: refused");

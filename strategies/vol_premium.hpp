@@ -111,6 +111,12 @@ struct VrpPolicy {
     /// Sell only while realised vol is stable or falling: the 5-session RV at
     /// or below the 20-session RV ("stable or declining market volatility").
     bool calm_trend_only = false;
+    /// Mullaney: no short puts into a downtrend -- sell only while the index
+    /// closes at or above its 50-session average.
+    bool uptrend_only = false;
+    /// Chen & Sebastian's per-trade risk: no sale when a 3-sd move to expiry
+    /// (at the IV sold) would lose more than this many rupees; 0 = off.
+    double max_risk = 0.0;
 };
 
 struct VrpFill {
@@ -153,6 +159,8 @@ struct VrpSignal {
     double p_loss_expiry = std::numeric_limits<double>::quiet_NaN();   ///< model P(fwd ends outside strike +/- credit)
     double cone_rank = std::numeric_limits<double>::quiet_NaN();       ///< IV's rank among past `sessions`-day realised vols
     double vol_trend = std::numeric_limits<double>::quiet_NaN();       ///< 5-session RV / 20-session RV; above 1 = vol rising
+    double over_ma50 = std::numeric_limits<double>::quiet_NaN();       ///< spot over its 50-session average
+    double risk = std::numeric_limits<double>::quiet_NaN();            ///< rupees lost at a 3-sd move to expiry, the position
     bool halted = false;                                                ///< the monthly loss halt was in force that day
 };
 
@@ -244,6 +252,14 @@ struct StraddleRisk {
     return out.gamma > 0.0 && out.vega_pt > 0.0;
 }
 
+/// Spot over its average of the 50 closes to day i; NaN before 50.
+inline double spot_over_ma50(const std::vector<double>& spot, std::size_t i) {
+    if (i + 1 < 50) { return std::numeric_limits<double>::quiet_NaN(); }
+    double s = 0.0;
+    for (std::size_t k = i + 1 - 50; k <= i; ++k) { s += spot[k]; }
+    return s > 0.0 ? spot[i] / (s / 50.0) : std::numeric_limits<double>::quiet_NaN();
+}
+
 /// Calendar month of a day count, as year * 12 + month.
 inline int month_key(std::int64_t day) {
     const std::chrono::year_month_day ymd{std::chrono::sys_days{std::chrono::days{day}}};
@@ -271,7 +287,7 @@ inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size
         || !(p.stop_multiple == 0.0 || p.stop_multiple > 1.0) || !(p.slippage_pts >= 0.0) || !std::isfinite(p.rate)
         || !std::isfinite(p.entry_spread) || !(p.hedge_band >= 0.0) || !(p.hedge_band_down >= 0.0)
         || !(p.take_profit >= 0.0 && p.take_profit < 1.0) || !(p.quick_profit >= 0.0 && p.quick_profit < 1.0)
-        || (p.quick_profit > 0.0 && p.quick_sessions == 0) || !(p.monthly_loss_halt >= 0.0)) {
+        || (p.quick_profit > 0.0 && p.quick_sessions == 0) || !(p.monthly_loss_halt >= 0.0) || !(p.max_risk >= 0.0)) {
         return std::unexpected(VrpError::BadPolicy);
     }
     if (m.day.empty() || m.spot.size() != m.day.size() || m.expiries.empty() || !m.quote || !m.forward
@@ -416,9 +432,16 @@ inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size
         s.vol_trend = rv_trend(m.spot, i);
         s.halted = halt_month >= 0 && month_key(m.day[i]) == halt_month;
         const bool calm_ok = !p.calm_trend_only || (std::isfinite(s.vol_trend) && s.vol_trend <= 1.0);
+        s.over_ma50 = spot_over_ma50(m.spot, i);
+        const bool trend_ok = !p.uptrend_only || (std::isfinite(s.over_ma50) && s.over_ma50 >= 1.0);
+        {
+            const double mv = 3.0 * fwd * iv * std::sqrt(T);
+            s.risk = (std::max(std::fabs(mv - (k - fwd)), std::fabs(mv + (k - fwd))) - credit) * qty;
+        }
+        const bool cap_ok = !(p.max_risk > 0.0) || (std::isfinite(s.risk) && s.risk <= p.max_risk);
         const bool cone_ok = !(p.min_cone_rank > 0.0) || (std::isfinite(s.cone_rank) && s.cone_rank >= p.min_cone_rank);
         const double need = p.entry_spread + (p.cost_in_vols ? (risk_ok ? s.cost_vols : std::numeric_limits<double>::infinity()) : 0.0);
-        if (iv - rvf >= need && credit > 0.0 && cone_ok && calm_ok && !s.halted) {
+        if (iv - rvf >= need && credit > 0.0 && cone_ok && calm_ok && trend_ok && cap_ok && !s.halted) {
             const auto ev = m.events.lower_bound(m.day[i]);
             if ((m.veto && m.veto(i)) || (ev != m.events.end() && *ev <= expiry)) {
                 s.vetoed = true;
