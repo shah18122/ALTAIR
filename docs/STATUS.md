@@ -48,10 +48,11 @@ Honest results on real NSE data, after costs. Details in
   [`research/execution/`](../research/execution) showed no tradable edge. They
   are kept as research, outside the production folders.
 - **Avellaneda-Stoikov quoting** (`altair_as_mm`, NIFTY/BANKNIFTY futures
-  only, paper; options get only the sell-only ask) loses on bars: the quoted
-  half spread (~7 pts) is gone five minutes after a fill (markout about 0) and
-  expenses (~7 pts a fill) take the rest. Smoke run on dataset/ only; rerun on
-  FYERS 1-minute futures before reading anything into it.
+  only, paper; options get only the sell-only ask) loses on every series
+  tried, 2015-2026 1-minute NIFTY and BANKNIFTY included, even with zero
+  costs: fills are adversely selected (five-minute markout below zero). Local
+  dataset/ only so far; the FYERS 1-minute futures rerun is pending
+  ([research/avellaneda-stoikov-hmm-results.md](research/avellaneda-stoikov-hmm-results.md)).
 - **HMM regime** (`altair_regimes`, models/hmm_regime.hpp): walk-forward
   P(stress), leak-checked. It now joins `altair_trader` as a daily input and
   scales Avellaneda-Stoikov's risk aversion; not yet tested as a straddle gate.
