@@ -27,9 +27,14 @@ Honest results on real NSE data, after costs. Details in
 [research/research-ideas.md](research/research-ideas.md) and
 [../ops/demo-trading.md](../ops/demo-trading.md).
 
-- **One edge:** selling the hedged NIFTY monthly at-the-money straddle
-  (variance premium). About ₹5.12 lakh net over 134 months, t ≈ 3.5. It comes
-  from the volatility premium, not from any forecast.
+- **One candidate edge, not yet validated on FYERS:** selling the hedged
+  NIFTY monthly at-the-money straddle (variance premium). The ₹5.12 lakh /
+  t ≈ 3.5 figure came from NSE bhavcopy, which is no longer used: FYERS data
+  only (2026-10-26). FYERS does not serve expired option contracts, so option
+  results can only be rebuilt from chains ALTAIR records itself from 2026-10
+  on. Paper only until then.
+  Validation checklist and model limits:
+  [research/vol-premium-validation.md](research/vol-premium-validation.md).
 - **No forecaster beats "no change" after costs**, on any track or timeframe
   (last retrain on data to 2026-09-24).
 - `altair_trader` (one model over every model) loses to buy and hold on NIFTY.

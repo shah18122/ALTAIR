@@ -23,6 +23,13 @@
 // in (IV sold minus P&L over vega), the breakeven move and the gamma/theta
 // ratio at entry, and the round-trip slippage in vol points; with
 // `cost_in_vols` that cost is added to the entry spread.
+// MODEL LIMITS (Morini, Understanding and Managing Model Risk, 2.8). The
+// premium is only as real as the HAR forecast and the Black-76 hedge behind
+// it, so the engine caps how much rides on them and stops entering when the
+// world leaves the range they were validated on: a model line on vega
+// (`max_vega`), a stress ceiling on trailing realised vol (`rv_ceiling`), and
+// a triggered revision once closed trades draw down `max_drawdown` from their
+// peak. A blocked day is recorded with its reason.
 //
 // THE MARKET IS AN INTERFACE. Quotes, forwards and listed strikes come from
 // the caller: synthetic Black-76 at INDIA VIX for the dataset, or NSE
@@ -42,6 +49,7 @@
 #include <analytics/iv.hpp>
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -117,6 +125,10 @@ struct VrpPolicy {
     /// Chen & Sebastian's per-trade risk: no sale when a 3-sd move to expiry
     /// (at the IV sold) would lose more than this many rupees; 0 = off.
     double max_risk = 0.0;
+    // Model limits; 0 = off.
+    double max_vega = 0.0;           ///< rupees per vol point the short straddle may carry: lots are cut to fit, none if one lot exceeds
+    double rv_ceiling = 0.0;         ///< no entry while the spot's trailing 20-session realised vol (annualised) is above this, or unknown
+    double max_drawdown = 0.0;       ///< rupees: once closed trades fall this far below their peak, no new entries until re-validated
 };
 
 struct VrpFill {
@@ -162,6 +174,7 @@ struct VrpSignal {
     double over_ma50 = std::numeric_limits<double>::quiet_NaN();       ///< spot over its 50-session average
     double risk = std::numeric_limits<double>::quiet_NaN();            ///< rupees lost at a 3-sd move to expiry, the position
     bool halted = false;                                                ///< the monthly loss halt was in force that day
+    const char* blocked = nullptr;   ///< the model limit that stopped an entry, if one did
 };
 
 struct VrpResult {
@@ -280,6 +293,25 @@ inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size
     return std::isfinite(v) ? std::sqrt(v) : std::numeric_limits<double>::quiet_NaN();
 }
 
+/// The straddle's vega in rupees per vol point, per unit; NaN if it cannot be priced.
+[[nodiscard]] inline double straddle_vega_point(double fwd, double strike, double T, double iv, double rate) noexcept {
+    const auto g = black76(OptionRight::Call, Price{static_cast<std::int64_t>(std::llround(fwd * 100.0))},
+                           Price{static_cast<std::int64_t>(std::llround(strike * 100.0))}, Years{T}, Vol{iv}, rate);
+    if (!g) { return std::numeric_limits<double>::quiet_NaN(); }
+    return 2.0 * vega_per_vol_point(g->vega) / 100.0;   // call and put share one vega; paise to rupees
+}
+
+/// The spot's realised vol over the 20 sessions to day i, annualised; NaN before 20 sessions.
+[[nodiscard]] inline double trailing_rv(const VrpMarket& m, std::size_t i) noexcept {
+    if (i < 20) { return std::numeric_limits<double>::quiet_NaN(); }
+    double ss = 0.0;
+    for (std::size_t k = i - 19; k <= i; ++k) {
+        const double r = std::log(m.spot[k] / m.spot[k - 1]);
+        ss += r * r;
+    }
+    return std::sqrt(ss / 20.0 * 252.0);
+}
+
 } // namespace vrp_detail
 
 [[nodiscard]] inline std::expected<VrpResult, VrpError> vrp_run(const VrpMarket& m, const VrpPolicy& p) {
@@ -287,7 +319,8 @@ inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size
         || !(p.stop_multiple == 0.0 || p.stop_multiple > 1.0) || !(p.slippage_pts >= 0.0) || !std::isfinite(p.rate)
         || !std::isfinite(p.entry_spread) || !(p.hedge_band >= 0.0) || !(p.hedge_band_down >= 0.0)
         || !(p.take_profit >= 0.0 && p.take_profit < 1.0) || !(p.quick_profit >= 0.0 && p.quick_profit < 1.0)
-        || (p.quick_profit > 0.0 && p.quick_sessions == 0) || !(p.monthly_loss_halt >= 0.0) || !(p.max_risk >= 0.0)) {
+        || (p.quick_profit > 0.0 && p.quick_sessions == 0) || !(p.monthly_loss_halt >= 0.0) || !(p.max_risk >= 0.0)
+        || !(p.max_vega >= 0.0) || !(p.rv_ceiling >= 0.0) || !(p.max_drawdown >= 0.0)) {
         return std::unexpected(VrpError::BadPolicy);
     }
     if (m.day.empty() || m.spot.size() != m.day.size() || m.expiries.empty() || !m.quote || !m.forward
@@ -296,8 +329,8 @@ inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size
     }
     using namespace vrp_detail;
     VrpResult out;
-    const double qty = static_cast<double>(p.lots) * p.lot_size;
     bool open = false;
+    double closed_pnl = 0.0, peak_pnl = 0.0;
     VrpTrade t;
     long lots = 0;
     double last_fwd = 0.0, last_iv = 0.0, hedge_fwd = 0.0;
@@ -319,7 +352,7 @@ inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size
         hedge_fwd = fwd;
         const double d = straddle_delta(fwd, t.strike, T, iv, p.rate);
         if (!std::isfinite(d)) { return; }
-        const long want = std::lround(qty * d / p.lot_size);   // the short straddle is -qty x d; the hedge holds +qty x d
+        const long want = std::lround(t.qty * d / p.lot_size);   // the short straddle is -qty x d; the hedge holds +qty x d
         if (want != lots) {
             t.fills.push_back({i, want - lots, fwd});
             lots = want;
@@ -349,6 +382,8 @@ inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size
         if (mk != pnl_month) { pnl_month = mk; month_pnl = 0.0; }
         month_pnl += t.gross;
         if (p.monthly_loss_halt > 0.0 && month_pnl <= -p.monthly_loss_halt) { halt_month = mk; }
+        closed_pnl += t.gross;
+        peak_pnl = std::max(peak_pnl, closed_pnl);
         out.trades.push_back(t);
         open = false;
     };
@@ -436,14 +471,26 @@ inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size
         const bool trend_ok = !p.uptrend_only || (std::isfinite(s.over_ma50) && s.over_ma50 >= 1.0);
         {
             const double mv = 3.0 * fwd * iv * std::sqrt(T);
-            s.risk = (std::max(std::fabs(mv - (k - fwd)), std::fabs(mv + (k - fwd))) - credit) * qty;
+            s.risk = (std::max(std::fabs(mv - (k - fwd)), std::fabs(mv + (k - fwd))) - credit) * static_cast<double>(p.lots) * p.lot_size;
         }
         const bool cap_ok = !(p.max_risk > 0.0) || (std::isfinite(s.risk) && s.risk <= p.max_risk);
         const bool cone_ok = !(p.min_cone_rank > 0.0) || (std::isfinite(s.cone_rank) && s.cone_rank >= p.min_cone_rank);
         const double need = p.entry_spread + (p.cost_in_vols ? (risk_ok ? s.cost_vols : std::numeric_limits<double>::infinity()) : 0.0);
         if (iv - rvf >= need && credit > 0.0 && cone_ok && calm_ok && trend_ok && cap_ok && !s.halted) {
+            int lots_now = p.lots;
+            if (p.max_vega > 0.0) {
+                const double unit = straddle_vega_point(fwd, k, T, iv, p.rate) * p.lot_size;
+                lots_now = std::isfinite(unit) && unit > 0.0
+                    ? std::min(p.lots, static_cast<int>(std::floor(p.max_vega / unit))) : 0;
+            }
             const auto ev = m.events.lower_bound(m.day[i]);
-            if ((m.veto && m.veto(i)) || (ev != m.events.end() && *ev <= expiry)) {
+            if (p.max_drawdown > 0.0 && peak_pnl - closed_pnl >= p.max_drawdown) {
+                s.blocked = "drawdown limit: model needs re-validation";
+            } else if (p.rv_ceiling > 0.0 && !(trailing_rv(m, i) <= p.rv_ceiling)) {
+                s.blocked = "realised vol above the stress ceiling, or not yet known";
+            } else if (lots_now < 1) {
+                s.blocked = "one lot carries more vega than the model line";
+            } else if ((m.veto && m.veto(i)) || (ev != m.events.end() && *ev <= expiry)) {
                 s.vetoed = true;
             } else {
                 s.entered = true;
@@ -457,7 +504,7 @@ inline double rv_trend(const std::vector<double>& spot, std::size_t i, std::size
                 t.credit = credit;
                 t.iv_in = iv;
                 t.rv_fcst = rvf;
-                t.qty = qty;
+                t.qty = static_cast<double>(lots_now) * p.lot_size;
                 t.p_loss_in = s.p_loss_expiry;
                 t.cone_rank_in = s.cone_rank;
                 t.vol_trend_in = s.vol_trend;
