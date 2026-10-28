@@ -92,6 +92,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -270,6 +271,8 @@ void usage(const char* exe) {
         "    --max-daily-loss RUPEES  no new entries past this loss today (default 2e5)\n"
         "    --max-margin RUPEES  estimated margin of everything held or working (default 1e7; a\n"
         "                         conservative estimate, not SPAN: live/margin.hpp)\n"
+        "    --monthly-halt RS    the books straddle stops selling for the month once its closed trades lose RS\n"
+        "    --straddle-max-risk RS  the books straddle sells only when a 3-sd move would lose at most RS a lot\n"
         "    --gate-z Z           a direction call trades only when its value clears zero by Z\n"
         "                         standard errors (default 1; 0 is the point estimate)\n"
         "    --no-record          do not write the session tape. By default every byte off the bus\n"
@@ -302,6 +305,7 @@ int main(int argc, char** argv) {
     lv::LiveExecPolicy policy;
     lv::LiveRiskLimits limits;
     double gate_z = 1.0;   // standard errors a direction call's value must clear
+    double monthly_halt = 0.0, straddle_max_risk = 0.0;   // the books straddle's monthly halt and per-trade risk cap; 0 = off
     // The tape is on by default: tuning needs FYERS's own ticks, and FYERS
     // history is only 1-minute bars. --no-record turns it off.
     bool record = true, record_asked = false, force_replay = false;
@@ -326,6 +330,8 @@ int main(int argc, char** argv) {
         if (a == "--max-daily-loss" && has) { limits.max_daily_loss = std::atof(argv[++i]); continue; }
         if (a == "--max-margin" && has) { limits.max_margin = std::atof(argv[++i]); continue; }
         if (a == "--gate-z" && has) { gate_z = std::atof(argv[++i]); continue; }
+        if (a == "--monthly-halt" && has) { monthly_halt = std::max(0.0, std::atof(argv[++i])); continue; }
+        if (a == "--straddle-max-risk" && has) { straddle_max_risk = std::max(0.0, std::atof(argv[++i])); continue; }
         if (a == "--record") { record = record_asked = true; continue; }
         if (a == "--no-record") { record = false; continue; }
         if (a == "--keep-tapes" && has) { keep_tapes = std::max(1, std::atoi(argv[++i])); continue; }
@@ -495,7 +501,9 @@ int main(int argc, char** argv) {
                 100 * bv.sigma_day, nv.intraday_share, bv.intraday_share);
     // INDIA VIX for the straddle sellers: the last close before today and
     // HAR's forecast of today's close (fitted in logs on closes before today).
-    lv::LiveStraddleInputs nst{nv}, bst{bv};
+    lv::LiveStraddleInputs nst, bst;
+    nst.vol = nv;
+    bst.vol = bv;
     {
         std::vector<double> vc;
         for (const auto& [d, c] : daily_closes(root / "dataset/spot/indiavix/1d", today)) if (c > 0.0) vc.push_back(c);
@@ -508,6 +516,61 @@ int main(int argc, char** argv) {
 
     const auto nd = daily_closes(root / "dataset/spot/nifty/1d", today);
     const auto bd = daily_closes(root / "dataset/spot/banknifty/1d", today);
+
+    // The options-book rules (live/straddle.hpp). The plain straddles above
+    // stay the control; beside them a "books" straddle with the rules on and
+    // a 16-delta strangle, so the paper record compares the three each day.
+    std::set<std::int64_t> news_days;
+    {
+        std::ifstream in(root / "config/scheduled_events.csv");
+        for (std::string line; std::getline(in, line);) {
+            if (line.size() < 10 || line[0] < '0' || line[0] > '9') continue;
+            if (const std::int64_t d = lv::parse_day(line.substr(0, 10)); d > 0) news_days.insert(d);
+        }
+        std::printf("  scheduled news days: %zu (config/scheduled_events.csv)%s\n", news_days.size(),
+                    news_days.contains(today) ? " -- TODAY is one: the books straddle sits out" : "");
+    }
+    // This month's closed P&L of a model, from the ledger (not on a replay:
+    // the tape's day is judged on its own).
+    const auto month_pnl = [&](const std::string& model) {
+        double sum = 0.0;
+        if (replaying) return sum;
+        std::ifstream in(paper_dir / "trades.csv");
+        const int month = lv::live_straddle_detail::month_of(today);
+        for (std::string line; std::getline(in, line);) {
+            if (line.size() < 10 || line[0] < '0' || line[0] > '9') continue;
+            const auto c = lv::report::csv_fields(line);
+            if (c.size() < 13 || c[1] != model) continue;
+            const std::int64_t d = lv::parse_day(c[0].substr(0, 10));
+            if (d <= 0 || d >= today || lv::live_straddle_detail::month_of(d) != month) continue;
+            const double net = std::atof(c[12].c_str()), gross = std::atof(c[10].c_str());
+            sum += c[12].empty() ? gross : net;
+        }
+        return sum;
+    };
+    std::vector<lv::LiveStraddleInputs> book_rules;
+    for (const auto* base : {&nst, &bst}) {
+        std::vector<double> closes;
+        for (const auto& [d, c] : (base == &nst ? nd : bd)) if (c > 0.0) closes.push_back(c);
+        lv::LiveStraddleInputs books = *base;
+        books.closes = closes;
+        books.rules.tag = "books";
+        books.rules.events = news_days;
+        books.rules.take_profit = 0.55;
+        books.rules.quick_profit = 0.25;
+        books.rules.quick_minutes = 60;
+        books.rules.calm_trend_only = true;
+        books.rules.uptrend_only = true;
+        books.rules.monthly_loss_halt = monthly_halt;
+        books.rules.max_risk = straddle_max_risk;
+        lv::LiveStraddleInputs strangle = *base;
+        strangle.closes = closes;
+        strangle.rules.leg_delta = 0.16;
+        for (auto* x : {&books, &strangle}) {
+            x->rules.month_closed_pnl = month_pnl(lv::LiveStraddleModel(*x).name());
+            book_rules.push_back(*x);
+        }
+    }
     std::vector<double> a, b, lr;
     for (const auto& [d, c] : nd) {
         const auto it = bd.find(d);
@@ -581,6 +644,7 @@ int main(int argc, char** argv) {
     // Sell the ATM straddle when forecast IV >= forecast RV, read on every tick (live/straddle.hpp).
     engine.add_model(std::make_unique<lv::LiveStraddleModel>(nst));
     engine.add_model(std::make_unique<lv::LiveStraddleModel>(bst));
+    for (const auto& br : book_rules) engine.add_model(std::make_unique<lv::LiveStraddleModel>(br));
     for (std::size_t i = 0; i <= dir->names.size(); ++i)
         engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dirs, i));
     if (dir->names.empty()) engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dirs, 0));
