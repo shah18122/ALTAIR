@@ -893,6 +893,8 @@ if(ALTAIR_BUILD_TESTS)
             Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
         target_include_directories(altair_obi_page_test
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        target_compile_definitions(altair_obi_page_test
+            PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
         set_target_properties(altair_obi_page_test
             PROPERTIES WIN32_EXECUTABLE OFF)
         if(WIN32)
