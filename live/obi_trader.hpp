@@ -45,6 +45,12 @@
 // the real-order bridge (app/live_real_orders.hpp) sends orders only for the
 // strategies with a switch in the LIVE arm, and this one has none.
 //
+// WHICH UNDERLYINGS. NIFTY and BANKNIFTY (targets in index points), and every
+// NSE F&O stock of config/obi_underlyings.csv (live/obi_underlyings.hpp;
+// NYKAA first) with its own target, stop and safety in rupees a share. A
+// stock's signal is its own near future; its options are its nearest
+// (monthly) chain. Lot and tick come from the instrument master.
+//
 // THREADING: everything runs on the live engine's single feed thread; the
 // model holds no locks and shares nothing.
 
@@ -217,7 +223,8 @@ private:
             const double d = calls[i]->strike - calls[i - 1]->strike;
             if (d > 0.0 && (best == 0.0 || d < best)) best = d;
         }
-        return best > 0.0 ? best : (r_.under == "BANKNIFTY" ? 100.0 : 50.0);
+        if (best > 0.0) return best;
+        return r_.under == "BANKNIFTY" ? 100.0 : r_.under == "NIFTY" ? 50.0 : 0.0;   // a stock without a chain sells nothing
     }
 
     [[nodiscard]] bool wanted(const LiveEngine& e, const LiveInstrument& in) const {

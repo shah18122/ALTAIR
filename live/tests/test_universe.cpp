@@ -3,6 +3,7 @@
 //
 // No check description here may contain the substring "F" "AIL" joined.
 
+#include <live/obi_underlyings.hpp>
 #include <live/universe.hpp>
 
 #include <cmath>
@@ -123,6 +124,73 @@ int main() {
         const auto u4 = build_universe(rows2, stocks, o4);
         check(find(u4, "NIFTY26O1324000CE") != nullptr && find(u4, "NIFTY26O1324000CE")->fyers == "NSE:NIFTY26O1324000CE",
               "after the Kite master's last weekly, the chain is the FYERS-listed weekly");
+    }
+    {
+        // The OBI trader's stocks (config/obi_underlyings.csv): stock, two near
+        // futures with a book, and the nearest chain around the spot.
+        auto rows5 = rows;
+        const auto row = [&rows5](std::uint32_t tok, const char* sym, const char* type, const char* seg, const char* exp, double k) {
+            LiveKiteRow r;
+            r.token = tok; r.symbol = sym; r.name = std::string(type) == "EQ" ? sym : "NYKAA"; r.type = type;
+            r.segment = seg; r.exchange = std::string(seg) == "NSE" ? "NSE" : "NFO";
+            r.expiry_day = exp[0] != 0 ? parse_day(exp) : 0; r.strike = k; r.tick = 0.05;
+            r.lot = std::string(type) == "EQ" ? 1 : 3125;
+            rows5.push_back(r);
+        };
+        row(1675521, "NYKAA", "EQ", "NSE", "", 0.0);
+        row(900001, "NYKAA26OCTFUT", "FUT", "NFO-FUT", "2026-10-27", 0.0);
+        row(900002, "NYKAA26NOVFUT", "FUT", "NFO-FUT", "2026-11-24", 0.0);
+        row(900003, "NYKAA26DECFUT", "FUT", "NFO-FUT", "2026-12-29", 0.0);
+        std::uint32_t t = 900100;
+        for (const char* e : {"2026-10-27", "2026-11-24"})
+            for (const double k : {320.0, 330.0, 340.0, 350.0, 360.0, 370.0, 380.0})
+                for (const char* cp : {"CE", "PE"}) {
+                    char name[40];
+                    std::snprintf(name, sizeof name, "NYKAA26%s%.0f%s", e[6] == '0' ? "OCT" : "NOV", k, cp);
+                    row(++t, name, cp, "NFO-OPT", e, k);
+                }
+        LiveUniverseOptions o5 = o;
+        o5.fo_stocks = {"NYKAA", "NOSUCH"};
+        o5.fo_spots = {347.0};   // ATM 350
+        const auto u5 = build_universe(rows5, stocks, o5);
+        const auto* eq = find(u5, "NYKAA");
+        check(eq && eq->kind == LiveKind::Equity && eq->fyers == "NSE:NYKAA-EQ" && eq->depth,
+              "an OBI stock is streamed as NSE:NYKAA-EQ with its book");
+        const auto* nf = find(u5, "NYKAA26OCTFUT");
+        check(nf && nf->underlying == "NYKAA" && nf->lot == 3125 && nf->depth && find(u5, "NYKAA26NOVFUT") != nullptr
+                  && find(u5, "NYKAA26DECFUT") == nullptr,
+              "its two nearest futures, with the master's lot and a book");
+        int n5 = 0, d5 = 0;
+        for (const auto& i : u5.instruments)
+            if (i.group == "NYKAA options") { ++n5; d5 += i.depth ? 1 : 0; check(i.expiry_day == parse_day("2026-10-27"), "the chain is the nearest expiry only"); }
+        check(n5 == 10 && d5 == 6 && find(u5, "NYKAA26OCT350PE") != nullptr && find(u5, "NYKAA26OCT320CE") == nullptr,
+              "its chain is ATM +/- 2 around the spot, the book within ATM +/- 1");
+        bool noted = false;
+        for (const auto& n : u5.notes) noted = noted || n.find("NOSUCH") != std::string::npos;
+        check(noted, "a symbol not in the master is noted, not streamed");
+        LiveUniverseOptions o6 = o5;
+        o6.fo_spots.clear();
+        const auto u6 = build_universe(rows5, stocks, o6);
+        check(find(u6, "NYKAA26OCTFUT") != nullptr && find(u6, "NYKAA26OCT350CE") == nullptr,
+              "without a spot the futures stream but no chain is guessed");
+        LiveUniverseOptions o7 = o;
+        o7.fo_stocks = {"SBIN"};
+        const auto u7 = build_universe(rows, stocks, o7);
+        int sbin = 0;
+        for (const auto& i : u7.instruments) sbin += i.symbol == "SBIN" && i.fyers == "NSE:SBIN-EQ" ? 1 : 0;
+        check(sbin == 1, "a NIFTY 50 stock on the OBI list is streamed once");
+
+        const auto path = std::filesystem::temp_directory_path() / "altair_obi_underlyings_test.csv";
+        {
+            std::ofstream f(path);
+            f << "# comment\nsymbol,target,stop,safety\nNYKAA, 0.80, 0.40, 0.05\r\nNYKAA,1,1,0\nBAD,0,1,0\nNIFTY,10,6,1\nIDEA,0.1,0.05\n";
+        }
+        const auto ul = read_obi_underlyings(path.string());
+        check(ul.size() == 2 && ul[0].symbol == "NYKAA" && ul[0].target_pts == 0.80 && ul[0].stop_pts == 0.40
+                  && ul[0].safety_pts == 0.05 && ul[1].symbol == "IDEA" && ul[1].safety_pts == 0.0,
+              "config/obi_underlyings.csv: repeats, a zero target and the indices are skipped");
+        std::filesystem::remove(path);
+        check(read_obi_underlyings("/no/such/file.csv").empty(), "no file is no OBI stocks");
     }
     const auto* atm = find(u, "NIFTY26O0624000CE");
     check(atm && atm->fyers == "NSE:NIFTY26O0624000CE" && atm->kind == LiveKind::Call && atm->strike == 24000.0,

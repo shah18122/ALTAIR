@@ -64,6 +64,7 @@
 #include <live/straddle.hpp>
 #include <live/models.hpp>
 #include <live/obi_trader.hpp>
+#include <live/obi_underlyings.hpp>
 #include <live/option_arb.hpp>
 #include <live/threshold.hpp>
 #include <live/report.hpp>
@@ -654,13 +655,19 @@ int main(int argc, char** argv) {
     // Order-book imbalance (book/flow.hpp, live/obi_trader.hpp): tick by tick
     // on every book and print; the near future long or short, and the same
     // signal as a SOLD put or call. Paper only. The watch file is not on the
-    // tape, so a replay runs without it.
-    for (const char* under : {"NIFTY", "BANKNIFTY"})
+    // tape, so a replay runs without it. The F&O stocks of
+    // config/obi_underlyings.csv (NYKAA, ...) get the same two models with
+    // their own target, stop and safety in rupees a share.
+    std::vector<lv::ObiUnderlying> obi_unders{{"NIFTY", 10.0, 6.0, 1.0}, {"BANKNIFTY", 25.0, 15.0, 2.0}};
+    for (auto& u : lv::read_obi_underlyings((root / "config/obi_underlyings.csv").string())) obi_unders.push_back(std::move(u));
+    for (const auto& u : obi_unders)
         for (const lv::ObiMode mode : {lv::ObiMode::Futures, lv::ObiMode::SellOptions}) {
             lv::ObiTraderRules r;
-            r.under = under;
+            r.under = u.symbol;
             r.mode = mode;
-            if (r.under == "BANKNIFTY") { r.target_pts = 25.0; r.stop_pts = 15.0; r.safety_pts = 2.0; }
+            r.target_pts = u.target_pts;
+            r.stop_pts = u.stop_pts;
+            r.safety_pts = u.safety_pts;
             if (!replaying) r.watch_file = (root / "data/live/obi_watch.csv").string();
             engine.add_model(std::make_unique<lv::LiveObiTraderModel>(r));
         }

@@ -62,14 +62,14 @@ inline constexpr std::array<NavigationPage, 43> kNavigationPages{{
     {"strategies.backtests", "Backtests", 2},
     {"models.findings", "Daily findings", 3},
     {"system.work-log", "Work log", 6},
-    {"market.order-flow", "Order Flow", 0},
+    {"market.order-book-imbalance", "Order Book Imbalance", 0},
 }};
 // Traversal order is NOT a legacy page index.
 // Within a group: what is used most comes first (Backtests: every trade log;
 // then Demo Trading, Threshold). Daily findings heads Models & Research and
 // Work log heads System & Audit: the day's results, and all the work done.
 // Start here (ALTAIR in plain words, desktop/start_page.hpp) heads the list.
-// Order Flow (desktop/order_flow_page.hpp) follows the Terminal it reads from.
+// Order Book Imbalance (desktop/obi_page.hpp) follows the Terminal it reads from.
 // The model pages (DCF, Aggregator, ML Trees, Regimes, Forecast, Memory,
 // Neural, Features, Volatility, Analytics, Microstructure, Cointegration,
 // Sizing, Flagging) are not listed: they open from the Model Atlas, which has
@@ -114,6 +114,8 @@ inline constexpr std::array<int, 24> kNavigationOrder{{
         return 8;
     }
     if (want == QLatin1String("parity & calendar")) return 31;
+    // The page's first name, for a day: Order Flow.
+    if (want == QLatin1String("market.order-flow") || want == QLatin1String("order flow")) return 42;
     for (int i = 0; i < static_cast<int>(kNavigationPages.size()); ++i) {
         const auto& page = kNavigationPages[static_cast<std::size_t>(i)];
         if (want == QString::fromUtf8(page.id) ||

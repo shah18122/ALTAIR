@@ -193,9 +193,9 @@ public:
 
     /// EVERY FRAME, FOR THE FEW THAT NEED IT. priceUpdated is one notice per
     /// instrument per burst, which is right for a grid and wrong for an
-    /// order-flow engine: it diffs consecutive books, and a book it never saw
+    /// order-book engine: it diffs consecutive books, and a book it never saw
     /// turns an execution into a cancel. A screen that needs every book and
-    /// print of an instrument asks for it here (desktop/order_flow_page.hpp)
+    /// print of an instrument asks for it here (desktop/obi_page.hpp)
     /// and gets frameApplied, synchronously, once the frame's state is in
     /// price(token). Everything else costs one empty() test per frame.
     void watch_frames(std::uint32_t token, bool on) {

@@ -65,6 +65,7 @@
 #include <feed/fyers_tbt.hpp>
 #include <feed/kite_decoder.hpp>
 #include <instruments/contract_spec.hpp>
+#include <live/obi_underlyings.hpp>
 #include <live/universe.hpp>
 
 #include <atomic>
@@ -349,6 +350,24 @@ void fyers_spots(const FySession& s, double& nifty, double& banknifty) {
     };
     nifty = lp_after("\"NSE:NIFTY50-INDEX\"");
     banknifty = lp_after("\"NSE:NIFTYBANK-INDEX\"");
+}
+
+/// The last price of each FYERS symbol of `syms` (0 where FYERS gave none).
+std::vector<double> fyers_last_prices(const FySession& s, const std::vector<std::string>& syms) {
+    std::vector<double> out(syms.size(), 0.0);
+    if (syms.empty()) { return out; }
+    const auto auth = altair::fyers::authorization_header(s.client.c_str(), s.access.c_str());
+    const auto target = altair::fyers::quotes_target(syms);
+    if (!auth || !target) { return out; }
+    const auto r = altair::https_get_auth("api-t1.fyers.in", *target, *auth, "", std::chrono::seconds{20});
+    if (!r || r->status != 200) { return out; }
+    for (std::size_t i = 0; i < syms.size(); ++i) {
+        const std::size_t at = r->body.find("\"" + syms[i] + "\"");
+        if (at == std::string::npos) { continue; }
+        const std::size_t lp = r->body.find("\"lp\":", at);
+        if (lp != std::string::npos) { out[i] = std::atof(r->body.c_str() + lp + 5); }
+    }
+    return out;
 }
 
 /// The FYERS 50-level book (feed/fyers_tbt.hpp), on its own socket and
@@ -1304,9 +1323,14 @@ int main(int argc, char** argv) {
         if (!err.empty()) { std::printf("%s\n", err.c_str()); return 2; }
         // The index contracts listed since data/instruments.csv was written
         // (each new weekly), from FYERS's master.
+        // The OBI trader's stocks (config/obi_underlyings.csv) come whole: the
+        // stock, its near futures and its chain centred on FYERS's last price.
+        const auto obi_stocks = altair::live::read_obi_underlyings(src + "/config/obi_underlyings.csv");
+        std::set<std::string> fo_unders{"NIFTY", "BANKNIFTY"};
+        for (const auto& u : obi_stocks) { fo_unders.insert(u.symbol); }
         if (std::ifstream fo(live_dir + "/fyers_masters/NSE_FO.csv", std::ios::binary); fo) {
-            const std::size_t n = altair::live::add_fyers_fo(rows, fo, {"NIFTY", "BANKNIFTY"});
-            std::printf("FYERS F&O master: %zu NIFTY/BANKNIFTY contract(s) not in data/instruments.csv added\n", n);
+            const std::size_t n = altair::live::add_fyers_fo(rows, fo, fo_unders);
+            std::printf("FYERS F&O master: %zu index/OBI-stock contract(s) not in data/instruments.csv added\n", n);
         }
         altair::live::LiveUniverseOptions uo;
         uo.today = today;
@@ -1317,6 +1341,17 @@ int main(int argc, char** argv) {
         uo.expiries = expiries;
         uo.monthly = monthly;
         uo.stocks = stocks;
+        for (const auto& u : obi_stocks) { uo.fo_stocks.push_back(u.symbol); }
+        if (!uo.fo_stocks.empty()) {
+            std::vector<std::string> eq;
+            for (const auto& name : uo.fo_stocks) { eq.push_back("NSE:" + name + "-EQ"); }
+            if (mode == "fyers" && session) { uo.fo_spots = fyers_last_prices(*session, eq); }
+            uo.fo_spots.resize(uo.fo_stocks.size(), 0.0);
+            for (std::size_t k = 0; k < uo.fo_stocks.size(); ++k) {
+                if (uo.fo_spots[k] > 0.0) { std::printf("OBI stock %s now %.2f (FYERS quote)\n", uo.fo_stocks[k].c_str(), uo.fo_spots[k]); }
+                else { std::printf("OBI stock %s: no FYERS quote, so its futures stream without a chain\n", uo.fo_stocks[k].c_str()); }
+            }
+        }
         auto uni = altair::live::build_universe(
             rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);
         g_depth_request = live_dir + "/depth_request.csv";

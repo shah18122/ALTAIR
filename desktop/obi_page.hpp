@@ -1,7 +1,27 @@
-// desktop/order_flow_page.hpp -- the order book, read as flow: one instrument,
-// every book and every print, as book/flow.hpp reads them.
+// desktop/obi_page.hpp -- Order Book Imbalance: one instrument, every book and
+// every print, and each of the owner's formulas worked with the live numbers.
 //
-// WHAT IS ON IT
+// THE FORMULAS, AS THE BRIEF STATES THEM (2026-10-29), shown worked on the
+// "Imbalance" tab with the numbers of the book the engine just read:
+//   OBI    = (Q_bid - Q_ask) / (Q_bid + Q_ask), at the touch and over 5 levels,
+//            read against the brief's table (+0.50 bid-side depth, 0 balanced,
+//            -0.50 ask-side depth);
+//   OBI_N  = (sum w_i B_i - sum w_i A_i) / (sum w_i B_i + sum w_i A_i),
+//            w_i = e^(-lambda (i-1)), lambda = 0.25, N = every level shown (up
+//            to 50) -- with a table of B_i, A_i and w_i level by level;
+//   P_micro = (A_1 P_bid + B_1 P_ask) / (B_1 + A_1), against the mid. A bigger
+//            bid size pulls it toward the ASK: the brief's worked example
+//            (bid 999.95 x 8,000, ask 1,000.00 x 2,000) gives 999.99, above the
+//            mid of 999.975 -- an upward bias, as the formula says;
+//   persistence across updates; S_t = a OBI + b OFI + g M (a, b, g = 0.4,
+//            0.4, 0.2, placeholders until calibrated);
+//   Strategies A-D (bid pressure, ask pressure, absorption, liquidity
+//            withdrawal) and the long and short entry conditions 1-5, ticked
+//            live with the thresholds the OBI trader uses (live/obi_trader.hpp).
+// All of it is computed by book/flow.hpp; this page shows its arithmetic and
+// recomputes nothing the engine does not.
+//
+// ALSO ON IT
 //   * Any instrument the feed streams (data/live/universe.csv): an underlying,
 //     then its future or any strike's call or put, or a search over all of
 //     them. A box asks the feed for that instrument's 50-level book (the TBT
@@ -45,6 +65,7 @@
 #include "theme.hpp"
 
 #include <book/flow.hpp>
+#include <live/obi_underlyings.hpp>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -62,6 +83,7 @@
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QSplitter>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTextStream>
 #include <QTimer>
@@ -202,6 +224,138 @@ inline bool set_watch(const QString& root, const QString& fyers, bool on) {
         return QStringLiteral("%1 %2  %3").arg(QString::number(r.strike, 'f', r.strike == std::floor(r.strike) ? 0 : 1),
                                                r.kind == QLatin1String("call") ? QStringLiteral("CE") : QStringLiteral("PE"), exp);
     return r.symbol;
+}
+
+/// The OBI trader's entry thresholds (live/obi_trader.hpp ObiTraderRules and
+/// app/live_engine_main.cpp), mirrored for the checklist; the trader decides.
+struct ObiRules {
+    double obi_entry = 0.30;                   ///< |OBI5| for conditions 1
+    int min_persist = 3;                       ///< updates beyond it
+    std::int64_t min_persist_ns = 500'000'000; ///< and for this long
+    double ofi_min = 0.10;                     ///< condition 2
+    double target_pts = 10.0, safety_pts = 1.0;
+};
+/// `root`, when given, is read for config/obi_underlyings.csv: a stock there
+/// (NYKAA) carries its own target and safety in rupees a share.
+[[nodiscard]] inline ObiRules rules_for(const QString& underlying, const QString& root = {}) {
+    ObiRules r;
+    if (underlying == QLatin1String("BANKNIFTY")) { r.target_pts = 25.0; r.safety_pts = 2.0; }
+    if (!root.isEmpty())
+        for (const auto& u : altair::live::read_obi_underlyings((root + QStringLiteral("/config/obi_underlyings.csv")).toStdString()))
+            if (QString::fromStdString(u.symbol) == underlying) { r.target_pts = u.target_pts; r.safety_pts = u.safety_pts; }
+    return r;
+}
+
+/// The brief's reading of an OBI value.
+[[nodiscard]] inline QString obi_reading(double v) {
+    if (v >= 0.30) return QStringLiteral("stronger visible bid-side depth");
+    if (v <= -0.30) return QStringLiteral("stronger visible ask-side depth");
+    if (std::fabs(v) <= 0.10) return QStringLiteral("balanced visible depth");
+    return v > 0 ? QStringLiteral("leaning to the bid") : QStringLiteral("leaning to the ask");
+}
+
+/// One level of the OBI_N table: its weight, sizes, and the OBI summed to it.
+struct LevelRow {
+    int i = 0;                 ///< 1 = the touch
+    double w = 0.0;
+    std::int64_t bid_px = 0, b = 0, ask_px = 0, a = 0;
+    double wb = 0.0, wa = 0.0;          ///< w_i B_i, w_i A_i
+    double obi_to = 0.0, wobi_to = 0.0; ///< plain and weighted OBI over levels 1..i
+};
+
+/// The table for the first n levels of a book, weights e^(-decay (i-1)) --
+/// the engine's own weights (flow::LevelWeights::exponential), summed in the
+/// same order, so its last row equals FlowSignals::obi_deep / obi_deep_w.
+[[nodiscard]] inline std::vector<LevelRow> level_rows(const flow::Level* bids, const flow::Level* asks, std::size_t n, double decay) {
+    std::vector<LevelRow> out;
+    const flow::LevelWeights w = flow::LevelWeights::exponential(decay);
+    std::int64_t cb = 0, ca = 0;
+    double wb = 0.0, wa = 0.0;
+    // RULE 11: proven -- n is the engine's level count, at most flow::kMaxLevels.
+    n = n < flow::kMaxLevels ? n : flow::kMaxLevels;
+    for (std::size_t i = 0; i < n; ++i) {
+        LevelRow r;
+        r.i = static_cast<int>(i) + 1;
+        r.w = w.w[i];
+        r.bid_px = bids[i].px; r.b = bids[i].qty; r.ask_px = asks[i].px; r.a = asks[i].qty;
+        r.wb = r.w * static_cast<double>(r.b);
+        r.wa = r.w * static_cast<double>(r.a);
+        cb += r.b; ca += r.a;
+        wb += r.wb; wa += r.wa;
+        r.obi_to = flow::imbalance(cb, ca).value_or(0.0);
+        r.wobi_to = wb + wa > 0.0 ? (wb - wa) / (wb + wa) : 0.0;
+        out.push_back(r);
+    }
+    return out;
+}
+
+/// One line of a checklist.
+struct Check { QString what; bool ok = false; QString value; };
+
+/// The brief's entry conditions 1-5 for a long (dir +1) or a short (-1), as
+/// the OBI trader tests them (live/obi_trader.hpp setup()). Rule 5 here is the
+/// target against spread and safety; the trader also subtracts the expenses
+/// from config/charges.toml, which this page does not price.
+[[nodiscard]] inline std::vector<Check> entry_checks(const flow::FlowSignals& s, int dir, const ObiRules& r, std::int64_t lot) {
+    std::vector<Check> c;
+    const double obi = s.obi_short * dir, ofi = s.ofi_norm * dir;
+    const int run = s.persist * dir;
+    const std::int64_t mine = dir > 0 ? s.buy_exec : s.sell_exec, theirs = dir > 0 ? s.sell_exec : s.buy_exec;
+    const std::int64_t taken = dir > 0 ? s.ask_exec_drop : s.bid_exec_drop;
+    const QString side = dir > 0 ? QStringLiteral("above") : QStringLiteral("below");
+    c.push_back({QStringLiteral("Five-level OBI %1 %2%3, held %4 updates and %5 s")
+                     .arg(dir > 0 ? QStringLiteral("exceeds") : QStringLiteral("falls below"), dir > 0 ? QStringLiteral("+") : QStringLiteral("−"))
+                     .arg(QString::number(r.obi_entry, 'f', 2)).arg(r.min_persist).arg(QString::number(static_cast<double>(r.min_persist_ns) / 1e9, 'f', 1)),
+                 obi >= r.obi_entry && run >= r.min_persist && s.persist_ns >= r.min_persist_ns,
+                 QStringLiteral("OBI5 %1, run %2 for %3 s").arg(signed2(s.obi_short)).arg(std::max(0, run)).arg(QString::number(run > 0 ? static_cast<double>(s.persist_ns) / 1e9 : 0.0, 'f', 1))});
+    c.push_back({QStringLiteral("%1 OFI over the window (%2 %3)").arg(dir > 0 ? QStringLiteral("Positive") : QStringLiteral("Negative"),
+                     dir > 0 ? QStringLiteral("≥ +") : QStringLiteral("≤ −"), QString::number(r.ofi_min, 'f', 2)),
+                 ofi >= r.ofi_min, QStringLiteral("OFI %1").arg(signed2(s.ofi_norm))});
+    c.push_back({dir > 0 ? QStringLiteral("Aggressive buy trades consume the ask") : QStringLiteral("Aggressive sell trades consume the bid"),
+                 mine >= std::max<std::int64_t>(1, lot) && mine > theirs && taken > 0,
+                 QStringLiteral("%1 %2 vs %3, %4 taken off the %5").arg(dir > 0 ? QStringLiteral("bought") : QStringLiteral("sold"), units(mine), units(theirs), units(taken),
+                                                                        dir > 0 ? QStringLiteral("ask") : QStringLiteral("bid"))});
+    const double level = dir > 0 ? s.prior_high : s.prior_low;
+    c.push_back({QStringLiteral("Price breaks the short-term %1 (30 s)").arg(dir > 0 ? QStringLiteral("high") : QStringLiteral("low")),
+                 level > 0.0 && (dir > 0 ? s.mid > level : s.mid < level),
+                 level > 0.0 ? QStringLiteral("mid %1 vs %2 %3").arg(rupees(s.mid), side, rupees(level)) : QStringLiteral("no 30 s history yet")});
+    const double spread = static_cast<double>(s.ask - s.bid) / 100.0;
+    const double left = r.target_pts - spread - r.safety_pts;
+    c.push_back({QStringLiteral("Expected move exceeds costs, slippage and a safety margin"),
+                 s.valid && left > 0.0,
+                 QStringLiteral("target %1 pts − spread %2 − safety %3 = %4 pts for costs (the trader prices them)")
+                     .arg(QString::number(r.target_pts, 'f', 2), QString::number(spread, 'f', 2), QString::number(r.safety_pts, 'f', 2),
+                          QString::number(left, 'f', 2))});
+    return c;
+}
+
+/// Strategies A-D: whether each one's picture is on the book now.
+[[nodiscard]] inline std::vector<Check> strategy_checks(const flow::FlowSignals& s, double threshold) {
+    std::vector<Check> c;
+    const bool bid_holds = s.bid_window_start > 0 && s.bid >= s.bid_window_start;
+    const bool bid_falls = s.bid_window_start > 0 && s.bid < s.bid_window_start;
+    c.push_back({QStringLiteral("A — Bid-side pressure (potential long): bids dominate several levels, the best bid holds, buyers lift the ask"),
+                 s.obi_short >= threshold && bid_holds && s.buy_exec > s.sell_exec && s.ask_exec_drop > 0,
+                 QStringLiteral("OBI5 %1 · best bid %2 (window start %3) · buys %4 vs sells %5 · ask taken %6")
+                     .arg(signed2(s.obi_short), rupees(static_cast<double>(s.bid)), rupees(static_cast<double>(s.bid_window_start)),
+                          units(s.buy_exec), units(s.sell_exec), units(s.ask_exec_drop))});
+    c.push_back({QStringLiteral("B — Ask-side pressure (potential short): asks dominate, the best bid falls, sellers hit the bid, weak bid refill"),
+                 s.obi_short <= -threshold && bid_falls && s.sell_exec > s.buy_exec && s.bid_exec_drop > 0 && s.bid_add < s.bid_exec_drop + s.bid_cancel,
+                 QStringLiteral("OBI5 %1 · best bid %2 (window start %3) · sells %4 vs buys %5 · bid refill %6 vs taken+pulled %7")
+                     .arg(signed2(s.obi_short), rupees(static_cast<double>(s.bid)), rupees(static_cast<double>(s.bid_window_start)),
+                          units(s.sell_exec), units(s.buy_exec), units(s.bid_add), units(s.bid_exec_drop + s.bid_cancel))});
+    c.push_back({QStringLiteral("C — Absorption (reversal): heavy selling into bids that refill, the price refuses to fall (or the reverse)"),
+                 s.absorption != 0,
+                 s.absorption > 0 ? QStringLiteral("buyers absorb the selling: long setup if selling fades and price reclaims")
+                 : s.absorption < 0 ? QStringLiteral("sellers absorb the buying: short setup if buying fades")
+                                    : QStringLiteral("sells %1 · buys %2 · hidden refill bid %3 / ask %4").arg(units(s.sell_exec), units(s.buy_exec), units(s.hidden_sell), units(s.hidden_buy))});
+    c.push_back({QStringLiteral("D — Liquidity withdrawal (breakout): ask liquidity pulled while buyers lift successive asks (or the reverse)"),
+                 s.withdrawal != 0,
+                 s.withdrawal > 0 ? QStringLiteral("asks pulled while lifted: upside breakout risk (confirmed by real buys)")
+                 : s.withdrawal < 0 ? QStringLiteral("bids pulled while hit: downside breakout risk (confirmed by real sells)")
+                                    : QStringLiteral("cancelled ask %1 / bid %2 · ask high moved %3").arg(units(s.ask_cancel), units(s.bid_cancel),
+                                                                                                    rupees(static_cast<double>(s.ask - s.ask_window_start)))});
+    return c;
 }
 
 } // namespace order_flow_detail
@@ -553,20 +707,20 @@ private:
 // The page
 // ---------------------------------------------------------------------------
 
-class OrderFlowPage final : public QWidget {
+class OrderBookImbalancePage final : public QWidget {
 public:
-    OrderFlowPage(PriceClient* client, QString root, QWidget* parent = nullptr)
+    OrderBookImbalancePage(PriceClient* client, QString root, QWidget* parent = nullptr)
         : QWidget(parent), client_(client), root_(std::move(root)) {
 #ifdef ALTAIR_SOURCE_DIR
         if (root_.isEmpty()) root_ = QStringLiteral(ALTAIR_SOURCE_DIR);
 #endif
-        setObjectName(QStringLiteral("orderFlowPage"));
+        setObjectName(QStringLiteral("obiPage"));
         auto* v = new QVBoxLayout(this);
         v->setContentsMargins(10, 8, 10, 8);
         v->setSpacing(6);
 
-        auto* title = new QLabel(QStringLiteral("<b>ORDER FLOW</b> &nbsp;<span style='color:%1'>imbalance, microprice, OFI, "
-                                                "executed vs cancelled — tick by tick (book/flow.hpp)</span>")
+        auto* title = new QLabel(QStringLiteral("<b>ORDER BOOK IMBALANCE</b> &nbsp;<span style='color:%1'>OBI, weighted OBI<sub>N</sub>, "
+                                                "microprice, persistence, S<sub>t</sub> and the entry rules — tick by tick (book/flow.hpp)</span>")
                                      .arg(QString::fromLatin1(theme_token::kTextMuted)), this);
         v->addWidget(title);
 
@@ -629,8 +783,42 @@ public:
         scroll->setMinimumWidth(380);
         split->addWidget(scroll);
 
-        // Middle: readings, charts and the tape.
-        auto* mid = new QWidget(split);
+        // Middle: the formulas worked (first tab), then flow, charts and the tape.
+        tabs_ = new QTabWidget(split);
+        tabs_->setObjectName(QStringLiteral("obiTabs"));
+        {
+            auto* sc = new QScrollArea;
+            sc->setWidgetResizable(true);
+            sc->setFrameShape(QFrame::NoFrame);
+            auto* w = new QWidget;
+            auto* iv = new QVBoxLayout(w);
+            iv->setContentsMargins(4, 4, 4, 4);
+            iv->setSpacing(6);
+            calc_ = new QLabel(w);
+            calc_->setObjectName(QStringLiteral("obiCalc"));
+            calc_->setTextFormat(Qt::RichText);
+            calc_->setWordWrap(true);
+            calc_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            iv->addWidget(calc_);
+            levels_ = make_live_table(9, {QStringLiteral("i"), QStringLiteral("w_i"), QStringLiteral("Bid"), QStringLiteral("B_i"),
+                                          QStringLiteral("w_i·B_i"), QStringLiteral("Ask"), QStringLiteral("A_i"), QStringLiteral("w_i·A_i"),
+                                          QStringLiteral("OBI to i (plain / weighted)")}, w);
+            levels_->setObjectName(QStringLiteral("obiLevels"));
+            levels_->horizontalHeader()->setSectionResizeMode(8, QHeaderView::ResizeToContents);
+            levels_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+            levels_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+            levels_->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+            levels_->setMinimumHeight(180);
+            iv->addWidget(levels_, 1);
+            checks_ = new QLabel(w);
+            checks_->setObjectName(QStringLiteral("obiChecks"));
+            checks_->setTextFormat(Qt::RichText);
+            checks_->setWordWrap(true);
+            iv->addWidget(checks_);
+            sc->setWidget(w);
+            tabs_->addTab(sc, QStringLiteral("Imbalance — the formulas, live"));
+        }
+        auto* mid = new QWidget;
         auto* mv = new QVBoxLayout(mid);
         mv->setContentsMargins(0, 0, 0, 0);
         mv->setSpacing(4);
@@ -660,7 +848,8 @@ public:
         tape_->setObjectName(QStringLiteral("flowTape"));
         tape_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
         mv->addWidget(tape_, 3);
-        split->addWidget(mid);
+        tabs_->addTab(mid, QStringLiteral("Flow, charts and tape"));
+        split->addWidget(tabs_);
 
         // Right: the OBI trader.
         auto* right = new QWidget(split);
@@ -703,7 +892,7 @@ public:
         reload_.start();
         reload_universe();
     }
-    ~OrderFlowPage() override {
+    ~OrderBookImbalancePage() override {
         if (client_ != nullptr && token_ != 0) client_->watch_frames(token_, false);
     }
 
@@ -755,6 +944,9 @@ public:
         flow::FlowConfig c;
         c.tick = std::max<std::int64_t>(1, std::llround(r->tick * 100.0));
         engine_ = std::make_unique<flow::FlowEngine>(c);
+        rules_ = order_flow_detail::rules_for(r->underlying, root_);
+        lot_ = std::max<qint64>(1, r->lot);
+        book_n_ = 0;
         history_.clear();
         events_.clear();
         last_total_ = {};
@@ -796,6 +988,10 @@ public:
     [[nodiscard]] QString counts_text() const { return flows_->text(); }
     [[nodiscard]] std::size_t samples() const noexcept { return history_.size(); }
     void repaint_now() { dirty_ = true; repaint_all(); }
+    [[nodiscard]] QString imbalance_text() const { return calc_->text(); }
+    [[nodiscard]] QString checks_text() const { return checks_->text(); }
+    [[nodiscard]] QTableWidget* levels_table() const noexcept { return levels_; }
+    [[nodiscard]] QTabWidget* tabs() const noexcept { return tabs_; }
 
 private:
     [[nodiscard]] const LiveRow* row_of(quint32 tok) const {
@@ -851,11 +1047,14 @@ private:
             }
             engine_->on_book(bids_.data(), n, asks_.data(), n, ns);
             ++books_;
+            book_n_ = n;
         } else {
             if (p->levels > 0) return;   // the depth frames are the book; a quote between them is not a new one
-            const flow::Level b{p->quote.bid, p->quote.bid_qty}, a{p->quote.ask, p->quote.ask_qty};
-            engine_->on_book(&b, 1, &a, 1, ns);
+            bids_[0] = flow::Level{p->quote.bid, p->quote.bid_qty};
+            asks_[0] = flow::Level{p->quote.ask, p->quote.ask_qty};
+            engine_->on_book(bids_.data(), 1, asks_.data(), 1, ns);
             ++books_;
+            book_n_ = 1;
         }
         const auto spent = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
         work_ns_ += spent;
@@ -884,6 +1083,116 @@ private:
         }
         last_ns_ = ns;
         dirty_ = true;
+    }
+
+    /// The Imbalance tab: each formula with the numbers of the book the engine read.
+    void fill_imbalance(const flow::FlowSignals* s, bool valid) {
+        using namespace order_flow_detail;
+        if (!valid || engine_ == nullptr) {
+            calc_->setText(QStringLiteral("<span style='color:%1'>Waiting for a tradable book. The formulas fill in on the first one.</span>")
+                               .arg(QString::fromLatin1(theme_token::kTextFaint)));
+            levels_->setRowCount(0);
+            checks_->setText(QString());
+            return;
+        }
+        const auto& cfg = engine_->config();
+        const QString up = QString::fromLatin1(theme_token::kUp), down = QString::fromLatin1(theme_token::kDown),
+                      muted = QString::fromLatin1(theme_token::kTextMuted), acc = QString::fromLatin1(theme_token::kAccent);
+        // Beyond the threshold in green or red; inside it in the page's own text colour.
+        const auto val = [&](double v) {
+            if (v >= cfg.threshold || v <= -cfg.threshold) return QStringLiteral("<b style='color:%1'>%2</b>").arg(v > 0 ? up : down, signed2(v));
+            return QStringLiteral("<b>%1</b>").arg(signed2(v));
+        };
+        const std::size_t n_deep = std::min<std::size_t>({cfg.deep_levels, s->bid_levels, s->ask_levels, book_n_});
+        const auto rows = level_rows(bids_.data(), asks_.data(), n_deep, cfg.decay);
+        const std::size_t n5 = std::min<std::size_t>(cfg.short_levels, rows.size());
+        std::int64_t b5 = 0, a5 = 0;
+        for (std::size_t i = 0; i < n5; ++i) { b5 += rows[i].b; a5 += rows[i].a; }
+        double swb = 0.0, swa = 0.0;
+        std::int64_t sb = 0, sa = 0;
+        for (const auto& r : rows) { swb += r.wb; swa += r.wa; sb += r.b; sa += r.a; }
+        QStringList h;
+        const QString sec = QStringLiteral("<div style='margin-top:6px'><b style='color:%1'>%2</b></div>").arg(acc);
+        h << sec.arg(QStringLiteral("1. Order Book Imbalance — at the touch"));
+        h << QStringLiteral("OBI = (Q<sub>bid</sub> − Q<sub>ask</sub>) / (Q<sub>bid</sub> + Q<sub>ask</sub>) = (%1 − %2) / (%1 + %2) = %3 &nbsp; → %4")
+                 .arg(units(s->bid_qty), units(s->ask_qty), val(s->obi1), obi_reading(s->obi1));
+        h << sec.arg(QStringLiteral("2. Five-level OBI (the entry rule's OBI)"));
+        h << QStringLiteral("OBI<sub>5</sub> = (ΣB<sub>1..%1</sub> − ΣA<sub>1..%1</sub>) / (ΣB + ΣA) = (%2 − %3) / (%2 + %3) = %4 &nbsp; → %5")
+                 .arg(static_cast<int>(n5)).arg(units(b5), units(a5), val(s->obi_short), obi_reading(s->obi_short));
+        h << sec.arg(QStringLiteral("3. Multi-level weighted OBI<sub>N</sub> — N = %1, w<sub>i</sub> = e<sup>−λ(i−1)</sup>, λ = %2")
+                         .arg(static_cast<int>(rows.size())).arg(QString::number(cfg.decay, 'f', 2)));
+        h << QStringLiteral("OBI<sub>N</sub> = (Σw<sub>i</sub>B<sub>i</sub> − Σw<sub>i</sub>A<sub>i</sub>) / (Σw<sub>i</sub>B<sub>i</sub> + Σw<sub>i</sub>A<sub>i</sub>) = "
+                            "(%1 − %2) / (%1 + %2) = %3 &nbsp; → %4<br><span style='color:%5'>Unweighted over the same %6 levels: (%7 − %8) / (%7 + %8) = %9 "
+                            "— the weights keep far-away size from dominating. Table below, level by level.</span>")
+                 .arg(QString::number(swb, 'f', 1), QString::number(swa, 'f', 1), val(s->obi_deep_w), obi_reading(s->obi_deep_w), muted)
+                 .arg(static_cast<int>(rows.size())).arg(units(sb), units(sa), signed2(s->obi_deep));
+        h << sec.arg(QStringLiteral("4. Microprice"));
+        const double mp = s->microprice.value(), mid = s->mid;
+        h << QStringLiteral("P<sub>micro</sub> = (A<sub>1</sub>·P<sub>bid</sub> + B<sub>1</sub>·P<sub>ask</sub>) / (B<sub>1</sub> + A<sub>1</sub>) = "
+                            "(%1 × %2 + %3 × %4) / (%3 + %1) = <b style='color:%5'>%6</b><br>mid = (%2 + %4) / 2 = %7 &nbsp; → microprice %8 the mid by %9 ticks: %10")
+                 .arg(units(s->ask_qty), rupees(static_cast<double>(s->bid)), units(s->bid_qty), rupees(static_cast<double>(s->ask)), acc, rupees(mp, 4), rupees(mid, 3))
+                 .arg(mp > mid ? QStringLiteral("above") : mp < mid ? QStringLiteral("below") : QStringLiteral("at"), signed2(s->micro_offset_ticks),
+                      mp > mid ? QStringLiteral("short-term upward bias (more size behind the bid pulls the fair price toward the ask)")
+                      : mp < mid ? QStringLiteral("short-term downward bias (more size behind the ask pulls it toward the bid)")
+                                 : QStringLiteral("no bias"));
+        h << sec.arg(QStringLiteral("5. Imbalance persistence"));
+        h << (s->persist != 0
+                  ? QStringLiteral("OBI<sub>5</sub> has stayed %1 %2 for <b>%3 updates</b> over %4 s (EWMA %5).")
+                        .arg(s->persist > 0 ? QStringLiteral("above +") : QStringLiteral("below −"), QString::number(cfg.threshold, 'f', 2))
+                        .arg(std::abs(s->persist)).arg(QString::number(static_cast<double>(s->persist_ns) / 1e9, 'f', 1), signed2(s->obi_ewma))
+                  : QStringLiteral("OBI<sub>5</sub> is inside ±%1: no persistent imbalance (EWMA %2). One snapshot is noise; the rule wants it held.")
+                        .arg(QString::number(cfg.threshold, 'f', 2), signed2(s->obi_ewma)));
+        h << sec.arg(QStringLiteral("6. Signal S<sub>t</sub> = α·OBI<sub>t</sub> + β·OFI<sub>t</sub> + γ·M<sub>t</sub>"));
+        h << QStringLiteral("S = %1 × %2 (weighted OBI<sub>N</sub>) + %3 × %4 (OFI, last %5 s) + %6 × %7 (momentum, %8 ticks) = %9"
+                            "<br><span style='color:%10'>α, β, γ are placeholders until calibrated out of sample.</span>")
+                 .arg(QString::number(cfg.w_obi, 'f', 1), signed2(s->obi_deep_w), QString::number(cfg.w_ofi, 'f', 1), signed2(s->ofi_norm))
+                 .arg(static_cast<qlonglong>(cfg.window_ns / 1'000'000'000))
+                 .arg(QString::number(cfg.w_mom, 'f', 1), signed2(s->mom_norm), QString::number(s->momentum_ticks, 'f', 1), val(s->score), muted);
+        calc_->setText(h.join(QStringLiteral("<br>")));
+
+        // The level table.
+        levels_->setRowCount(static_cast<int>(rows.size()));
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const auto& r = rows[i];
+            const int k = static_cast<int>(i);
+            live_set(levels_, k, 0, QString::number(r.i));
+            live_set(levels_, k, 1, QString::number(r.w, 'f', 3));
+            live_set(levels_, k, 2, rupees(static_cast<double>(r.bid_px)));
+            live_set(levels_, k, 3, units(r.b), QColor(theme_token::kUp));
+            live_set(levels_, k, 4, QString::number(r.wb, 'f', 1));
+            live_set(levels_, k, 5, rupees(static_cast<double>(r.ask_px)));
+            live_set(levels_, k, 6, units(r.a), QColor(theme_token::kDown));
+            live_set(levels_, k, 7, QString::number(r.wa, 'f', 1));
+            live_set(levels_, k, 8, QStringLiteral("%1 / %2").arg(signed2(r.obi_to), signed2(r.wobi_to)),
+                     r.wobi_to >= cfg.threshold ? QColor(theme_token::kUp) : r.wobi_to <= -cfg.threshold ? QColor(theme_token::kDown)
+                                                                             : levels_->palette().color(QPalette::Text));
+        }
+
+        // Strategies A-D and the entry conditions.
+        const auto list = [&](const QString& head, const std::vector<Check>& cs, bool count) {
+            int ok = 0;
+            for (const auto& c : cs) ok += c.ok ? 1 : 0;
+            QString t = QStringLiteral("<div style='margin-top:8px'><b style='color:%1'>%2</b>%3</div>")
+                            .arg(acc, head, count ? QStringLiteral(" &nbsp;<b style='color:%1'>%2 of %3</b>").arg(ok == static_cast<int>(cs.size()) ? up : muted).arg(ok).arg(static_cast<int>(cs.size())) : QString());
+            int n = 0;
+            for (const auto& c : cs)
+                t += QStringLiteral("<div><b style='color:%1'>%2</b> %3%4 &nbsp;<span style='color:%5'>%6</span></div>")
+                         .arg(c.ok ? up : QString::fromLatin1(theme_token::kTextFaint), c.ok ? QStringLiteral("✓") : QStringLiteral("·"),
+                              count ? QString::number(++n) + QStringLiteral(". ") : QString(), c.what, muted, c.value);
+            return t;
+        };
+        const QString note = token_is_option()
+            ? QStringLiteral("<div style='color:%1'>The OBI trader takes its signal from the near future; on an option these lines read the option's own book.</div>").arg(muted)
+            : QString();
+        checks_->setText(list(QStringLiteral("Strategies — which picture is on the book now"), strategy_checks(*s, cfg.threshold), false)
+                         + list(QStringLiteral("Long entry conditions"), entry_checks(*s, 1, rules_, lot_), true)
+                         + list(QStringLiteral("Short entry conditions"), entry_checks(*s, -1, rules_, lot_), true) + note
+                         + QStringLiteral("<div style='color:%1;margin-top:6px'>Positive OBI does not guarantee a rise: orders can be cancelled, hidden "
+                                          "size can exist, aggressive sellers can overwhelm the bids. The thresholds are a starting framework, not validated.</div>").arg(muted));
+    }
+    [[nodiscard]] bool token_is_option() const {
+        const LiveRow* r = row_of(token_);
+        return r != nullptr && (r->kind == QLatin1String("call") || r->kind == QLatin1String("put"));
     }
 
     void repaint_all() {
@@ -995,6 +1304,8 @@ private:
             flows_->setText(QString());
         }
 
+        fill_imbalance(s, valid);
+
         // The charts.
         const qint64 span = static_cast<qint64>(span_->currentData().toInt()) * 1'000'000'000LL;
         const double th = engine_ != nullptr ? engine_->config().threshold : 0.30;
@@ -1058,6 +1369,13 @@ private:
     FlowChart* signal_chart_ = nullptr;
     QTableWidget* tape_ = nullptr;
     StrategyRecordPanel* record_ = nullptr;
+    QTabWidget* tabs_ = nullptr;
+    QLabel* calc_ = nullptr;
+    QTableWidget* levels_ = nullptr;
+    QLabel* checks_ = nullptr;
+    order_flow_detail::ObiRules rules_{};
+    qint64 lot_ = 1;
+    std::size_t book_n_ = 0;   ///< levels of the book the engine last read (bids_ / asks_)
     QTimer paint_, reload_;
 };
 
