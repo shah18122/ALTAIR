@@ -50,7 +50,7 @@
 #include "audit_panel.hpp"
 #include "cost_panel.hpp"
 #include "depth_ladder.hpp"
-#include "order_flow_page.hpp"
+#include "obi_page.hpp"
 #include "chain_panel.hpp"
 #include "kite_link.hpp"
 #include "kill_switch.hpp"
@@ -1764,9 +1764,9 @@ private:
         // desktop/work_log_page.hpp).
         pages_->addWidget(new DailyFindingsPage(source_root()));
         pages_->addWidget(new WorkLogPage(source_root()));
-        // 42: the order book read as flow, for any instrument the feed streams,
-        // off the Terminal's own stream (desktop/order_flow_page.hpp).
-        pages_->addWidget(new OrderFlowPage(terminal_->stream(), source_root()));
+        // 42: order-book imbalance, as Smit's formulas define it, for any instrument
+        // the feed streams, off the Terminal's own stream (desktop/obi_page.hpp).
+        pages_->addWidget(new OrderBookImbalancePage(terminal_->stream(), source_root()));
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

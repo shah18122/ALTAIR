@@ -1,4 +1,4 @@
-// Acceptance tests for desktop/order_flow_page.hpp: the Order Flow page.
+// Acceptance tests for desktop/obi_page.hpp: the Order Book Imbalance page.
 //
 // The books and prints come over the real bus into the real client, so what
 // is tested is that the page sees EVERY frame (a burst the grid sees once),
@@ -8,7 +8,7 @@
 //
 // No check description here may contain the substring "F" "AIL" joined.
 
-#include "../order_flow_page.hpp"
+#include "../obi_page.hpp"
 
 #include <server/price_bus.hpp>
 
@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
     using namespace altair;
     using namespace altair::ui;
     QApplication app(argc, argv);
-    std::printf("order flow page\n");
+    std::printf("order book imbalance page\n");
     simple_mode::use_settings(false);
 
     QTemporaryDir root;
@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
     print(13, 2400000, 0, t0);   // the day's volume so far
     pump(bus, 3000, [&] { const LivePrice* p = client.price(13); return p != nullptr && p->levels == 5 && p->has_volume; });
 
-    OrderFlowPage page(&client, root.path());
+    OrderBookImbalancePage page(&client, root.path());
     page.resize(1500, 900);
     page.show();
     QCoreApplication::processEvents();
@@ -179,6 +179,55 @@ int main(int argc, char** argv) {
     }
     check(page.samples() > 0, "the charts have points");
 
+    // The formulas, worked with the book the engine read: bids 1,200 a level, asks 600 / 1,000 x4.
+    {
+        const auto& s = page.engine()->signals();
+        const QString t = page.imbalance_text();
+        check(page.tabs()->currentIndex() == 0 && page.tabs()->tabText(0).startsWith(QStringLiteral("Imbalance")),
+              "the page opens on the formulas");
+        check(t.contains(QStringLiteral("(1,200 − 600) / (1,200 + 600)")) && std::fabs(s.obi1 - 1.0 / 3.0) < 1e-12,
+              "OBI at the touch is shown with its numbers: (1,200 - 600) / (1,200 + 600) = +0.33");
+        check(t.contains(QStringLiteral("(6,000 − 4,600) / (6,000 + 4,600)")), "the five-level sums are shown");
+        check(t.contains(QStringLiteral("e<sup>−λ(i−1)</sup>")) && t.contains(QStringLiteral("λ = 0.25")), "the weights and lambda are stated");
+        check(t.contains(QStringLiteral("(600 × 24000.00 + 1,200 × 24000.05) / (1,200 + 600)")) && t.contains(QStringLiteral("above")),
+              "the microprice is worked, and lies above the mid with the bigger bid");
+        check(t.contains(QStringLiteral("S = 0.4 ×")), "S_t is broken into its terms");
+        auto* lv = page.levels_table();
+        const auto rows = order_flow_detail::level_rows(nullptr, nullptr, 0, 0.25);
+        check(rows.empty(), "an empty book has no level rows");
+        check(lv->rowCount() == 5 && lv->item(0, 3)->text() == QStringLiteral("1,200") && lv->item(0, 6)->text() == QStringLiteral("600")
+                  && lv->item(1, 1)->text() == QString::number(std::exp(-0.25), 'f', 3),
+              "the level table: B_i, A_i and w_i = e^-0.25(i-1)");
+        const QString last = lv->item(4, 8)->text();
+        check(last == QStringLiteral("%1 / %2").arg(order_flow_detail::signed2(s.obi_deep), order_flow_detail::signed2(s.obi_deep_w)),
+              "its last row is the engine's OBI_N, plain and weighted");
+        const QString c = page.checks_text();
+        check(c.contains(QStringLiteral("A — Bid-side pressure")) && c.contains(QStringLiteral("D — Liquidity withdrawal"))
+                  && c.contains(QStringLiteral("Long entry conditions")) && c.contains(QStringLiteral("Short entry conditions")),
+              "strategies A-D and both sets of entry conditions are listed");
+    }
+    {   // The checklist itself, on a reading where every long condition holds.
+        flow::FlowSignals s;
+        s.valid = true; s.obi_short = 0.45; s.persist = 4; s.persist_ns = 900'000'000; s.ofi_norm = 0.6;
+        s.buy_exec = 300; s.sell_exec = 75; s.ask_exec_drop = 225; s.prior_high = 2400000.0; s.mid = 2400012.5;
+        s.bid = 2400010; s.ask = 2400015;
+        const auto c = order_flow_detail::entry_checks(s, 1, order_flow_detail::rules_for(QStringLiteral("NIFTY")), 75);
+        bool all = c.size() == 5;
+        for (const auto& x : c) all = all && x.ok;
+        check(all, "OBI5 > +0.30 held, OFI > +0.10, buys taking the ask, a breakout and room for costs: 5 of 5 long");
+        const auto sh = order_flow_detail::entry_checks(s, -1, order_flow_detail::rules_for(QStringLiteral("NIFTY")), 75);
+        bool none = true;
+        for (std::size_t i = 0; i < 4; ++i) none = none && !sh[i].ok;
+        check(none, "and none of the short conditions 1-4");
+        s.persist = 2;
+        check(!order_flow_detail::entry_checks(s, 1, order_flow_detail::ObiRules{}, 75)[0].ok, "two updates is not held");
+        check(order_flow_detail::rules_for(QStringLiteral("BANKNIFTY")).target_pts == 25.0, "BANKNIFTY uses the trader's 25-point target");
+        check(order_flow_detail::obi_reading(0.5) == QStringLiteral("stronger visible bid-side depth")
+                  && order_flow_detail::obi_reading(0.0) == QStringLiteral("balanced visible depth")
+                  && order_flow_detail::obi_reading(-0.5) == QStringLiteral("stronger visible ask-side depth"),
+              "the brief's table: +0.50 bid-side, 0 balanced, -0.50 ask-side");
+    }
+
     // The 50-level book: asked for in the file the feed and the OBI trader read.
     auto* deep = page.findChild<QCheckBox*>(QStringLiteral("flowDeep"));
     check(deep != nullptr && !deep->isChecked(), "the 50-level book is not asked for until it is ticked");
@@ -214,6 +263,6 @@ int main(int argc, char** argv) {
         check(order_flow_detail::events_between(b, a, 8, 100, 105).empty(), "a reset in between reports nothing");
     }
 
-    std::printf("%s\n", failures == 0 ? "all order flow checks passed" : "order flow checks did not pass");
+    std::printf("%s\n", failures == 0 ? "all order book imbalance checks passed" : "order book imbalance checks did not pass");
     return failures == 0 ? 0 : 1;
 }

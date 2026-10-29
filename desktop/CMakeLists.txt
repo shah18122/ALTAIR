@@ -72,7 +72,7 @@ qt_add_executable(altair_desktop
     saved_layouts.hpp
     daily_findings_page.hpp
     work_log_page.hpp
-    order_flow_page.hpp
+    obi_page.hpp
     workspace_pages.hpp
     workspace_layout.hpp
     tick_model.hpp
@@ -879,31 +879,31 @@ if(ALTAIR_BUILD_TESTS)
                 PRIVATE ws2_32 mswsock)
         endif()
         add_test(NAME desktop_live_models COMMAND altair_live_models_test)
-        # The Order Flow page: every book and print of one instrument, from the
+        # The Order Book Imbalance page: every book and print of one instrument, from the
         # real bus and client, through book/flow.hpp.
-        qt_add_executable(altair_order_flow_test
-            tests/test_order_flow.cpp
-            order_flow_page.hpp
+        qt_add_executable(altair_obi_page_test
+            tests/test_obi_page.cpp
+            obi_page.hpp
             live_market.hpp
             price_client.hpp
             strategy_record.hpp
             theme.hpp)
-        target_link_libraries(altair_order_flow_test PRIVATE
+        target_link_libraries(altair_obi_page_test PRIVATE
             altair_types altair_time altair_server altair_analytics altair_flags Boost::headers
             Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
-        target_include_directories(altair_order_flow_test
+        target_include_directories(altair_obi_page_test
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        set_target_properties(altair_order_flow_test
+        set_target_properties(altair_obi_page_test
             PROPERTIES WIN32_EXECUTABLE OFF)
         if(WIN32)
-            target_link_libraries(altair_order_flow_test
+            target_link_libraries(altair_obi_page_test
                 PRIVATE ws2_32 mswsock)
         endif()
-        add_test(NAME desktop_order_flow COMMAND altair_order_flow_test)
-        set_tests_properties(desktop_order_flow PROPERTIES TIMEOUT 60 ENVIRONMENT
+        add_test(NAME desktop_obi_page COMMAND altair_obi_page_test)
+        set_tests_properties(desktop_obi_page PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
         if(WIN32)
-            set_tests_properties(desktop_order_flow PROPERTIES ENVIRONMENT_MODIFICATION
+            set_tests_properties(desktop_obi_page PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
         endif()
         # Trade statistics, the expense heads of a fill and the strategy record panel.
