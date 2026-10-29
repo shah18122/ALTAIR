@@ -191,10 +191,29 @@ public:
         return last_.size();
     }
 
+    /// EVERY FRAME, FOR THE FEW THAT NEED IT. priceUpdated is one notice per
+    /// instrument per burst, which is right for a grid and wrong for an
+    /// order-flow engine: it diffs consecutive books, and a book it never saw
+    /// turns an execution into a cancel. A screen that needs every book and
+    /// print of an instrument asks for it here (desktop/order_flow_page.hpp)
+    /// and gets frameApplied, synchronously, once the frame's state is in
+    /// price(token). Everything else costs one empty() test per frame.
+    void watch_frames(std::uint32_t token, bool on) {
+        if (on) frame_watch_.insert(token);
+        else frame_watch_.erase(token);
+    }
+
+    /// What frameApplied carries.
+    enum FrameKindApplied : int { AppliedBook = 0, AppliedTrade = 1, AppliedQuote = 2 };
+
 Q_SIGNALS:
     void statusChanged();
     void priceUpdated(unsigned token);
     void tradeUpdated(unsigned token);
+    /// A watched instrument's frame (watch_frames): `kind` is a
+    /// FrameKindApplied, `engine_ns` the frame's feed time. A trade snapshot
+    /// (a late joiner's last trade) is state, not a print, and is not sent.
+    void frameApplied(unsigned token, int kind, qint64 engine_ns);
 
 private Q_SLOTS:
     void drain() {
@@ -334,6 +353,8 @@ private:
         }
         touch(d.payload.token);
         if (h.topic == kTopicTrades && !snapshot) Q_EMIT tradeUpdated(d.payload.token);
+        if (!frame_watch_.empty() && frame_watch_.count(d.payload.token) != 0 && !(h.topic == kTopicTrades && snapshot))
+            Q_EMIT frameApplied(d.payload.token, h.topic == kTopicTrades ? AppliedTrade : AppliedBook, h.engine_time_ns);
     }
 
     void apply_quote(const FrameHeader& h, const QuotePayload& q) {
@@ -348,6 +369,8 @@ private:
         lp.replay = q.has(kQuoteReplay);
         lp.simulated = q.has(kQuoteSimulated);
         touch(q.token);
+        if (!frame_watch_.empty() && q.has(kQuoteHasTop) && frame_watch_.count(q.token) != 0)
+            Q_EMIT frameApplied(q.token, AppliedQuote, h.engine_time_ns);
     }
     void touch(std::uint32_t token) {
         if (touched_seen_.insert(token).second) touched_.push_back(token);
@@ -362,6 +385,7 @@ private:
     std::unordered_map<std::uint32_t, std::uint64_t> seq_;
     std::vector<std::uint32_t> touched_;            ///< instruments updated in this burst, first-touch order
     std::unordered_set<std::uint32_t> touched_seen_;
+    std::unordered_set<std::uint32_t> frame_watch_;   ///< tokens frameApplied is sent for
     std::uint64_t frames_ = 0;
     std::uint64_t gaps_ = 0;
     std::uint64_t missed_ = 0;

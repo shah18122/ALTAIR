@@ -207,6 +207,15 @@ struct FlowConfig {
     std::size_t capacity = 1024;                   ///< events per window (rounded up to a power of two)
 };
 
+/// What the session has seen since the last reset(), never expired: a
+/// screen diffs two snapshots to list each event (desktop/order_flow_page.hpp).
+struct FlowTotals {
+    std::int64_t buy = 0, sell = 0, unknown = 0;                   ///< printed, units
+    std::int64_t bid_exec_drop = 0, ask_exec_drop = 0;
+    std::int64_t bid_cancel = 0, ask_cancel = 0, bid_add = 0, ask_add = 0;
+    std::int64_t hidden_buy = 0, hidden_sell = 0;
+};
+
 /// Everything the engine knows after the last event. Plain data.
 struct FlowSignals {
     std::int64_t ns = 0;
@@ -239,6 +248,7 @@ struct FlowSignals {
     int absorption = 0;                 ///< +1 buyers absorb selling, -1 sellers absorb buying
     int withdrawal = 0;                 ///< +1 ask liquidity pulled while lifted, -1 bid side
     std::uint64_t books = 0, trades = 0, malformed = 0, evicted = 0, untradable = 0;
+    FlowTotals total{};                 ///< since reset(), not windowed
 };
 
 namespace detail {
@@ -646,6 +656,11 @@ private:
         ring_[t_ & mask_] = e;
         ++t_;
         add(e, +1);
+        FlowTotals& d = s_.total;
+        d.buy += e.buy; d.sell += e.sell; d.unknown += e.unknown;
+        d.bid_exec_drop += e.bid_exec_drop; d.ask_exec_drop += e.ask_exec_drop;
+        d.bid_cancel += e.bid_cancel; d.ask_cancel += e.ask_cancel; d.bid_add += e.bid_add; d.ask_add += e.ask_add;
+        d.hidden_buy += e.hidden_buy; d.hidden_sell += e.hidden_sell;
     }
 
     /// The signals after an event; `book` is the book update just applied, if one was.
