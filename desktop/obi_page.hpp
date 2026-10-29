@@ -65,6 +65,7 @@
 #include "theme.hpp"
 
 #include <book/flow.hpp>
+#include <live/obi_underlyings.hpp>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -234,9 +235,14 @@ struct ObiRules {
     double ofi_min = 0.10;                     ///< condition 2
     double target_pts = 10.0, safety_pts = 1.0;
 };
-[[nodiscard]] inline ObiRules rules_for(const QString& underlying) {
+/// `root`, when given, is read for config/obi_underlyings.csv: a stock there
+/// (NYKAA) carries its own target and safety in rupees a share.
+[[nodiscard]] inline ObiRules rules_for(const QString& underlying, const QString& root = {}) {
     ObiRules r;
     if (underlying == QLatin1String("BANKNIFTY")) { r.target_pts = 25.0; r.safety_pts = 2.0; }
+    if (!root.isEmpty())
+        for (const auto& u : altair::live::read_obi_underlyings((root + QStringLiteral("/config/obi_underlyings.csv")).toStdString()))
+            if (QString::fromStdString(u.symbol) == underlying) { r.target_pts = u.target_pts; r.safety_pts = u.safety_pts; }
     return r;
 }
 
@@ -938,7 +944,7 @@ public:
         flow::FlowConfig c;
         c.tick = std::max<std::int64_t>(1, std::llround(r->tick * 100.0));
         engine_ = std::make_unique<flow::FlowEngine>(c);
-        rules_ = order_flow_detail::rules_for(r->underlying);
+        rules_ = order_flow_detail::rules_for(r->underlying, root_);
         lot_ = std::max<qint64>(1, r->lot);
         book_n_ = 0;
         history_.clear();

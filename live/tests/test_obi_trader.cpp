@@ -7,7 +7,9 @@
 // No check description here may contain the substring "F" "AIL" joined.
 
 #include <live/obi_trader.hpp>
+#include <live/obi_underlyings.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -28,33 +30,43 @@ using namespace altair::live;
 constexpr std::int64_t kMs = 1'000'000LL;
 constexpr std::uint32_t kIdx = 1, kFut = 13;
 
-LiveInstrument inst(std::uint32_t tok, const std::string& sym, LiveKind k, double strike, std::int64_t expiry) {
+/// The underlying a rig trades: NIFTY by default; a stock (NYKAA) shifts
+/// every price by `shift` paise and scales every print by `qmul`.
+struct Spec {
+    std::string under = "NIFTY";
+    std::int64_t lot = 75, shift = 0, qmul = 1;
+    double cost_per_unit = 1.0;
+};
+
+LiveInstrument inst(const Spec& sp, std::uint32_t tok, const std::string& sym, LiveKind k, double strike, std::int64_t expiry) {
     LiveInstrument i;
-    i.token = tok; i.symbol = sym; i.fyers = "NSE:" + sym; i.underlying = "NIFTY";
-    i.kind = k; i.lot = k == LiveKind::Index ? 1 : 75; i.tick = 0.05; i.strike = strike; i.expiry_day = expiry;
+    i.token = tok; i.symbol = sym; i.fyers = "NSE:" + sym; i.underlying = sp.under;
+    i.kind = k == LiveKind::Index && sp.under != "NIFTY" ? LiveKind::Equity : k;
+    i.lot = k == LiveKind::Index ? 1 : sp.lot; i.tick = 0.05; i.strike = strike; i.expiry_day = expiry;
     return i;
 }
 
 struct Rig {
     std::int64_t t0 = 0, vol = 0, base = 0;   ///< base: ms added to every time below
+    Spec sp;
     std::vector<LiveInstrument> u;
     std::unique_ptr<LiveEngine> e;
     LiveObiTraderModel* m = nullptr;
 
-    explicit Rig(ObiMode mode, ObiTraderRules r = {}) {
+    explicit Rig(ObiMode mode, ObiTraderRules r = {}, Spec spec = {}) : sp(std::move(spec)) {
         const std::int64_t day = parse_day("2026-10-05"), expiry = parse_day("2026-10-27");
         t0 = (day * 86400 + 10 * 3600 - 19800) * 1'000'000'000LL;   // 10:00 IST
-        u.push_back(inst(kIdx, "NIFTY", LiveKind::Index, 0, 0));
-        u.push_back(inst(kFut, "NIFTY26OCTFUT", LiveKind::Future, 0, expiry));
+        u.push_back(inst(sp, kIdx, sp.under, LiveKind::Index, 0, 0));
+        u.push_back(inst(sp, kFut, sp.under + "26OCTFUT", LiveKind::Future, 0, expiry));
         std::uint32_t tok = 100;
         for (int k = 23850; k <= 24150; k += 50) {
-            u.push_back(inst(tok++, "NIFTY26OCT" + std::to_string(k) + "CE", LiveKind::Call, k, expiry));
-            u.push_back(inst(tok++, "NIFTY26OCT" + std::to_string(k) + "PE", LiveKind::Put, k, expiry));
+            u.push_back(inst(sp, tok++, sp.under + "26OCT" + std::to_string(k) + "CE", LiveKind::Call, k, expiry));
+            u.push_back(inst(sp, tok++, sp.under + "26OCT" + std::to_string(k) + "PE", LiveKind::Put, k, expiry));
         }
         LiveExecPolicy instant;
         instant.latency_ns = 0;
         // One rupee a unit a fill: the round trip costs 2 points.
-        const LiveCostFn cost = [](const LiveInstrument&, bool, double qty, double, std::int64_t) { return 1.0 * qty; };
+        const LiveCostFn cost = [c = sp.cost_per_unit](const LiveInstrument&, bool, double qty, double, std::int64_t) { return c * qty; };
         e = std::make_unique<LiveEngine>(u, cost, instant);
         r.mode = mode;
         auto mm = std::make_unique<LiveObiTraderModel>(r);
@@ -68,8 +80,9 @@ struct Rig {
         return 0;
     }
     void quote(std::uint32_t tok, std::int64_t bid, std::int64_t ask, std::int64_t bq, std::int64_t aq, std::int64_t at_ms) {
+        const std::int64_t sh = tok == kFut || tok == kIdx ? sp.shift : 0;   // the options keep their premiums
         QuotePayload q;
-        q.token = tok; q.flags = kQuoteHasTop; q.bid = bid; q.ask = ask; q.bid_qty = bq; q.ask_qty = aq;
+        q.token = tok; q.flags = kQuoteHasTop; q.bid = bid + sh; q.ask = ask + sh; q.bid_qty = bq; q.ask_qty = aq;
         e->on_quote(q, t0 + (base + at_ms) * kMs);
     }
     /// A 5-level book (and its touch as a quote), every level `bq` / `aq`;
@@ -77,15 +90,16 @@ struct Rig {
     void book(std::uint32_t tok, std::int64_t bid, std::int64_t ask, std::int64_t bq, std::int64_t aq, std::int64_t at_ms,
               std::int64_t ask0 = -1) {
         LiveLevel b[5], a[5];
-        for (int k = 0; k < 5; ++k) { b[k] = {bid - 5 * k, bq}; a[k] = {ask + 5 * k, aq}; }
+        const std::int64_t sh = tok == kFut ? sp.shift : 0;
+        for (int k = 0; k < 5; ++k) { b[k] = {bid + sh - 5 * k, bq}; a[k] = {ask + sh + 5 * k, aq}; }
         if (ask0 >= 0) a[0].qty = ask0;
         quote(tok, bid, ask, bq, a[0].qty, at_ms);
         e->on_book(tok, 5, b, a, t0 + (base + at_ms) * kMs);
     }
     void print(std::uint32_t tok, std::int64_t px, std::int64_t at_ms, std::int64_t qty = 0) {
-        vol += qty;
+        vol += qty * sp.qmul;
         PricePayload p;
-        p.token = tok; p.last_paise = px; p.flags |= kPriceHasVolume; p.volume = vol; p.exchange_ts_ns = t0 + (base + at_ms) * kMs;
+        p.token = tok; p.last_paise = px + (tok == kFut ? sp.shift : 0); p.flags |= kPriceHasVolume; p.volume = vol; p.exchange_ts_ns = t0 + (base + at_ms) * kMs;
         e->on_trade(p, p.exchange_ts_ns, p.exchange_ts_ns);
     }
     /// 30 s of history, then a bid-heavy book with buyers lifting the ask;
@@ -171,6 +185,43 @@ int main() {
         g.long_setup(true);
         g.book(kFut, 2399400, 2399405, 1000, 1000, 23'000);
         check(g.noted("no entries until tomorrow"), "a loss past the daily limit halts the model for the day");
+    }
+    {
+        // An F&O stock from config/obi_underlyings.csv: NYKAA's own future
+        // (lot 3,125, around Rs 347) with its per-share target and stop.
+        const auto list = read_obi_underlyings(std::string(ALTAIR_SOURCE_DIR) + "/config/obi_underlyings.csv");
+        const auto it = std::find_if(list.begin(), list.end(), [](const ObiUnderlying& x) { return x.symbol == "NYKAA"; });
+        check(it != list.end() && it->target_pts > it->stop_pts && it->stop_pts * 3125 < 2'000.0,
+              "the shipped list has NYKAA, its stop inside the Rs 2,000 a trade limit for one lot");
+        ObiTraderRules r;
+        r.under = "NYKAA";
+        if (it != list.end()) { r.target_pts = it->target_pts; r.stop_pts = it->stop_pts; r.safety_pts = it->safety_pts; }
+        Spec sp;
+        sp.under = "NYKAA"; sp.lot = 3125; sp.shift = 34'700 - 2'400'000; sp.qmul = 12; sp.cost_per_unit = 0.01;
+        Rig g(ObiMode::Futures, r, sp);
+        check(g.m->name() == "OBI futures NYKAA", "the model is named for the stock");
+        g.long_setup(true);
+        const LivePosition* p = g.e->book().position(g.m->name(), kFut);
+        check(p != nullptr && p->side > 0 && p->qty == 3125 && p->inst.symbol == "NYKAA26OCTFUT",
+              "the same confirmations on NYKAA's book: long one lot (3,125) of NYKAA26OCTFUT");
+        check(p != nullptr && p->why_in.find("target 0.80 pts") != std::string::npos, "rule 5 uses NYKAA's own target");
+        g.book(kFut, 2399950, 2399955, 1000, 1000, 23'000);   // Rs 1.10 a share down
+        check(g.e->book().flat(g.m->name()), "Rs 0.40 a share against: stopped");
+    }
+    {
+        // A stock's chain is sold the same way: the long signal sells a put.
+        // (The rig's strikes sit near 24,000, so a small lot keeps the margin
+        // check out of the way; this checks the routing, not the sizing.)
+        ObiTraderRules r;
+        r.under = "NYKAA"; r.target_pts = 0.80; r.stop_pts = 0.40; r.safety_pts = 0.05;
+        Spec sp;
+        sp.under = "NYKAA"; sp.cost_per_unit = 0.01;
+        Rig g(ObiMode::SellOptions, r, sp);
+        const std::uint32_t pe = g.token_of("NYKAA26OCT23950PE");
+        for (std::int64_t t = 100; t <= 20'000; t += 1'000) g.book(pe, 5000, 5010, 500, 700, t);
+        g.long_setup(true);
+        const LivePosition* p = g.e->book().position(g.m->name(), pe);
+        check(p != nullptr && p->side < 0, "NYKAA option mode: the long signal SELLS a put, never buys");
     }
     std::printf("%s\n", failures == 0 ? "all OBI trader checks passed" : "OBI trader checks did not pass");
     return failures == 0 ? 0 : 1;

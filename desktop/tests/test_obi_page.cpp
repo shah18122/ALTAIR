@@ -222,6 +222,10 @@ int main(int argc, char** argv) {
         s.persist = 2;
         check(!order_flow_detail::entry_checks(s, 1, order_flow_detail::ObiRules{}, 75)[0].ok, "two updates is not held");
         check(order_flow_detail::rules_for(QStringLiteral("BANKNIFTY")).target_pts == 25.0, "BANKNIFTY uses the trader's 25-point target");
+        {
+            const auto ny = order_flow_detail::rules_for(QStringLiteral("NYKAA"), QStringLiteral(ALTAIR_SOURCE_DIR));
+            check(ny.target_pts > 0.0 && ny.target_pts < 5.0, "NYKAA reads its per-share target from config/obi_underlyings.csv");
+        }
         check(order_flow_detail::obi_reading(0.5) == QStringLiteral("stronger visible bid-side depth")
                   && order_flow_detail::obi_reading(0.0) == QStringLiteral("balanced visible depth")
                   && order_flow_detail::obi_reading(-0.5) == QStringLiteral("stronger visible ask-side depth"),

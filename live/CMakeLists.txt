@@ -62,6 +62,7 @@ if(ALTAIR_BUILD_TESTS)
 
     add_executable(altair_live_obi_trader_test tests/test_obi_trader.cpp)
     target_link_libraries(altair_live_obi_trader_test PRIVATE altair_live)
+    target_compile_definitions(altair_live_obi_trader_test PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     add_test(NAME live_obi_trader COMMAND altair_live_obi_trader_test)
 
     add_executable(altair_live_exec_study_test tests/test_exec_study.cpp)

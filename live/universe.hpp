@@ -269,6 +269,12 @@ struct LiveUniverseOptions {
     bool stocks = true;
     bool stock_futures = true;          ///< the stocks' near and next futures (stat-arb trades and rolls them)
     bool bse_twins = true;              ///< the same stocks on BSE: the cross-exchange arbitrage's other leg
+    /// F&O stocks streamed whole for the OBI trader (config/obi_underlyings.csv):
+    /// the stock, its two nearest futures and its nearest chain, all with the
+    /// 5-level book near the money. `fo_spots` centres each chain (same order;
+    /// a missing or zero spot streams no chain).
+    std::vector<std::string> fo_stocks;
+    std::vector<double> fo_spots;
 };
 
 struct LiveUniverse {
@@ -383,6 +389,53 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
     detail::add_chains(rows, "NIFTY", o.nifty_spot, o, "NIFTY options", rep);
     detail::add_chains(rows, "BANKNIFTY", o.banknifty_spot, o, "BANKNIFTY options", rep);
 
+    // The OBI trader's stocks: equity, near futures, nearest chain.
+    for (std::size_t k = 0; k < o.fo_stocks.size(); ++k) {
+        const std::string& sym = o.fo_stocks[k];
+        const auto have = [&rep](std::uint32_t tok) {
+            return std::any_of(rep.instruments.begin(), rep.instruments.end(), [tok](const LiveInstrument& i) { return i.token == tok; });
+        };
+        const LiveKiteRow* eq = nullptr;
+        for (const auto& r : rows)
+            if (r.segment == "NSE" && r.exchange == "NSE" && r.type == "EQ" && r.symbol == sym) { eq = &r; break; }
+        if (eq == nullptr) rep.notes.push_back(sym + ": not an NSE equity in the master");
+        else if (!have(eq->token)) {
+            LiveInstrument in;
+            in.token = eq->token;
+            in.fyers = "NSE:" + sym + "-EQ";
+            in.symbol = sym;
+            in.underlying = sym;
+            in.kind = LiveKind::Equity;
+            in.lot = 1;
+            in.tick = eq->tick > 0.0 ? eq->tick : 0.05;
+            in.group = "OBI stocks";
+            in.depth = true;
+            rep.instruments.push_back(std::move(in));
+        }
+        std::vector<const LiveKiteRow*> fut;
+        for (const auto& r : rows)
+            if (r.segment == "NFO-FUT" && r.name == sym && r.expiry_day >= o.today) fut.push_back(&r);
+        std::sort(fut.begin(), fut.end(), [](const LiveKiteRow* a, const LiveKiteRow* b) { return a->expiry_day < b->expiry_day; });
+        if (fut.empty()) rep.notes.push_back(sym + ": no future on or after today in the master");
+        for (std::size_t i = 0; i < fut.size() && i < 2; ++i) {
+            if (have(fut[i]->token)) continue;
+            LiveInstrument in;
+            in.token = fut[i]->token;
+            in.fyers = "NSE:" + fut[i]->symbol;
+            in.symbol = fut[i]->symbol;
+            in.underlying = sym;
+            in.kind = LiveKind::Future;
+            in.expiry_day = fut[i]->expiry_day;
+            in.lot = fut[i]->lot;
+            in.tick = fut[i]->tick;
+            in.group = "OBI stocks";
+            in.depth = true;
+            rep.instruments.push_back(std::move(in));
+        }
+        const double spot = k < o.fo_spots.size() ? o.fo_spots[k] : 0.0;
+        detail::add_chains(rows, sym, spot, o, sym + " options", rep);
+    }
+
     if (o.stocks) {
         std::map<std::string, const LiveKiteRow*> eq;
         for (const auto& r : rows)
@@ -449,6 +502,10 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
             }
         }
     }
+    // A stock both in NIFTY 50 and the OBI list is streamed once, as the OBI
+    // list added it (with its book).
+    std::set<std::uint32_t> seen;
+    std::erase_if(rep.instruments, [&seen](const LiveInstrument& i) { return !seen.insert(i.token).second; });
     return rep;
 }
 
