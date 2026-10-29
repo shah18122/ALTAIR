@@ -711,4 +711,23 @@ inline void add_watchlist(std::vector<LiveInstrument>& u, const std::vector<Live
     return (unix_seconds + 19800) / 86400;
 }
 
+/// data/live/obi_watch.csv, the instruments the order-book imbalance trader
+/// watches (live/obi_trader.hpp) and the price service puts on the FYERS
+/// 50-level slots after the scrip on screen: one FYERS symbol a line, '#'
+/// comments; anything after a comma is ignored. Missing: none.
+[[nodiscard]] inline std::vector<std::string> read_obi_watch(const std::string& path) {
+    std::vector<std::string> out;
+    std::ifstream in(path);
+    std::string line;
+    // RULE 11: refused past 256 -- the watch list is read, not trusted; the
+    // 50-level slots hold at most five anyway.
+    while (std::getline(in, line) && out.size() < 256) {
+        if (const auto c = line.find(','); c != std::string::npos) line.resize(c);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        out.push_back(line);
+    }
+    return out;
+}
+
 } // namespace altair::live

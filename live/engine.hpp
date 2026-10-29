@@ -146,6 +146,15 @@ public:
     /// decisions do: in session and not paused by a trade gap. The time to
     /// act at is LiveEngine::quote_ns().
     virtual void on_quote(LiveEngine&, std::uint32_t /*token*/) {}
+    /// A book (5 or 50 levels) for `token`, received at bus time `recv_ns`,
+    /// and every trade print, with the bus time it was received at: for a
+    /// model that keeps its own tick-by-tick state (book/flow.hpp). Called
+    /// on EVERY event, in session or not and paused or not, so that state
+    /// never skips a tick; the model gates its own decisions on paused(),
+    /// stale() and the time of day. Both arrive on one clock (the bus's),
+    /// so the two streams can be ordered against each other.
+    virtual void on_book_tick(LiveEngine&, std::uint32_t /*token*/, std::int64_t /*recv_ns*/) {}
+    virtual void on_print(LiveEngine&, const PricePayload& /*trade*/, std::int64_t /*recv_ns*/) {}
     [[nodiscard]] virtual LiveModelView view(const LiveEngine& e) const = 0;
 };
 
@@ -193,8 +202,9 @@ public:
 
     // ---- the feed --------------------------------------------------------
 
-    /// A trade, stamped `ns` (the exchange's time where it has one).
-    void on_trade(const PricePayload& p, std::int64_t ns) {
+    /// A trade, stamped `ns` (the exchange's time where it has one) and
+    /// received at bus time `recv_ns` (0: the same as `ns`).
+    void on_trade(const PricePayload& p, std::int64_t ns, std::int64_t recv_ns = 0) {
         // The clock first: the previous minute closes and decides on what was
         // known then; a new session resets before its first tick is kept.
         advance(ns);
@@ -210,6 +220,7 @@ public:
         if (!bars_.feed(p.token, static_cast<double>(p.last_paise) / 100.0, ns, s.volume, [](std::uint32_t, const LiveBar&) {}))
             ++late_prints_;
         book_.on_market(p.token, std::max(ns, clock_ns_));
+        for (auto& m : models_) m->on_print(*this, p, recv_ns > 0 ? recv_ns : ns);
         if (after_event) after_event();
     }
     /// A late joiner's bootstrap: the last trade as it stands, not a trade now.
@@ -257,6 +268,8 @@ public:
         }
         s.book_ns = ns;
         book_.on_market(token, std::max(ns, clock_ns_));
+        for (auto& m : models_) m->on_book_tick(*this, token, ns);
+        if (after_event) after_event();
     }
     /// Trade frames were lost (a sequence gap): today's bars are incomplete,
     /// so no model decides until a whole clean minute has passed.

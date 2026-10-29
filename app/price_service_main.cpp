@@ -278,6 +278,9 @@ extern "C" void on_stop_signal(int) { g_stop.store(true); }
 std::size_t g_depth50 = altair::fyers_tbt::kTbtStandardSlots;
 /// Where the desktop says which scrip is on screen (data/live/depth_request.csv).
 std::string g_depth_request;
+/// The order-book imbalance trader's watch list (data/live/obi_watch.csv):
+/// asked for the 50-level slots after the scrip on screen.
+std::string g_obi_watch;
 /// Cores and priorities for this process's threads (config/latency.toml).
 altair::latency::Plan g_latency;
 
@@ -429,12 +432,22 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
     const std::size_t slots = std::min(g_depth50, TbtFeed::kSlots);
     if (g_depth50 > slots)
         std::printf("  50-level book: --depth50 %zu asks for more than one FYERS connection holds; %zu slots\n", g_depth50, slots);
-    std::vector<std::pair<std::string, std::uint32_t>> request = read_depth_request(g_depth_request);
-    std::filesystem::file_time_type request_time{};
-    {
-        std::error_code ec;
-        request_time = std::filesystem::last_write_time(g_depth_request, ec);
-    }
+    // What is asked for: the desktop's scrip first, then the OBI watch list.
+    using Stamp = std::pair<std::filesystem::file_time_type, std::filesystem::file_time_type>;
+    const auto stamp = [] {
+        std::error_code a, b;
+        const auto t1 = std::filesystem::last_write_time(g_depth_request, a);
+        const auto t2 = std::filesystem::last_write_time(g_obi_watch, b);
+        return Stamp{a ? std::filesystem::file_time_type{} : t1, b ? std::filesystem::file_time_type{} : t2};
+    };
+    const auto read_requests = [&] {
+        auto r = read_depth_request(g_depth_request);
+        for (const auto& sym : altair::live::read_obi_watch(g_obi_watch))
+            if (const auto it = token_of.find(sym); it != token_of.end()) r.emplace_back(sym, it->second);
+        return r;
+    };
+    std::vector<std::pair<std::string, std::uint32_t>> request = read_requests();
+    Stamp request_time = stamp();
     const auto plan = [&]() {
         std::vector<std::string> asked;
         for (const auto& [sym, tok] : request) {
@@ -452,11 +465,10 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
             if (feed.stop.load() || g_stop.load() || unix_now() >= deadline_unix) return;
             std::this_thread::sleep_for(std::chrono::seconds{1});
         }
-        std::error_code ec;
-        const auto t = std::filesystem::last_write_time(g_depth_request, ec);
-        if (ec || t == request_time) continue;
+        const Stamp t = stamp();
+        if (t == request_time) continue;
         request_time = t;
-        request = read_depth_request(g_depth_request);
+        request = read_requests();
         held = plan();
     }
 
@@ -521,11 +533,10 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
     // Every second: has the desktop put another scrip on screen? Then the
     // slots move to it -- unsubscribe what left, subscribe what came.
     opt.poll = [&](std::vector<altair::FyersFrame>& out) {
-        std::error_code ec;
-        const auto t = std::filesystem::last_write_time(g_depth_request, ec);
-        if (ec || t == request_time) return;
+        const Stamp t = stamp();
+        if (t == request_time) return;
         request_time = t;
-        request = read_depth_request(g_depth_request);
+        request = read_requests();
         const auto next = plan();
         if (next.empty() || next == held) return;
         for (const auto& f : tbt::tbt_switch_texts(held, next, 1)) out.push_back(bytes(f));
@@ -1309,6 +1320,7 @@ int main(int argc, char** argv) {
         auto uni = altair::live::build_universe(
             rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);
         g_depth_request = live_dir + "/depth_request.csv";
+        g_obi_watch = live_dir + "/obi_watch.csv";
         const std::string watch_path = live_dir + "/watchlist.csv";
         // The market watch's added scrips (data/live/watchlist.csv).
         std::vector<std::uint32_t> watched = altair::live::read_watchlist(watch_path);

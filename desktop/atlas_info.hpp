@@ -142,7 +142,12 @@ inline constexpr Entry kByFile[] = {
     {"analytics/advanced_pricers.hpp", {"Numerical pricer; Heston and EGARCH parameters by maximum likelihood / calibration to the chain.",
         "Option chain and daily returns.", kResearch}},
     {"book/microstructure.hpp", {kNotTrained, kLiveBook, kResearch}},
-    {"book/flow.hpp", {"Estimated on volume buckets and a regression of price change on signed volume.", "Trades and quotes recorded from the live feed.", kResearch}},
+    {"book/flow.hpp", {kNotTrained, kLiveBook,
+        "Live: the OBI trader's engine, fed every book and trade print (one per watched instrument)."}},
+    {"live/obi_trader.hpp", {"Not trained: the thresholds are a starting framework, not fitted out of sample.", kLiveBook,
+        "Live, paper only: NIFTY and BANKNIFTY near futures long/short, and the same signal as a sold put or call. "
+        "Never buys an option; Rs 2,000 a trade and Rs 5,000 a day loss limits."}},
+    {"book/trade_flow.hpp", {"Estimated on volume buckets and a regression of price change on signed volume.", "Trades and quotes recorded from the live feed.", kResearch}},
     {"risk/slippage.hpp", {"Impact coefficients fitted to recorded fills.", "Recorded live quotes and paper fills.",
         "Execution page; demo fills are priced at the touch with size and latency, not with this model."}},
     {"oms/execution.hpp", {"Not trained: scheduling rules.", "Volume profile from dataset/.", "Execution page; the router sends single limit/IOC orders."}},

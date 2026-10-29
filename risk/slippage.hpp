@@ -1,6 +1,6 @@
 // risk/slippage.hpp -- execution cost learned from fill history.
 //
-// P3-10. Distinct from `book/flow.hpp`'s KyleLambda, which measures price
+// P3-10. Distinct from `book/trade_flow.hpp`'s KyleLambda, which measures price
 // impact from ORDER FLOW observed in the book. This measures what Altair's own
 // orders actually cost, from Altair's own fills, which is the only number that
 // belongs in rule 5's "net of full cost before it exists".

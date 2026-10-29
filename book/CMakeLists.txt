@@ -30,6 +30,12 @@ if(ALTAIR_BUILD_TESTS)
     target_include_directories(altair_depth_study_test PRIVATE ${CMAKE_SOURCE_DIR})
     add_test(NAME depth_study COMMAND altair_depth_study_test)
 
+    # VPIN and Kyle's lambda (book/trade_flow.hpp).
+    add_executable(altair_trade_flow_test tests/test_trade_flow.cpp)
+    target_link_libraries(altair_trade_flow_test PRIVATE altair_book altair_flags)
+    add_test(NAME trade_flow COMMAND altair_trade_flow_test)
+
+    # The live order-book imbalance engine (book/flow.hpp).
     add_executable(altair_flow_test tests/test_flow.cpp)
     target_link_libraries(altair_flow_test PRIVATE altair_book altair_flags)
     add_test(NAME flow COMMAND altair_flow_test)

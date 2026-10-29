@@ -44,7 +44,7 @@
 #include <analytics/hmm.hpp>
 #include <analytics/kalman.hpp>
 #include <analytics/sabr.hpp>
-#include <book/flow.hpp>
+#include <book/trade_flow.hpp>
 #include <book/microstructure.hpp>
 #include <analytics/derivatives.hpp>
 #include <features/registry.hpp>

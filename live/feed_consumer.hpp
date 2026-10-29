@@ -55,7 +55,8 @@ public:
         if (!d) { ++bad_; return false; }
         if (h.topic == kTopicTrades) {
             if (snapshot) { e_.on_trade_snapshot(d->payload); ++snapshots_; }
-            else e_.on_trade(d->payload, d->payload.exchange_ts_ns > 0 ? d->payload.exchange_ts_ns : h.engine_time_ns);
+            else e_.on_trade(d->payload, d->payload.exchange_ts_ns > 0 ? d->payload.exchange_ts_ns : h.engine_time_ns,
+                             h.engine_time_ns);
             return true;
         }
         // kTopicBook

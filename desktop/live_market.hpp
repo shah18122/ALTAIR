@@ -1747,12 +1747,47 @@ private:
         menu.addSeparator();
         auto* add = menu.addAction(QStringLiteral("Add scrip…  (Insert)"));
         auto* remove = menu.addAction(QStringLiteral("Remove scrip  (Delete)"));
+        // The order-book imbalance trader's watch list (live/obi_trader.hpp):
+        // shown on the Live Models page, and asked for the 50-level slots.
+        menu.addSeparator();
+        const int sr = model_->row_of(selected_);
+        const LiveRow* srow = sr >= 0 ? &model_->rows()[static_cast<std::size_t>(sr)] : nullptr;
+        const bool watched = srow != nullptr && read_obi_watch().contains(srow->fyers);
+        auto* obi = menu.addAction(watched ? QStringLiteral("Stop watching for OBI") : QStringLiteral("Watch for OBI (50-level book)"));
+        obi->setEnabled(srow != nullptr && !srow->fyers.isEmpty() && srow->fyers.startsWith(QStringLiteral("NSE:")));
         QAction* chosen = menu.exec(view_->viewport()->mapToGlobal(at));
         if (chosen == chain) open_chain();
         else if (chosen == buy && on_order_key) on_order_key(true);
         else if (chosen == sell && on_order_key) on_order_key(false);
         else if (chosen == add) focus_add();
         else if (chosen == remove) remove_scrip(selected_);
+        else if (chosen == obi && srow != nullptr) toggle_obi_watch(srow->fyers);
+    }
+
+    /// data/live/obi_watch.csv: one FYERS symbol a line (live/universe.hpp read_obi_watch).
+    [[nodiscard]] QStringList read_obi_watch() const {
+        QStringList out;
+        QFile f(live_path("obi_watch.csv"));
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return out;
+        QTextStream in(&f);
+        while (!in.atEnd()) {
+            QString line = in.readLine().section(QLatin1Char(','), 0, 0).trimmed();
+            if (!line.isEmpty() && !line.startsWith(QLatin1Char('#'))) out << line;
+        }
+        return out;
+    }
+    void toggle_obi_watch(const QString& fyers) {
+        QStringList list = read_obi_watch();
+        if (list.contains(fyers)) list.removeAll(fyers);
+        else list << fyers;
+        QDir().mkpath(root_ + QStringLiteral("/data/live"));
+        QSaveFile f(live_path("obi_watch.csv"));
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+        QTextStream out(&f);
+        out << "# instruments the OBI trader watches (Market watch: right-click, Watch for OBI)\n";
+        for (const auto& s2 : list) out << QString(s2).remove(QLatin1Char(',')) << '\n';
+        out.flush();
+        (void)f.commit();
     }
 
     [[nodiscard]] static LiveRow row_from_master(const MasterScrip& m) {
