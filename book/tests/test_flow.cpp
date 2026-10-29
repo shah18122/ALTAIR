@@ -167,6 +167,10 @@ void executed_cancelled_hidden()
         e.on_trade(100'000, 1'200, 0, 600 * kMs);
         check(e.signals().ask_cancel == 750, "then 750 cancelled from the ask");
         check(e.signals().hidden_sell == 200, "and the 200 sell no visible bid explained is hidden execution");
+        feed(e, ladder(100'000, 100'005, 5, 1'000, 1'000), 60'000 * kMs);   // a minute on: the window is empty
+        const altair::flow::FlowTotals& t = e.signals().total;
+        check(e.signals().ask_cancel == 0 && t.ask_cancel == 750 && t.hidden_sell == 200 && t.sell == 200,
+              "the session totals keep what the window has expired");
     }
     {   // a sell print does not explain an ask drop, nor a print that never reached the level
         FlowEngine e(c);

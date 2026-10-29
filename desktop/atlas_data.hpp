@@ -295,12 +295,12 @@ inline constexpr std::array kAtlasRows{
 
     // -- 4. Microstructure and execution ------------------------------------
     AtlasRow{"4. Microstructure & execution", "Order-book imbalance",
-             AtlasStatus::Implemented, "book/flow.hpp", 24,
+             AtlasStatus::Implemented, "book/flow.hpp", 42,
              "More size resting on the bid than the ask hints at the next "
              "tick -- over the touch, 5 levels and up to 50, plain and "
              "weighted toward the touch. Decays in milliseconds."},
     AtlasRow{"4. Microstructure & execution", "Microprice",
-             AtlasStatus::Implemented, "book/flow.hpp", 24,
+             AtlasStatus::Implemented, "book/flow.hpp", 42,
              "A fairer 'current price' than the mid, weighted by which side "
              "has more size behind it."},
     AtlasRow{"4. Microstructure & execution", "VPIN",
@@ -312,12 +312,12 @@ inline constexpr std::array kAtlasRows{
              "How far the price moves per unit of net buying. The market's "
              "price of impatience."},
     AtlasRow{"4. Microstructure & execution", "Order flow imbalance (OFI)",
-             AtlasStatus::Implemented, "book/flow.hpp", 24,
+             AtlasStatus::Implemented, "book/flow.hpp", 42,
              "Who is adding and who is taking at the touch, tick by tick, and "
              "whether size that vanished was traded or just cancelled -- with "
              "absorption and liquidity-withdrawal flags."},
     AtlasRow{"4. Microstructure & execution", "OBI trader",
-             AtlasStatus::Implemented, "live/obi_trader.hpp", 24,
+             AtlasStatus::Implemented, "live/obi_trader.hpp", 42,
              "A beginner's order-flow scalper: enters only when imbalance, "
              "flow, real aggressive trades, a breakout and the costs all "
              "agree; futures long or short, or the same view as a sold option."},

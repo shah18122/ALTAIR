@@ -19,7 +19,7 @@ inline constexpr std::array<NavigationGroup, 7> kNavigationGroups{{
 }};
 /// The order groups appear in: trading and the brokers that feed it first.
 inline constexpr std::array<int, 7> kNavigationGroupOrder{{0, 5, 1, 2, 3, 4, 6}};
-inline constexpr std::array<NavigationPage, 42> kNavigationPages{{
+inline constexpr std::array<NavigationPage, 43> kNavigationPages{{
     {"market.grid", "Live Grid", 0},
     {"market.chart", "Chart", 0},
     {"market.terminal", "Terminal", 0},
@@ -62,18 +62,20 @@ inline constexpr std::array<NavigationPage, 42> kNavigationPages{{
     {"strategies.backtests", "Backtests", 2},
     {"models.findings", "Daily findings", 3},
     {"system.work-log", "Work log", 6},
+    {"market.order-flow", "Order Flow", 0},
 }};
 // Traversal order is NOT a legacy page index.
 // Within a group: what is used most comes first (Backtests: every trade log;
 // then Demo Trading, Threshold). Daily findings heads Models & Research and
 // Work log heads System & Audit: the day's results, and all the work done.
 // Start here (ALTAIR in plain words, desktop/start_page.hpp) heads the list.
+// Order Flow (desktop/order_flow_page.hpp) follows the Terminal it reads from.
 // The model pages (DCF, Aggregator, ML Trees, Regimes, Forecast, Memory,
 // Neural, Features, Volatility, Analytics, Microstructure, Cointegration,
 // Sizing, Flagging) are not listed: they open from the Model Atlas, which has
 // the way back. Their routes stay so saved links and the Atlas still work.
-inline constexpr std::array<int, 23> kNavigationOrder{{
-    38, 2, 34, 12, 21, 39, 35, 36, 31, 19, 8, 22, 20, 40, 32, 3, 15, 14, 6, 41, 4, 11, 37
+inline constexpr std::array<int, 24> kNavigationOrder{{
+    38, 2, 42, 34, 12, 21, 39, 35, 36, 31, 19, 8, 22, 20, 40, 32, 3, 15, 14, 6, 41, 4, 11, 37
 }};
 /// A page the sidebar lists (the rest open from the Model Atlas or search).
 [[nodiscard]] constexpr bool nav_listed(int index) noexcept {
