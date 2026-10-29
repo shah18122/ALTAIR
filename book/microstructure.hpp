@@ -1,4 +1,11 @@
-// book/microstructure.hpp — imbalance and microprice.
+// book/microstructure.hpp — imbalance and microprice on a BookState.
+//
+// SINCE 2026-10-29 A THIN ADAPTER. The arithmetic lives once, in book/flow.hpp
+// (the live OBI engine's kernels: flow::imbalance, flow::weighted_imbalance,
+// flow::microprice); this file only reads a BookState (the 5-level Kite-era
+// book) into them, so the Quant page and the feature builder keep their API
+// and there is no second copy of the math. The live engine, at 5 or 50
+// levels, is flow::FlowEngine.
 //
 // P2-09a. The stateless third of P2-09: pure functions of a BookState, no
 // history, no clock. VPIN and Kyle's lambda need rolling windows (P2-09b);
@@ -18,6 +25,7 @@
 
 #pragma once
 
+#include <book/flow.hpp>
 #include <book/l2_book.hpp>
 
 #include <cstddef>
@@ -94,15 +102,8 @@ obi(const BookState& b, std::uint8_t levels = 1) noexcept {
     if (!bd || !ad) {
         return std::nullopt;
     }
-    const std::int64_t bq = bd->qty.raw();
-    const std::int64_t aq = ad->qty.raw();
-    const std::int64_t total = bq + aq;
-    if (total <= 0) {
-        // D6: 0.0 would mean "perfectly balanced", which is a strong claim.
-        // The truth here is that there is no information.
-        return std::nullopt;
-    }
-    return static_cast<double>(bq - aq) / static_cast<double>(total);
+    // D6: no size at all is "no information", not "balanced" -- flow::imbalance is empty then.
+    return flow::imbalance(bd->qty.raw(), ad->qty.raw());
 }
 
 /// As `obi`, with harmonic weights w(k) = 1/(1+k).
@@ -124,19 +125,9 @@ weighted_obi(const BookState& b,
         return std::nullopt;
     }
 
-    double wb = 0.0;
-    double wa = 0.0;
-    for (std::uint8_t k = 0; k < nb; ++k) {
-        wb += static_cast<double>(b.bid[k].qty.raw()) / static_cast<double>(1 + k);
-    }
-    for (std::uint8_t k = 0; k < na; ++k) {
-        wa += static_cast<double>(b.ask[k].qty.raw()) / static_cast<double>(1 + k);
-    }
-    const double total = wb + wa;
-    if (!(total > 0.0)) {
-        return std::nullopt;
-    }
-    return (wb - wa) / total;
+    static const flow::LevelWeights harmonic = flow::LevelWeights::harmonic();
+    return flow::weighted_imbalance([&](std::size_t k) { return b.bid[k].qty.raw(); }, nb,
+                                    [&](std::size_t k) { return b.ask[k].qty.raw(); }, na, harmonic);
 }
 
 /// Size-weighted fair price at the touch. UNIT: paise.
@@ -159,28 +150,12 @@ microprice(const BookState& b) noexcept {
     if (!is_tradable(b)) {
         return std::nullopt;
     }
-    const DepthLevel& bid = b.bid[0];
-    const DepthLevel& ask = b.ask[0];
-
-    const std::int64_t bp = bid.px.raw();
-    const std::int64_t bq = bid.qty.raw();
-    const std::int64_t ap = ask.px.raw();
-    const std::int64_t aq = ask.qty.raw();
-
-    const std::int64_t total = bq + aq;
-    if (total <= 0) {
-        return std::nullopt;          // D6
-    }
-    if (detail::mul_overflows(bp, aq) || detail::mul_overflows(ap, bq)) {
+    // D2: exact integers; overflow (and no size, D6) is empty, never a wrapped number.
+    const auto r = flow::microprice(b.bid[0].px.raw(), b.bid[0].qty.raw(), b.ask[0].px.raw(), b.ask[0].qty.raw());
+    if (!r) {
         return std::nullopt;
     }
-    const std::int64_t lhs = bp * aq;
-    const std::int64_t rhs = ap * bq;
-    // The sum can overflow even when both products fit.
-    if (lhs > 0 && rhs > std::numeric_limits<std::int64_t>::max() - lhs) {
-        return std::nullopt;
-    }
-    return Price{(lhs + rhs) / total};
+    return Price{r->truncated()};
 }
 
 } // namespace altair

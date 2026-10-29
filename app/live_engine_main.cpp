@@ -63,6 +63,7 @@
 #include <live/desk_trader.hpp>
 #include <live/straddle.hpp>
 #include <live/models.hpp>
+#include <live/obi_trader.hpp>
 #include <live/option_arb.hpp>
 #include <live/threshold.hpp>
 #include <live/report.hpp>
@@ -650,6 +651,19 @@ int main(int argc, char** argv) {
     if (dir->names.empty()) engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dirs, 0));
     engine.add_model(std::make_unique<lv::LivePairsModel>(pf));
     engine.add_model(std::make_unique<lv::LiveStatArbModel>(std::move(sa)));
+    // Order-book imbalance (book/flow.hpp, live/obi_trader.hpp): tick by tick
+    // on every book and print; the near future long or short, and the same
+    // signal as a SOLD put or call. Paper only. The watch file is not on the
+    // tape, so a replay runs without it.
+    for (const char* under : {"NIFTY", "BANKNIFTY"})
+        for (const lv::ObiMode mode : {lv::ObiMode::Futures, lv::ObiMode::SellOptions}) {
+            lv::ObiTraderRules r;
+            r.under = under;
+            r.mode = mode;
+            if (r.under == "BANKNIFTY") { r.target_pts = 25.0; r.stop_pts = 15.0; r.safety_pts = 2.0; }
+            if (!replaying) r.watch_file = (root / "data/live/obi_watch.csv").string();
+            engine.add_model(std::make_unique<lv::LiveObiTraderModel>(r));
+        }
     // The event-driven strategies, each with its settings: altair_tune's
     // (config/model_params/<key>.toml) where it found better ones on recorded
     // FYERS days, else the defaults; a replay uses the ones on its tape.

@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include <book/flow.hpp>
+#include <book/trade_flow.hpp>
 #include <book/l2_book.hpp>
 #include <book/microstructure.hpp>
 #include <features/vector.hpp>
