@@ -62,9 +62,15 @@ OpenSSL. The desktop needs Qt 6.8+ (Core, Gui, Network, Svg, Widgets).
 ### Windows (primary)
 
 ```bat
-build.bat            :: default preset: engine + tests (+ desktop when Qt is found)
-build.bat net        :: + broker helpers and the FYERS feed via vcpkg (use this one)
+build.bat net        :: FYERS feed + broker helpers via vcpkg (use this one): build what changed, no tests
+build.bat net app    :: only the apps (desktop, price service, live engine): fastest after an edit
+build.bat net test   :: build everything, then run the tests in parallel
+build.bat net full   :: configure afresh + build + test (the old behaviour)
+build.bat            :: same modes, preset "default" (no vcpkg)
 ```
+
+Configure runs only the first time (or with `full`); ninja re-runs CMake by
+itself when a CMakeLists.txt changes.
 
 On Windows, CMake defaults Qt to `D:/Qt/6.8.3/msvc2022_64`, or
 `C:/Qt/6.8.3/msvc2022_64` when D: has none; pass `-DALTAIR_QT_ROOT=<path>` to
