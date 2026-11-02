@@ -50,6 +50,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -86,6 +87,14 @@ struct LiveRiskLimits {
     double max_gross_notional = 1.0e8;     ///< rupees: |qty x price| of everything held or working, plus the new order
     double max_daily_loss = 2.0e5;         ///< rupees: today's realised (gross where unpriced) plus open marks
     double max_margin = 1.0e7;             ///< rupees: estimated margin (live/margin.hpp) of everything held or working, plus the new order
+    /// Smit's standing rule (2026-10-25): options are SOLD, never bought to
+    /// open. Enforced here for every model, whatever its own code does; a
+    /// short option is still bought back to close it (exits are not checked).
+    bool options_sell_only = true;
+    /// Entries one model may submit in any 60 s of feed time: a model that
+    /// loops on a bad signal is stopped here, not by the account (nautilus's
+    /// order-rate limit). 0 = no limit.
+    std::size_t max_entries_per_minute = 30;
 };
 
 /// The estimated margin at one minute's close: what the CLI appends to margin.csv.
@@ -209,6 +218,10 @@ public:
         // known then; a new session resets before its first tick is kept.
         advance(ns);
         LiveState& s = state_[p.token];
+        // What traded in this print, for a passive entry's queue: the day's
+        // volume moved (FYERS prints are snapshots that can cover several
+        // trades), else the print's own quantity.
+        const std::int64_t traded = p.has(kPriceHasVolume) && s.volume > 0 ? std::max<std::int64_t>(0, p.volume - s.volume) : p.last_qty;
         s.ltp = p.last_paise;
         s.last_ns = ns;
         if (p.has(kPriceHasVolume)) s.volume = p.volume;
@@ -219,6 +232,7 @@ public:
         replay_ = replay_ || s.replay;
         if (!bars_.feed(p.token, static_cast<double>(p.last_paise) / 100.0, ns, s.volume, [](std::uint32_t, const LiveBar&) {}))
             ++late_prints_;
+        book_.on_print(p.token, p.last_paise, traded, std::max(ns, clock_ns_));
         book_.on_market(p.token, std::max(ns, clock_ns_));
         for (auto& m : models_) m->on_print(*this, p, recv_ns > 0 ? recv_ns : ns);
         if (after_event) after_event();
@@ -630,6 +644,14 @@ private:
         if (paused()) return "decisions paused: " + pause_note_;
         if (!r.carry && live_minute_of_day(live_ist_minute_index(r.ns)) >= kLiveSquareOffMinute)
             return std::string("intraday entry after the 15:20 square-off");
+        if (limits_.options_sell_only && r.inst != nullptr && r.side > 0
+            && (r.inst->kind == LiveKind::Call || r.inst->kind == LiveKind::Put))
+            return "options are sold only: an opening buy of " + r.inst->symbol + " is refused";
+        auto& times = entry_times_[r.model];
+        while (!times.empty() && r.ns - times.front() >= 60'000'000'000LL) times.pop_front();
+        if (limits_.max_entries_per_minute > 0 && times.size() >= limits_.max_entries_per_minute)
+            return "order rate: " + std::to_string(times.size()) + " entries in the last minute (limit "
+                 + std::to_string(limits_.max_entries_per_minute) + ")";
         const auto ps = book_.positions();
         if (ps.size() + 1 > limits_.max_positions)
             return "position limit (" + std::to_string(limits_.max_positions) + ")";
@@ -662,8 +684,12 @@ private:
         }
         if (-day_pnl > limits_.max_daily_loss)
             return "daily loss " + live_fmt::num(-day_pnl, 0) + " over " + live_fmt::num(limits_.max_daily_loss, 0);
+        times.push_back(r.ns);   // allowed: it counts against the rate
         return std::nullopt;
     }
+    /// Feed times of each model's allowed entries in the last minute (the
+    /// order-rate limit); written only from risk_check, on the feed thread.
+    mutable std::unordered_map<std::string, std::deque<std::int64_t>> entry_times_;
 
     std::vector<LiveInstrument> u_;
     std::unordered_map<std::uint32_t, std::size_t> index_;

@@ -517,9 +517,27 @@ holds:
   new cannot be priced (`live/margin.hpp`: conservative, **not SPAN** — futures
   at scan + exposure, short options NSE-shaped with no credit for premium or
   hedges, long options at premium);
-- today's loss is past `--max-daily-loss`.
+- today's loss is past `--max-daily-loss`;
+- it would **buy an option to open** (Smit's standing rule: options are sold
+  only). This holds for every model, whatever its own code does; buying a
+  short option back to close it is an exit and is never refused;
+- the model has already had 30 entries allowed in the last 60 s of feed time
+  (the order-rate limit: a model looping on a bad signal stops here).
 
 **Exits are never refused.**
+
+**Brackets: exits the paper book watches** (`LivePaperBook::set_bracket`,
+the idea of nautilus_trader's order emulator). A position can carry a stop
+and a target (rupees a unit, or a share of the entry), a trailing stop (a
+give-back from the best mark since entry), a time stop, and a group. They are
+checked on every quote of the instrument against the price the exit would
+deal at (a long's bid, a short's ask) and on the clock for the time stop; the
+exit's reason names the rule and the numbers. One leg's bracket firing closes
+every position of the same model in the same group. Brackets are not
+journaled: a model sets them again after a restart. The **books straddle and
+the 16-delta strangle** use one: both legs are bought back once either leg's
+ask is 50 % above its sale price (`--straddle-leg-stop PCT`, 0 = off; it is on
+the tape for replays). The plain straddle stays the control, without a stop.
 
 **Clock and schedule.**
 - **The feed's clock.** Everything runs on the feed's own time stamps, never
@@ -639,8 +657,15 @@ in `data/live/tapes/`.
 bars, which cannot judge a strategy that lives at the touch. The tuner replays
 the tapes instead:
 - **Strategies:** the arbitrage (margin over costs, how long a pair may wait),
-  OHL (stop, trail start, trail) and the option arbitrage (margin to enter,
-  when to unwind).
+  OHL (stop, trail start, trail), the option arbitrage (margin to enter,
+  when to unwind), and every **OBI trader** (`obi_<under>_<A-D>_<fut|opt>`,
+  16 of them): the OBI5 threshold and how long it must hold (A, B), the time
+  stop (C, D), the target (futures: target and stop scaled together; options:
+  the premium fall), and for option sales **resting at the ask against
+  hitting the bid** (`passive` 1 / 0).
+- **Tapes:** the engine's (`data/live/tapes/`) and the recorder's
+  (`data/store/tapes/<date>/`), oldest first. `--strategy` takes a key or a
+  prefix (`obi`, `obi_banknifty`, `obi_nykaa_C`).
 - **One pass a tape:** every grid point gets its own engine, so a tape is read
   once however large the grid.
 - **Walk-forward over the days:** each test day takes the setting that was
@@ -651,11 +676,75 @@ the tapes instead:
   adjustment for the whole grid (p < 0.10).
 - **Otherwise** the defaults stay and it says why. The engine prints which
   settings it runs with at start.
-- **Kept out of it:** SIM tapes (unless `--allow-sim`, for trying it out), and
-  passive against aggressive execution, which needs a queue-position fill
-  model in the paper book first.
+- **Kept out of it:** SIM tapes (unless `--allow-sim`, for trying it out),
+  and the straddle sellers (one decision a day on forecasts that are not on
+  the tape: they are judged on the recorded chains).
+- **Latency** (`--latency-ms 50,250,1000`): the first value is the verdict;
+  the others re-run everything and go to `data/live/tune/latency.csv`, to show
+  how much of a result survives a slower path, or a co-located one. The feed
+  lag (receive time minus the exchange's stamp on each print; FYERS stamps to
+  the second) is printed for every run.
 
-`data/live/tune/<key>.csv` holds every day × setting.
+`data/live/tune/<key>.csv` holds every day × setting, and
+`data/live/tune/<key>_stats.csv` the stats sheet of every setting
+(`live/trade_stats.hpp`): net, gross, expenses, cost share, trades, hit rate,
+average win and loss, expectancy, profit factor, daily Sharpe and Sortino,
+max drawdown, Calmar, average hold, and the 1 s / 10 s / 60 s markouts of the
+entries (negative at 1 s: the fills are being picked off).
+
+**The OBI option quoter** (`live/obi_quoter.hpp`, "OBI quoter BANKNIFTY" and
+one per stock in `config/obi_underlyings.csv`). hftbacktest's OBI market maker
+cut down to the house rule that options are only sold. It keeps a sale
+resting at the ask of the put and of the call two strikes out of the money,
+and leans away from the side the near future's book threatens:
+- future OBI5 >= +0.30 (bids heavy): the call quote is pulled, the put stays;
+- future OBI5 <= -0.30 (asks heavy): the put quote is pulled, the call stays;
+- in between: both are offered.
+A leg is also pulled while its own book is bid or its spread is over 6 ticks.
+A quote is placed only when a 10 % fall in the premium pays both fills'
+expenses plus 2 % of the premium. A filled sale gets a bracket: bought back at
+the ask once the premium is 10 % down (target) or 25 % up (stop), or after
+15 minutes. An unfilled quote times out with the book's entry timeout and is
+offered again at the new ask. After a losing trade that leg rests a minute.
+Rs 5,000 a day halts it. Quoting runs 09:20-15:00, and only once the session's
+first trade print has dated the day. Every quote, pull and exit goes in the
+decision log with its numbers. `altair_tune --strategy obiq_banknifty` sweeps
+the pull level, the target and how far out it quotes. Paper only, and not
+validated: NSE pays no maker rebate, so any edge has to come from the spread
+and the decay after STT and charges.
+
+**Choosing the OBI stocks: `altair_obi_select`** (`app/obi_select.hpp`). The
+idea is the Kalshi market maker's market selector: score every candidate on
+what it did and trade only the best. It replays one recorded session (the
+latest, or `--day`) and scores every NSE stock book on the tape (the NIFTY 50
+cash books; BSE twins and the indices are left out) by
+`0.5 × rank(value traded) + 0.3 × rank(touch depth in rupees) + 0.2 × rank(tight spread)`,
+each a rank among the candidates, sampled at most once a second in session
+hours. A stock needs 300 samples (`--min-samples`) to be scored.
+- The ranking always goes to `data/live/obi_selection.csv`.
+- `--write` rewrites `config/obi_underlyings.csv` with the best `--top`
+  (default 3, counting `--keep`); `--keep NYKAA` keeps a stock with its
+  current row. A new stock gets target = max(8 ticks, 4 × its median spread),
+  stop = half, safety = one tick, as a starting point for
+  `altair_tune --strategy obi_<stock>`.
+- Restart the price service and the live engine afterwards: the price
+  service streams the futures and chain of exactly the stocks in the file.
+- Dropping a stock is safe: the OBI traders square off at 15:20, so nothing
+  is left working or held on a stock taken out.
+- Nothing chooses on its own: run it after the close, read the ranking, then
+  `--write`.
+
+**Passive option sales** (`LivePaperBook::open_passive`,
+`book/queue_fill.hpp`). The OBI option sellers rest their sale at the ask
+by default. The paper book fills a resting order only as a resting order can
+fill: it joins the back of the level; trades at its price eat the volume
+ahead first; a shrink the trades do not explain is cancels, taken from ahead
+of it with probability f(front) / (f(front) + f(back)), f(x) = x³ (the
+probability queue model of hftbacktest); a trade through its price fills it
+up to what printed; a bid rising to its price takes the rest. It fills at its
+own price, and is cancelled unfilled after the entry timeout. Futures and
+every exit stay at the touch. The cube is not fitted yet: it is pessimistic
+until real resting fills say otherwise.
 
 **The replay** (`--replay TAPE`). The same engine, fed the tape, into
 `replay/<tape>/`:

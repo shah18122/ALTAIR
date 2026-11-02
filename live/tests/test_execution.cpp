@@ -64,6 +64,12 @@ void trade(LiveEngine& e, std::uint32_t tok, std::int64_t px, std::int64_t ns) {
     e.on_trade(p, ns);
 }
 
+void print(LiveEngine& e, std::uint32_t tok, std::int64_t px, std::int64_t volume, std::int64_t ns) {
+    PricePayload p;
+    p.token = tok; p.last_paise = px; p.volume = volume; p.flags = kPriceHasVolume;
+    e.on_trade(p, ns);
+}
+
 double cost5bp(const LiveInstrument&, bool, double q, double px, std::int64_t) { return 0.0005 * q * px; }
 
 /// A model that does nothing: the engine's own obligations are what is tested.
@@ -442,6 +448,139 @@ int main() {
         eq.side = -1; eq.carry = true;
         check(close_to(live_margin(eq), 1600.0), "a cash short is intraday whatever it says");
         check(live_margin(LiveMarginLeg{}) == 0.0, "nothing held, nothing blocked");
+    }
+
+    // ---- a passive sale rests at the ask and fills through its queue -----------
+    {
+        LiveEngine e(u, cost5bp);
+        print(e, 10, 2400100, 1'000, at(12, 0));
+        quote(e, 10, 2400000, 2400100, 100, at(12, 0));
+        std::string why;
+        check(e.book().open_passive("pas", u[1], -1, 1, at(12, 0), "rest", &why), "a passive sale is accepted at a fresh quote");
+        quote(e, 10, 2400000, 2400100, 100, at(12, 0, 1));   // past the latency: it rests behind the 100 shown
+        check(e.book().fills().empty(), "resting: nothing fills on a quote that does not cross");
+        print(e, 10, 2400100, 1'060, at(12, 0, 2));          // 60 trade at our price: the front is 40
+        check(e.book().fills().empty(), "the volume ahead trades first");
+        print(e, 10, 2400100, 1'120, at(12, 0, 3));          // 60 more: 20 reach us
+        const LivePosition* p = e.book().position("pas", 10);
+        check(p != nullptr && p->qty == 20 && p->side == -1 && p->entry == 24001.0 && e.book().fills().back().partial,
+              "a trade past the front fills the part that reached it, at our own price (the ask)");
+        print(e, 10, 2400200, 1'200, at(12, 0, 4));          // a buyer sweeps through our price
+        p = e.book().position("pas", 10);
+        check(p != nullptr && p->qty == 50 && p->state == LivePosState::Open, "a trade through the price fills the rest");
+        check(e.book().fills().back().reason.rfind("passive: ", 0) == 0, "the fill says it was passive");
+
+        // One that nobody trades with is cancelled at the timeout.
+        print(e, 11, 2400100, 500, at(12, 1));
+        quote(e, 11, 2400000, 2400100, 1'000, at(12, 1));
+        check(e.book().open_passive("pas2", u[2], -1, 1, at(12, 1), "rest", &why), "a second passive sale");
+        quote(e, 11, 2400000, 2400100, 1'000, at(12, 1, 1));
+        print(e, 11, 2400100, 600, at(12, 1, 5));             // 100 of the 1000 ahead
+        quote(e, 11, 2400000, 2400100, 1'000, at(12, 2, 2));
+        e.book().on_clock(at(12, 2, 2));
+        check(e.book().position("pas2", 11) == nullptr, "unfilled after the entry timeout: cancelled");
+
+        // A bid that rises to the offer crosses it: filled at once.
+        print(e, 11, 2400100, 700, at(12, 3));
+        quote(e, 11, 2400000, 2400100, 1'000, at(12, 3));
+        check(e.book().open_passive("pas3", u[2], -1, 1, at(12, 3), "rest", &why), "a third passive sale");
+        quote(e, 11, 2400000, 2400100, 1'000, at(12, 3, 1));
+        quote(e, 11, 2400100, 2400200, 1'000, at(12, 3, 2));
+        p = e.book().position("pas3", 11);
+        check(p != nullptr && p->qty == 50 && p->entry == 24001.0, "a crossing bid takes the resting offer at its price");
+    }
+
+    // ---- brackets: the book's own stops, targets, trails and time stops ---------
+    {
+        LiveExecPolicy instant;
+        instant.latency_ns = 0;
+        LiveEngine e(u, cost5bp, instant);
+        print(e, 10, 2400000, 100, at(13, 0));
+        quote(e, 10, 2399900, 2400100, 500, at(13, 0));
+        quote(e, 11, 2399900, 2400100, 500, at(13, 0));
+        std::string why;
+        check(e.book().open("br", u[1], -1, 1, at(13, 0), "short", false, &why), "a short to bracket");   // sold at 23999
+        LiveBracket b;
+        b.stop_pts = 20.0;
+        b.target_pts = 50.0;
+        check(e.book().set_bracket("br", 10, b) && !e.book().set_bracket("nobody", 10, b), "a bracket is set on a position, and only on one");
+        quote(e, 10, 2400500, 2400800, 500, at(13, 0, 5));   // ask 24008: 9 against
+        check(e.book().position("br", 10) != nullptr, "inside the stop: still held");
+        quote(e, 10, 2401500, 2401900, 500, at(13, 0, 6));   // ask 24019: 20 against
+        check(e.book().position("br", 10) == nullptr && !e.book().trades().empty()
+                  && e.book().trades().back().why_out.rfind("bracket: stop", 0) == 0,
+              "a short's stop fires on the ask, 20 against, and the exit says so");
+
+        quote(e, 10, 2399900, 2400100, 500, at(13, 1));
+        check(e.book().open("br2", u[1], 1, 1, at(13, 1), "long", false, &why), "a long to trail");   // bought at 24001
+        LiveBracket t;
+        t.trail_pts = 10.0;
+        t.target_pts = 100.0;
+        (void)e.book().set_bracket("br2", 10, t);
+        quote(e, 10, 2403000, 2403100, 500, at(13, 1, 5));   // bid 24030: +29
+        check(e.book().position("br2", 10) != nullptr, "running in profit: held");
+        quote(e, 10, 2402000, 2402100, 500, at(13, 1, 6));   // bid 24020: gave back 10
+        check(e.book().position("br2", 10) == nullptr && e.book().trades().back().why_out.rfind("bracket: trailing stop", 0) == 0
+                  && e.book().trades().back().gross > 0.0,
+              "a trailing stop locks in what was made once the move gives back the trail");
+
+        // A group: one leg's stop closes the other (a straddle's legs).
+        quote(e, 10, 2399900, 2400100, 500, at(13, 2));
+        quote(e, 11, 2399900, 2400100, 500, at(13, 2));
+        check(e.book().open("grp", u[1], -1, 1, at(13, 2), "leg 1", false, &why) && e.book().open("grp", u[2], -1, 1, at(13, 2), "leg 2", false, &why),
+              "two sold legs");
+        LiveBracket g;
+        g.stop_pct = 0.001;   // 24 a unit
+        g.group = "legs";
+        (void)e.book().set_bracket("grp", 10, g);
+        (void)e.book().set_bracket("grp", 11, g);
+        quote(e, 11, 2402500, 2402600, 500, at(13, 2, 5));   // leg 2's ask 24026: 27 against
+        check(e.book().flat("grp"), "one leg's stop closes both legs of the group");
+        bool told = false;
+        for (const auto& tr : e.book().trades()) told = told || (tr.model == "grp" && tr.why_out.find("bracket group 'legs'") != std::string::npos);
+        check(told, "the other leg's exit names the group and the leg that fired");
+
+        // A time stop, on the clock.
+        quote(e, 10, 2399900, 2400100, 500, at(13, 3));
+        check(e.book().open("tm", u[1], 1, 1, at(13, 3), "timed", false, &why), "a timed long");
+        LiveBracket ts;
+        ts.expire_ns = at(13, 5);
+        (void)e.book().set_bracket("tm", 10, ts);
+        e.book().on_clock(at(13, 4));
+        check(e.book().position("tm", 10) != nullptr, "before the time stop: held");
+        quote(e, 10, 2399900, 2400100, 500, at(13, 5));
+        check(e.book().position("tm", 10) == nullptr && e.book().trades().back().why_out == "bracket: time stop", "at the time stop: closed");
+    }
+
+    // ---- the risk gate: options sold only, and an order-rate limit -------------
+    {
+        std::vector<LiveInstrument> uo = universe();
+        uo.push_back(inst(20, "NIFTY_CE", LiveKind::Call, 75, kToday + 7));
+        uo.back().strike = 24000.0;
+        LiveExecPolicy instant;
+        instant.latency_ns = 0;
+        LiveEngine e(uo, cost5bp, instant);
+        quote(e, 20, 10000, 10100, 500, at(10, 30));
+        trade(e, kLiveNiftyToken, 2400000, at(10, 30));
+        quote(e, kLiveNiftyToken, 2399900, 2400100, 1, at(10, 30));   // the underlying, for the margin
+        std::string why;
+        check(!e.book().open("buyer", uo.back(), 1, 1, at(10, 30), "buy a call", false, &why) && why.find("options are sold only") != std::string::npos,
+              "an opening BUY of an option is refused for every model");
+        const bool sold = e.book().open("seller", uo.back(), -1, 1, at(10, 30), "sell a call", false, &why);
+        check(sold, "selling it is allowed");
+        check(e.book().close("seller", 20, at(10, 30), "buy back"), "and buying it back to close is allowed");
+        LiveRiskLimits l = e.limits();
+        l.max_entries_per_minute = 3;
+        e.set_limits(l);
+        quote(e, 10, 2399900, 2400100, 500, at(10, 31));
+        int ok = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (e.book().open("fast", u[1], 1, 1, at(10, 31, i), "go", false, &why)) ++ok;
+            (void)e.book().close("fast", 10, at(10, 31, i), "out");
+        }
+        check(ok == 3 && why.find("order rate") != std::string::npos, "the 4th entry inside a minute is refused: order rate");
+        quote(e, 10, 2399900, 2400100, 500, at(10, 32, 1));
+        check(e.book().open("fast", u[1], 1, 1, at(10, 32, 1), "go", false, &why), "a minute later it may enter again");
     }
 
     // ---- latency percentiles ----------------------------------------------------

@@ -169,6 +169,90 @@ int main() {
               && tn::read_params(root / "config/model_params/arbitrage.toml") == arb.points[2],
           "an accepted setting is written so the engine reads it back exactly");
 
+    // ---- the OBI traders ----------------------------------------------------------------
+    const auto og = tn::obi_grids({{"BANKNIFTY", 25.0, 15.0, 2.0}, {"NYKAA", 0.80, 0.40, 0.05}});
+    check(og.size() == 16, "16 OBI grids: two underlyings x four trade types x futures / option sale");
+    bool defaults_are_today = true, keys_ok = true;
+    for (const auto& g : og) {
+        live::ObiTraderRules r = tn::obi_base_rules(g.key.find("nykaa") != std::string::npos ? live::ObiUnderlying{"NYKAA", 0.80, 0.40, 0.05}
+                                                                                           : live::ObiUnderlying{"BANKNIFTY", 25.0, 15.0, 2.0},
+                                                    live::ObiType::A, live::ObiMode::Futures);
+        const live::ObiTraderRules before = r;
+        tn::apply_obi_params(r, g.points[g.defaults]);
+        defaults_are_today = defaults_are_today && r.obi_entry == before.obi_entry && r.min_persist_ns == before.min_persist_ns
+                          && r.target_pts == before.target_pts && r.stop_pts == before.stop_pts && r.max_hold_ns == before.max_hold_ns
+                          && r.option_target_pct == before.option_target_pct && r.passive_options == before.passive_options;
+        keys_ok = keys_ok && g.make_all != nullptr && g.key.rfind("obi_", 0) == 0;
+    }
+    check(defaults_are_today, "every OBI grid's defaults are today's rules exactly");
+    check(keys_ok, "each builds its own hub and trader");
+    const tn::Grid* aopt = nullptr;
+    for (const auto& g : og) if (g.key == "obi_banknifty_A_opt") aopt = &g;
+    check(aopt != nullptr && aopt->points.size() == 54 && aopt->model == "OBI A option-sell BANKNIFTY",
+          "obi_banknifty_A_opt: threshold x hold x option target x passive = 54 settings, judged on its own model");
+    {
+        live::ObiTraderRules r = tn::obi_base_rules({"BANKNIFTY", 25.0, 15.0, 2.0}, live::ObiType::A, live::ObiMode::SellOptions);
+        tn::apply_obi_params(r, {{"obi_entry", 0.4}, {"persist_ms", 1000.0}, {"target_scale", 1.5}, {"passive", 0.0}});
+        check(r.obi_entry == 0.4 && r.min_persist_ns == 1'000'000'000 && r.target_pts == 37.5 && r.stop_pts == 22.5 && !r.passive_options,
+              "a tuned file sets the threshold, the hold, scales target and stop together, and can turn resting off");
+    }
+    {
+        const auto qg = tn::quoter_grids({{"BANKNIFTY", 25.0, 15.0, 2.0}, {"NYKAA", 0.80, 0.40, 0.05}});
+        check(qg.size() == 2 && qg[0].key == "obiq_banknifty" && qg[0].points.size() == 27 && qg[0].model == "OBI quoter BANKNIFTY"
+                  && qg[0].make_all != nullptr,
+              "the option quoter: one grid an underlying, pull level x target x strikes out = 27 settings");
+        live::ObiQuoterRules q, d;
+        tn::apply_quoter_params(q, qg[0].points[qg[0].defaults]);
+        check(q.pull_obi == d.pull_obi && q.target_pct == d.target_pct && q.strikes_otm == d.strikes_otm,
+              "the quoter grid's defaults are today's rules exactly");
+        tn::apply_quoter_params(q, {{"pull_obi", 0.5}, {"strikes_otm", 3.0}});
+        check(q.pull_obi == 0.5 && q.strikes_otm == 3 && q.target_pct == d.target_pct, "a tuned file sets only its own keys");
+    }
+    {
+        // The engine runs an OBI grid through the same tape pass as the others.
+        std::vector<tn::DayRun> runs;
+        check(tn::run_tape_group(root / "2026-10-05-100000.tape", {&arb, &og.front()}, cost, runs, err) && runs.size() == 2
+                  && runs[0].trips[arb.defaults] == 1 && runs[1].net.size() == og.front().points.size(),
+              "several grids share one pass of a tape; each gets its own day");
+        check(runs[0].rec[in1].trade_net.size() == 1 && runs[0].rec[in1].markout_n[0] == 2 && runs[0].rec[in1].markout_n[2] == 0,
+              "every round trip, and each entry leg's markout once its horizon has passed (the 60 s one has not)");
+        tn::FeedLag lag;
+        std::vector<tn::DayRun> r2;
+        check(tn::run_tape_group(root / "2026-10-05-100000.tape", {&arb}, cost, r2, err, 1'000'000'000, &lag) && lag.hist.count() >= 3,
+              "the feed lag is measured off the trade prints");
+        check(r2[0].trips[in1] == 0 || r2[0].net[in1] != runs[0].net[in1], "a slower latency changes what the strategy gets");
+    }
+    {
+        fs::create_directories(root / "data/store/tapes/2026-10-07");
+        fs::create_directories(root / "data/live/tapes");
+        std::ofstream(root / "data/store/tapes/2026-10-07/2026-10-07-091000.tape") << "x";
+        std::ofstream(root / "data/live/tapes/2026-10-06-091000.tape") << "x";
+        const auto t = tn::find_tapes(root);
+        check(t.size() == 2 && t[0].filename() == "2026-10-06-091000.tape" && t[1].filename() == "2026-10-07-091000.tape",
+              "the engine's tapes and the recorder's are both found, oldest first");
+    }
+
+    // ---- the stats sheet ----------------------------------------------------------------
+    {
+        live::TradeRecord r;
+        r.trade_net = {100, -50, 200, -25};
+        r.hold_s = {10, 20, 30, 40};
+        r.daily_net = {50, 175, -100, 0};
+        r.gross = 300;
+        r.expenses = 75;
+        r.markout_sum = {-40, 20, 60};
+        r.markout_n = {4, 4, 4};
+        const auto st = live::stats_sheet(r);
+        check(st.trades == 4 && st.hit_rate == 0.5 && st.expectancy == 56.25 && st.profit_factor == 4.0,
+              "hit rate, expectancy and profit factor per round trip");
+        check(st.max_drawdown == 100.0 && st.net == 125.0 && std::fabs(st.cost_share - 0.25) < 1e-12 && st.avg_hold_s == 25.0,
+              "drawdown on the cumulative daily net, costs as a share of gross, the average hold");
+        check(st.markout[0] == -10.0 && st.markout[2] == 15.0 && std::isfinite(st.sharpe), "markouts a trade, and a daily Sharpe");
+        live::TradeRecord one;
+        one.daily_net = {10};
+        check(!std::isfinite(live::stats_sheet(one).sharpe), "one day has no Sharpe: NaN, never a made-up zero");
+    }
+
     fs::remove_all(root);
     std::printf("%s\n", failures == 0 ? "all tuning checks passed" : "tuning checks did not pass");
     return failures == 0 ? 0 : 1;
