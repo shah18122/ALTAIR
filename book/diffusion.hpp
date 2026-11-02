@@ -66,7 +66,10 @@ struct Config {
                                       300 * kMsNs, 500 * kMsNs,  750 * kMsNs,  1000 * kMsNs,
                                       1500 * kMsNs, 2000 * kMsNs, 3000 * kMsNs, 5000 * kMsNs};
     std::int64_t window_ns = 300 * kSecNs;      ///< the lead-lag window
-    std::int64_t recompute_ns = kSecNs;         ///< the profile is refreshed at most this often
+    /// The profile is refreshed at most this often: it costs (moves) x (lags)
+    /// per pair, so every 5 s keeps ~25 pairs well under a millisecond a tick.
+    std::int64_t recompute_ns = 5 * kSecNs;
+    std::size_t max_moves = 3000;               ///< per side in the window; the oldest go first
     std::int64_t sample_ns = kSecNs;            ///< the grid of the gap and the discovery fit
     std::size_t max_samples = 900;              ///< 15 minutes of seconds
     std::size_t min_moves = 20;                 ///< price changes each side before anything is read
@@ -171,7 +174,7 @@ private:
 
     void trim(Side& s) {
         const std::int64_t cut = now_ - c_.window_ns;
-        while (!s.moves.empty() && s.moves.front().t1 < cut) {
+        while (!s.moves.empty() && (s.moves.front().t1 < cut || s.moves.size() > c_.max_moves)) {
             s.sum_sq -= s.moves.front().r * s.moves.front().r;
             s.moves.pop_front();
         }
