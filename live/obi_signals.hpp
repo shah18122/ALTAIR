@@ -51,6 +51,30 @@ struct ObiSignalRules {
     std::int64_t min_persist_ns = 500'000'000;
 };
 
+/// The decision alone: +1 long, -1 short, 0 none -- the same answer as
+/// obi_signal(), without building the reason. This is what runs on every tick:
+/// no string, no snprintf, no allocation, and for A / B no branches -- the four
+/// conditions are evaluated together and AND-ed as bits, so a mispredicted
+/// early exit cannot cost a pipeline flush. obi_signal() is built on it, so
+/// the two can never disagree.
+[[nodiscard]] inline int obi_decide(ObiType type, const flow::FlowSignals& s, const ObiSignalRules& r) noexcept {
+    switch (type) {
+    case ObiType::A:
+    case ObiType::B: {
+        const bool a = type == ObiType::A;
+        const int dir = a ? 1 : -1;
+        const long long mine = a ? s.buy_exec : s.sell_exec, theirs = a ? s.sell_exec : s.buy_exec;
+        const unsigned fire = static_cast<unsigned>(s.valid) & static_cast<unsigned>(!(s.obi_short * dir < r.obi_entry))
+                              & static_cast<unsigned>(s.persist * dir >= r.min_persist)
+                              & static_cast<unsigned>(s.persist_ns >= r.min_persist_ns) & static_cast<unsigned>(mine > theirs);
+        return dir & -static_cast<int>(fire);   // fire ? dir : 0
+    }
+    case ObiType::C: return s.valid ? s.absorption : 0;
+    case ObiType::D: return s.valid ? s.withdrawal : 0;
+    }
+    return 0;
+}
+
 /// +1 long, -1 short, 0 none for `type` on `s`; `why` says what it saw, or
 /// what is missing, with the numbers.
 [[nodiscard]] inline int obi_signal(ObiType type, const flow::FlowSignals& s, const ObiSignalRules& r, std::string& why) {

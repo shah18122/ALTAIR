@@ -158,17 +158,21 @@ template <class BidQty, class AskQty>
     return (b - a) / t;
 }
 
+namespace detail {
+/// All ones when `c`, else zero: a comparison turned into an AND mask.
+[[nodiscard]] constexpr std::int64_t mask(bool c) noexcept { return -static_cast<std::int64_t>(c); }
+} // namespace detail
+
 /// Cont-Kukanov-Stoikov order flow imbalance between two quotes of one level.
 /// Exact integers: bids added or lifted count +, asks added or hit count -.
+/// Branch-free: each of the four price comparisons becomes an all-ones / zero
+/// mask that gates its size with AND, so a touch that moves at random cannot
+/// mispredict. The same sums as the four ifs it replaced.
 [[nodiscard]] constexpr std::int64_t ofi_level(std::int64_t pb0, std::int64_t qb0, std::int64_t pa0, std::int64_t qa0,
                                                std::int64_t pb1, std::int64_t qb1, std::int64_t pa1,
                                                std::int64_t qa1) noexcept {
-    std::int64_t e = 0;
-    if (pb1 >= pb0) e += qb1;
-    if (pb1 <= pb0) e -= qb0;
-    if (pa1 <= pa0) e -= qa1;
-    if (pa1 >= pa0) e += qa0;
-    return e;
+    using detail::mask;
+    return (qb1 & mask(pb1 >= pb0)) - (qb0 & mask(pb1 <= pb0)) - (qa1 & mask(pa1 <= pa0)) + (qa0 & mask(pa1 >= pa0));
 }
 
 /// Which side initiated a trade, from the book before it.
@@ -256,6 +260,13 @@ namespace detail {
 /// Prints or drops waiting to be explained, oldest first: a fixed ring.
 /// A matched item drops to zero size and is skipped, then popped once it
 /// reaches the front; nothing is ever shifted.
+///
+/// It also keeps a price ENVELOPE: no item still waiting is priced below lo()
+/// or above hi(). It only widens while the ring holds anything and resets when
+/// it empties, so it can be loose but never wrong -- a matcher may skip the
+/// whole scan when the envelope cannot reach its price, and nothing it skips
+/// could have matched (a deep level dropping on a 50-level book is the usual
+/// case: no waiting print traded that far through the touch).
 class Pending {
 public:
     struct Item { std::int64_t ns = 0, px = 0, qty = 0; };
@@ -271,15 +282,24 @@ public:
         std::optional<Item> out;
         trim();
         if (size() == kCap) { out = at(0); pop(); }
+        // RULE 11: not a clamp -- a running min / max of the prices waiting, so
+        // the envelope only ever widens to cover them; no value is cut off.
+        if (h_ == t_) { lo_ = hi_ = x.px; }   // empty: the envelope starts again
+        else { lo_ = x.px < lo_ ? x.px : lo_; hi_ = x.px > hi_ ? x.px : hi_; }
         a_[t_ & (kCap - 1)] = x;
         ++t_;
         return out;
     }
-    void clear() noexcept { h_ = t_ = 0; }
+    void clear() noexcept { h_ = t_ = 0; lo_ = kNone; hi_ = -kNone; }
+    /// The envelope (see the class comment); lo() > hi() when nothing waits.
+    [[nodiscard]] std::int64_t lo() const noexcept { return h_ == t_ ? kNone : lo_; }
+    [[nodiscard]] std::int64_t hi() const noexcept { return h_ == t_ ? -kNone : hi_; }
 
 private:
+    static constexpr std::int64_t kNone = std::numeric_limits<std::int64_t>::max();
     std::array<Item, kCap> a_{};
     std::size_t h_ = 0, t_ = 0;
+    std::int64_t lo_ = kNone, hi_ = -kNone;
 };
 
 /// Sliding-window extreme of (ns, value) by time: monotonic deque, fixed size.
@@ -514,9 +534,15 @@ private:
             // Against the old book at the same index: always initialised
             // memory, and only trusted when every index matched.
             pxdiff |= px ^ old[k].px;
+            // Branch-free: the slot at ndrop is always written (ndrop <= k <
+            // kMaxLevels) and only kept -- ndrop advanced -- when the size fell;
+            // the sign bit of dq is the mask that routes it to drops or adds.
             const std::int64_t dq = q - old[k].qty;
-            if (dq < 0) { d.drop_at[d.ndrop] = static_cast<std::uint8_t>(k); d.drop_qty[d.ndrop] = -dq; ++d.ndrop; }
-            else d.add += dq;
+            const std::int64_t fell = dq >> 63;   // -1 when dq < 0, else 0 (arithmetic shift, C++20)
+            d.drop_at[d.ndrop] = static_cast<std::uint8_t>(k);
+            d.drop_qty[d.ndrop] = -dq;
+            d.ndrop += static_cast<std::size_t>(fell & 1);
+            d.add += dq & ~fell;
         }
         d.same = have_book_ && k == old_n && pxdiff == 0;
         return k;
@@ -558,12 +584,17 @@ private:
     std::int64_t drop(std::int64_t px, std::int64_t q, std::int64_t ns, bool bid) noexcept {
         detail::Pending& prints = bid ? sell_wait_ : buy_wait_;
         std::int64_t got = 0;
-        for (std::size_t k = 0; k < prints.size() && q > 0; ++k) {
+        // Gate: a sell print reaches a bid at px only if priced <= px, a buy an
+        // ask only if priced >= px. Outside the envelope nothing can match.
+        const bool can = bid ? prints.lo() <= px : prints.hi() >= px;
+        for (std::size_t k = 0; can && k < prints.size() && q > 0; ++k) {
             auto& p = prints.at(k);
-            if (p.qty <= 0 || !reaches(!bid, p.px, px)) continue;
+            // Branch-free: a print that is spent or does not reach this level
+            // matches zero (its mask is zero), instead of a skip.
+            const bool ok = (p.qty > 0) & reaches(!bid, p.px, px);
             // RULE 11: not a capacity clamp -- matching arithmetic; what is
             // left of either side carries on (and waits), nothing is dropped.
-            const std::int64_t m = p.qty < q ? p.qty : q;
+            const std::int64_t m = (p.qty < q ? p.qty : q) & detail::mask(ok);
             p.qty -= m; q -= m; got += m;
         }
         prints.trim();
@@ -576,14 +607,27 @@ private:
     std::int64_t print(std::int64_t px, std::int64_t q, std::int64_t ns, bool buy) noexcept {
         detail::Pending& drops = buy ? ask_drop_ : bid_drop_;
         std::int64_t got = 0;
-        while (q > 0) {
-            std::size_t best = drops.size();
-            for (std::size_t k = 0; k < drops.size(); ++k) {
+        // Best price first: a buy takes the lowest ask, a sell the highest bid.
+        // As a key to minimise -- the price, sign-flipped for a sell with
+        // (x ^ m) - m -- "reaches" is key <= the print's key and "better" is
+        // key < the best so far, so the scan is a branch-free select (cmov):
+        // the first of equal bests wins, exactly as before.
+        const std::int64_t flip = detail::mask(!buy);
+        const std::int64_t reach = (px ^ flip) - flip;
+        // Gate: no waiting drop inside the print's reach -> no scan.
+        const bool can = buy ? drops.lo() <= px : drops.hi() >= px;
+        while (can && q > 0) {
+            const std::size_t n = drops.size();
+            std::size_t best = n;
+            std::int64_t best_key = std::numeric_limits<std::int64_t>::max();
+            for (std::size_t k = 0; k < n; ++k) {
                 const auto& d = drops.at(k);
-                if (d.qty <= 0 || !reaches(buy, px, d.px)) continue;
-                if (best == drops.size() || (buy ? d.px < drops.at(best).px : d.px > drops.at(best).px)) best = k;
+                const std::int64_t key = (d.px ^ flip) - flip;
+                const bool take = (d.qty > 0) & (key <= reach) & (key < best_key);
+                best = take ? k : best;
+                best_key = take ? key : best_key;
             }
-            if (best == drops.size()) break;
+            if (best == n) break;
             auto& d = drops.at(best);
             // RULE 11: not a capacity clamp -- matching arithmetic; the rest carries on.
             const std::int64_t m = d.qty < q ? d.qty : q;
@@ -732,7 +776,10 @@ private:
         const double mid0 = s.ask_window_start > s.bid_window_start
                                 ? 0.5 * static_cast<double>(s.bid_window_start + s.ask_window_start) : s.mid;
         s.momentum_ticks = (s.mid - mid0) / tick;
-        s.mom_norm = std::tanh(s.momentum_ticks / cfg_.mom_scale_ticks);
+        // Skipped when the input has not changed (most events): the same
+        // argument gives the same tanh, bit for bit.
+        if (s.momentum_ticks != mom_in_) { mom_in_ = s.momentum_ticks; mom_out_ = std::tanh(s.momentum_ticks / cfg_.mom_scale_ticks); }
+        s.mom_norm = mom_out_;
         s.score = cfg_.w_obi * s.obi_deep_w + cfg_.w_ofi * s.ofi_norm + cfg_.w_mom * s.mom_norm;
         s.mean_bid_qty = sum_.books > 0 ? static_cast<double>(sum_.bid_qty) / static_cast<double>(sum_.books) : 0.0;
         s.mean_ask_qty = sum_.books > 0 ? static_cast<double>(sum_.ask_qty) / static_cast<double>(sum_.books) : 0.0;
@@ -781,6 +828,7 @@ private:
     std::int64_t persist_since_ = 0;
     double ewma_ = 0.0;
     std::int64_t ewma_ns_ = 0;
+    double mom_in_ = std::numeric_limits<double>::quiet_NaN(), mom_out_ = 0.0;   ///< tanh memo: a pure function, never reset
     FlowSignals s_{};
 };
 

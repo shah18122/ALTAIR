@@ -320,6 +320,34 @@ int main() {
         const LivePosition* p = g.e->book().position(g.m->name(), pe);
         check(p != nullptr && p->side < 0, "NYKAA option mode: the long signal SELLS a put, never buys");
     }
+    {
+        // obi_decide() -- the per-tick gate, no text -- gives obi_signal()'s
+        // answer on every edge: OBI at, just inside and outside +/- entry
+        // (and NaN), persistence at and around the minimum in updates and in
+        // time, prints equal and either way, C / D both signs, a stale book.
+        const ObiSignalRules rules{};
+        const double obis[] = {-1.0, -0.31, -0.30, -0.29, 0.0, 0.29, 0.30, 0.31, 1.0, std::nan("")};
+        const int runs[] = {-4, -3, -2, 0, 2, 3, 4};
+        const std::int64_t held[] = {0, 499'999'999, 500'000'000, 900'000'000};
+        const std::int64_t prints[][2] = {{0, 0}, {10, 5}, {5, 10}, {7, 7}};
+        long cases = 0, differ = 0;
+        std::string why;
+        for (const bool valid : {false, true})
+            for (const double o : obis)
+                for (const int run : runs)
+                    for (const auto ns : held)
+                        for (const auto& bs : prints)
+                            for (const int flag : {-1, 0, 1}) {
+                                flow::FlowSignals s;
+                                s.valid = valid; s.obi_short = o; s.persist = run; s.persist_ns = ns;
+                                s.buy_exec = bs[0]; s.sell_exec = bs[1]; s.absorption = flag; s.withdrawal = -flag;
+                                for (const ObiType t : kObiTypes) {
+                                    ++cases;
+                                    differ += obi_decide(t, s, rules) != obi_signal(t, s, rules, why);
+                                }
+                            }
+        check(differ == 0 && cases > 10'000, "the bare decision (obi_decide) matches obi_signal on every edge case");
+    }
     std::printf("%s\n", failures == 0 ? "all OBI trader checks passed" : "OBI trader checks did not pass");
     return failures == 0 ? 0 : 1;
 }

@@ -43,3 +43,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_flow_test PRIVATE altair_book altair_flags)
     add_test(NAME flow COMMAND altair_flow_test)
 endif()
+
+# The OBI hot path, timed, with a behaviour checksum. An EXECUTABLE, not a test:
+# timing under a parallel ctest run is noise. Run it by hand.
+if(ALTAIR_BUILD_BENCH)
+    add_executable(altair_bench_flow bench/bench_flow.cpp)
+    target_link_libraries(altair_bench_flow PRIVATE altair_book altair_flags)
+endif()
