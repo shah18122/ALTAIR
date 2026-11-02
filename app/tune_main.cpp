@@ -4,9 +4,9 @@
 //   altair_tune [--root DIR] [--strategy KEY|PREFIX|all] [--latency-ms LIST]
 //               [--unverified-costs] [--allow-sim] [--dry-run]
 //
-// For each strategy (the arbitrage, OHL, option arbitrage, and every OBI
-// trader: obi_<under>_<A-D>_<fut|opt>): every recorded day replayed through
-// every point of its grid in ONE pass a tape, a walk-forward over the days,
+// For each strategy (the arbitrage, OHL, option arbitrage, every OBI trader:
+// obi_<under>_<A-D>_<fut|opt>, and the option quoter: obiq_<under>): every
+// recorded day replayed through every point of its grid in ONE pass a tape, a walk-forward over the days,
 // net of expenses, and the verdict. A setting is written to
 // config/model_params/<key>.toml only when it passes the guard; the engine
 // loads it at its next start. The per-day table goes to
@@ -42,7 +42,7 @@ void usage(const char* exe) {
         "altair_tune -- tune the event-driven strategies and the OBI traders on recorded FYERS sessions\n\n"
         "    %s [--root DIR] [--strategy KEY|PREFIX|all] [--latency-ms LIST] [--unverified-costs] [--allow-sim] [--dry-run]\n\n"
         "    --root              the tree holding data/live/tapes, data/store/tapes and config/ (default: the source tree)\n"
-        "    --strategy          arbitrage, ohl, option_arb, an OBI trader (obi_banknifty_A_opt), a prefix\n"
+        "    --strategy          arbitrage, ohl, option_arb, an OBI trader (obi_banknifty_A_opt), the quoter (obiq_banknifty), a prefix\n"
         "                        (obi, obi_banknifty, obi_nykaa_C), or all (default)\n"
         "    --latency-ms        decision-to-market latency, e.g. 250 or 50,250,1000 (default: each tape's own);\n"
         "                        the first is the verdict, the rest are sensitivity (data/live/tune/latency.csv)\n"
@@ -132,6 +132,7 @@ int main(int argc, char** argv) {
     // The grids asked for: a key, a prefix ("obi", "obi_banknifty"), or all.
     std::vector<tn::Grid> grids = tn::all_grids();
     for (auto& g : tn::obi_grids(tn::obi_underlyings(root))) grids.push_back(std::move(g));
+    for (auto& g : tn::quoter_grids(tn::obi_underlyings(root))) grids.push_back(std::move(g));
     std::vector<const tn::Grid*> chosen;
     std::size_t engines = 0;
     for (const auto& g : grids)

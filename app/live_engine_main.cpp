@@ -63,6 +63,7 @@
 #include <live/desk_trader.hpp>
 #include <live/straddle.hpp>
 #include <live/models.hpp>
+#include <live/obi_quoter.hpp>
 #include <live/obi_trader.hpp>
 #include <live/obi_underlyings.hpp>
 #include <live/option_arb.hpp>
@@ -705,6 +706,32 @@ int main(int argc, char** argv) {
                 }
                 engine.add_model(std::make_unique<lv::LiveObiTraderModel>(r, hub));
             }
+    // The OBI-skewed option quoter (live/obi_quoter.hpp): a sale resting on
+    // the put and the call two strikes out, the threatened leg pulled. Paper.
+    // Its settings come the same way (config/model_params/obiq_<under>.toml).
+    for (const auto& u : obi_unders) {
+        lv::ObiQuoterRules q;
+        q.under = u.symbol;
+        const std::string key = altair::tune::quoter_key(u.symbol);
+        altair::tune::Params p;
+        if (replaying) {
+            if (const auto it = tuned_on_tape.find(key); it != tuned_on_tape.end()) p = it->second;
+        } else {
+            p = altair::tune::read_params(root / "config/model_params" / (key + ".toml"));
+        }
+        altair::tune::apply_quoter_params(q, p);
+        if (!p.empty()) {
+            std::printf("  %s: %s (tuned)\n", key.c_str(), altair::tune::params_text(p).c_str());
+            tuned_text += "tuned." + key + "=";
+            for (const auto& [k, v] : p) {
+                char b[64];
+                std::snprintf(b, sizeof b, "%s:%.17g;", k.c_str(), v);
+                tuned_text += b;
+            }
+            tuned_text += "\n";
+        }
+        engine.add_model(std::make_unique<lv::LiveObiQuoterModel>(q, hub));
+    }
     // The event-driven strategies, each with its settings: altair_tune's
     // (config/model_params/<key>.toml) where it found better ones on recorded
     // FYERS days, else the defaults; a replay uses the ones on its tape.

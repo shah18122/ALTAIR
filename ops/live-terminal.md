@@ -692,6 +692,27 @@ average win and loss, expectancy, profit factor, daily Sharpe and Sortino,
 max drawdown, Calmar, average hold, and the 1 s / 10 s / 60 s markouts of the
 entries (negative at 1 s: the fills are being picked off).
 
+**The OBI option quoter** (`live/obi_quoter.hpp`, "OBI quoter BANKNIFTY" and
+one per stock in `config/obi_underlyings.csv`). hftbacktest's OBI market maker
+cut down to the house rule that options are only sold. It keeps a sale
+resting at the ask of the put and of the call two strikes out of the money,
+and leans away from the side the near future's book threatens:
+- future OBI5 >= +0.30 (bids heavy): the call quote is pulled, the put stays;
+- future OBI5 <= -0.30 (asks heavy): the put quote is pulled, the call stays;
+- in between: both are offered.
+A leg is also pulled while its own book is bid or its spread is over 6 ticks.
+A quote is placed only when a 10 % fall in the premium pays both fills'
+expenses plus 2 % of the premium. A filled sale gets a bracket: bought back at
+the ask once the premium is 10 % down (target) or 25 % up (stop), or after
+15 minutes. An unfilled quote times out with the book's entry timeout and is
+offered again at the new ask. After a losing trade that leg rests a minute.
+Rs 5,000 a day halts it. Quoting runs 09:20-15:00, and only once the session's
+first trade print has dated the day. Every quote, pull and exit goes in the
+decision log with its numbers. `altair_tune --strategy obiq_banknifty` sweeps
+the pull level, the target and how far out it quotes. Paper only, and not
+validated: NSE pays no maker rebate, so any edge has to come from the spread
+and the decay after STT and charges.
+
 **Choosing the OBI stocks: `altair_obi_select`** (`app/obi_select.hpp`). The
 idea is the Kalshi market maker's market selector: score every candidate on
 what it did and trade only the best. It replays one recorded session (the

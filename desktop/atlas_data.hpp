@@ -321,6 +321,12 @@ inline constexpr std::array kAtlasRows{
              "Four order-book trade types on BANKNIFTY and NYKAA -- bid "
              "pressure, ask pressure, absorption, withdrawal -- each trading "
              "the future long or short, or the same view as a sold option."},
+    AtlasRow{"4. Microstructure & execution", "OBI option quoter",
+             AtlasStatus::Implemented, "live/obi_quoter.hpp", -1,
+             "Sell-side quoting: a sale rests at the ask of the put and the "
+             "call two strikes out, and the leg the future's OBI5 threatens "
+             "is pulled (bids heavy: the call; asks heavy: the put). Brackets "
+             "buy it back. Paper only, never buys to open, not validated."},
     AtlasRow{"4. Microstructure & execution", "Slippage & market impact",
              AtlasStatus::Implemented, "risk/slippage.hpp", 12,
              "What your own order costs you by moving the price against "

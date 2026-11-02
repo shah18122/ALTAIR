@@ -44,6 +44,7 @@
 #include <live/engine.hpp>
 #include <live/feed_consumer.hpp>
 #include <live/latency.hpp>
+#include <live/obi_quoter.hpp>
 #include <live/obi_trader.hpp>
 #include <live/obi_underlyings.hpp>
 #include <live/option_arb.hpp>
@@ -261,6 +262,51 @@ inline void apply_obi_params(live::ObiTraderRules& r, const Params& p) {
                 };
                 out.push_back(std::move(g));
             }
+    return out;
+}
+
+// ---- the OBI option quoter ---------------------------------------------------------
+
+/// "obiq_banknifty": the quoter's settings key.
+[[nodiscard]] inline std::string quoter_key(const std::string& under) {
+    std::string k = "obiq_";
+    for (const char c : under) k.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    return k;
+}
+
+/// `p`'s keys onto the quoter's rules (the rest stay).
+inline void apply_quoter_params(live::ObiQuoterRules& r, const Params& p) {
+    for (const auto& [k, v] : p) {
+        if (k == "pull_obi") r.pull_obi = v;
+        else if (k == "target_pct") r.target_pct = v;
+        else if (k == "strikes_otm") r.strikes_otm = static_cast<int>(std::lround(v));
+    }
+}
+
+/// One grid an underlying: where to pull a leg x the target x how far out.
+[[nodiscard]] inline std::vector<Grid> quoter_grids(const std::vector<live::ObiUnderlying>& unders) {
+    std::vector<Grid> out;
+    for (const auto& u : unders) {
+        live::ObiQuoterRules d;
+        d.under = u.symbol;
+        const std::vector<std::pair<std::string, std::vector<double>>> axes{
+            {"pull_obi", {0.20, 0.30, 0.50}}, {"target_pct", {0.05, 0.10, 0.15}}, {"strikes_otm", {1.0, 2.0, 3.0}}};
+        const Params def{{"pull_obi", d.pull_obi}, {"target_pct", d.target_pct}, {"strikes_otm", static_cast<double>(d.strikes_otm)}};
+        Grid g = detail::cross(quoter_key(u.symbol), live::LiveObiQuoterModel(d, nullptr).name(), axes, def, nullptr);
+        g.make_all = [d](const Params& p) {
+            live::ObiQuoterRules r = d;
+            apply_quoter_params(r, p);
+            live::ObiHub::Config hc;
+            hc.unders = {r.under};
+            auto hub = std::make_unique<live::ObiHub>(hc);
+            const live::ObiHub* h = hub.get();
+            std::vector<std::unique_ptr<live::LiveModel>> v;
+            v.push_back(std::move(hub));
+            v.push_back(std::make_unique<live::LiveObiQuoterModel>(r, h));
+            return v;
+        };
+        out.push_back(std::move(g));
+    }
     return out;
 }
 

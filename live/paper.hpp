@@ -648,7 +648,9 @@ private:
             got += n;
             value += static_cast<double>(px) / 100.0 * static_cast<double>(n);
         };
-        if (t.levels > 0 && fresh(t.book_ns, now)) {
+        // The levels only when they are as new as the touch: a quote that moved
+        // since the last book is the market now, not the book's old prices.
+        if (t.levels > 0 && fresh(t.book_ns, now) && t.book_ns >= t.quote_ns) {
             for (std::size_t k = 0; k < t.levels && k < kLiveDepth; ++k) {
                 const LiveLevel& l = side > 0 ? t.asks[k] : t.bids[k];
                 eat(l.px, l.qty);

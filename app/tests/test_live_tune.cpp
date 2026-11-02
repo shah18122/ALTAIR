@@ -197,6 +197,18 @@ int main() {
               "a tuned file sets the threshold, the hold, scales target and stop together, and can turn resting off");
     }
     {
+        const auto qg = tn::quoter_grids({{"BANKNIFTY", 25.0, 15.0, 2.0}, {"NYKAA", 0.80, 0.40, 0.05}});
+        check(qg.size() == 2 && qg[0].key == "obiq_banknifty" && qg[0].points.size() == 27 && qg[0].model == "OBI quoter BANKNIFTY"
+                  && qg[0].make_all != nullptr,
+              "the option quoter: one grid an underlying, pull level x target x strikes out = 27 settings");
+        live::ObiQuoterRules q, d;
+        tn::apply_quoter_params(q, qg[0].points[qg[0].defaults]);
+        check(q.pull_obi == d.pull_obi && q.target_pct == d.target_pct && q.strikes_otm == d.strikes_otm,
+              "the quoter grid's defaults are today's rules exactly");
+        tn::apply_quoter_params(q, {{"pull_obi", 0.5}, {"strikes_otm", 3.0}});
+        check(q.pull_obi == 0.5 && q.strikes_otm == 3 && q.target_pct == d.target_pct, "a tuned file sets only its own keys");
+    }
+    {
         // The engine runs an OBI grid through the same tape pass as the others.
         std::vector<tn::DayRun> runs;
         check(tn::run_tape_group(root / "2026-10-05-100000.tape", {&arb, &og.front()}, cost, runs, err) && runs.size() == 2
