@@ -89,6 +89,15 @@ REM exit code -- and a failed MSVC link returns 4294967295, i.e. -1. That trap
 REM let a link failure through and ran ctest against a STALE binary, which
 REM then "passed" tests for code that had never been compiled. NEQ 0 reads the
 REM actual value and catches both signs.
+REM A program that is still running cannot be overwritten: the link then fails
+REM with LNK1168 after a long compile. Say so up front instead. Nothing is
+REM closed for you -- the live engine may be holding paper positions.
+set "RUNNING="
+tasklist /FI "IMAGENAME eq altair_desktop.exe" 2>nul | find /I "altair_desktop.exe" >nul && set "RUNNING=%RUNNING% altair_desktop.exe"
+tasklist /FI "IMAGENAME eq altair_price_service.exe" 2>nul | find /I "altair_price_service.exe" >nul && set "RUNNING=%RUNNING% altair_price_service.exe"
+tasklist /FI "IMAGENAME eq altair_live_engine.exe" 2>nul | find /I "altair_live_engine.exe" >nul && set "RUNNING=%RUNNING% altair_live_engine.exe"
+if defined RUNNING goto still_running
+
 if /I "%MODE%"=="full" goto configure
 if not exist "%CACHE%" goto configure
 if exist "%SRCDIR%\build\%PRESET%\build.ninja" goto build
@@ -147,6 +156,12 @@ exit /b %CTEST_RC%
 :skip_tests
 echo Built. Tests not run: "build.bat %PRESET% test" runs them.
 exit /b 0
+
+:still_running
+echo ERROR: still running:%RUNNING%
+echo   Windows will not let the build overwrite a running program (LNK1168).
+echo   Close them first, e.g.:  taskkill /IM altair_live_engine.exe /IM altair_price_service.exe /IM altair_desktop.exe
+exit /b 1
 
 :bad_mode
 echo ERROR: unknown mode "%MODE%". Use: build, app, test or full.
