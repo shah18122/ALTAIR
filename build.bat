@@ -8,8 +8,15 @@ REM child process and its environment dies with it. Both ship inside Visual
 REM Studio Build Tools, so this calls vcvars in the SAME cmd process, then runs
 REM cmake.
 REM
-REM   build.bat            configure + build + test  (preset: default)
-REM   build.bat debug      the same, for a named preset
+REM   build.bat net             build what changed, no tests (fast, after every edit)
+REM   build.bat net app         only the apps: desktop, price service, live engine
+REM                             (skips the ~240 test programs: fastest)
+REM   build.bat net test        build everything, then run the tests in parallel
+REM   build.bat net full        configure afresh + build + test (the old behaviour)
+REM   build.bat                 the same, preset "default"
+REM
+REM Configure runs only when the build folder has no cache yet (or for "full"):
+REM after that, ninja re-runs CMake by itself whenever a CMakeLists.txt changes.
 REM
 REM Presets: default, vcpkg, debug, asan, tsan, prod
 REM
@@ -27,6 +34,9 @@ pushd "%SRCDIR%"
 
 set "PRESET=%~1"
 if "%PRESET%"=="" set "PRESET=default"
+set "MODE=%~2"
+if "%MODE%"=="" set "MODE=build"
+if /I not "%MODE%"=="build" if /I not "%MODE%"=="app" if /I not "%MODE%"=="test" if /I not "%MODE%"=="full" goto bad_mode
 
 REM Visual Studio Build Tools: ask vswhere first, then the usual folder.
 set "VSROOT="
@@ -79,16 +89,41 @@ REM exit code -- and a failed MSVC link returns 4294967295, i.e. -1. That trap
 REM let a link failure through and ran ctest against a STALE binary, which
 REM then "passed" tests for code that had never been compiled. NEQ 0 reads the
 REM actual value and catches both signs.
+if /I "%MODE%"=="full" goto configure
+if not exist "%CACHE%" goto configure
+if exist "%SRCDIR%\build\%PRESET%\build.ninja" goto build
+:configure
 echo === configure [%PRESET%] ===
 cmake --preset %PRESET%
 if %ERRORLEVEL% NEQ 0 goto configure_failed
-
 echo.
+
+:build
+if /I "%MODE%"=="app" goto build_apps
 echo === build [%PRESET%] ===
 cmake --build --preset %PRESET%
 if %ERRORLEVEL% NEQ 0 exit /b 1
+goto built
 
+:build_apps
+REM Only the programs you run. A target the configure did not create (no Qt,
+REM so no desktop; no vcpkg net, so no price service) is left out, not an error.
+set "APPS="
+findstr /L /C:"build altair_desktop:" "%SRCDIR%\build\%PRESET%\build.ninja" >nul 2>&1
+if not errorlevel 1 set "APPS=%APPS% altair_desktop"
+findstr /L /C:"build altair_price_service:" "%SRCDIR%\build\%PRESET%\build.ninja" >nul 2>&1
+if not errorlevel 1 set "APPS=%APPS% altair_price_service"
+findstr /L /C:"build altair_live_engine:" "%SRCDIR%\build\%PRESET%\build.ninja" >nul 2>&1
+if not errorlevel 1 set "APPS=%APPS% altair_live_engine"
+if not defined APPS goto no_apps
+echo === build apps [%PRESET%]:%APPS% ===
+cmake --build --preset %PRESET% --target%APPS%
+if %ERRORLEVEL% NEQ 0 exit /b 1
+
+:built
 echo.
+if /I "%MODE%"=="build" goto skip_tests
+if /I "%MODE%"=="app" goto skip_tests
 REM A preset that deliberately builds NO test binaries -- `prod` sets
 REM ALTAIR_BUILD_TESTS=OFF so a shipped tree carries no test executables -- has
 REM nothing for ctest to run, and ctest calls that an error. Reporting a clean
@@ -97,7 +132,7 @@ REM no-tests case is named and passed, and every other ctest failure still
 REM fails. It says WHERE the tests were run instead, because "no tests" must
 REM never read as "tests passed".
 echo === test [%PRESET%] ===
-ctest --preset %PRESET% --output-on-failure
+ctest --preset %PRESET% --output-on-failure -j %NUMBER_OF_PROCESSORS%
 set CTEST_RC=%ERRORLEVEL%
 if %CTEST_RC% NEQ 0 (
     if /I "%PRESET%"=="prod" (
@@ -108,6 +143,20 @@ if %CTEST_RC% NEQ 0 (
     )
 )
 exit /b %CTEST_RC%
+
+:skip_tests
+echo Built. Tests not run: "build.bat %PRESET% test" runs them.
+exit /b 0
+
+:bad_mode
+echo ERROR: unknown mode "%MODE%". Use: build, app, test or full.
+echo   e.g.  build.bat net        build.bat net app        build.bat net test
+exit /b 1
+
+:no_apps
+echo ERROR: none of altair_desktop, altair_price_service, altair_live_engine is in build\%PRESET%.
+echo   Run "build.bat %PRESET% full" once to configure it.
+exit /b 1
 
 :no_vcvars
 echo ERROR: Visual Studio Build Tools (C++ workload) not found.
