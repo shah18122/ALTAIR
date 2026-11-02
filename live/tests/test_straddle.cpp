@@ -190,6 +190,15 @@ int main() {
         check(s.trips == 2 && s.why_out.find("profit target") != std::string::npos && s.exit_minute < 15 * 60 + 20,
               "a 2 % profit target buys both legs back before the square-off");
     }
+    {
+        LiveStraddleRules R;
+        R.leg_stop_pct = 0.02;
+        const Run s = session(0.004, R);
+        std::printf("    leg stop: exit %02d:%02d, %s\n", s.exit_minute / 60, s.exit_minute % 60, s.why_out.c_str());
+        check(s.trips == 2 && s.why_out.find("bracket") != std::string::npos && s.exit_minute < 15 * 60 + 20 && s.legs_open == 0,
+              "a 2 % leg stop: one leg's ask 2 % over its sale buys BOTH legs back before the square-off");
+        check(session(0.004).why_out.find("bracket") == std::string::npos, "without the rule there is no stop (the plain straddle)");
+    }
     std::printf("%s\n", failures ? "SOME CHECKS DID NOT PASS" : "all checks passed");
     return failures ? 1 : 0;
 }

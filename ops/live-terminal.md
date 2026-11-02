@@ -517,9 +517,27 @@ holds:
   new cannot be priced (`live/margin.hpp`: conservative, **not SPAN** — futures
   at scan + exposure, short options NSE-shaped with no credit for premium or
   hedges, long options at premium);
-- today's loss is past `--max-daily-loss`.
+- today's loss is past `--max-daily-loss`;
+- it would **buy an option to open** (Smit's standing rule: options are sold
+  only). This holds for every model, whatever its own code does; buying a
+  short option back to close it is an exit and is never refused;
+- the model has already had 30 entries allowed in the last 60 s of feed time
+  (the order-rate limit: a model looping on a bad signal stops here).
 
 **Exits are never refused.**
+
+**Brackets: exits the paper book watches** (`LivePaperBook::set_bracket`,
+the idea of nautilus_trader's order emulator). A position can carry a stop
+and a target (rupees a unit, or a share of the entry), a trailing stop (a
+give-back from the best mark since entry), a time stop, and a group. They are
+checked on every quote of the instrument against the price the exit would
+deal at (a long's bid, a short's ask) and on the clock for the time stop; the
+exit's reason names the rule and the numbers. One leg's bracket firing closes
+every position of the same model in the same group. Brackets are not
+journaled: a model sets them again after a restart. The **books straddle and
+the 16-delta strangle** use one: both legs are bought back once either leg's
+ask is 50 % above its sale price (`--straddle-leg-stop PCT`, 0 = off; it is on
+the tape for replays). The plain straddle stays the control, without a stop.
 
 **Clock and schedule.**
 - **The feed's clock.** Everything runs on the feed's own time stamps, never

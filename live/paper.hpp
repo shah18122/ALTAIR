@@ -23,6 +23,16 @@
 // expires: once submitted it is an obligation that keeps working until it
 // fills, however long the market stays unquoted -- and it says so.
 //
+// BRACKETS (set_bracket): exits the book itself watches for a position, the
+// way nautilus_trader's order emulator holds stop and take-profit orders the
+// venue does not: a stop and a target (in rupees a unit, or a share of the
+// entry), a trailing stop, a time stop, and a GROUP -- one leg's bracket
+// firing closes every position of the same model in the same group (an OCO
+// across a straddle's two legs). Checked on every quote of the instrument,
+// against the price the exit would deal at (a long's bid, a short's ask), and
+// on the clock for the time stop. The exit says which rule fired and the
+// numbers. A bracket only ever closes.
+//
 // EXPENSES ARE CHARGED ON EVERY FILL through the caller's cost function (the
 // CLI prices them from config/charges.toml through risk/cost.hpp). Unpriced is
 // NaN all the way through -- a round trip with an unpriced fill has NO net.
@@ -110,6 +120,21 @@ struct LiveRiskRequest {
 /// A refusal reason, or nullopt to allow.
 using LiveRiskFn = std::function<std::optional<std::string>(const LiveRiskRequest&)>;
 
+/// Exits the book watches for one position (all 0 = off). Distances are
+/// rupees a unit (`*_pts`) or shares of the entry price (`*_pct`); where both
+/// are set the nearer one fires.
+struct LiveBracket {
+    double stop_pts = 0.0, stop_pct = 0.0;       ///< adverse move from the entry
+    double target_pts = 0.0, target_pct = 0.0;   ///< favourable move from the entry
+    double trail_pts = 0.0, trail_pct = 0.0;     ///< give-back from the best mark since entry
+    std::int64_t expire_ns = 0;                  ///< feed time: close at or after it
+    std::string group;                           ///< one firing closes the model's whole group
+    [[nodiscard]] bool any() const noexcept {
+        return stop_pts > 0.0 || stop_pct > 0.0 || target_pts > 0.0 || target_pct > 0.0 || trail_pts > 0.0 || trail_pct > 0.0
+            || expire_ns > 0;
+    }
+};
+
 enum class LiveFillRole : std::uint8_t { Open, Close };
 
 struct LivePaperFill {
@@ -166,6 +191,8 @@ struct LivePosition {
     std::int64_t decided_ns = 0;   ///< the decision; legs of one decision share it
     std::int64_t exit_since_ns = 0;///< when the exit was submitted (0: none working)
     std::string exit_reason;
+    LiveBracket bracket;           ///< the book's own exits (set_bracket); none by default
+    double best_move = 0.0;        ///< rupees a unit: the best favourable mark since entry (the trail)
     [[nodiscard]] bool filled() const noexcept { return qty > 0; }
 };
 
@@ -380,11 +407,24 @@ public:
         return true;
     }
 
-    /// The market moved for `token` at `ns`: work its due orders.
+    /// The market moved for `token` at `ns`: work its due orders, then its brackets.
     void on_market(std::uint32_t token, std::int64_t ns) {
         std::vector<int> ids;
         for (const auto& [id, o] : orders_) if (o.key.second == token && o.due_ns <= ns) ids.push_back(id);
         for (const int id : ids) execute(id, ns);
+        if (brackets_) check_brackets(ns, token);
+    }
+
+    /// Watch `b` for `model`'s position in `token` (it may still be entering:
+    /// the bracket arms once it has filled). Replaces any bracket it had.
+    /// False when there is no such position.
+    bool set_bracket(const std::string& model, std::uint32_t token, const LiveBracket& b) {
+        const auto it = positions_.find(std::make_pair(model, token));
+        if (it == positions_.end()) return false;
+        it->second.bracket = b;
+        it->second.best_move = 0.0;
+        brackets_ = brackets_ || b.any();
+        return true;
     }
 
     /// The clock reached `ns`: work every due order against the quotes in
@@ -393,6 +433,7 @@ public:
         std::vector<int> ids;
         for (const auto& [id, o] : orders_) if (o.due_ns <= ns) ids.push_back(id);
         for (const int id : ids) execute(id, ns);
+        if (brackets_) check_brackets(ns, 0);
         std::vector<int> expired;
         for (const auto& [id, o] : orders_) if (!o.exit && o.expire_ns > 0 && ns >= o.expire_ns) expired.push_back(id);
         for (const int id : expired) expire_entry(id, ns);
@@ -457,6 +498,72 @@ public:
     }
 
 private:
+    /// The brackets of `token`'s positions (0: every position, the clock's
+    /// pass, where only time stops and quotes already in force are read).
+    void check_brackets(std::int64_t ns, std::uint32_t token) {
+        struct Hit { std::string model, group; std::uint32_t token; std::string why; };
+        std::vector<Hit> hits;
+        for (auto& [k, p] : positions_) {
+            if (!p.bracket.any() || p.state != LivePosState::Open || !p.filled()) continue;
+            if (token != 0 && k.second != token) continue;
+            const LiveBracket& b = p.bracket;
+            std::string why;
+            char num[200];
+            if (b.expire_ns > 0 && ns >= b.expire_ns) {
+                why = "bracket: time stop";
+            } else {
+                const LiveTop t = top_(p.inst.token);
+                const std::int64_t px = p.side > 0 ? t.bid : t.ask;   // what the exit would deal at
+                if (px <= 0 || !fresh(t.quote_ns, ns)) continue;
+                const double mark = static_cast<double>(px) / 100.0;
+                const double move = static_cast<double>(p.side) * (mark - p.entry);   // rupees a unit, in favour
+                p.best_move = std::max(p.best_move, move);
+                const auto dist = [&](double pts, double pct) {
+                    double d = std::numeric_limits<double>::infinity();
+                    if (pts > 0.0) d = std::min(d, pts);
+                    if (pct > 0.0) d = std::min(d, pct * p.entry);
+                    return d;
+                };
+                const double stop = dist(b.stop_pts, b.stop_pct), target = dist(b.target_pts, b.target_pct),
+                             trail = dist(b.trail_pts, b.trail_pct);
+                if (-move >= stop) {
+                    std::snprintf(num, sizeof num, "bracket: stop, %s at %.2f against entry %.2f (%.2f a unit against, limit %.2f)",
+                                  p.side > 0 ? "bid" : "ask", mark, p.entry, -move, stop);
+                    why = num;
+                } else if (move >= target) {
+                    std::snprintf(num, sizeof num, "bracket: target, %s at %.2f against entry %.2f (%.2f a unit in favour, target %.2f)",
+                                  p.side > 0 ? "bid" : "ask", mark, p.entry, move, target);
+                    why = num;
+                } else if (p.best_move > 0.0 && p.best_move - move >= trail) {
+                    std::snprintf(num, sizeof num, "bracket: trailing stop, gave back %.2f a unit from the best %.2f (trail %.2f)",
+                                  p.best_move - move, p.best_move, trail);
+                    why = num;
+                }
+            }
+            if (!why.empty()) hits.push_back(Hit{k.first, b.group, k.second, why});
+        }
+        for (const auto& h : hits) {
+            const auto it = positions_.find(std::make_pair(h.model, h.token));
+            if (it == positions_.end() || it->second.state == LivePosState::Closing) continue;
+            const std::string sym = it->second.inst.symbol;
+            disarm(it->second);
+            (void)close(h.model, h.token, ns, h.why);
+            if (h.group.empty()) continue;
+            std::vector<std::uint32_t> mates;
+            for (const auto& [k, q] : positions_)
+                if (k.first == h.model && k.second != h.token && q.bracket.group == h.group && q.state != LivePosState::Closing)
+                    mates.push_back(k.second);
+            for (const std::uint32_t m : mates) {
+                const auto mi = positions_.find(std::make_pair(h.model, m));
+                if (mi == positions_.end()) continue;
+                disarm(mi->second);
+                (void)close(h.model, m, ns, "bracket group '" + h.group + "': " + sym + " " + h.why);
+            }
+        }
+    }
+
+    static void disarm(LivePosition& p) { p.bracket = LiveBracket{}; }
+
     struct Order {
         int id = 0;
         std::pair<std::string, std::uint32_t> key;
@@ -663,6 +770,7 @@ private:
     std::vector<std::string> cancelled_;
     int next_id_ = 1;
     std::uint64_t version_ = 0;
+    bool brackets_ = false;   ///< a bracket was ever set: until then the checks cost nothing
 };
 
 // ---- durable files ----------------------------------------------------------

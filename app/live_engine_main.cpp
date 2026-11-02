@@ -275,6 +275,8 @@ void usage(const char* exe) {
         "                         conservative estimate, not SPAN: live/margin.hpp)\n"
         "    --monthly-halt RS    the books straddle stops selling for the month once its closed trades lose RS\n"
         "    --straddle-max-risk RS  the books straddle sells only when a 3-sd move would lose at most RS a lot\n"
+        "    --straddle-leg-stop PCT the books straddle and the strangle buy back BOTH legs once either leg's ask is\n"
+        "                        PCT %% above its sale price (default 50; 0 = off; the plain straddle never stops)\n"
         "    --gate-z Z           a direction call trades only when its value clears zero by Z\n"
         "                         standard errors (default 1; 0 is the point estimate)\n"
         "    --no-record          do not write the session tape. By default every byte off the bus\n"
@@ -308,6 +310,7 @@ int main(int argc, char** argv) {
     lv::LiveRiskLimits limits;
     double gate_z = 1.0;   // standard errors a direction call's value must clear
     double monthly_halt = 0.0, straddle_max_risk = 0.0;   // the books straddle's monthly halt and per-trade risk cap; 0 = off
+    double straddle_leg_stop = 0.50;                       // the books straddle's and strangle's per-leg stop; 0 = off
     // The tape is on by default: tuning needs FYERS's own ticks, and FYERS
     // history is only 1-minute bars. --no-record turns it off.
     bool record = true, record_asked = false, force_replay = false;
@@ -334,6 +337,7 @@ int main(int argc, char** argv) {
         if (a == "--gate-z" && has) { gate_z = std::atof(argv[++i]); continue; }
         if (a == "--monthly-halt" && has) { monthly_halt = std::max(0.0, std::atof(argv[++i])); continue; }
         if (a == "--straddle-max-risk" && has) { straddle_max_risk = std::max(0.0, std::atof(argv[++i])); continue; }
+        if (a == "--straddle-leg-stop" && has) { straddle_leg_stop = std::max(0.0, std::atof(argv[++i]) / 100.0); continue; }
         if (a == "--record") { record = record_asked = true; continue; }
         if (a == "--no-record") { record = false; continue; }
         if (a == "--keep-tapes" && has) { keep_tapes = std::max(1, std::atoi(argv[++i])); continue; }
@@ -362,6 +366,7 @@ int main(int argc, char** argv) {
         }
         const std::string* args = lv::tape_section(start, "args");
         if (args == nullptr) { std::printf("the tape's start record has no options\n"); return 2; }
+        straddle_leg_stop = 0.0;   // a tape from before the leg stop existed ran without one
         std::istringstream in(*args);
         for (std::string line; std::getline(in, line);) {
             const auto eq = line.find('=');
@@ -378,6 +383,7 @@ int main(int argc, char** argv) {
             else if (k == "max_daily_loss") limits.max_daily_loss = std::strtod(v.c_str(), nullptr);
             else if (k == "max_margin") limits.max_margin = std::strtod(v.c_str(), nullptr);
             else if (k == "gate_z") gate_z = std::strtod(v.c_str(), nullptr);
+            else if (k == "straddle_leg_stop") straddle_leg_stop = std::strtod(v.c_str(), nullptr);
             else if (k == "unverified_costs") unverified_costs = v == "1";
             else if (k.rfind("tuned.", 0) == 0) {
                 auto& p = tuned_on_tape[k.substr(6)];
@@ -569,6 +575,7 @@ int main(int argc, char** argv) {
         strangle.closes = closes;
         strangle.rules.leg_delta = 0.16;
         for (auto* x : {&books, &strangle}) {
+            x->rules.leg_stop_pct = straddle_leg_stop;
             x->rules.month_closed_pnl = month_pnl(lv::LiveStraddleModel(*x).name());
             book_rules.push_back(*x);
         }
@@ -780,6 +787,8 @@ int main(int argc, char** argv) {
                       static_cast<long long>(policy.entry_timeout_ns), limits.max_positions, limits.max_per_model,
                       limits.max_gross_notional, limits.max_daily_loss, limits.max_margin, gate_z, unverified_costs ? 1 : 0);
         args_text = text;
+        std::snprintf(text, sizeof text, "straddle_leg_stop=%.17g\n", straddle_leg_stop);
+        args_text += text;
         args_text += tuned_text;
     }
     const auto vol_json = [](const lv::LiveVolInputs& v) {

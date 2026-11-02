@@ -98,8 +98,14 @@ int main() {
         q.token = tok; q.flags = kQuoteHasTop; q.bid = bid; q.ask = ask; q.bid_qty = bq; q.ask_qty = aq;
         x.on_quote(q, at);
     };
+    // The mechanics below need a long option leg, which the engine's risk gate
+    // refuses by default (Smit's rule: options are sold only). They run with
+    // the rule off; the last block shows what the rule does to a conversion.
+    LiveRiskLimits mech;
+    mech.options_sell_only = false;
     {
         LiveEngine e(u, cost, instant);
+        e.set_limits(mech);
         e.add_model(std::make_unique<LiveOptionArbModel>(rule));
         e.on_trade(p, t0);
         // Fair: conversion locks K - F_ask + C_bid - P_ask = 24000 - 24000.50 + 110.00 - 110.50 = -1.
@@ -123,6 +129,7 @@ int main() {
     }
     {
         LiveEngine e(u, cost, instant);
+        e.set_limits(mech);
         e.add_model(std::make_unique<LiveOptionArbModel>(rule));
         e.on_trade(p, t0);
         feed(e, 12, 11000, 11050, t0 + kSec);
@@ -134,6 +141,19 @@ int main() {
               "10.65 clears 10.64 only at the touch: the future's leaning book makes it 10.60, so it is not chased");
         feed(e, 13, 2399950, 2400050, t0 + 3 * kSec);           // the future's book evens out
         check(!e.book().flat("Option arbitrage"), "with the books even, the same 10.65 is entered");
+    }
+
+    {
+        LiveEngine e(u, cost, instant);   // the default limits: options sold only
+        e.add_model(std::make_unique<LiveOptionArbModel>(rule));
+        e.on_trade(p, t0);
+        feed(e, 12, 11000, 11050, t0 + kSec);
+        feed(e, 13, 2399950, 2400050, t0 + kSec);
+        feed(e, 11, 12500, 12550, t0 + 2 * kSec);   // the same rich call: a conversion would buy the put
+        bool long_option = false;
+        for (const auto& pos : e.book().positions())
+            long_option = long_option || (pos.side > 0 && (pos.inst.kind == LiveKind::Call || pos.inst.kind == LiveKind::Put));
+        check(!long_option, "with options sold only (the default), the conversion's long put is refused: no option is bought");
     }
 
     std::printf("%s\n", failures == 0 ? "all option arbitrage checks passed" : "option arbitrage checks did not pass");

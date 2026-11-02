@@ -90,6 +90,10 @@ struct LiveStraddleRules {
     bool uptrend_only = false;           ///< previous close >= its 50-day average
     double max_risk = 0.0;               ///< rupees lost at a 3-sd move over the rest of the session; 0 = off
     double min_cone_rank = 0.0;          ///< 0 = off (the rank is logged either way)
+    /// A stop on each sold leg, as a share of its sale price: once either
+    /// leg's ask is this much above what it was sold for, BOTH legs are bought
+    /// back (a bracket group in the paper book, live/paper.hpp). 0 = off.
+    double leg_stop_pct = 0.0;
 };
 
 /// What the straddle seller knows before the session.
@@ -411,7 +415,21 @@ private:
         }
         call_ = last_.call; put_ = last_.put;
         entry_ns_ = ns;
-        note_ = "Sold " + call_->symbol + " + " + put_->symbol + " at " + reason;
+        arm_stops(e);
+        note_ = "Sold " + call_->symbol + " + " + put_->symbol + " at " + reason
+              + (R.leg_stop_pct > 0.0 ? "; stop: both legs bought back once either leg's ask is " + live_fmt::num(100 * R.leg_stop_pct, 0)
+                                            + " % above its sale price"
+                                      : std::string());
+    }
+
+    /// The per-leg stop, watched by the paper book (both legs in one group).
+    void arm_stops(LiveEngine& e) {
+        if (!(in_.rules.leg_stop_pct > 0.0)) return;
+        LiveBracket b;
+        b.stop_pct = in_.rules.leg_stop_pct;
+        b.group = "straddle legs";
+        for (const LiveInstrument* leg : {call_, put_})
+            if (leg != nullptr) (void)e.book().set_bracket(name(), leg->token, b);
     }
 
     /// The day-level book rules; empty when none says no.
@@ -475,6 +493,7 @@ private:
         if (call_ == nullptr && put_ == nullptr) return;
         traded_ = true;
         entry_ns_ = 0;   // the entry time is the journal's; a quick-profit window does not survive a restart
+        arm_stops(e);    // the book's brackets are not journaled: set them again
         note_ = "Resumed at " + live_fmt::hhmm(m) + ": holding the straddle sold earlier today.";
         e.note_decision(name(), note_);
     }
