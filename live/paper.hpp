@@ -12,11 +12,26 @@
 //   * for no more than the size displayed: the rest of the order keeps
 //     working against later quotes (a partial fill);
 //   * no sooner than `latency_ns` after the decision.
+// A PASSIVE entry (open_passive) is the one exception: a limit order resting
+// at its own side's touch (a sell at the ask), which fills only as
+// book/queue_fill.hpp says a resting order can -- the volume ahead of it
+// traded or cancelled first, a trade through its price, or a crossing quote --
+// at its own price. Exits are never passive: an exit must get out.
 // An ENTRY that is not filled within `entry_timeout_ns` is cancelled; a
 // partly filled one keeps what filled, and a model's other legs from the same
 // decision are unwound, so one filled leg is never left unhedged. An EXIT never
 // expires: once submitted it is an obligation that keeps working until it
 // fills, however long the market stays unquoted -- and it says so.
+//
+// BRACKETS (set_bracket): exits the book itself watches for a position, the
+// way nautilus_trader's order emulator holds stop and take-profit orders the
+// venue does not: a stop and a target (in rupees a unit, or a share of the
+// entry), a trailing stop, a time stop, and a GROUP -- one leg's bracket
+// firing closes every position of the same model in the same group (an OCO
+// across a straddle's two legs). Checked on every quote of the instrument,
+// against the price the exit would deal at (a long's bid, a short's ask), and
+// on the clock for the time stop. The exit says which rule fired and the
+// numbers. A bracket only ever closes.
 //
 // EXPENSES ARE CHARGED ON EVERY FILL through the caller's cost function (the
 // CLI prices them from config/charges.toml through risk/cost.hpp). Unpriced is
@@ -41,6 +56,7 @@
 
 #pragma once
 
+#include <book/queue_fill.hpp>
 #include <live/universe.hpp>
 
 #include <algorithm>
@@ -84,6 +100,7 @@ struct LiveExecPolicy {
     std::int64_t latency_ns = 250'000'000;          ///< decision to order at the market
     std::int64_t max_quote_age_ns = 10'000'000'000; ///< older than this, a quote is not executable
     std::int64_t entry_timeout_ns = 60'000'000'000; ///< an entry not filled by then is cancelled
+    queue::ProbQueueConfig queue{};                 ///< how a passive entry's queue place is estimated
 };
 
 /// Rupees of expenses for one fill: (instrument, buy?, quantity, price in
@@ -102,6 +119,21 @@ struct LiveRiskRequest {
 };
 /// A refusal reason, or nullopt to allow.
 using LiveRiskFn = std::function<std::optional<std::string>(const LiveRiskRequest&)>;
+
+/// Exits the book watches for one position (all 0 = off). Distances are
+/// rupees a unit (`*_pts`) or shares of the entry price (`*_pct`); where both
+/// are set the nearer one fires.
+struct LiveBracket {
+    double stop_pts = 0.0, stop_pct = 0.0;       ///< adverse move from the entry
+    double target_pts = 0.0, target_pct = 0.0;   ///< favourable move from the entry
+    double trail_pts = 0.0, trail_pct = 0.0;     ///< give-back from the best mark since entry
+    std::int64_t expire_ns = 0;                  ///< feed time: close at or after it
+    std::string group;                           ///< one firing closes the model's whole group
+    [[nodiscard]] bool any() const noexcept {
+        return stop_pts > 0.0 || stop_pct > 0.0 || target_pts > 0.0 || target_pct > 0.0 || trail_pts > 0.0 || trail_pct > 0.0
+            || expire_ns > 0;
+    }
+};
 
 enum class LiveFillRole : std::uint8_t { Open, Close };
 
@@ -159,6 +191,8 @@ struct LivePosition {
     std::int64_t decided_ns = 0;   ///< the decision; legs of one decision share it
     std::int64_t exit_since_ns = 0;///< when the exit was submitted (0: none working)
     std::string exit_reason;
+    LiveBracket bracket;           ///< the book's own exits (set_bracket); none by default
+    double best_move = 0.0;        ///< rupees a unit: the best favourable mark since entry (the trail)
     [[nodiscard]] bool filled() const noexcept { return qty > 0; }
 };
 
@@ -210,12 +244,42 @@ public:
     /// says no; otherwise it works until filled or timed out.
     bool open(const std::string& model, const LiveInstrument& in, int side, std::int64_t lots, std::int64_t ns,
               const std::string& reason, bool carry, std::string* why = nullptr) {
+        return open_impl(model, in, side, lots, ns, reason, carry, false, why);
+    }
+    /// Submit a PASSIVE entry: a limit order resting at its own side's touch
+    /// (a sell at the ask, a buy at the bid) once `latency_ns` has passed,
+    /// filled only through the queue model (book/queue_fill.hpp), at its own
+    /// price. It times out like any entry. Intraday only.
+    bool open_passive(const std::string& model, const LiveInstrument& in, int side, std::int64_t lots, std::int64_t ns,
+                      const std::string& reason, std::string* why = nullptr) {
+        return open_impl(model, in, side, lots, ns, reason, false, true, why);
+    }
+
+    /// A trade print of `qty` units at `px` paise for `token`: what moves a
+    /// passive entry up its queue, or fills it.
+    void on_print(std::uint32_t token, std::int64_t px, std::int64_t qty, std::int64_t ns) {
+        if (px <= 0 || qty <= 0) return;
+        std::vector<int> ids;
+        for (const auto& [id, o] : orders_) if (o.passive && o.key.second == token && o.q.placed) ids.push_back(id);
+        for (const int id : ids) {
+            const auto oit = orders_.find(id);
+            if (oit == orders_.end()) continue;
+            if (!oit->second.exit && oit->second.expire_ns > 0 && ns >= oit->second.expire_ns) { expire_entry(id, ns); continue; }
+            const std::int64_t got = queue::on_trade(oit->second.q, px, qty);
+            if (got > 0) fill(id, got, static_cast<double>(oit->second.q.px) / 100.0 * static_cast<double>(got), ns);
+        }
+    }
+
+private:
+    bool open_impl(const std::string& model, const LiveInstrument& in, int side, std::int64_t lots, std::int64_t ns,
+                   const std::string& reason, bool carry, bool passive, std::string* why) {
         if (side == 0 || lots <= 0) { if (why) *why = "nothing to do"; return false; }
         const auto key = std::make_pair(model, in.token);
         if (positions_.count(key) != 0) { if (why) *why = "already in a position"; return false; }
         const std::int64_t qty = lots * (in.lot > 0 ? in.lot : 1);
         const LiveTop t = top_(in.token);
-        const std::int64_t touch = side > 0 ? t.ask : t.bid;
+        // A market order deals at the far touch; a passive one rests at its own.
+        const std::int64_t touch = (side > 0) != passive ? t.ask : t.bid;
         if (!fresh(t.quote_ns, ns) || touch <= 0) {
             if (why) *why = "no fresh quote for " + in.symbol + age_text(t.quote_ns, ns);
             return false;
@@ -233,11 +297,14 @@ public:
         Order o;
         o.id = next_id_++; o.key = key; o.side = side; o.remaining = qty; o.submit_ns = ns;
         o.due_ns = ns + pol_.latency_ns; o.expire_ns = ns + pol_.entry_timeout_ns; o.reason = reason; o.exit = false;
+        o.passive = passive;
         orders_.emplace(o.id, o);
         if (on_order) on_order(LiveOrderEvent{model, in, side, qty, touch, ns, ns, false, reason});
         if (pol_.latency_ns <= 0) execute(o.id, ns);
         return true;
     }
+
+public:
 
     /// Close `model`'s position in `token`: cancel an unfilled entry, or submit
     /// an exit that works until it fills. False when there is no position.
@@ -340,11 +407,24 @@ public:
         return true;
     }
 
-    /// The market moved for `token` at `ns`: work its due orders.
+    /// The market moved for `token` at `ns`: work its due orders, then its brackets.
     void on_market(std::uint32_t token, std::int64_t ns) {
         std::vector<int> ids;
         for (const auto& [id, o] : orders_) if (o.key.second == token && o.due_ns <= ns) ids.push_back(id);
         for (const int id : ids) execute(id, ns);
+        if (brackets_) check_brackets(ns, token);
+    }
+
+    /// Watch `b` for `model`'s position in `token` (it may still be entering:
+    /// the bracket arms once it has filled). Replaces any bracket it had.
+    /// False when there is no such position.
+    bool set_bracket(const std::string& model, std::uint32_t token, const LiveBracket& b) {
+        const auto it = positions_.find(std::make_pair(model, token));
+        if (it == positions_.end()) return false;
+        it->second.bracket = b;
+        it->second.best_move = 0.0;
+        brackets_ = brackets_ || b.any();
+        return true;
     }
 
     /// The clock reached `ns`: work every due order against the quotes in
@@ -353,9 +433,22 @@ public:
         std::vector<int> ids;
         for (const auto& [id, o] : orders_) if (o.due_ns <= ns) ids.push_back(id);
         for (const int id : ids) execute(id, ns);
+        if (brackets_) check_brackets(ns, 0);
         std::vector<int> expired;
         for (const auto& [id, o] : orders_) if (!o.exit && o.expire_ns > 0 && ns >= o.expire_ns) expired.push_back(id);
         for (const int id : expired) expire_entry(id, ns);
+    }
+
+    /// The last time `model` opened anything (feed ns; 0 never): fills here,
+    /// and the journal's for a restarted engine (note_opened), so a model
+    /// that sold and was taken out earlier today knows it after a restart.
+    [[nodiscard]] std::int64_t last_open_ns(const std::string& model) const {
+        const auto it = last_open_.find(model);
+        return it == last_open_.end() ? 0 : it->second;
+    }
+    void note_opened(const std::string& model, std::int64_t ns) {
+        std::int64_t& t = last_open_[model];
+        t = std::max(t, ns);
     }
 
     /// Restore a position from the journal, without a fill.
@@ -417,6 +510,72 @@ public:
     }
 
 private:
+    /// The brackets of `token`'s positions (0: every position, the clock's
+    /// pass, where only time stops and quotes already in force are read).
+    void check_brackets(std::int64_t ns, std::uint32_t token) {
+        struct Hit { std::string model, group; std::uint32_t token; std::string why; };
+        std::vector<Hit> hits;
+        for (auto& [k, p] : positions_) {
+            if (!p.bracket.any() || p.state != LivePosState::Open || !p.filled()) continue;
+            if (token != 0 && k.second != token) continue;
+            const LiveBracket& b = p.bracket;
+            std::string why;
+            char num[200];
+            if (b.expire_ns > 0 && ns >= b.expire_ns) {
+                why = "bracket: time stop";
+            } else {
+                const LiveTop t = top_(p.inst.token);
+                const std::int64_t px = p.side > 0 ? t.bid : t.ask;   // what the exit would deal at
+                if (px <= 0 || !fresh(t.quote_ns, ns)) continue;
+                const double mark = static_cast<double>(px) / 100.0;
+                const double move = static_cast<double>(p.side) * (mark - p.entry);   // rupees a unit, in favour
+                p.best_move = std::max(p.best_move, move);
+                const auto dist = [&](double pts, double pct) {
+                    double d = std::numeric_limits<double>::infinity();
+                    if (pts > 0.0) d = std::min(d, pts);
+                    if (pct > 0.0) d = std::min(d, pct * p.entry);
+                    return d;
+                };
+                const double stop = dist(b.stop_pts, b.stop_pct), target = dist(b.target_pts, b.target_pct),
+                             trail = dist(b.trail_pts, b.trail_pct);
+                if (-move >= stop) {
+                    std::snprintf(num, sizeof num, "bracket: stop, %s at %.2f against entry %.2f (%.2f a unit against, limit %.2f)",
+                                  p.side > 0 ? "bid" : "ask", mark, p.entry, -move, stop);
+                    why = num;
+                } else if (move >= target) {
+                    std::snprintf(num, sizeof num, "bracket: target, %s at %.2f against entry %.2f (%.2f a unit in favour, target %.2f)",
+                                  p.side > 0 ? "bid" : "ask", mark, p.entry, move, target);
+                    why = num;
+                } else if (p.best_move > 0.0 && p.best_move - move >= trail) {
+                    std::snprintf(num, sizeof num, "bracket: trailing stop, gave back %.2f a unit from the best %.2f (trail %.2f)",
+                                  p.best_move - move, p.best_move, trail);
+                    why = num;
+                }
+            }
+            if (!why.empty()) hits.push_back(Hit{k.first, b.group, k.second, why});
+        }
+        for (const auto& h : hits) {
+            const auto it = positions_.find(std::make_pair(h.model, h.token));
+            if (it == positions_.end() || it->second.state == LivePosState::Closing) continue;
+            const std::string sym = it->second.inst.symbol;
+            disarm(it->second);
+            (void)close(h.model, h.token, ns, h.why);
+            if (h.group.empty()) continue;
+            std::vector<std::uint32_t> mates;
+            for (const auto& [k, q] : positions_)
+                if (k.first == h.model && k.second != h.token && q.bracket.group == h.group && q.state != LivePosState::Closing)
+                    mates.push_back(k.second);
+            for (const std::uint32_t m : mates) {
+                const auto mi = positions_.find(std::make_pair(h.model, m));
+                if (mi == positions_.end()) continue;
+                disarm(mi->second);
+                (void)close(h.model, m, ns, "bracket group '" + h.group + "': " + sym + " " + h.why);
+            }
+        }
+    }
+
+    static void disarm(LivePosition& p) { p.bracket = LiveBracket{}; }
+
     struct Order {
         int id = 0;
         std::pair<std::string, std::uint32_t> key;
@@ -427,7 +586,55 @@ private:
         std::int64_t submit_ns = 0, due_ns = 0, expire_ns = 0;
         std::string reason;
         bool exit = false;
+        bool passive = false;          ///< resting at its own touch (open_passive)
+        queue::QueueOrder q{};         ///< its place in the queue, once it rests
+        std::int64_t depth_seen_ns = 0;///< the book/quote time last applied to `q`
     };
+
+    /// The units shown at `px` on `side`'s own side of `t` (a sell's asks);
+    /// -1 when `px` lies beyond what is shown (unknown).
+    [[nodiscard]] std::int64_t level_at(const LiveTop& t, int side, std::int64_t px, std::int64_t now) const {
+        const bool asks = side < 0;
+        const auto better = [&](std::int64_t a, std::int64_t b) { return asks ? a < b : a > b; };   // a nearer the touch than b
+        if (t.levels > 0 && fresh(t.book_ns, now)) {
+            std::int64_t best = 0, worst = 0;
+            for (std::size_t k = 0; k < t.levels && k < kLiveDepth; ++k) {
+                const LiveLevel& l = asks ? t.asks[k] : t.bids[k];
+                if (l.px <= 0) continue;
+                if (l.px == px) return l.qty;
+                if (best == 0 || better(l.px, best)) best = l.px;
+                if (worst == 0 || better(worst, l.px)) worst = l.px;
+            }
+            if (best == 0) return -1;
+            return better(worst, px) ? -1 : 0;   // within the shown range but absent: the level is empty
+        }
+        const std::int64_t touch = asks ? t.ask : t.bid, tq = asks ? t.ask_qty : t.bid_qty;
+        if (touch <= 0 || !fresh(t.quote_ns, now)) return -1;
+        if (touch == px) return tq;
+        return better(px, touch) ? 0 : -1;
+    }
+
+    /// A passive entry, due: rest it at its touch, then follow its queue.
+    void work_passive(int id, Order& o, const LivePosition& p, std::int64_t now) {
+        const LiveTop t = top_(p.inst.token);
+        if (!o.q.placed) {
+            const std::int64_t px = o.side < 0 ? t.ask : t.bid;
+            if (px <= 0 || !fresh(t.quote_ns, now)) return;   // nothing to rest against yet
+            const std::int64_t lvl = level_at(t, o.side, px, now);
+            queue::place(o.q, o.side, px, o.remaining, std::max<std::int64_t>(0, lvl));
+            o.depth_seen_ns = std::max(t.book_ns, t.quote_ns);
+            return;
+        }
+        // Only a NEW book or quote moves the queue: a print re-reading an old
+        // book would cancel what on_print counted.
+        if (const std::int64_t seen = std::max(t.book_ns, t.quote_ns); seen != o.depth_seen_ns) {
+            o.depth_seen_ns = seen;
+            if (const std::int64_t lvl = level_at(t, o.side, o.q.px, now); lvl >= 0) queue::on_depth(o.q, pol_.queue, lvl);
+        }
+        const std::int64_t opp = fresh(t.quote_ns, now) ? (o.side < 0 ? t.bid : t.ask) : 0;
+        if (const std::int64_t got = queue::on_cross(o.q, opp); got > 0)
+            fill(id, got, static_cast<double>(o.q.px) / 100.0 * static_cast<double>(got), now);
+    }
 
     [[nodiscard]] static std::string age_text(std::int64_t quote_ns, std::int64_t now_ns) {
         if (quote_ns <= 0) return " (never quoted)";
@@ -453,7 +660,9 @@ private:
             got += n;
             value += static_cast<double>(px) / 100.0 * static_cast<double>(n);
         };
-        if (t.levels > 0 && fresh(t.book_ns, now)) {
+        // The levels only when they are as new as the touch: a quote that moved
+        // since the last book is the market now, not the book's old prices.
+        if (t.levels > 0 && fresh(t.book_ns, now) && t.book_ns >= t.quote_ns) {
             for (std::size_t k = 0; k < t.levels && k < kLiveDepth; ++k) {
                 const LiveLevel& l = side > 0 ? t.asks[k] : t.bids[k];
                 eat(l.px, l.qty);
@@ -475,25 +684,38 @@ private:
         if (!o.exit && o.expire_ns > 0 && now >= o.expire_ns) { expire_entry(id, now); return; }
         const auto pit = positions_.find(o.key);
         if (pit == positions_.end()) { orders_.erase(oit); return; }
-        LivePosition& p = pit->second;
-        const LiveTop t = top_(p.inst.token);
+        if (o.passive) { work_passive(id, o, pit->second, now); return; }
+        const LiveTop t = top_(pit->second.inst.token);
         const auto [got, value] = take(t, o.side, o.remaining, now);
         if (got <= 0) return;   // nothing executable now: keeps working
-        const double px = value / static_cast<double>(got);
+        fill(id, got, value, now);
+    }
+
+    /// `got` units of order `id` filled for `value` rupees x units at `now`.
+    void fill(int id, std::int64_t got, double value, std::int64_t now) {
+        const auto oit = orders_.find(id);
+        if (oit == orders_.end() || got <= 0) return;
+        Order& o = oit->second;
+        const auto pit = positions_.find(o.key);
+        if (pit == positions_.end()) { orders_.erase(oit); return; }
+        LivePosition& p = pit->second;
+        const double px = value / static_cast<double>(got);   // the price is what was asked, whatever is left
+        got = std::min(got, o.remaining);
         LivePaperFill f;
         f.model = p.model; f.token = p.inst.token; f.symbol = p.inst.symbol; f.side = o.side; f.qty = got;
-        f.price = px; f.ns = now; f.submit_ns = o.submit_ns; f.reason = o.reason;
+        f.price = px; f.ns = now; f.submit_ns = o.submit_ns; f.reason = o.passive ? "passive: " + o.reason : o.reason;
         f.role = o.exit ? LiveFillRole::Close : LiveFillRole::Open; f.carry = p.carry;
         f.expenses = cost_ ? cost_(p.inst, o.side > 0, static_cast<double>(got), px, now)
                            : std::numeric_limits<double>::quiet_NaN();
         o.remaining -= got;
         o.filled += got;
-        o.value += value;
+        o.value += px * static_cast<double>(got);
         o.expenses += f.expenses;   // NaN sticks
         f.partial = o.remaining > 0;
         fills_.push_back(f);
         ++version_;
         if (!o.exit) {
+            note_opened(p.model, now);
             if (!p.filled()) p.entry_ns = now;
             p.qty = o.filled;
             p.entry = o.value / static_cast<double>(o.filled);
@@ -559,10 +781,12 @@ private:
     std::map<std::pair<std::string, std::uint32_t>, LivePosition> positions_;
     std::map<int, Order> orders_;
     std::vector<LivePaperTrade> trades_;
+    std::map<std::string, std::int64_t> last_open_;   ///< model -> its last entry fill (feed ns)
     std::vector<LivePaperFill> fills_;
     std::vector<std::string> cancelled_;
     int next_id_ = 1;
     std::uint64_t version_ = 0;
+    bool brackets_ = false;   ///< a bracket was ever set: until then the checks cost nothing
 };
 
 // ---- durable files ----------------------------------------------------------
@@ -621,7 +845,8 @@ inline constexpr const char* kLiveJournalHeader =
 [[nodiscard]] inline std::vector<LivePosition> live_replay_journal(const std::string& path,
                                                                    const std::vector<LiveInstrument>& universe,
                                                                    std::vector<std::string>& orphans,
-                                                                   std::size_t* rows = nullptr) {
+                                                                   std::size_t* rows = nullptr,
+                                                                   std::map<std::string, std::int64_t>* last_open = nullptr) {
     struct Acc { LivePosition p; double value = 0.0; std::int64_t opened = 0, closed = 0; std::string symbol; };
     std::map<std::pair<std::string, std::uint32_t>, Acc> acc;
     std::ifstream in(path);
@@ -638,6 +863,10 @@ inline constexpr const char* kLiveJournalHeader =
             auto& a = acc[{c[1], tok}];
             a.symbol = c[3];
             if (c[4] == "OPEN") {
+                if (last_open != nullptr) {
+                    std::int64_t& t = (*last_open)[c[1]];
+                    t = std::max<std::int64_t>(t, std::atoll(c[0].c_str()));
+                }
                 if (a.opened == a.closed) {   // a fresh round trip
                     a = Acc{};
                     a.symbol = c[3];

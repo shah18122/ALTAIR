@@ -221,7 +221,9 @@ int main() {
               "D, asks pulled while buyers lift them: long for the breakout");
     }
     {
-        Rig g(ObiMode::SellOptions);
+        ObiTraderRules aggressive = nifty_rules();
+        aggressive.passive_options = false;   // hit the bid: the exits are tested here
+        Rig g(ObiMode::SellOptions, aggressive);
         const std::uint32_t pe = g.token_of("NIFTY26OCT23950PE"), ce = g.token_of("NIFTY26OCT24050CE");
         for (std::int64_t t = 100; t <= 20'000; t += 1'000) {
             g.book(pe, 5000, 5010, 500, 700, t);
@@ -238,6 +240,25 @@ int main() {
         check(!bought, "no option is ever bought to open");
         g.book(pe, 4200, 4210, 500, 700, 23'000);   // premium down 16 %
         check(g.e->book().flat(g.m->name()), "premium down past 15 %: bought back at the target");
+    }
+    {
+        Rig g(ObiMode::SellOptions);   // the default: the sale rests at the ask
+        const std::uint32_t pe = g.token_of("NIFTY26OCT23950PE"), ce = g.token_of("NIFTY26OCT24050CE");
+        for (std::int64_t t = 100; t <= 20'000; t += 1'000) {
+            g.book(pe, 5000, 5010, 500, 700, t);
+            g.book(ce, 5000, 5010, 500, 700, t);
+        }
+        g.long_setup(true);
+        const LivePosition* p = g.e->book().position(g.m->name(), pe);
+        check(p != nullptr && p->side < 0 && !p->filled() && p->why_in.find("resting at the ask") != std::string::npos,
+              "passive option sale: it rests at the put's ask, unfilled until someone buys");
+        g.print(pe, 5010, 22'100, 0);      // the put's volume so far
+        g.print(pe, 5010, 22'200, 400);    // 400 of the 700 ahead traded
+        p = g.e->book().position(g.m->name(), pe);
+        check(p != nullptr && !p->filled(), "the volume ahead of it trades first");
+        g.print(pe, 5020, 22'300, 1'000);  // a buyer sweeps through the ask
+        p = g.e->book().position(g.m->name(), pe);
+        check(p != nullptr && p->filled() && p->side < 0 && p->entry == 50.10, "then it is sold at its own price, the ask");
     }
     {
         Rig g(ObiMode::Futures);

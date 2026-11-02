@@ -383,6 +383,11 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
     target_link_libraries(altair_tune PRIVATE altair_live altair_charges_toml altair_flags)
     target_include_directories(altair_tune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_tune PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    # The OBI trader's stocks for the next session, scored on a recorded one.
+    add_executable(altair_obi_select obi_select_main.cpp)
+    target_link_libraries(altair_obi_select PRIVATE altair_live altair_flags)
+    target_include_directories(altair_obi_select PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(altair_obi_select PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     # Everything the price service publishes, recorded to tapes all session
     # (a scheduled task runs it whether or not the desktop is open).
     add_executable(altair_feed_recorder feed_recorder_main.cpp)
@@ -409,6 +414,11 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
         target_link_libraries(altair_live_tune_test PRIVATE altair_live altair_flags)
         target_include_directories(altair_live_tune_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
         add_test(NAME live_tune COMMAND altair_live_tune_test)
+        add_test(NAME obi_select_help COMMAND altair_obi_select --help)
+        add_executable(altair_obi_select_test tests/test_obi_select.cpp)
+        target_link_libraries(altair_obi_select_test PRIVATE altair_live altair_flags)
+        target_include_directories(altair_obi_select_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        add_test(NAME obi_select COMMAND altair_obi_select_test)
         # A simulated morning recorded, then replayed: the same journal and
         # decisions byte for byte (needs dataset/ and a shell).
         if(NOT WIN32 AND TARGET altair_price_service)

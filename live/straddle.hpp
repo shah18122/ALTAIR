@@ -90,6 +90,10 @@ struct LiveStraddleRules {
     bool uptrend_only = false;           ///< previous close >= its 50-day average
     double max_risk = 0.0;               ///< rupees lost at a 3-sd move over the rest of the session; 0 = off
     double min_cone_rank = 0.0;          ///< 0 = off (the rank is logged either way)
+    /// A stop on each sold leg, as a share of its sale price: once either
+    /// leg's ask is this much above what it was sold for, BOTH legs are bought
+    /// back (a bracket group in the paper book, live/paper.hpp). 0 = off.
+    double leg_stop_pct = 0.0;
 };
 
 /// What the straddle seller knows before the session.
@@ -216,6 +220,9 @@ public:
     }
 
     void on_quote(LiveEngine& e, std::uint32_t token) override {
+        // A restart: what this model holds or sold today is known before any
+        // quote can lead to a sale.
+        if (!resumed_checked_) resume(e, live_minute_of_day(live_ist_minute_index(e.quote_ns())));
         if (traded_) {
             if ((call_ != nullptr && token == call_->token) || (put_ != nullptr && token == put_->token)) manage(e, e.quote_ns());
             return;
@@ -411,7 +418,21 @@ private:
         }
         call_ = last_.call; put_ = last_.put;
         entry_ns_ = ns;
-        note_ = "Sold " + call_->symbol + " + " + put_->symbol + " at " + reason;
+        arm_stops(e);
+        note_ = "Sold " + call_->symbol + " + " + put_->symbol + " at " + reason
+              + (R.leg_stop_pct > 0.0 ? "; stop: both legs bought back once either leg's ask is " + live_fmt::num(100 * R.leg_stop_pct, 0)
+                                            + " % above its sale price"
+                                      : std::string());
+    }
+
+    /// The per-leg stop, watched by the paper book (both legs in one group).
+    void arm_stops(LiveEngine& e) {
+        if (!(in_.rules.leg_stop_pct > 0.0)) return;
+        LiveBracket b;
+        b.stop_pct = in_.rules.leg_stop_pct;
+        b.group = "straddle legs";
+        for (const LiveInstrument* leg : {call_, put_})
+            if (leg != nullptr) (void)e.book().set_bracket(name(), leg->token, b);
     }
 
     /// The day-level book rules; empty when none says no.
@@ -465,6 +486,7 @@ private:
     /// A restart: legs this model sold earlier today are in the book. Hold them; never sell twice.
     void resume(LiveEngine& e, int m) {
         resumed_checked_ = true;
+        if (traded_) return;   // this session sold already: nothing to resume
         for (const auto& p : e.book().positions()) {
             if (p.model != name()) continue;
             const LiveInstrument* in = e.instrument(p.inst.token);
@@ -472,9 +494,20 @@ private:
             if (in->kind == LiveKind::Call) call_ = in;
             if (in->kind == LiveKind::Put) put_ = in;
         }
-        if (call_ == nullptr && put_ == nullptr) return;
+        if (call_ == nullptr && put_ == nullptr) {
+            // Sold earlier today and already bought back (a stop, a profit
+            // take): one sale a day, so nothing more to watch or sell.
+            if (const std::int64_t t = e.book().last_open_ns(name()); t > 0 && live_day_of(live_ist_minute_index(t)) == e.today() && !traded_) {
+                traded_ = true;
+                taken_ = true;
+                note_ = "Resumed at " + live_fmt::hhmm(m) + ": the straddle sold earlier today is already bought back; no second sale.";
+                e.note_decision(name(), note_);
+            }
+            return;
+        }
         traded_ = true;
         entry_ns_ = 0;   // the entry time is the journal's; a quick-profit window does not survive a restart
+        arm_stops(e);    // the book's brackets are not journaled: set them again
         note_ = "Resumed at " + live_fmt::hhmm(m) + ": holding the straddle sold earlier today.";
         e.note_decision(name(), note_);
     }
