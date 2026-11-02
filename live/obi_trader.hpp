@@ -302,7 +302,8 @@ public:
         v.name = name();
         v.family = family();
         v.state = halted_ ? "done today" : (held_ != 0 ? "in position" : "watching");
-        v.signal = signal_;
+        if (sig_seen_)   // formatted here, for the screen, not on every tick
+            v.signal = sig_.valid ? "OBI5 " + num(sig_.obi_short) + ", OFI " + num(sig_.ofi_norm) + ", S " + num(sig_.score) : "no book";
         v.reason = note_;
         v.fields.emplace_back("Trade type", std::string(obi_type_letter(r_.type)) + " -- " + obi_type_name(r_.type));
         if (fut_ != nullptr && hub_ != nullptr)
@@ -319,8 +320,12 @@ private:
     /// +1 long, -1 short, 0 none; `text` says why, with the numbers.
     [[nodiscard]] int setup(const LiveEngine& e, const flow::FlowSignals& s, std::string& text, std::string& blocked) const {
         if (fut_ == nullptr) return 0;
+        const ObiSignalRules rules{r_.obi_entry, r_.min_persist, r_.min_persist_ns};
+        // The gate: the bare decision, no text. Most ticks stop here; the
+        // reason is formatted only when the trade type fires.
+        if (obi_decide(r_.type, s, rules) == 0) return 0;
         std::string why;
-        const int dir = obi_signal(r_.type, s, ObiSignalRules{r_.obi_entry, r_.min_persist, r_.min_persist_ns}, why);
+        const int dir = obi_signal(r_.type, s, rules, why);
         if (dir == 0) return 0;
         // The one check: the target after costs.
         const std::int64_t lot = std::max<std::int64_t>(1, fut_->lot);
@@ -354,8 +359,8 @@ private:
         const flow::FlowSignals& s = fe->signals();
         std::string text, blocked;
         const int dir = setup(e, s, text, blocked);
-        signal_ = s.valid ? "OBI5 " + live_fmt::num(s.obi_short) + ", OFI " + live_fmt::num(s.ofi_norm) + ", S " + live_fmt::num(s.score)
-                          : "no book";
+        sig_ = {s.valid, s.obi_short, s.ofi_norm, s.score};   // three numbers, not a string: view() formats them
+        sig_seen_ = true;
         if (dir == 0) {
             if (!blocked.empty()) log_blocked(e, ns, blocked);
             return;
@@ -499,7 +504,10 @@ private:
     std::int64_t entry_ns_ = 0, cooldown_until_ = 0, last_blocked_ns_ = 0;
     int trades_today_ = 0;
     bool halted_ = false;
-    std::string note_, signal_, last_blocked_;
+    std::string note_, last_blocked_;
+    /// The future's last reading, for view().
+    struct SignalSeen { bool valid = false; double obi_short = 0.0, ofi_norm = 0.0, score = 0.0; } sig_;
+    bool sig_seen_ = false;
 };
 
 } // namespace altair::live
