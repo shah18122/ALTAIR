@@ -298,7 +298,10 @@ struct RouterStrategy {
     std::int64_t max_orders_per_day = 0;     ///< entries
     std::int64_t max_daily_loss_paise = 0;
 };
-inline constexpr const char* kRouterStrategyKeys[] = {"arbitrage", "ohl", "option_arb"};
+/// Option arbitrage is NOT here: every conversion, reversal and box BUYS an
+/// option, and Smit's rule is that ALTAIR never buys options (2026-10-25). It
+/// stays a paper model (live/option_arb.hpp); the router refuses its requests.
+inline constexpr const char* kRouterStrategyKeys[] = {"arbitrage", "ohl"};
 
 /// Which strategy a request is from: (key, is an exit); nullopt for a person's.
 [[nodiscard]] inline std::optional<std::pair<std::string, bool>> router_strategy_of(std::string_view by) {

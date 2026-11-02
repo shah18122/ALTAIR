@@ -1,0 +1,19 @@
+# config/nse_holidays.csv -- NSE trading holidays (equity derivatives), future dates.
+#
+# Used by altair_live_engine for the trading sessions left to an option's
+# expiry (live/straddle.hpp restates IV on trading time) and for the
+# freshness check on the history (a holiday is not a missing session).
+#
+# config/nse_calendar.csv is DERIVED from bars and so cannot hold the future;
+# this file is TRANSCRIBED from NSE's holiday circular for 2026, as reported
+# by broker pages on 2026-11-02 (Upstox, Jainam, Tata MF). Check it against
+# the circular on nseindia.com, and add the 2027 list when NSE publishes it
+# (normally in December). An expiry that falls on a holiday moves to the
+# session before; the live engine takes expiry dates from the FYERS master,
+# which already carries the move.
+#
+# Muhurat trading (Sunday 2026-11-08) is a special session, not a holiday.
+date,name
+2026-11-10,Diwali Balipratipada
+2026-11-24,Prakash Gurpurb Sri Guru Nanak Dev
+2026-12-25,Christmas

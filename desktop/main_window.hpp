@@ -1691,7 +1691,7 @@ private:
                        QStringLiteral("<b>Option arbitrage.</b> Put-call parity (conversion / reversal against the future) and "
                                       "box spreads, entered when the lock beats every leg's expenses and spreads in and out; "
                                       "the order book's imbalance orders the legs and stops a lock the book says is about to "
-                                      "vanish. Demo by default; real only with LIVE on and Auto: Option arb ticked."));
+                                      "vanish. Paper only: every lock buys an option, and ALTAIR never buys options."));
         }
         pages_->addWidget(arb_page);
 

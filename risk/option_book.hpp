@@ -26,6 +26,7 @@
 // INCOMPLETE and the caller is told so, never handed a partial sum as a total.
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/iv.hpp>
 #include <core/time/timestamp.hpp>
@@ -64,7 +65,7 @@ struct BookLeg {
 
 struct BookParams {
     Timestamp now{};
-    double rate{0.065};              ///< continuously compounded, fraction
+    double rate{kInrRiskFreeRate};              ///< continuously compounded, fraction
     double dividend_yield{0.0};
 };
 

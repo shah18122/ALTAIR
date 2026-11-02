@@ -494,9 +494,10 @@ int main(int argc, char** argv)
               "the arm file: armed, one lot, and it ends within one session");
         const QJsonObject st = arm.value(QStringLiteral("strategies")).toObject();
         bool any_on = false;
-        for (const QString& k : {QStringLiteral("arbitrage"), QStringLiteral("ohl"), QStringLiteral("option_arb")})
+        for (const QString& k : {QStringLiteral("arbitrage"), QStringLiteral("ohl")})
             any_on = any_on || !st.contains(k) || st.value(k).toObject().value(QStringLiteral("on")).toBool();
-        check(st.size() == 3 && !any_on, "the arm names every auto strategy, each off unless ticked");
+        check(st.size() == 2 && !any_on && !st.contains(QStringLiteral("option_arb")),
+              "the arm names every auto strategy, each off unless ticked; option arbitrage (it buys options) is not one");
         {
             LiveTradingArmDialog d2(LiveTradingLimits{});
             d2.set_strategy(QStringLiteral("arbitrage"), true, 10);

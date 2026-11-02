@@ -1,5 +1,22 @@
-# Scheduled market-moving news for altair_vol_premium --events.
+# Scheduled market-moving news for altair_vol_premium --events and the live
+# "books" straddle (altair_live_engine): no sale on an event day.
 # One row per event day, YYYY-MM-DD in IST. Fill from the official calendars
-# (Union Budget, RBI MPC decision days, general election results). Left empty on
-# purpose: no dates are guessed here.
+# (Union Budget, RBI MPC decision days, general election results); no date is
+# guessed here. Checked 2026-11-02:
+#   * RBI MPC FY2026-27 schedule (RBI press release, 23 Mar 2026): the decision
+#     is announced on the last day of each meeting.
+#   * US FOMC 2026 and tentative 2027 schedule (Federal Reserve): the decision
+#     is 14:00 New York, past midnight IST, so the Indian session it moves is
+#     the NEXT day; that is the date below.
+#   * Union Budget 2027-28: expected 1 Feb 2027 (PTI, Sep 2026); confirm when
+#     Parliament's budget session is called.
+# Add: election counting days when ECI announces them, the RBI FY2027-28 MPC
+# calendar (published around March), and the FOMC dates once confirmed.
 date,event
+2026-12-04,RBI MPC decision (2-4 Dec 2026)
+2026-12-10,US FOMC decision (8-9 Dec 2026; lands overnight IST)
+2027-01-28,US FOMC decision (26-27 Jan 2027, tentative; lands overnight IST)
+2027-02-01,Union Budget 2027-28 (expected date)
+2027-02-05,RBI MPC decision (3-5 Feb 2027)
+2027-03-18,US FOMC decision (16-17 Mar 2027, tentative; lands overnight IST)
+2027-04-29,US FOMC decision (27-28 Apr 2027, tentative; lands overnight IST)

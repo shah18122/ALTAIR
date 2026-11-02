@@ -22,7 +22,7 @@ void check(bool ok, const char* what) {
 using namespace altair;
 using namespace altair::live;
 
-std::vector<LiveInstrument> universe(std::int64_t today) {
+std::vector<LiveInstrument> universe(std::int64_t today, int near = 2, bool next_week = false) {
     std::vector<LiveInstrument> u;
     const auto add = [&u](std::uint32_t tok, const std::string& sym, const char* under, LiveKind k, double strike,
                           std::int64_t lot, std::int64_t expiry) {
@@ -36,8 +36,12 @@ std::vector<LiveInstrument> universe(std::int64_t today) {
     add(11, "NIFTY26OCTFUT", "NIFTY", LiveKind::Future, 0, 65, today + 20);
     std::uint32_t tok = 1000;
     for (int k = 23000; k <= 25000; k += 50) {
-        add(++tok, "NIFTYW" + std::to_string(k) + "CE", "NIFTY", LiveKind::Call, k, 65, today + 2);
-        add(++tok, "NIFTYW" + std::to_string(k) + "PE", "NIFTY", LiveKind::Put, k, 65, today + 2);
+        add(++tok, "NIFTYW" + std::to_string(k) + "CE", "NIFTY", LiveKind::Call, k, 65, today + near);
+        add(++tok, "NIFTYW" + std::to_string(k) + "PE", "NIFTY", LiveKind::Put, k, 65, today + near);
+        if (next_week) {
+            add(++tok, "NIFTYX" + std::to_string(k) + "CE", "NIFTY", LiveKind::Call, k, 65, today + near + 7);
+            add(++tok, "NIFTYX" + std::to_string(k) + "PE", "NIFTY", LiveKind::Put, k, 65, today + near + 7);
+        }
     }
     return u;
 }
@@ -46,14 +50,16 @@ struct Run {
     std::size_t legs_open = 0, sold_calls = 0, sold_puts = 0, bought = 0, trips = 0;
     std::string why_in, finding, why_out, all_findings;
     double call_strike = 0.0, put_strike = 0.0;
+    std::int64_t sold_expiry = 0;
     int exit_minute = -1;
     LiveStraddleReading first;
     int entry_minute = -1;
 };
 
-Run session(double sigma_day, const LiveStraddleRules& rules = {}, std::vector<double> closes = {}) {
+Run session(double sigma_day, const LiveStraddleRules& rules = {}, std::vector<double> closes = {}, int near = 2,
+            bool next_week = false) {
     const std::int64_t today = parse_day("2026-10-01");
-    const auto u = universe(today);
+    const auto u = universe(today, near, next_week);
     LiveEngine e(u, [](const LiveInstrument&, bool, double qty, double px, std::int64_t) { return 0.0005 * qty * px; });
     LiveStraddleInputs in;
     in.vol = LiveVolInputs{"NIFTY", sigma_day, 0.75, 24000.0};
@@ -87,7 +93,7 @@ Run session(double sigma_day, const LiveStraddleRules& rules = {}, std::vector<d
         if (f.side < 0) {
             (call ? r.sold_calls : r.sold_puts) += 1;
             r.why_in = f.reason;
-            if (const auto* i = e.instrument(f.token)) (call ? r.call_strike : r.put_strike) = i->strike;
+            if (const auto* i = e.instrument(f.token)) { (call ? r.call_strike : r.put_strike) = i->strike; r.sold_expiry = i->expiry_day; }
         }
         else r.bought += 1;
     }
@@ -189,6 +195,56 @@ int main() {
         std::printf("    profit taking: exit %02d:%02d, %s\n", s.exit_minute / 60, s.exit_minute % 60, s.why_out.c_str());
         check(s.trips == 2 && s.why_out.find("profit target") != std::string::npos && s.exit_minute < 15 * 60 + 20,
               "a 2 % profit target buys both legs back before the square-off");
+    }
+
+    // ---- one clock, one window (2026-11-02) --------------------------------
+    {
+        const std::int64_t thu = parse_day("2026-10-01"), tue = parse_day("2026-10-06");
+        check(std::fabs(d::sessions_to(thu, 9 * 60 + 15, tue, {}) - 4.0) < 1e-9, "Thursday 09:15 to Tuesday's close: four sessions");
+        check(std::fabs(d::sessions_to(thu, 9 * 60 + 15, tue, {parse_day("2026-10-02")}) - 3.0) < 1e-9, "a Friday holiday leaves three");
+        check(std::fabs(d::sessions_to(tue, 12 * 60 + 22, tue, {}) - 0.5) < 0.01, "expiry day at 12:22: half a session left");
+        // Expiry day at 09:15: 6.25 hours of calendar time against one whole session.
+        const double years = 6.25 / 24.0 / 365.0;
+        const double ratio = 1.0 / d::to_trading_vol(1.0, years, 1.0);
+        std::printf("    expiry-day calendar IV / trading IV: %.2f\n", ratio);
+        check(ratio > 2.3 && ratio < 2.4, "on expiry day a calendar-time IV reads ~2.4x the trading-time one");
+        const double cal = d::straddle_iv(d::straddle_price(24000, 24000, 4.26 / 365, 0.12), 24000, 24000, 4.26 / 365);
+        check(std::fabs(d::to_trading_vol(cal, 4.26 / 365, 3.0) - 0.12 * std::sqrt(4.26 / 365 * 252 / 3.0)) < 1e-6,
+              "the restated vol keeps the straddle's total variance");
+    }
+    check(std::fabs(calm.first.sessions - 2.0) < 0.02, "the reading counts the sessions to expiry (Thursday 09:15 to a Saturday expiry: two)");
+    check(calm.first.iv_bid < calm.first.iv_bid_calendar, "over a weekend-free span with a Saturday expiry, trading-time IV is below calendar");
+    check(calm.why_in.find("calendar-time bid") != std::string::npos && calm.why_in.find("old today-only forecast") != std::string::npos,
+          "the entry logs the old readings beside the new");
+    // ---- history, stress, expiry day ---------------------------------------
+    {
+        LiveStraddleRules R;
+        R.blocked = "no sale: history is not FYERS (dataset/ (NOT FYERS))";
+        const Run s = session(0.004, R);
+        check(s.sold_calls + s.sold_puts == 0 && s.all_findings.find("history is not FYERS") != std::string::npos,
+              "history the engine refused: nothing sold, and the day says why");
+    }
+    {
+        LiveStraddleRules R;
+        R.max_gap_loss = 1.0;
+        check(session(0.004, R).sold_calls == 0, "a one-rupee cap on a 4 % gap loss: nothing sold");
+        check(calm.why_in.find("4% gap loss Rs") != std::string::npos, "every entry logs its 4 % gap loss");
+    }
+    {
+        const Run roll = session(0.004, {}, {}, 0, true);
+        check(roll.sold_calls == 1 && roll.sold_expiry == today + 7, "expiry day, rule Roll: it sells next week's straddle");
+        LiveStraddleRules R;
+        R.expiry_day = ExpiryDayRule::Sell;
+        // The simulator prices on calendar time, so its 0DTE straddle is cheap on trading time: a very calm forecast.
+        const Run zero = session(0.001, R, {}, 0, true);
+        check(zero.sold_calls == 1 && zero.sold_expiry == today, "expiry day, rule Sell: it sells today's (0DTE)");
+        R.expiry_day = ExpiryDayRule::Skip;
+        const Run skip = session(0.004, R, {}, 0, true);
+        check(skip.sold_calls + skip.sold_puts == 0 && skip.all_findings.find("expiry day") != std::string::npos,
+              "expiry day, rule Skip: nothing sold, and the day says why");
+        const Run lone = session(0.004, {}, {}, 0, false);
+        check(lone.sold_calls == 0 && lone.all_findings.find("beyond an expiry that ends today") != std::string::npos,
+              "rule Roll with no later expiry streamed: nothing sold, and it says so");
     }
     std::printf("%s\n", failures ? "SOME CHECKS DID NOT PASS" : "all checks passed");
     return failures ? 1 : 0;

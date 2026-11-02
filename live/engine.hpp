@@ -431,10 +431,12 @@ public:
     [[nodiscard]] std::vector<LiveMarkSample> take_marks() { return std::exchange(marks_, {}); }
 
     /// Calls or puts of the nearest streamed expiry of `under`, by strike.
-    [[nodiscard]] std::vector<const LiveInstrument*> chain(const std::string& under, LiveKind kind) const {
+    /// The nearest expiry's chain; with `after_today`, the nearest expiring after today.
+    [[nodiscard]] std::vector<const LiveInstrument*> chain(const std::string& under, LiveKind kind, bool after_today = false) const {
         std::int64_t expiry = 0;
+        const std::int64_t from = after_today ? day_ + 1 : day_;
         for (const auto& i : u_)
-            if (i.kind == kind && i.underlying == under && i.expiry_day >= day_ && (expiry == 0 || i.expiry_day < expiry))
+            if (i.kind == kind && i.underlying == under && i.expiry_day >= from && (expiry == 0 || i.expiry_day < expiry))
                 expiry = i.expiry_day;
         std::vector<const LiveInstrument*> out;
         for (const auto& i : u_) if (i.kind == kind && i.underlying == under && i.expiry_day == expiry) out.push_back(&i);

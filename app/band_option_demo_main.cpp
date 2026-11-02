@@ -38,6 +38,7 @@
 // Offline and read-only. Writes <out>/band_option_demo/: trades_<rule>.csv,
 // summary.csv (every rule, instrument and model) and meta.csv.
 
+#include <analytics/inr_rate.hpp>
 #include <app/forecast_tracks.hpp>
 #include <models/band_curriculum.hpp>
 #include <risk/charges_toml.hpp>
@@ -85,7 +86,7 @@ void usage(const char* exe) {
         "                          Synthetic intraday P&L turns on this choice: run all three\n"
         "    --rules LIST          strangle, strangle-stop2x, strangle-hedged, expiry-day,\n"
         "                          expiry-day-stop2x (default: all)\n"
-        "    --rate R              continuously compounded rate for the forward (default 0.065)\n"
+        "    --rate R              continuously compounded rate for the forward (default: the 91-day T-bill)\n"
         "    --slippage-pts P      option premium points given up per fill (default 0.5)\n"
         "    --unverified-costs    price expenses from an UNVERIFIED config/charges.toml anyway,\n"
         "                          stamping every expense and net figure UNVERIFIED\n", exe);
@@ -267,7 +268,7 @@ std::string leg_exit(const FadeTrade& t) {
 int main(int argc, char** argv) {
     fs::path root = "dataset", out = "data/verified";
     std::string which = "both", rules_arg;
-    double rate = 0.065, slip = 0.5;
+    double rate = altair::kInrRiskFreeRate, slip = 0.5;
     bool unverified = false, trading_clock = true, variance_clock = true;   // default: the variance clock
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};

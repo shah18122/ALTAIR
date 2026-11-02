@@ -69,11 +69,11 @@ namespace altair::live_real {
 
 namespace fs = std::filesystem;
 
-/// The strategies that may send real orders, by model name.
+/// The strategies that may send real orders, by model name. Option
+/// arbitrage is not one: it buys options (oms/live_router.hpp), paper only.
 [[nodiscard]] inline std::string strategy_key(const std::string& model) {
     if (model == "Cross-exchange arbitrage") return "arbitrage";
     if (model == "OHL" || model.rfind("OHL ", 0) == 0) return "ohl";
-    if (model == "Option arbitrage") return "option_arb";
     return {};
 }
 

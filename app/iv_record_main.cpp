@@ -10,6 +10,7 @@
 // enough sessions. Run it after the close, at least as often as tapes rotate;
 // a day already written is kept unless --force.
 
+#include <analytics/inr_rate.hpp>
 #include <app/iv_record.hpp>
 #include <live/tape.hpp>
 #include <live/universe.hpp>
@@ -56,7 +57,7 @@ void usage(const char* exe) {
         "usage: %s [--tapes DIR] [--out DIR] [--rate R] [--force]\n"
         "  --tapes  the engine's session tapes (default data/live/tapes)\n"
         "  --out    where the per-day IV files go (default data/live/iv)\n"
-        "  --rate   the rate in Black-76 and in put-call parity (default 0.065)\n"
+        "  --rate   the rate in Black-76 and in put-call parity (default: analytics/inr_rate.hpp, the 91-day T-bill)\n"
         "  --force  rewrite days already written\n",
         exe);
 }
@@ -65,7 +66,7 @@ void usage(const char* exe) {
 
 int main(int argc, char** argv) {
     fs::path tapes = "data/live/tapes", out = "data/live/iv";
-    double rate = 0.065;
+    double rate = altair::kInrRiskFreeRate;
     bool force = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];

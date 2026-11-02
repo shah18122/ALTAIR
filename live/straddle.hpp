@@ -18,6 +18,27 @@
 // The implied vol needs no forecast here: the straddle is sold at the bid
 // seen on the tick, so the vol it is sold at is observed, not predicted.
 //
+// ONE CLOCK, ONE WINDOW (NSE review, 2026-11-02). Both sides of the rule are
+// a variance per TRADING SESSION, annualised by 252:
+//   * the IV is solved on calendar time (to 15:30 IST on the expiry), then
+//     restated on trading time: the same total variance spread over the
+//     sessions left (the rest of today plus every weekday to the expiry that
+//     is not an NSE holiday). On calendar time a Monday read of a Tuesday
+//     weekly looks ~1.5x richer and an expiry-day read ~2.4x, which made the
+//     old rule pass on nearly every day;
+//   * the RV forecast is today's session rate: HAR's sigma for the share of
+//     the session still to run, and today's realised intraday variance
+//     (from the open, without the overnight gap: a seller entering after
+//     09:15 never carries it) scaled up to a full session for the share that
+//     has run.
+// The calendar-time IV and the old today-only RV are kept in every reading
+// and logged beside the gate's values, so the two can be compared.
+//
+// EXPIRY DAY (Smit, 2026-11-02). On the day the nearest expiry expires, the
+// models sell the NEXT expiry (`ExpiryDayRule::Roll`); one extra paper model
+// per index keeps selling the contract that expires today (0DTE) so the
+// record shows whether the extra gamma pays.
+//
 // THE RULE (Smit, 2026-10-25): sell when forecast IV >= forecast RV, with no
 // fixed margin. One straddle a session, one lot a leg, at the first tick it
 // holds; held to the engine's 15:20 square-off. No stop: 1:2 stops in bps of
@@ -61,6 +82,7 @@
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include <analytics/option_math.hpp>
 #include <analytics/vol_cone.hpp>
 #include <live/engine.hpp>
@@ -76,6 +98,13 @@
 
 namespace altair::live {
 
+/// What a seller does on the day its nearest expiry expires.
+enum class ExpiryDayRule {
+    Roll,   ///< sell the next expiry instead (the default)
+    Sell,   ///< sell the contract expiring today (0DTE)
+    Skip,   ///< no sale on expiry day
+};
+
 /// The book rules (see the header). Defaults: all off, the plain straddle.
 struct LiveStraddleRules {
     std::string tag;                     ///< in the model's name ("books"); empty for the plain model
@@ -90,6 +119,10 @@ struct LiveStraddleRules {
     bool uptrend_only = false;           ///< previous close >= its 50-day average
     double max_risk = 0.0;               ///< rupees lost at a 3-sd move over the rest of the session; 0 = off
     double min_cone_rank = 0.0;          ///< 0 = off (the rank is logged either way)
+    double max_gap_loss = 0.0;           ///< rupees lost a lot if the index gaps `gap_move` either way; 0 = off (logged either way)
+    double gap_move = 0.04;              ///< the stress gap, a share of the forward (4 %)
+    ExpiryDayRule expiry_day = ExpiryDayRule::Roll;
+    std::string blocked;                 ///< set by the engine: no sale today, for this reason (stale or non-FYERS history)
 };
 
 /// What the straddle seller knows before the session.
@@ -98,12 +131,13 @@ struct LiveStraddleInputs {
     double vix_close = 0.0;           ///< INDIA VIX's last close before today
     double vix_forecast = 0.0;        ///< HAR's forecast of today's VIX close; 0 when none
     std::vector<double> closes;       ///< the index's daily closes before today, oldest first (cone, trend)
+    std::set<std::int64_t> holidays;  ///< NSE trading holidays (config/nse_holidays.csv), for the sessions to expiry
     LiveStraddleRules rules;
 };
 
 namespace live_straddle_detail {
 
-inline constexpr double kRate = 0.065;
+inline constexpr double kRate = kInrRiskFreeRate;
 inline constexpr double kYearSec = 365.0 * 86400.0;
 /// 15:30 IST, the options' expiry time, as UTC seconds into the day.
 inline constexpr std::int64_t kExpiryUtcSec = 15 * 3600 + 30 * 60 - 19800;
@@ -137,6 +171,24 @@ inline constexpr std::int64_t kExpiryUtcSec = 15 * 3600 + 30 * 60 - 19800;
 [[nodiscard]] inline double years_to(std::int64_t ns, std::int64_t expiry_day) noexcept {
     const double left = static_cast<double>(expiry_day * 86400 + kExpiryUtcSec) - static_cast<double>(ns) / 1e9;
     return std::max(left, 60.0) / kYearSec;
+}
+
+/// Trading sessions from minute `m` of `today` to the 15:30 close of
+/// `expiry_day`: what is left of today, plus every weekday after it up to and
+/// including the expiry that is not a holiday. At least one minute.
+[[nodiscard]] inline double sessions_to(std::int64_t today, int m, std::int64_t expiry_day, const std::set<std::int64_t>& holidays) {
+    double s = live_model_detail::remaining_fraction(m);
+    for (std::int64_t d = today + 1; d <= expiry_day; ++d) {
+        const std::int64_t wd = (d + 4) % 7;   // 1970-01-01 was a Thursday: 0 = Sunday
+        if (wd >= 1 && wd <= 5 && !holidays.contains(d)) s += 1.0;
+    }
+    return std::max(s, 1.0 / 375.0);
+}
+
+/// A calendar-time vol over `years` restated on trading time over `sessions`:
+/// the same total variance.
+[[nodiscard]] inline double to_trading_vol(double vol_calendar, double years, double sessions) noexcept {
+    return vol_calendar * std::sqrt(years * 252.0 / sessions);
 }
 
 /// 5-day over 20-day realised vol of the last closes; NaN with too few.
@@ -185,8 +237,12 @@ struct LiveStraddleReading {
     double spot = 0.0, forward = 0.0, strike = 0.0, years = 0.0;
     double bid = 0.0, mid = 0.0;             ///< straddle, rupees
     double iv_mid = 0.0, iv_bid = 0.0;       ///< annualised, fractions
-    double rv_so_far = 0.0;                  ///< today's realised vol so far, annualised
-    double rv_forecast = 0.0;                ///< realised so far + HAR for the rest, annualised
+    double iv_bid_calendar = 0.0;            ///< the bid IV on calendar time (the pre-2026-11-02 reading), for the log
+    double sessions = 0.0;                   ///< trading sessions to the expiry, today's remainder included
+    double rv_so_far = 0.0;                  ///< today's intraday realised vol so far (no gap), as a session rate, annualised
+    double rv_forecast = 0.0;                ///< today's session rate: HAR for the rest, realised for what has run, annualised
+    double rv_today_old = 0.0;               ///< the pre-2026-11-02 forecast (gap + so far + HAR rest), for the log
+    double gap_loss = std::numeric_limits<double>::quiet_NaN();    ///< rupees lost a lot at a `gap_move` gap
     double vix = 0.0;
     double atm_strike = 0.0;                 ///< the ATM strike the IV gate reads (== strike for the straddle)
     double p_loss = std::numeric_limits<double>::quiet_NaN();      ///< model chance of a loss held to expiry
@@ -255,11 +311,17 @@ public:
                                         + (in_.rules.leg_delta > 0.0 ? live_fmt::num(100 * in_.rules.leg_delta, 0) + "-delta strangle"
                                                                      : std::string("ATM straddle"))
                                         + " of the nearest " + in_.vol.under
-                                        + " expiry, one lot a leg, once forecast IV (the ATM bid) >= forecast RV; bought back by 15:20.";
+                                        + (in_.rules.expiry_day == ExpiryDayRule::Roll ? " expiry (the next one on expiry day)"
+                                           : in_.rules.expiry_day == ExpiryDayRule::Sell ? " expiry (0DTE on expiry day)"
+                                                                                          : " expiry (none on expiry day)")
+                                        + ", one lot a leg, once forecast IV (the ATM bid) >= forecast RV; bought back by 15:20.";
         if (last_.ok) {
             v.fields.push_back({"straddle", live_fmt::num(last_.strike, 0) + ": bid " + live_fmt::num(last_.bid) + ", mid " + live_fmt::num(last_.mid)});
-            v.fields.push_back({"implied vol", "mid " + live_fmt::num(100 * last_.iv_mid, 2) + ", bid " + live_fmt::num(100 * last_.iv_bid, 2)});
-            v.fields.push_back({"realised vol", "so far " + live_fmt::num(100 * last_.rv_so_far, 2) + ", forecast " + live_fmt::num(100 * last_.rv_forecast, 2)});
+            v.fields.push_back({"implied vol (trading time)", "mid " + live_fmt::num(100 * last_.iv_mid, 2) + ", bid " + live_fmt::num(100 * last_.iv_bid, 2)
+                                                                   + " over " + live_fmt::num(last_.sessions, 2) + " sessions (calendar bid "
+                                                                   + live_fmt::num(100 * last_.iv_bid_calendar, 2) + ")"});
+            v.fields.push_back({"realised vol", "intraday so far " + live_fmt::num(100 * last_.rv_so_far, 2) + ", session forecast "
+                                                    + live_fmt::num(100 * last_.rv_forecast, 2) + " (old " + live_fmt::num(100 * last_.rv_today_old, 2) + ")"});
             v.fields.push_back({"books", books_text(last_)});
         } else if (!last_.why.empty()) {
             v.fields.push_back({"reading", last_.why});
@@ -282,8 +344,19 @@ public:
         r.spot = idx ? e.mid(idx->token) : 0.0;
         if (!(r.spot > 0.0)) { r.why = "no " + in_.vol.under + " index price"; return r; }
         if (!(in_.vol.sigma_day > 0.0)) { r.why = "no HAR forecast of today's realised vol"; return r; }
-        const auto calls = e.chain(in_.vol.under, LiveKind::Call);
-        const auto puts = e.chain(in_.vol.under, LiveKind::Put);
+        const std::int64_t today = live_day_of(live_ist_minute_index(ns));
+        const int minute = live_minute_of_day(live_ist_minute_index(ns));
+        const bool roll = in_.rules.expiry_day == ExpiryDayRule::Roll;
+        if (in_.rules.expiry_day == ExpiryDayRule::Skip) {
+            const auto nearest = e.chain(in_.vol.under, LiveKind::Call);
+            if (!nearest.empty() && nearest.front()->expiry_day == today) { r.why = "expiry day: this model does not sell on expiry day"; return r; }
+        }
+        const auto calls = e.chain(in_.vol.under, LiveKind::Call, roll);
+        const auto puts = e.chain(in_.vol.under, LiveKind::Put, roll);
+        if (calls.empty() || puts.empty()) {
+            r.why = roll ? "no " + in_.vol.under + " chain beyond an expiry that ends today" : "no " + in_.vol.under + " option chain";
+            return r;
+        }
         // The pair at strike k, with both legs quoted sanely now.
         struct Leg { const LiveInstrument* c = nullptr; const LiveInstrument* p = nullptr; double cb = 0, ca = 0, pb = 0, pa = 0; };
         const auto pair_at = [&](double k, Leg& out) {
@@ -318,16 +391,21 @@ public:
         if (!nearest(r.spot, at)) { r.why = "no strike near " + live_fmt::num(r.spot, 0) + " with both legs quoted within 5 %"; return r; }
         // Put-call parity at that strike gives the expiry's forward; the ATM strike is the one nearest it.
         const double k0 = at.c->strike;
-        r.years = d::years_to(ns, at.c->expiry_day);
-        r.forward = k0 + (0.5 * (at.ca + at.cb) - 0.5 * (at.pa + at.pb)) * std::exp(d::kRate * r.years);
+        const double years_cal = d::years_to(ns, at.c->expiry_day);
+        r.forward = k0 + (0.5 * (at.ca + at.cb) - 0.5 * (at.pa + at.pb)) * std::exp(d::kRate * years_cal);
         Leg atm = at;
         (void)nearest(r.forward, atm);
         r.call = atm.c; r.put = atm.p; r.strike = atm.c->strike;
         r.bid = atm.cb + atm.pb;
         r.mid = 0.5 * (atm.ca + atm.cb + atm.pa + atm.pb);
-        r.iv_mid = d::straddle_iv(r.mid, r.forward, r.strike, r.years);
-        r.iv_bid = d::straddle_iv(r.bid, r.forward, r.strike, r.years);
-        if (!std::isfinite(r.iv_bid) || !std::isfinite(r.iv_mid)) { r.why = "the straddle at " + live_fmt::num(r.strike, 0) + " has no implied vol"; return r; }
+        const double iv_mid_cal = d::straddle_iv(r.mid, r.forward, r.strike, years_cal);
+        r.iv_bid_calendar = d::straddle_iv(r.bid, r.forward, r.strike, years_cal);
+        if (!std::isfinite(r.iv_bid_calendar) || !std::isfinite(iv_mid_cal)) { r.why = "the straddle at " + live_fmt::num(r.strike, 0) + " has no implied vol"; return r; }
+        // Trading time from here on: years = sessions / 252, and the vols restated to match.
+        r.sessions = d::sessions_to(today, minute, at.c->expiry_day, in_.holidays);
+        r.iv_mid = d::to_trading_vol(iv_mid_cal, years_cal, r.sessions);
+        r.iv_bid = d::to_trading_vol(r.iv_bid_calendar, years_cal, r.sessions);
+        r.years = r.sessions / 252.0;
         r.atm_strike = r.strike;
         double k_put = r.strike, k_call = r.strike;
         if (in_.rules.leg_delta > 0.0) {
@@ -361,19 +439,30 @@ public:
             r.mid = 0.5 * (ca + cb + pa + pb);
         }
         r.p_loss = 1.0 - altair::short_strangle_pop(r.forward, k_put, k_call, r.years, r.iv_mid, r.bid);
+        r.gap_loss = d::loss_at_move(r.forward, k_put, k_call, r.bid, in_.rules.gap_move * r.forward)
+                   * static_cast<double>(r.call->lot > 0 ? r.call->lot : 1);
         if (!in_.closes.empty()) {
-            const auto h = static_cast<std::size_t>(std::max(1.0, std::round(r.years * 252.0)));
+            const auto h = static_cast<std::size_t>(std::max(1.0, std::round(r.sessions)));
             r.cone_rank = altair::cone_rank(in_.closes, in_.closes.size() - 1, h, r.iv_bid);
         }
-        // Realised so far: one-minute closes since the previous close, plus the minute in progress.
+        // Realised so far: one-minute closes since the open (no gap), plus the minute in progress.
         const auto& bars = e.bars(idx->token);
-        double so_far = live_model_detail::realised_so_far(bars, in_.vol.prev_close);
-        const double last = bars.empty() ? in_.vol.prev_close : bars.back().c;
-        if (last > 0.0) { const double x = std::log(r.spot / last); so_far += x * x; }
-        const int m = live_minute_of_day(live_ist_minute_index(ns));
-        const double rest = in_.vol.intraday_share * in_.vol.sigma_day * in_.vol.sigma_day * live_model_detail::remaining_fraction(m);
-        r.rv_so_far = std::sqrt(so_far * 252.0);
-        r.rv_forecast = std::sqrt((so_far + rest) * 252.0);
+        double intraday = live_model_detail::realised_so_far(bars, 0.0);
+        const double last = bars.empty() ? 0.0 : bars.back().c;
+        if (last > 0.0) { const double x = std::log(r.spot / last); intraday += x * x; }
+        const int m = minute;
+        const double left = live_model_detail::remaining_fraction(m), ran = 1.0 - left;
+        const double share = in_.vol.intraday_share > 0.0 ? in_.vol.intraday_share : 0.75;
+        const double sig2 = in_.vol.sigma_day * in_.vol.sigma_day;
+        // Today's session rate: HAR for the share still to run, today's intraday realised scaled to a session for the share run.
+        r.rv_forecast = std::sqrt((sig2 * left + intraday / share) * 252.0);
+        r.rv_so_far = ran > 0.0 ? std::sqrt(intraday / (share * ran) * 252.0) : 0.0;
+        {
+            // The old reading, kept for the log: the gap, plus so far, plus HAR's rest, as one day.
+            double old = live_model_detail::realised_so_far(bars, in_.vol.prev_close);
+            if (last > 0.0) { const double x = std::log(r.spot / last); old += x * x; }
+            r.rv_today_old = std::sqrt((old + share * sig2 * left) * 252.0);
+        }
         {
             const double sd = r.forward * r.iv_bid * std::sqrt(std::max(live_model_detail::remaining_fraction(m), 1.0 / 375.0) / 252.0);
             r.risk = d::loss_at_move(r.forward, k_put, k_call, r.bid, 3.0 * sd) * static_cast<double>(r.call->lot > 0 ? r.call->lot : 1);
@@ -399,6 +488,7 @@ private:
         const auto& R = in_.rules;
         if (R.min_cone_rank > 0.0 && !(last_.cone_rank >= R.min_cone_rank)) return;   // watch on: the rank moves with the IV
         if (R.max_risk > 0.0 && !(last_.risk <= R.max_risk)) return;
+        if (R.max_gap_loss > 0.0 && !(last_.gap_loss <= R.max_gap_loss)) return;
         traded_ = true;
         const std::string reason = live_fmt::hhmm(m) + " " + reading_text(last_) + "; " + books_text(last_) + ": forecast IV >= forecast RV, SELL";
         LiveDecisionScope log(e, name(), [this] { return note_; });
@@ -418,6 +508,7 @@ private:
     [[nodiscard]] std::string day_gate(std::int64_t day) const {
         namespace d = live_straddle_detail;
         const auto& R = in_.rules;
+        if (!R.blocked.empty()) return R.blocked;
         if (R.events.contains(day)) return "scheduled news today (config/scheduled_events.csv)";
         if (R.monthly_loss_halt > 0.0 && R.month_closed_pnl <= -R.monthly_loss_halt)
             return "monthly loss halt: closed trades this month " + live_fmt::num(R.month_closed_pnl, 0) + " against a limit of -"
@@ -487,15 +578,17 @@ private:
         namespace d = live_straddle_detail;
         const auto opt = [](double x, int dp) { return std::isfinite(x) ? live_fmt::num(x, dp) : std::string("—"); };
         return "P(loss at expiry) " + opt(r.p_loss, 3) + ", IV cone rank " + opt(r.cone_rank, 2) + ", 3-sd risk Rs "
-             + opt(r.risk, 0) + ", 5d/20d RV " + opt(d::vol_trend(in_.closes), 2) + ", close/MA50 " + opt(d::over_ma50(in_.closes), 3);
+             + opt(r.risk, 0) + ", " + opt(100 * in_.rules.gap_move, 0) + "% gap loss Rs " + opt(r.gap_loss, 0) + ", 5d/20d RV " + opt(d::vol_trend(in_.closes), 2) + ", close/MA50 " + opt(d::over_ma50(in_.closes), 3);
     }
     [[nodiscard]] std::string reading_text(const LiveStraddleReading& r) const {
         return "spot " + live_fmt::num(r.spot, 1) + ", fwd " + live_fmt::num(r.forward, 1) + ", "
              + (r.put != nullptr && r.put->strike != r.strike ? live_fmt::num(r.put->strike, 0) + "/" : std::string()) + live_fmt::num(r.strike, 0)
              + (r.put != nullptr && r.put->strike != r.strike ? " strangle bid " : " straddle bid ")
              + live_fmt::num(r.bid) + " (ATM " + live_fmt::num(r.atm_strike, 0) + " IV bid " + live_fmt::num(100 * r.iv_bid, 2) + ", mid "
-             + live_fmt::num(100 * r.iv_mid, 2) + ") vs RV forecast " + live_fmt::num(100 * r.rv_forecast, 2) + " (so far "
-             + live_fmt::num(100 * r.rv_so_far, 2) + "), VIX " + vix_text(r.vix);
+             + live_fmt::num(100 * r.iv_mid, 2) + " on " + live_fmt::num(r.sessions, 2) + " sessions; calendar-time bid "
+             + live_fmt::num(100 * r.iv_bid_calendar, 2) + ") vs RV forecast " + live_fmt::num(100 * r.rv_forecast, 2) + " (intraday so far "
+             + live_fmt::num(100 * r.rv_so_far, 2) + "; old today-only forecast " + live_fmt::num(100 * r.rv_today_old, 2) + "), VIX "
+             + vix_text(r.vix);
     }
 
     LiveStraddleInputs in_;
