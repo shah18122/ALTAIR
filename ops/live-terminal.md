@@ -692,6 +692,27 @@ average win and loss, expectancy, profit factor, daily Sharpe and Sortino,
 max drawdown, Calmar, average hold, and the 1 s / 10 s / 60 s markouts of the
 entries (negative at 1 s: the fills are being picked off).
 
+**Choosing the OBI stocks: `altair_obi_select`** (`app/obi_select.hpp`). The
+idea is the Kalshi market maker's market selector: score every candidate on
+what it did and trade only the best. It replays one recorded session (the
+latest, or `--day`) and scores every NSE stock book on the tape (the NIFTY 50
+cash books; BSE twins and the indices are left out) by
+`0.5 × rank(value traded) + 0.3 × rank(touch depth in rupees) + 0.2 × rank(tight spread)`,
+each a rank among the candidates, sampled at most once a second in session
+hours. A stock needs 300 samples (`--min-samples`) to be scored.
+- The ranking always goes to `data/live/obi_selection.csv`.
+- `--write` rewrites `config/obi_underlyings.csv` with the best `--top`
+  (default 3, counting `--keep`); `--keep NYKAA` keeps a stock with its
+  current row. A new stock gets target = max(8 ticks, 4 × its median spread),
+  stop = half, safety = one tick, as a starting point for
+  `altair_tune --strategy obi_<stock>`.
+- Restart the price service and the live engine afterwards: the price
+  service streams the futures and chain of exactly the stocks in the file.
+- Dropping a stock is safe: the OBI traders square off at 15:20, so nothing
+  is left working or held on a stock taken out.
+- Nothing chooses on its own: run it after the close, read the ranking, then
+  `--write`.
+
 **Passive option sales** (`LivePaperBook::open_passive`,
 `book/queue_fill.hpp`). The OBI option sellers rest their sale at the ask
 by default. The paper book fills a resting order only as a resting order can
