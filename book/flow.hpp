@@ -282,6 +282,8 @@ public:
         std::optional<Item> out;
         trim();
         if (size() == kCap) { out = at(0); pop(); }
+        // RULE 11: not a clamp -- a running min / max of the prices waiting, so
+        // the envelope only ever widens to cover them; no value is cut off.
         if (h_ == t_) { lo_ = hi_ = x.px; }   // empty: the envelope starts again
         else { lo_ = x.px < lo_ ? x.px : lo_; hi_ = x.px > hi_ ? x.px : hi_; }
         a_[t_ & (kCap - 1)] = x;
