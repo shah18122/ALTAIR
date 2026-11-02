@@ -439,6 +439,18 @@ public:
         for (const int id : expired) expire_entry(id, ns);
     }
 
+    /// The last time `model` opened anything (feed ns; 0 never): fills here,
+    /// and the journal's for a restarted engine (note_opened), so a model
+    /// that sold and was taken out earlier today knows it after a restart.
+    [[nodiscard]] std::int64_t last_open_ns(const std::string& model) const {
+        const auto it = last_open_.find(model);
+        return it == last_open_.end() ? 0 : it->second;
+    }
+    void note_opened(const std::string& model, std::int64_t ns) {
+        std::int64_t& t = last_open_[model];
+        t = std::max(t, ns);
+    }
+
     /// Restore a position from the journal, without a fill.
     void restore(const LivePosition& p) {
         LivePosition q = p;
@@ -703,6 +715,7 @@ private:
         fills_.push_back(f);
         ++version_;
         if (!o.exit) {
+            note_opened(p.model, now);
             if (!p.filled()) p.entry_ns = now;
             p.qty = o.filled;
             p.entry = o.value / static_cast<double>(o.filled);
@@ -768,6 +781,7 @@ private:
     std::map<std::pair<std::string, std::uint32_t>, LivePosition> positions_;
     std::map<int, Order> orders_;
     std::vector<LivePaperTrade> trades_;
+    std::map<std::string, std::int64_t> last_open_;   ///< model -> its last entry fill (feed ns)
     std::vector<LivePaperFill> fills_;
     std::vector<std::string> cancelled_;
     int next_id_ = 1;
@@ -831,7 +845,8 @@ inline constexpr const char* kLiveJournalHeader =
 [[nodiscard]] inline std::vector<LivePosition> live_replay_journal(const std::string& path,
                                                                    const std::vector<LiveInstrument>& universe,
                                                                    std::vector<std::string>& orphans,
-                                                                   std::size_t* rows = nullptr) {
+                                                                   std::size_t* rows = nullptr,
+                                                                   std::map<std::string, std::int64_t>* last_open = nullptr) {
     struct Acc { LivePosition p; double value = 0.0; std::int64_t opened = 0, closed = 0; std::string symbol; };
     std::map<std::pair<std::string, std::uint32_t>, Acc> acc;
     std::ifstream in(path);
@@ -848,6 +863,10 @@ inline constexpr const char* kLiveJournalHeader =
             auto& a = acc[{c[1], tok}];
             a.symbol = c[3];
             if (c[4] == "OPEN") {
+                if (last_open != nullptr) {
+                    std::int64_t& t = (*last_open)[c[1]];
+                    t = std::max<std::int64_t>(t, std::atoll(c[0].c_str()));
+                }
                 if (a.opened == a.closed) {   // a fresh round trip
                     a = Acc{};
                     a.symbol = c[3];

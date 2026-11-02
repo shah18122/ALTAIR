@@ -785,8 +785,9 @@ int main(int argc, char** argv) {
     std::vector<std::string> orphans;
     const fs::path journal = paper_dir / "journal.csv";
     std::size_t journal_rows = 0;
+    std::map<std::string, std::int64_t> last_open;   // what each model opened last, closed since or not
     const bool have_journal = fs::exists(journal);
-    const auto resumed = have_journal ? lv::live_replay_journal(journal.string(), universe, orphans, &journal_rows)
+    const auto resumed = have_journal ? lv::live_replay_journal(journal.string(), universe, orphans, &journal_rows, &last_open)
                                       : lv::live_read_positions((paper_dir / "open_positions.csv").string(), universe, orphans);
     std::printf("resuming from %s: %zu position(s)%s\n", have_journal ? "paper/journal.csv" : "paper/open_positions.csv",
                 resumed.size(), have_journal ? (" (" + std::to_string(journal_rows) + " fills)").c_str() : "");
@@ -795,6 +796,7 @@ int main(int argc, char** argv) {
         if (!p.carry && d != today) { orphans.push_back(p.model + " " + p.inst.symbol + " (intraday, " + lv::day_text(d) + ")"); continue; }
         engine.book().restore(p);
     }
+    for (const auto& [model, ns] : last_open) engine.book().note_opened(model, ns);
     for (const auto& o : orphans) note += "Not resumed: " + o + ". ";
     note += cost_note;
 
