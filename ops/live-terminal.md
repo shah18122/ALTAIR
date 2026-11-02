@@ -639,8 +639,15 @@ in `data/live/tapes/`.
 bars, which cannot judge a strategy that lives at the touch. The tuner replays
 the tapes instead:
 - **Strategies:** the arbitrage (margin over costs, how long a pair may wait),
-  OHL (stop, trail start, trail) and the option arbitrage (margin to enter,
-  when to unwind).
+  OHL (stop, trail start, trail), the option arbitrage (margin to enter,
+  when to unwind), and every **OBI trader** (`obi_<under>_<A-D>_<fut|opt>`,
+  16 of them): the OBI5 threshold and how long it must hold (A, B), the time
+  stop (C, D), the target (futures: target and stop scaled together; options:
+  the premium fall), and for option sales **resting at the ask against
+  hitting the bid** (`passive` 1 / 0).
+- **Tapes:** the engine's (`data/live/tapes/`) and the recorder's
+  (`data/store/tapes/<date>/`), oldest first. `--strategy` takes a key or a
+  prefix (`obi`, `obi_banknifty`, `obi_nykaa_C`).
 - **One pass a tape:** every grid point gets its own engine, so a tape is read
   once however large the grid.
 - **Walk-forward over the days:** each test day takes the setting that was
@@ -651,11 +658,33 @@ the tapes instead:
   adjustment for the whole grid (p < 0.10).
 - **Otherwise** the defaults stay and it says why. The engine prints which
   settings it runs with at start.
-- **Kept out of it:** SIM tapes (unless `--allow-sim`, for trying it out), and
-  passive against aggressive execution, which needs a queue-position fill
-  model in the paper book first.
+- **Kept out of it:** SIM tapes (unless `--allow-sim`, for trying it out),
+  and the straddle sellers (one decision a day on forecasts that are not on
+  the tape: they are judged on the recorded chains).
+- **Latency** (`--latency-ms 50,250,1000`): the first value is the verdict;
+  the others re-run everything and go to `data/live/tune/latency.csv`, to show
+  how much of a result survives a slower path, or a co-located one. The feed
+  lag (receive time minus the exchange's stamp on each print; FYERS stamps to
+  the second) is printed for every run.
 
-`data/live/tune/<key>.csv` holds every day × setting.
+`data/live/tune/<key>.csv` holds every day × setting, and
+`data/live/tune/<key>_stats.csv` the stats sheet of every setting
+(`live/trade_stats.hpp`): net, gross, expenses, cost share, trades, hit rate,
+average win and loss, expectancy, profit factor, daily Sharpe and Sortino,
+max drawdown, Calmar, average hold, and the 1 s / 10 s / 60 s markouts of the
+entries (negative at 1 s: the fills are being picked off).
+
+**Passive option sales** (`LivePaperBook::open_passive`,
+`book/queue_fill.hpp`). The OBI option sellers rest their sale at the ask
+by default. The paper book fills a resting order only as a resting order can
+fill: it joins the back of the level; trades at its price eat the volume
+ahead first; a shrink the trades do not explain is cancels, taken from ahead
+of it with probability f(front) / (f(front) + f(back)), f(x) = x³ (the
+probability queue model of hftbacktest); a trade through its price fills it
+up to what printed; a bid rising to its price takes the rest. It fills at its
+own price, and is cancelled unfilled after the entry timeout. Futures and
+every exit stay at the touch. The cube is not fitted yet: it is pessimistic
+until real resting fills say otherwise.
 
 **The replay** (`--replay TAPE`). The same engine, fed the tape, into
 `replay/<tape>/`:

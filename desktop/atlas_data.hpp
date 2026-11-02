@@ -362,6 +362,12 @@ inline constexpr std::array kAtlasRows{
              "Exact FIFO replay handles identified adds, cancels and trades "
              "ahead, and invalidates on sequence gaps. Live use remains gated "
              "on licensed order-by-order depth."},
+    AtlasRow{"4. Microstructure & execution", "Probability queue model",
+             AtlasStatus::Implemented, "book/queue_fill.hpp", -1,
+             "Where a resting order stands in an aggregated (L2) book: it joins "
+             "the back, trades at its price eat what is ahead, and cancels are "
+             "split ahead or behind by f(x) = x^3. The OBI option sales rest "
+             "at the ask through it, on paper. The power is not fitted yet."},
     AtlasRow{"4. Microstructure & execution", "Fill probability",
              AtlasStatus::Implemented, "models/fill_probability.hpp", 24,
              "A train-fold-scaled logistic hazard reports probabilities and "

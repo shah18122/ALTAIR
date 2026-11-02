@@ -12,6 +12,11 @@
 //   * for no more than the size displayed: the rest of the order keeps
 //     working against later quotes (a partial fill);
 //   * no sooner than `latency_ns` after the decision.
+// A PASSIVE entry (open_passive) is the one exception: a limit order resting
+// at its own side's touch (a sell at the ask), which fills only as
+// book/queue_fill.hpp says a resting order can -- the volume ahead of it
+// traded or cancelled first, a trade through its price, or a crossing quote --
+// at its own price. Exits are never passive: an exit must get out.
 // An ENTRY that is not filled within `entry_timeout_ns` is cancelled; a
 // partly filled one keeps what filled, and a model's other legs from the same
 // decision are unwound, so one filled leg is never left unhedged. An EXIT never
@@ -41,6 +46,7 @@
 
 #pragma once
 
+#include <book/queue_fill.hpp>
 #include <live/universe.hpp>
 
 #include <algorithm>
@@ -84,6 +90,7 @@ struct LiveExecPolicy {
     std::int64_t latency_ns = 250'000'000;          ///< decision to order at the market
     std::int64_t max_quote_age_ns = 10'000'000'000; ///< older than this, a quote is not executable
     std::int64_t entry_timeout_ns = 60'000'000'000; ///< an entry not filled by then is cancelled
+    queue::ProbQueueConfig queue{};                 ///< how a passive entry's queue place is estimated
 };
 
 /// Rupees of expenses for one fill: (instrument, buy?, quantity, price in
@@ -210,12 +217,42 @@ public:
     /// says no; otherwise it works until filled or timed out.
     bool open(const std::string& model, const LiveInstrument& in, int side, std::int64_t lots, std::int64_t ns,
               const std::string& reason, bool carry, std::string* why = nullptr) {
+        return open_impl(model, in, side, lots, ns, reason, carry, false, why);
+    }
+    /// Submit a PASSIVE entry: a limit order resting at its own side's touch
+    /// (a sell at the ask, a buy at the bid) once `latency_ns` has passed,
+    /// filled only through the queue model (book/queue_fill.hpp), at its own
+    /// price. It times out like any entry. Intraday only.
+    bool open_passive(const std::string& model, const LiveInstrument& in, int side, std::int64_t lots, std::int64_t ns,
+                      const std::string& reason, std::string* why = nullptr) {
+        return open_impl(model, in, side, lots, ns, reason, false, true, why);
+    }
+
+    /// A trade print of `qty` units at `px` paise for `token`: what moves a
+    /// passive entry up its queue, or fills it.
+    void on_print(std::uint32_t token, std::int64_t px, std::int64_t qty, std::int64_t ns) {
+        if (px <= 0 || qty <= 0) return;
+        std::vector<int> ids;
+        for (const auto& [id, o] : orders_) if (o.passive && o.key.second == token && o.q.placed) ids.push_back(id);
+        for (const int id : ids) {
+            const auto oit = orders_.find(id);
+            if (oit == orders_.end()) continue;
+            if (!oit->second.exit && oit->second.expire_ns > 0 && ns >= oit->second.expire_ns) { expire_entry(id, ns); continue; }
+            const std::int64_t got = queue::on_trade(oit->second.q, px, qty);
+            if (got > 0) fill(id, got, static_cast<double>(oit->second.q.px) / 100.0 * static_cast<double>(got), ns);
+        }
+    }
+
+private:
+    bool open_impl(const std::string& model, const LiveInstrument& in, int side, std::int64_t lots, std::int64_t ns,
+                   const std::string& reason, bool carry, bool passive, std::string* why) {
         if (side == 0 || lots <= 0) { if (why) *why = "nothing to do"; return false; }
         const auto key = std::make_pair(model, in.token);
         if (positions_.count(key) != 0) { if (why) *why = "already in a position"; return false; }
         const std::int64_t qty = lots * (in.lot > 0 ? in.lot : 1);
         const LiveTop t = top_(in.token);
-        const std::int64_t touch = side > 0 ? t.ask : t.bid;
+        // A market order deals at the far touch; a passive one rests at its own.
+        const std::int64_t touch = (side > 0) != passive ? t.ask : t.bid;
         if (!fresh(t.quote_ns, ns) || touch <= 0) {
             if (why) *why = "no fresh quote for " + in.symbol + age_text(t.quote_ns, ns);
             return false;
@@ -233,11 +270,14 @@ public:
         Order o;
         o.id = next_id_++; o.key = key; o.side = side; o.remaining = qty; o.submit_ns = ns;
         o.due_ns = ns + pol_.latency_ns; o.expire_ns = ns + pol_.entry_timeout_ns; o.reason = reason; o.exit = false;
+        o.passive = passive;
         orders_.emplace(o.id, o);
         if (on_order) on_order(LiveOrderEvent{model, in, side, qty, touch, ns, ns, false, reason});
         if (pol_.latency_ns <= 0) execute(o.id, ns);
         return true;
     }
+
+public:
 
     /// Close `model`'s position in `token`: cancel an unfilled entry, or submit
     /// an exit that works until it fills. False when there is no position.
@@ -427,7 +467,55 @@ private:
         std::int64_t submit_ns = 0, due_ns = 0, expire_ns = 0;
         std::string reason;
         bool exit = false;
+        bool passive = false;          ///< resting at its own touch (open_passive)
+        queue::QueueOrder q{};         ///< its place in the queue, once it rests
+        std::int64_t depth_seen_ns = 0;///< the book/quote time last applied to `q`
     };
+
+    /// The units shown at `px` on `side`'s own side of `t` (a sell's asks);
+    /// -1 when `px` lies beyond what is shown (unknown).
+    [[nodiscard]] std::int64_t level_at(const LiveTop& t, int side, std::int64_t px, std::int64_t now) const {
+        const bool asks = side < 0;
+        const auto better = [&](std::int64_t a, std::int64_t b) { return asks ? a < b : a > b; };   // a nearer the touch than b
+        if (t.levels > 0 && fresh(t.book_ns, now)) {
+            std::int64_t best = 0, worst = 0;
+            for (std::size_t k = 0; k < t.levels && k < kLiveDepth; ++k) {
+                const LiveLevel& l = asks ? t.asks[k] : t.bids[k];
+                if (l.px <= 0) continue;
+                if (l.px == px) return l.qty;
+                if (best == 0 || better(l.px, best)) best = l.px;
+                if (worst == 0 || better(worst, l.px)) worst = l.px;
+            }
+            if (best == 0) return -1;
+            return better(worst, px) ? -1 : 0;   // within the shown range but absent: the level is empty
+        }
+        const std::int64_t touch = asks ? t.ask : t.bid, tq = asks ? t.ask_qty : t.bid_qty;
+        if (touch <= 0 || !fresh(t.quote_ns, now)) return -1;
+        if (touch == px) return tq;
+        return better(px, touch) ? 0 : -1;
+    }
+
+    /// A passive entry, due: rest it at its touch, then follow its queue.
+    void work_passive(int id, Order& o, const LivePosition& p, std::int64_t now) {
+        const LiveTop t = top_(p.inst.token);
+        if (!o.q.placed) {
+            const std::int64_t px = o.side < 0 ? t.ask : t.bid;
+            if (px <= 0 || !fresh(t.quote_ns, now)) return;   // nothing to rest against yet
+            const std::int64_t lvl = level_at(t, o.side, px, now);
+            queue::place(o.q, o.side, px, o.remaining, std::max<std::int64_t>(0, lvl));
+            o.depth_seen_ns = std::max(t.book_ns, t.quote_ns);
+            return;
+        }
+        // Only a NEW book or quote moves the queue: a print re-reading an old
+        // book would cancel what on_print counted.
+        if (const std::int64_t seen = std::max(t.book_ns, t.quote_ns); seen != o.depth_seen_ns) {
+            o.depth_seen_ns = seen;
+            if (const std::int64_t lvl = level_at(t, o.side, o.q.px, now); lvl >= 0) queue::on_depth(o.q, pol_.queue, lvl);
+        }
+        const std::int64_t opp = fresh(t.quote_ns, now) ? (o.side < 0 ? t.bid : t.ask) : 0;
+        if (const std::int64_t got = queue::on_cross(o.q, opp); got > 0)
+            fill(id, got, static_cast<double>(o.q.px) / 100.0 * static_cast<double>(got), now);
+    }
 
     [[nodiscard]] static std::string age_text(std::int64_t quote_ns, std::int64_t now_ns) {
         if (quote_ns <= 0) return " (never quoted)";
@@ -475,20 +563,32 @@ private:
         if (!o.exit && o.expire_ns > 0 && now >= o.expire_ns) { expire_entry(id, now); return; }
         const auto pit = positions_.find(o.key);
         if (pit == positions_.end()) { orders_.erase(oit); return; }
-        LivePosition& p = pit->second;
-        const LiveTop t = top_(p.inst.token);
+        if (o.passive) { work_passive(id, o, pit->second, now); return; }
+        const LiveTop t = top_(pit->second.inst.token);
         const auto [got, value] = take(t, o.side, o.remaining, now);
         if (got <= 0) return;   // nothing executable now: keeps working
-        const double px = value / static_cast<double>(got);
+        fill(id, got, value, now);
+    }
+
+    /// `got` units of order `id` filled for `value` rupees x units at `now`.
+    void fill(int id, std::int64_t got, double value, std::int64_t now) {
+        const auto oit = orders_.find(id);
+        if (oit == orders_.end() || got <= 0) return;
+        Order& o = oit->second;
+        const auto pit = positions_.find(o.key);
+        if (pit == positions_.end()) { orders_.erase(oit); return; }
+        LivePosition& p = pit->second;
+        const double px = value / static_cast<double>(got);   // the price is what was asked, whatever is left
+        got = std::min(got, o.remaining);
         LivePaperFill f;
         f.model = p.model; f.token = p.inst.token; f.symbol = p.inst.symbol; f.side = o.side; f.qty = got;
-        f.price = px; f.ns = now; f.submit_ns = o.submit_ns; f.reason = o.reason;
+        f.price = px; f.ns = now; f.submit_ns = o.submit_ns; f.reason = o.passive ? "passive: " + o.reason : o.reason;
         f.role = o.exit ? LiveFillRole::Close : LiveFillRole::Open; f.carry = p.carry;
         f.expenses = cost_ ? cost_(p.inst, o.side > 0, static_cast<double>(got), px, now)
                            : std::numeric_limits<double>::quiet_NaN();
         o.remaining -= got;
         o.filled += got;
-        o.value += value;
+        o.value += px * static_cast<double>(got);
         o.expenses += f.expenses;   // NaN sticks
         f.partial = o.remaining > 0;
         fills_.push_back(f);

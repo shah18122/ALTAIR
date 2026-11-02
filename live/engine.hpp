@@ -209,6 +209,10 @@ public:
         // known then; a new session resets before its first tick is kept.
         advance(ns);
         LiveState& s = state_[p.token];
+        // What traded in this print, for a passive entry's queue: the day's
+        // volume moved (FYERS prints are snapshots that can cover several
+        // trades), else the print's own quantity.
+        const std::int64_t traded = p.has(kPriceHasVolume) && s.volume > 0 ? std::max<std::int64_t>(0, p.volume - s.volume) : p.last_qty;
         s.ltp = p.last_paise;
         s.last_ns = ns;
         if (p.has(kPriceHasVolume)) s.volume = p.volume;
@@ -219,6 +223,7 @@ public:
         replay_ = replay_ || s.replay;
         if (!bars_.feed(p.token, static_cast<double>(p.last_paise) / 100.0, ns, s.volume, [](std::uint32_t, const LiveBar&) {}))
             ++late_prints_;
+        book_.on_print(p.token, p.last_paise, traded, std::max(ns, clock_ns_));
         book_.on_market(p.token, std::max(ns, clock_ns_));
         for (auto& m : models_) m->on_print(*this, p, recv_ns > 0 ? recv_ns : ns);
         if (after_event) after_event();

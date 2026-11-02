@@ -669,16 +669,33 @@ int main(int argc, char** argv) {
     auto obi_hub = std::make_unique<lv::ObiHub>(hub_cfg);
     const lv::ObiHub* hub = obi_hub.get();
     engine.add_model(std::move(obi_hub));
+    // Each trader's settings: altair_tune's (config/model_params/obi_*.toml)
+    // where it found better ones on recorded FYERS days, else today's rules;
+    // a replay uses the ones on its tape. Option sales rest at the ask unless
+    // a tuned file says hitting the bid did better.
+    std::string tuned_text;
     for (const auto& u : obi_unders)
-        for (const lv::ObiType type : {lv::ObiType::A, lv::ObiType::B, lv::ObiType::C, lv::ObiType::D})
+        for (const lv::ObiType type : lv::kObiTypes)
             for (const lv::ObiMode mode : {lv::ObiMode::Futures, lv::ObiMode::SellOptions}) {
-                lv::ObiTraderRules r;
-                r.under = u.symbol;
-                r.type = type;
-                r.mode = mode;
-                r.target_pts = u.target_pts;
-                r.stop_pts = u.stop_pts;
-                r.safety_pts = u.safety_pts;
+                lv::ObiTraderRules r = altair::tune::obi_base_rules(u, type, mode);
+                const std::string key = altair::tune::obi_key(u.symbol, type, mode);
+                altair::tune::Params p;
+                if (replaying) {
+                    if (const auto it = tuned_on_tape.find(key); it != tuned_on_tape.end()) p = it->second;
+                } else {
+                    p = altair::tune::read_params(root / "config/model_params" / (key + ".toml"));
+                }
+                altair::tune::apply_obi_params(r, p);
+                if (!p.empty()) {
+                    std::printf("  %s: %s (tuned)\n", key.c_str(), altair::tune::params_text(p).c_str());
+                    tuned_text += "tuned." + key + "=";
+                    for (const auto& [k, v] : p) {
+                        char b[64];
+                        std::snprintf(b, sizeof b, "%s:%.17g;", k.c_str(), v);
+                        tuned_text += b;
+                    }
+                    tuned_text += "\n";
+                }
                 engine.add_model(std::make_unique<lv::LiveObiTraderModel>(r, hub));
             }
     // The event-driven strategies, each with its settings: altair_tune's
@@ -687,7 +704,6 @@ int main(int argc, char** argv) {
     //   NSE against BSE, on every quote; OHL on every near future at 09:15
     //   (live/threshold.hpp); option arbitrage, parity and box locks timed by
     //   the book's imbalance (live/option_arb.hpp).
-    std::string tuned_text;
     for (const auto& g : altair::tune::all_grids()) {
         altair::tune::Params p = g.points[g.defaults];
         if (replaying) {
