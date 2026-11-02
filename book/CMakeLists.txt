@@ -39,6 +39,11 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_flow_test tests/test_flow.cpp)
     target_link_libraries(altair_flow_test PRIVATE altair_book altair_flags)
     add_test(NAME flow COMMAND altair_flow_test)
+
+    # Information diffusion between contracts (book/diffusion.hpp).
+    add_executable(altair_diffusion_test tests/test_diffusion.cpp)
+    target_link_libraries(altair_diffusion_test PRIVATE altair_book altair_flags)
+    add_test(NAME diffusion COMMAND altair_diffusion_test)
 endif()
 
 # The OBI hot path, timed, with a behaviour checksum. An EXECUTABLE, not a test:

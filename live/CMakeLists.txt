@@ -68,4 +68,8 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_live_exec_study_test tests/test_exec_study.cpp)
     target_link_libraries(altair_live_exec_study_test PRIVATE altair_live)
     add_test(NAME live_exec_study COMMAND altair_live_exec_study_test)
+
+    add_executable(altair_live_diffusion_test tests/test_diffusion.cpp)
+    target_link_libraries(altair_live_diffusion_test PRIVATE altair_live)
+    add_test(NAME live_diffusion COMMAND altair_live_diffusion_test)
 endif()

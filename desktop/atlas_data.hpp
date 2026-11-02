@@ -321,6 +321,16 @@ inline constexpr std::array kAtlasRows{
              "Four order-book trade types on BANKNIFTY and NYKAA -- bid "
              "pressure, ask pressure, absorption, withdrawal -- each trading "
              "the future long or short, or the same view as a sold option."},
+    AtlasRow{"4. Microstructure & execution", "Information diffusion (lead-lag)",
+             AtlasStatus::Implemented, "book/diffusion.hpp", 42,
+             "Who moves first -- the future, the index, the bank stocks or the "
+             "options -- by how many milliseconds, which contract carries the "
+             "price discovery, and how much the slow one still owes."},
+    AtlasRow{"4. Microstructure & execution", "Diffusion trader",
+             AtlasStatus::Implemented, "live/diffusion.hpp", 42,
+             "Sells the option whose quote has not caught up with the future, "
+             "or trades the future behind its stocks, only where the lead is "
+             "longer than the feed's jitter. Paper only."},
     AtlasRow{"4. Microstructure & execution", "Slippage & market impact",
              AtlasStatus::Implemented, "risk/slippage.hpp", 12,
              "What your own order costs you by moving the price against "
