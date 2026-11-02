@@ -653,24 +653,34 @@ int main(int argc, char** argv) {
     engine.add_model(std::make_unique<lv::LivePairsModel>(pf));
     engine.add_model(std::make_unique<lv::LiveStatArbModel>(std::move(sa)));
     // Order-book imbalance (book/flow.hpp, live/obi_trader.hpp): tick by tick
-    // on every book and print; the near future long or short, and the same
-    // signal as a SOLD put or call. Paper only. The watch file is not on the
-    // tape, so a replay runs without it. The F&O stocks of
-    // config/obi_underlyings.csv (NYKAA, ...) get the same two models with
-    // their own target, stop and safety in rupees a share.
-    std::vector<lv::ObiUnderlying> obi_unders{{"NIFTY", 10.0, 6.0, 1.0}, {"BANKNIFTY", 25.0, 15.0, 2.0}};
+    // on every book and print, BANKNIFTY (the heavy book) and the F&O stocks of
+    // config/obi_underlyings.csv (NYKAA, the thin one). The hub keeps one flow
+    // engine per instrument and is added FIRST: the engine calls the models in
+    // order, so every trader reads the book the hub has just applied. Then the
+    // four trade types (A bid pressure, B ask pressure, C absorption,
+    // D withdrawal), each on the near future and as a SOLD put or call. Paper
+    // only. The watch file is not on the tape, so a replay runs without it.
+    std::vector<lv::ObiUnderlying> obi_unders{{"BANKNIFTY", 25.0, 15.0, 2.0}};
     for (auto& u : lv::read_obi_underlyings((root / "config/obi_underlyings.csv").string())) obi_unders.push_back(std::move(u));
+    lv::ObiHub::Config hub_cfg;
+    hub_cfg.unders.clear();
+    for (const auto& u : obi_unders) hub_cfg.unders.push_back(u.symbol);
+    if (!replaying) hub_cfg.watch_file = (root / "data/live/obi_watch.csv").string();
+    auto obi_hub = std::make_unique<lv::ObiHub>(hub_cfg);
+    const lv::ObiHub* hub = obi_hub.get();
+    engine.add_model(std::move(obi_hub));
     for (const auto& u : obi_unders)
-        for (const lv::ObiMode mode : {lv::ObiMode::Futures, lv::ObiMode::SellOptions}) {
-            lv::ObiTraderRules r;
-            r.under = u.symbol;
-            r.mode = mode;
-            r.target_pts = u.target_pts;
-            r.stop_pts = u.stop_pts;
-            r.safety_pts = u.safety_pts;
-            if (!replaying) r.watch_file = (root / "data/live/obi_watch.csv").string();
-            engine.add_model(std::make_unique<lv::LiveObiTraderModel>(r));
-        }
+        for (const lv::ObiType type : {lv::ObiType::A, lv::ObiType::B, lv::ObiType::C, lv::ObiType::D})
+            for (const lv::ObiMode mode : {lv::ObiMode::Futures, lv::ObiMode::SellOptions}) {
+                lv::ObiTraderRules r;
+                r.under = u.symbol;
+                r.type = type;
+                r.mode = mode;
+                r.target_pts = u.target_pts;
+                r.stop_pts = u.stop_pts;
+                r.safety_pts = u.safety_pts;
+                engine.add_model(std::make_unique<lv::LiveObiTraderModel>(r, hub));
+            }
     // The event-driven strategies, each with its settings: altair_tune's
     // (config/model_params/<key>.toml) where it found better ones on recorded
     // FYERS days, else the defaults; a replay uses the ones on its tape.

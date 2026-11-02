@@ -1,5 +1,5 @@
 # config/obi_underlyings.csv -- NSE F&O stocks the order-book imbalance trader
-# (live/obi_trader.hpp, paper only) runs on besides NIFTY and BANKNIFTY.
+# (live/obi_trader.hpp, paper only) runs on besides BANKNIFTY.
 #
 # One stock a line. target, stop and safety are rupees a SHARE (the lot comes
 # from the FYERS master: NYKAA is 3,125, so a 0.40 stop is about Rs 1,250 a

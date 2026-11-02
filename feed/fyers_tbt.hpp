@@ -371,6 +371,7 @@ private:
 /// Standard plan; five a connection (three connections) on Prime.
 inline constexpr std::size_t kTbtStandardSlots = 1;
 inline constexpr std::size_t kTbtSlotsPerConnection = 5;
+inline constexpr std::size_t kTbtPrimeConnections = 3;
 [[nodiscard]] inline bool tbt_eligible(std::string_view fyers_symbol) noexcept {
     return fyers_symbol.substr(0, 4) == "NSE:" && fyers_symbol.find("-INDEX") == std::string_view::npos;
 }

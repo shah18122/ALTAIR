@@ -318,9 +318,9 @@ inline constexpr std::array kAtlasRows{
              "absorption and liquidity-withdrawal flags."},
     AtlasRow{"4. Microstructure & execution", "OBI trader",
              AtlasStatus::Implemented, "live/obi_trader.hpp", 42,
-             "A beginner's order-flow scalper: enters only when imbalance, "
-             "flow, real aggressive trades, a breakout and the costs all "
-             "agree; futures long or short, or the same view as a sold option."},
+             "Four order-book trade types on BANKNIFTY and NYKAA -- bid "
+             "pressure, ask pressure, absorption, withdrawal -- each trading "
+             "the future long or short, or the same view as a sold option."},
     AtlasRow{"4. Microstructure & execution", "Slippage & market impact",
              AtlasStatus::Implemented, "risk/slippage.hpp", 12,
              "What your own order costs you by moving the price against "

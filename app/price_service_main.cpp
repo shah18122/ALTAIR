@@ -101,7 +101,9 @@ void usage(const char* exe) {
         "                      scrip on screen (data/live/depth_request.csv, written\n"
         "                      by the desktop), else the near futures: --depth50 N\n"
         "                      slots, default 1 (FYERS Standard; Prime allows 5 a\n"
-        "                      connection); off: the 5-level book only. NSE equity\n"
+        "                      connection on up to three connections: --depth50 15\n"
+        "                      fills the BANKNIFTY and NYKAA futures and their strikes\n"
+        "                      nearest the money); off: the 5-level book only. NSE equity\n"
         "                      and F&O only. Needs data/fyers_session.json\n"
         "                      (altair_fyers_login) or ALTAIR_FYERS_CLIENT_ID and\n"
         "                      ALTAIR_FYERS_ACCESS_TOKEN. Without --go: prints the\n"
@@ -275,8 +277,14 @@ struct Bar {
 std::atomic<bool> g_stop{false};
 extern "C" void on_stop_signal(int) { g_stop.store(true); }
 /// How many instruments hold the FYERS 50-level book at once (--depth50 N;
-/// 0 = off). FYERS allows 1 on a Standard plan and 5 a connection on Prime.
+/// 0 = off). FYERS allows 1 on a Standard plan and 5 a connection, three
+/// connections, on Prime: up to 15, one socket and thread a connection.
 std::size_t g_depth50 = altair::fyers_tbt::kTbtStandardSlots;
+/// The OBI trader's underlyings (BANKNIFTY and config/obi_underlyings.csv)
+/// and the level each chain was centred on: their near futures, then their
+/// strikes nearest the money, are the 50-level defaults.
+std::vector<std::string> g_obi_unders;
+std::unordered_map<std::string, double> g_obi_spot;
 /// Where the desktop says which scrip is on screen (data/live/depth_request.csv).
 std::string g_depth_request;
 /// The order-book imbalance trader's watch list (data/live/obi_watch.csv):
@@ -411,6 +419,14 @@ struct TbtFeed {
     std::thread th;
 };
 
+/// One TbtFeed a FYERS connection (three on Prime).
+struct TbtFeeds {
+    std::array<TbtFeed, altair::fyers_tbt::kTbtPrimeConnections> feeds;
+    [[nodiscard]] bool fresh(std::uint32_t token) const {
+        return std::any_of(feeds.begin(), feeds.end(), [token](const TbtFeed& f) { return f.fresh(token); });
+    }
+};
+
 /// data/live/depth_request.csv: one "<fyers symbol>,<token>" a line, the scrip
 /// on screen first. Missing or unreadable: no request.
 [[nodiscard]] std::vector<std::pair<std::string, std::uint32_t>> read_depth_request(const std::string& path) {
@@ -427,17 +443,31 @@ struct TbtFeed {
 }
 
 void run_fyers_tbt(const FySession& session, const std::vector<altair::live::LiveInstrument>& u,
-                   altair::live_sources::SharedBus& bus, std::int64_t deadline_unix, TbtFeed& feed) {
+                   altair::live_sources::SharedBus& bus, std::int64_t deadline_unix, TbtFeed& feed, std::size_t conn) {
     namespace tbt = altair::fyers_tbt;
     using altair::live::LiveKind;
     const auto auth = altair::fyers::authorization_header(session.client.c_str(), session.access.c_str());
     if (!auth) return;
-    // The defaults: futures first, then options, then equities -- what the
-    // slots hold when the desktop asks for nothing.
+    // The defaults -- what the slots hold when the desktop asks for nothing:
+    // the OBI underlyings' near futures, then their strikes nearest the money
+    // (calls and puts), then the other futures, the other options, equities.
     std::vector<std::size_t> idx;
     for (std::size_t i = 0; i < u.size(); ++i)
         if (u[i].depth && u[i].kind != LiveKind::Index) idx.push_back(i);
-    const auto rank = [&u](std::size_t i) { return u[i].kind == LiveKind::Future ? 0 : u[i].kind == LiveKind::Equity ? 2 : 1; };
+    std::unordered_map<std::string, std::int64_t> near_expiry;   // each OBI underlying's nearest future
+    for (const std::size_t i : idx)
+        if (u[i].kind == LiveKind::Future && g_obi_spot.contains(u[i].underlying)) {
+            auto [it, fresh] = near_expiry.emplace(u[i].underlying, u[i].expiry_day);
+            if (!fresh && u[i].expiry_day < it->second) it->second = u[i].expiry_day;
+        }
+    const auto rank = [&](std::size_t i) -> std::pair<int, double> {
+        const auto& in = u[i];
+        const auto spot = g_obi_spot.find(in.underlying);
+        const bool obi = spot != g_obi_spot.end();
+        if (in.kind == LiveKind::Future) return {obi && near_expiry[in.underlying] == in.expiry_day ? 0 : 2, 0.0};
+        if (in.kind == LiveKind::Call || in.kind == LiveKind::Put) return {obi ? 1 : 3, obi ? std::fabs(in.strike - spot->second) : 0.0};
+        return {4, 0.0};
+    };
     std::stable_sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) { return rank(a) < rank(b); });
     std::vector<std::string> defaults;
     std::unordered_map<std::string, std::uint32_t> token_of;   // every symbol the feed knows
@@ -447,10 +477,14 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
         if (in.kind != LiveKind::Index) token_of.emplace(in.fyers, in.token);
     }
     for (const std::size_t i : idx) defaults.push_back(u[i].fyers);
-    // RULE 11: refused, not truncated silently -- one connection holds at most five.
-    const std::size_t slots = std::min(g_depth50, TbtFeed::kSlots);
-    if (g_depth50 > slots)
-        std::printf("  50-level book: --depth50 %zu asks for more than one FYERS connection holds; %zu slots\n", g_depth50, slots);
+    // RULE 11: refused, not truncated silently -- five a connection, three connections.
+    const std::size_t total = std::min(g_depth50, TbtFeed::kSlots * altair::fyers_tbt::kTbtPrimeConnections);
+    if (conn == 0 && g_depth50 > total)
+        std::printf("  50-level book: --depth50 %zu asks for more than three FYERS connections hold; %zu slots\n", g_depth50, total);
+    // This connection's share of the plan: slots [5 conn, 5 conn + 5).
+    const std::size_t first = conn * TbtFeed::kSlots;
+    const std::size_t slots = first < total ? std::min(TbtFeed::kSlots, total - first) : 0;
+    if (slots == 0) return;
     // What is asked for: the desktop's scrip first, then the OBI watch list.
     using Stamp = std::pair<std::filesystem::file_time_type, std::filesystem::file_time_type>;
     const auto stamp = [] {
@@ -474,7 +508,14 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
             asked.push_back(sym);
             token_of.emplace(sym, tok);
         }
-        return tbt::tbt_plan_slots(asked, defaults, slots, [&](const std::string& x) { return token_of.contains(x); });
+        // Every connection plans the whole list from the same files and keeps
+        // its own slice, so the connections never hold the same symbol twice
+        // (for a second at most, while one has read a changed file and
+        // another has not).
+        const auto all = tbt::tbt_plan_slots(asked, defaults, total, [&](const std::string& x) { return token_of.contains(x); });
+        std::vector<std::string> mine;
+        for (std::size_t k = first; k < all.size() && k < first + slots; ++k) mine.push_back(all[k]);
+        return mine;
     };
     std::vector<std::string> held = plan();
     // Nothing that can hold the book yet (no depth instruments, no request):
@@ -500,8 +541,8 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
     const auto say_held = [&] {
         std::string names;
         for (const auto& h : held) names += (names.empty() ? "" : ", ") + h;
-        std::printf("  50-level book: %zu slot(s) on %s (FYERS: NSE equity and F&O only; 1 symbol on Standard, 5 a connection"
-                    " on Prime; --depth50)\n", slots, names.c_str());
+        std::printf("  50-level book, connection %zu: %zu slot(s) on %s (FYERS: NSE equity and F&O only; 1 symbol on Standard,"
+                    " 5 a connection, three connections, on Prime; --depth50)\n", conn + 1, slots, names.c_str());
         std::fflush(stdout);
     };
     say_held();
@@ -766,12 +807,13 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
                 depth_topics.size(), u.size());
     std::fflush(stdout);
 
-    TbtFeed tbt;
-    if (g_depth50 > 0)
-        tbt.th = std::thread([&] {
-            std::printf("  %s\n", altair::latency::apply_thread(g_latency, "tbt").c_str());
-            run_fyers_tbt(session, u, bus, deadline_unix, tbt);
-        });
+    TbtFeeds tbt;
+    for (std::size_t c = 0; c < tbt.feeds.size(); ++c)
+        if (g_depth50 > c * TbtFeed::kSlots)
+            tbt.feeds[c].th = std::thread([&, c] {
+                std::printf("  %s\n", altair::latency::apply_thread(g_latency, "tbt").c_str());
+                run_fyers_tbt(session, u, bus, deadline_unix, tbt.feeds[c], c);
+            });
     std::vector<altair::fyers_frames::LastTrade> last(u.size());
     // Instruments added while streaming: cookies u.size() + k. Deques, so a
     // reference handed to the decoder's callback never moves.
@@ -1351,6 +1393,12 @@ int main(int argc, char** argv) {
                 if (uo.fo_spots[k] > 0.0) { std::printf("OBI stock %s now %.2f (FYERS quote)\n", uo.fo_stocks[k].c_str(), uo.fo_spots[k]); }
                 else { std::printf("OBI stock %s: no FYERS quote, so its futures stream without a chain\n", uo.fo_stocks[k].c_str()); }
             }
+        }
+        g_obi_unders = {"BANKNIFTY"};
+        g_obi_spot["BANKNIFTY"] = bnf;
+        for (std::size_t k = 0; k < uo.fo_stocks.size(); ++k) {
+            g_obi_unders.push_back(uo.fo_stocks[k]);
+            if (k < uo.fo_spots.size() && uo.fo_spots[k] > 0.0) g_obi_spot[uo.fo_stocks[k]] = uo.fo_spots[k];
         }
         auto uni = altair::live::build_universe(
             rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);

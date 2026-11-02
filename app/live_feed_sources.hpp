@@ -43,6 +43,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -99,8 +100,8 @@ struct BusEvent {
 /// The bus, its board and its owner thread: everything a source publishes
 /// through. trade(), quote() and book() are called from ONE source thread at
 /// a time (the sources run one after another, never together); second_book()
-/// from ONE other thread (the FYERS 50-level book's), on a ring of its own,
-/// so each ring keeps exactly one producer. Everything else is safe from any
+/// from the FYERS 50-level book's threads, on a ring of their own, one at a
+/// time under a mutex, so each ring keeps exactly one producer at a time. Everything else is safe from any
 /// thread.
 class SharedBus {
 public:
@@ -139,11 +140,16 @@ public:
         push(e);
         books_.fetch_add(1, std::memory_order_relaxed);
     }
-    /// A book from the second producer (the 50-level book's thread).
+    /// A book from the second producer: the 50-level book's threads, one a
+    /// FYERS connection (up to three). They take turns on the ring through
+    /// `second_mu_` -- the only lock here, never held with another, and never
+    /// taken by the main source or the owner thread -- so the ring keeps one
+    /// producer at a time.
     void second_book(const PricePayload& p, const PriceLevel* b, const PriceLevel* a, std::int64_t ns) {
         BusEvent e;
         e.kind = BusEvent::Book; e.ns = ns; e.price = p;
         for (std::size_t i = 0; i < kMaxDepthLevels; ++i) { e.bids[i] = b[i]; e.asks[i] = a[i]; }
+        const std::lock_guard<std::mutex> lock(second_mu_);
         push(*second_, e);
         books_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -228,6 +234,7 @@ private:
     BoardCache cache_;              ///< owner thread only
     std::unique_ptr<Ring> ring_;
     std::unique_ptr<Ring> second_;  ///< the second producer's ring (second_book)
+    std::mutex second_mu_;          ///< the 50-level threads take turns on second_
     std::atomic<bool> stop_{false};
     std::atomic<std::uint64_t> published_{0}, published2_{0};
     std::atomic<std::size_t> clients_{0};
