@@ -65,6 +65,7 @@
 #include <live/models.hpp>
 #include <live/obi_quoter.hpp>
 #include <live/obi_trader.hpp>
+#include <live/diffusion.hpp>
 #include <live/obi_underlyings.hpp>
 #include <live/option_arb.hpp>
 #include <live/threshold.hpp>
@@ -706,6 +707,34 @@ int main(int argc, char** argv) {
                 }
                 engine.add_model(std::make_unique<lv::LiveObiTraderModel>(r, hub));
             }
+    // Information diffusion (book/diffusion.hpp, live/diffusion.hpp): who moves
+    // first between each underlying's future, its index (or stock), the bank
+    // stocks and the options near the money, and by how long. The hub measures
+    // every pair on every tick and writes the day's report to
+    // <live dir>/diffusion/diffusion_<day>.csv; a --replay of a recorded tape
+    // writes the same report under the replay's directory, which makes the
+    // replay the study of recorded sessions. Then, per underlying, a sold-option
+    // trader (the stale put after a rise, the stale call after a fall) and a
+    // futures trader (the future behind its stocks), only on pairs that pass
+    // the gate (the leader leads by more than the jitter floor). Paper only;
+    // every entry and exit goes to <live dir>/diffusion/trades.csv with its reason.
+    lv::DiffusionHub::Config diff_cfg;
+    diff_cfg.unders = hub_cfg.unders;
+    diff_cfg.report_dir = (live_dir / "diffusion").string();
+    auto diff_hub = std::make_unique<lv::DiffusionHub>(diff_cfg);
+    const lv::DiffusionHub* dhub = diff_hub.get();
+    engine.add_model(std::move(diff_hub));
+    for (const auto& u : obi_unders)
+        for (const lv::DiffMode mode : {lv::DiffMode::SellOptions, lv::DiffMode::Futures}) {
+            lv::DiffusionRules r;
+            r.under = u.symbol;
+            r.mode = mode;
+            r.stop_pts = u.stop_pts;
+            r.safety_pts = u.safety_pts;
+            if (u.symbol != "BANKNIFTY") r.option_safety = u.safety_pts;   // a stock's premiums are rupees a share
+            r.log_file = (live_dir / "diffusion" / "trades.csv").string();
+            engine.add_model(std::make_unique<lv::LiveDiffusionTraderModel>(r, dhub, hub));
+        }
     // The OBI-skewed option quoter (live/obi_quoter.hpp): a sale resting on
     // the put and the call two strikes out, the threatened leg pulled. Paper.
     // Its settings come the same way (config/model_params/obiq_<under>.toml).
