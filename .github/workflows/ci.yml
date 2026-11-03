@@ -151,7 +151,7 @@ jobs:
       - name: Ops jobs (Python), install script and timers
         run: |
           python3 -m unittest discover -s ops/linux/tests -v
-          bash -n ops/build.sh ops/install.sh
+          bash -n ops/build.sh ops/install.sh ops/setup.sh
           for t in ops/systemd/*.timer; do
             systemd-analyze calendar "$(sed -n 's/^OnCalendar=//p' "$t")" > /dev/null
           done
