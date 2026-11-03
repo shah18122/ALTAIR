@@ -8,19 +8,26 @@
 //   tbt     the FYERS 50-level book thread
 //   engine  the models engine
 //   router  the order router
-// "auto" leaves the first `reserve` cores (default 2) to Windows and the
-// desktop and gives the roles the rest, most critical first. With fewer than
-// four cores nothing is pinned; the priorities still apply.
+// "auto" leaves the first `reserve` cores (default 2) to the system and the
+// DCV desktop and gives the roles the rest, most critical first. With fewer
+// than four cores nothing is pinned; the priorities still apply.
 //
-// THE PROCESS. On Windows: HIGH_PRIORITY_CLASS, a 1 ms system timer
-// (timeBeginPeriod) and power throttling off (EcoQoS would otherwise park a
-// background process on an efficiency core). On Linux: pinning by
-// pthread_setaffinity_np; raising a priority needs privileges and is reported,
-// not forced. Elsewhere: reported as not supported. Nothing here ever stops a
-// service: a call that is refused says so and the service runs unpinned.
+// THE PROCESS (Linux). nice -5; and, with lock_memory, mlockall(MCL_CURRENT |
+// MCL_FUTURE | MCL_ONFAULT) so no page the service has touched is ever paged
+// out -- but ONLY when RLIMIT_MEMLOCK is unlimited (ops/tune_host.sh sets it):
+// under a finite limit MCL_FUTURE would turn a later allocation past the limit
+// into an out-of-memory failure, and a service must never die of its tuning.
+//
+// THE THREADS. Pinned by pthread_setaffinity_np. A priority is a nice value;
+// with realtime = true a PINNED thread at highest/time_critical runs
+// SCHED_FIFO instead (priority 20 / 40), which needs RLIMIT_RTPRIO (again
+// tune_host.sh) and is kept to pinned threads so it can only ever compete on
+// its own core. The kernel's RT throttle (sched_rt_runtime_us) still leaves
+// 5 % to everything else. Nothing here ever stops a service: a call that is
+// refused says so and the service runs as it was.
 //
 // The plan and its parsing are here (pure, tested); the OS calls are in
-// core/affinity.cpp so <windows.h> stays out of every other file.
+// core/affinity.cpp.
 
 #pragma once
 
@@ -63,8 +70,9 @@ struct RolePlan {
 
 struct Plan {
     bool enabled = true;
-    bool high_priority = true;   ///< the process: HIGH_PRIORITY_CLASS, timer, throttling off
-    int timer_ms = 1;            ///< 0: leave the system timer alone
+    bool high_priority = true;   ///< the process: nice -5
+    bool lock_memory = true;     ///< mlockall, when RLIMIT_MEMLOCK is unlimited
+    bool realtime = false;       ///< SCHED_FIFO for pinned highest/time_critical threads
     int reserve = 2;             ///< cores left to the OS and the desktop when "auto"
     std::map<std::string, RolePlan> roles;
 };
@@ -151,13 +159,11 @@ namespace detail {
         const std::string_view key = detail::trim(line.substr(0, eq)), raw = detail::trim(line.substr(eq + 1));
         const std::string_view val = detail::unquote(raw);
         if (section.empty()) {
-            if (key == "enabled" || key == "high_priority") {
+            if (key == "enabled" || key == "high_priority" || key == "lock_memory" || key == "realtime") {
                 if (val != "true" && val != "false") return bad(std::string(key) + " must be true or false");
-                (key == "enabled" ? p.enabled : p.high_priority) = val == "true";
-            } else if (key == "timer_ms") {
-                const auto v = detail::to_int(val);
-                if (!v || *v > 15) return bad("timer_ms must be 0 to 15");
-                p.timer_ms = *v;
+                bool& b = key == "enabled" ? p.enabled : key == "high_priority" ? p.high_priority
+                        : key == "lock_memory" ? p.lock_memory : p.realtime;
+                b = val == "true";
             } else if (key == "reserve") {
                 if (!detail::to_int(val)) return bad("reserve must be a whole number");
             } else {
@@ -191,8 +197,11 @@ namespace detail {
 /// Hardware threads (at least 1).
 [[nodiscard]] unsigned hardware_cores();
 
-/// The process: priority class, timer, power throttling. Returns what was done.
+/// The process: nice, memory locking. Returns what was done.
 std::string apply_process(const Plan& p);
+
+/// mlockall when the plan asks and RLIMIT_MEMLOCK is unlimited. Returns what was done.
+std::string lock_memory(const Plan& p);
 
 /// The calling thread, as `role`: pin and priority. Returns what was done.
 std::string apply_thread(const Plan& p, std::string_view role);

@@ -30,7 +30,7 @@ int main() {
     const Plan p8 = default_plan(8);
     check(p8.roles.at("bus").core == 2 && p8.roles.at("feed").core == 3 && p8.roles.at("engine").core == 4
               && p8.roles.at("router").core == 5 && p8.roles.at("tbt").core == 6,
-          "8 cores: 0 and 1 left to Windows and the desktop, the roles on 2 to 6, most critical first");
+          "8 cores: 0 and 1 left to the system and the desktop, the roles on 2 to 6, most critical first");
     const Plan p4 = default_plan(4);
     check(p4.roles.at("bus").core == 2 && p4.roles.at("feed").core == 3 && p4.roles.at("engine").core == 2,
           "4 cores: the roles share 2 and 3");
@@ -41,11 +41,11 @@ int main() {
           "2 cores: nothing pinned, the priorities still apply");
 
     std::string err;
-    const auto ok = parse_plan("enabled = true\nhigh_priority = false\ntimer_ms = 1\nreserve = 1\n"
+    const auto ok = parse_plan("enabled = true\nhigh_priority = false\nlock_memory = false\nrealtime = true\nreserve = 1\n"
                                "[cores]\nbus = 5\nfeed = \"off\"\nengine = \"auto\"\n"
                                "[priority]\nbus = \"time_critical\"   # the owner thread\n",
                                8, err);
-    check(ok && !ok->high_priority && ok->roles.at("bus").core == 5 && ok->roles.at("feed").core < 0
+    check(ok && !ok->high_priority && !ok->lock_memory && ok->realtime && ok->roles.at("bus").core == 5 && ok->roles.at("feed").core < 0
               && ok->roles.at("engine").core == 3 && ok->roles.at("bus").prio == Prio::TimeCritical,
           "a number pins, \"off\" unpins, \"auto\" follows the reserve (1 here: engine on core 3)");
     err.clear();
@@ -75,6 +75,15 @@ int main() {
     th.join();
     std::printf("  (%s)\n", said.c_str());
     check(said.rfind("bus:", 0) == 0, "applying to a thread says what it did and returns");
+    {
+        Plan nolock = default_plan(8);
+        nolock.lock_memory = false;
+        check(lock_memory(nolock).find("not locked") != std::string::npos, "lock_memory = false leaves memory unlocked");
+        const std::string lm = lock_memory(default_plan(8));
+        std::printf("  (%s)\n", lm.c_str());
+        check(lm.find("memory") == 0, "locking memory reports what it did, and refuses rather than risk a finite limit");
+        check(!parse_plan("timer_ms = 1\n", 8, err), "the Windows-only timer_ms key is gone");
+    }
     Plan off = default_plan(8);
     off.enabled = false;
     check(apply_thread(off, "bus").find("not pinned") != std::string::npos && apply_process(off).find("off") != std::string::npos,

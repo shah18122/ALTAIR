@@ -339,6 +339,17 @@ add_executable(altair_depth_study depth_study_main.cpp)
 target_link_libraries(altair_depth_study PRIVATE altair_flags)
 target_include_directories(altair_depth_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# The latency probe: FYERS round trip, timer wake-up jitter, memory locking
+# and the host's tuning as in effect (core/host_tuning.hpp). Read-only.
+add_executable(altair_latency_probe latency_probe_main.cpp)
+target_link_libraries(altair_latency_probe PRIVATE altair_affinity altair_flags Threads::Threads)
+target_include_directories(altair_latency_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_definitions(altair_latency_probe PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+if(ALTAIR_BUILD_TESTS)
+    add_test(NAME latency_probe COMMAND altair_latency_probe --no-network --wakeups 200
+             --out ${CMAKE_CURRENT_BINARY_DIR}/latency_probe_out)
+endif()
+
 # The band-fade short-option demo: the range band's forecast, one lot, priced
 # synthetically, costed through risk/cost.hpp (refused while unverified).
 # The live models, paper-trading on altair_price_service's stream: bars from

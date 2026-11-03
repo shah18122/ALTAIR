@@ -147,9 +147,9 @@ echo "launchers in $apps"
 
 step "8/8 latency tuning"
 if [ "$tune" = 1 ] && [ -x "$root/ops/tune_host.sh" ]; then
-    "$root/ops/tune_host.sh" --go
+    "$root/ops/tune_host.sh" --go --user "$user"
 elif [ "$tune" = 1 ]; then
-    echo "ops/tune_host.sh is not in this version yet: nothing tuned"
+    echo "ops/tune_host.sh is missing: nothing tuned"
 else
     echo "skipped (--tune applies it)"
 fi

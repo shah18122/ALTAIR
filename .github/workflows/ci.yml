@@ -150,10 +150,17 @@ jobs:
       - name: Ops jobs (Python), install script and timers
         run: |
           python3 -m unittest discover -s ops/linux/tests -v
-          bash -n ops/build.sh ops/install.sh ops/setup.sh
+          bash -n ops/build.sh ops/install.sh ops/setup.sh ops/tune_host.sh
+          ops/tune_host.sh --user "$(id -un)" > /dev/null    # the dry run: changes nothing
           for t in ops/systemd/*.timer; do
             systemd-analyze calendar "$(sed -n 's/^OnCalendar=//p' "$t")" > /dev/null
           done
+          # Every unit, with ALTAIR's placeholders filled, is valid systemd syntax.
+          mkdir -p /tmp/units && for u in ops/systemd/*; do
+            sed -e "s#@ROOT@#$PWD#g" -e "s#@USER@#$(id -un)#g" "$u" > "/tmp/units/$(basename "$u")"
+          done
+          systemd-analyze verify /tmp/units/altair-recorder.service /tmp/units/altair-fyers-login.service \
+            /tmp/units/altair-nightly.service /tmp/units/altair-fyers-chain.service
 
       - name: Configure (linux preset)
         run: cmake --preset linux
