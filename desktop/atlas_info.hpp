@@ -32,7 +32,7 @@ struct AtlasInfo {
 namespace atlas_info_detail {
 
 inline constexpr const char* kBars =
-    "dataset/: NIFTY, BANKNIFTY and NIFTY 50 stock bars (1-minute to daily) from FYERS/Kite history, with INDIA VIX.";
+    "dataset/: NIFTY, BANKNIFTY and NIFTY 50 stock bars (1-minute to daily) from FYERS history, with INDIA VIX.";
 inline constexpr const char* kResearch =
     "Research only: run from its page on history. The live models engine does not trade it.";
 inline constexpr const char* kWalkForward =

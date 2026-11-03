@@ -81,7 +81,7 @@ struct Session { std::string client; std::string access; };
     const auto stamp = fs::last_write_time(path, ec);
     const bool fresh = !ec && fs::file_time_type::clock::now() - stamp < std::chrono::hours(20);
     if (fetch && !fresh) {
-        const auto r = altair::https_get_auth("public.fyers.in", "/sym_details/NSE_FO.csv", "", "", std::chrono::seconds{60});
+        const auto r = altair::https_get_auth("public.fyers.in", "/sym_details/NSE_FO.csv", "", std::chrono::seconds{60});
         if (r && r->status == 200 && r->body.size() > 1000) {
             const fs::path tmp = path.string() + ".tmp";
             {
@@ -219,7 +219,7 @@ int main(int argc, char** argv) {
             first_request = false;
             const auto request = altair::fyers_history::uri(symbol, "1", chunk.from, chunk.to);
             if (!request) { return Fetch::Failed; }
-            const auto r = altair::https_get_auth("api-t1.fyers.in", *request, *authorization, "", std::chrono::seconds{30});
+            const auto r = altair::https_get_auth("api-t1.fyers.in", *request, *authorization, std::chrono::seconds{30});
             if (!r) { return Fetch::Failed; }
             if (r->status == 401 || r->status == 403) { return Fetch::LoginExpired; }
             if (r->status != 200) {

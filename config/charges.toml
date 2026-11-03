@@ -188,16 +188,6 @@ equity_futures  = { type = "unset" }
 equity_options  = { type = "unset" }
 currency_fo     = { type = "unset" }
 
-[broker.kite]
-display_name = "Zerodha Kite"
-equity_delivery = { type = "flat",    amount = 0.0 }
-equity_intraday = { type = "pct_cap", pct = 0.0003, cap = 20.0 }
-equity_futures  = { type = "pct_cap", pct = 0.0003, cap = 20.0 }
-equity_options  = { type = "flat",    amount = 20.0 }
-currency_fo     = { type = "pct_cap", pct = 0.0003, cap = 20.0 }
-call_and_trade  = 50.0
-auto_squareoff  = 50.0
-
 [broker.xts]
 display_name = "XTS Symphony"
 # Symphony is a platform, not a broker — the slab depends on YOUR broker.

@@ -29,7 +29,7 @@
 # annotation says which arm it takes:
 #
 #     // RULE 11: proven unreachable -- lambda > 12 is refused above.
-#     // RULE 11: counted -- KiteLoadReport::underlying_truncated.
+#     // RULE 11: counted -- MasterLoadReport::underlying_truncated.
 #     // RULE 11: safe-side clamp -- an unknown action gets the SMALLEST size.
 #
 # Deliberately a comment and not a macro. The value is the sentence a reviewer

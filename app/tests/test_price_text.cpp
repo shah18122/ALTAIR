@@ -52,7 +52,7 @@ std::string fmt(double v) {
     return n ? std::string(buf, *n) : std::string("<refused>");
 }
 
-/// The line CX02-A1b removes from kite_update_main.cpp, reproduced so the
+/// The line CX02-A1b removed from the old dataset updater, reproduced so the
 /// property can be shown to reject it.
 std::string old_percent_g(double v) {
     char buf[64];
@@ -149,7 +149,7 @@ void price_text_refuses_what_is_not_a_price() {
     const auto big = format_price(1e15, buf, sizeof buf);
     check(!big && big.error() == PriceTextError::OutOfRange,
           "a price at the ceiling is refused");
-    // CX02-A2c (R-AB-026). Zero is not a price. Kite returns it for a
+    // CX02-A2c (R-AB-026). Zero is not a price. A broker returns it for a
     // halted or malformed candle, and `,0,0,0,0,` asserts a market that
     // traded at nothing -- the same argument the fetcher already makes for an
     // all-zero VOLUME.

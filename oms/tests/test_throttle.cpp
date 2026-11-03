@@ -36,11 +36,14 @@ namespace {
 
 Timestamp at_ms(std::int64_t ms) { return Timestamp{ms * 1'000'000}; }
 
+// A conservative account: 10/s, 200/min, 3000/day (the daily cap binds first).
+constexpr BrokerLimits kTestLimits{10, 200, 3000};
+
 // ── 1 ────────────────────────────────────────────────────────────────────
 void a_burst_is_allowed_then_throttled_and_the_window_rolls()
 {
     std::printf("\n1 a_burst_is_allowed_then_throttled_and_the_window_rolls\n");
-    BrokerThrottle t{kKiteOrderLimits};        // 10/s, 200/min, 3000/day
+    BrokerThrottle t{kTestLimits};        // 10/s, 200/min, 3000/day
 
     int allowed = 0;
     for (int i = 0; i < 10; ++i) {
@@ -78,7 +81,7 @@ void the_daily_budget_runs_out_while_the_fast_limits_never_bind()
 {
     std::printf("\n2 the_daily_budget_runs_out_while_the_fast_limits_never"
                 "_bind\n");
-    BrokerThrottle t{kKiteOrderLimits};
+    BrokerThrottle t{kTestLimits};
 
     // A polite strategy: 2 orders per second, well under 10 and well under
     // 200 a minute. Run it for an hour of market time.
@@ -189,42 +192,30 @@ void the_router_refuses_an_unavailable_venue_rather_than_falling_back()
 {
     std::printf("\n5 the_router_refuses_an_unavailable_venue_rather_than"
                 "_falling_back\n");
-    BrokerThrottle kite{kKiteOrderLimits};
+    BrokerThrottle fyers{kFyersOrderLimits};
 
-    const auto k = route(Venue::Kite, kite, at_ms(0));
-    check(k && k->venue == Venue::Kite, "a Kite order routes to Kite");
+    const auto f = route(Venue::Fyers, fyers, at_ms(0));
+    check(f && f->venue == Venue::Fyers, "a FYERS order routes to FYERS, on the FYERS throttle");
 
-    const auto x = route(Venue::Xts, kite, at_ms(0));
+    const auto x = route(Venue::Xts, fyers, at_ms(0));
     check(!x && x.error() == RouteError::VenueUnavailable,
           "an XTS order is REFUSED while P4-06 is unbuilt -- a silent"
           " fallback would send the order to a broker the caller did not"
           " choose, on an account they may not have meant to use");
-    check(kite.used_today() == 1,
-          "and the refused XTS order did not consume Kite's budget");
+    check(fyers.used_today() == 1,
+          "and the refused XTS order did not consume FYERS's budget");
 
-    const auto n = route(Venue::None, kite, at_ms(0));
+    const auto n = route(Venue::None, fyers, at_ms(0));
     check(!n && n.error() == RouteError::NoVenue,
           "an unset venue is refused -- Venue::None is ordinal 0 so a zeroed"
           " request cannot route anywhere by default");
-
-    BrokerThrottle fyers{kFyersOrderLimits};
-    BrokerThrottle kite_secondary{kKiteOrderLimits};
-    const auto f = route(Venue::Fyers, fyers, kite_secondary, at_ms(0));
-    check(f && f->venue == Venue::Fyers,
-          "the explicit FYERS route uses the FYERS throttle");
-    check(fyers.used_today() == 1 && kite_secondary.used_today() == 0,
-          "a FYERS route never consumes the Kite secondary budget");
-    const auto f_legacy = route(Venue::Fyers, kite, at_ms(0));
-    check(!f_legacy && f_legacy.error() == RouteError::VenueUnavailable,
-          "the legacy Kite-only route refuses FYERS instead of silently"
-          " routing a primary order to the secondary account");
     check(std::strcmp(describe(Venue::Fyers), "FYERS") == 0,
-          "venue descriptions expose the primary broker clearly");
+          "venue descriptions expose the broker clearly");
 
     // A throttled venue surfaces as a route failure carrying the reason.
     BrokerThrottle tiny{BrokerLimits{1, 0, 0}};
-    (void)route(Venue::Kite, tiny, at_ms(0));
-    const auto blocked = route(Venue::Kite, tiny, at_ms(0));
+    (void)route(Venue::Fyers, tiny, at_ms(0));
+    const auto blocked = route(Venue::Fyers, tiny, at_ms(0));
     check(!blocked && blocked.error() == RouteError::AllThrottled,
           "and a throttled venue fails the route rather than sending anyway");
 
@@ -249,8 +240,8 @@ void time_comes_off_the_tick()
     // Nothing here reads a clock, so the same sequence of timestamps gives
     // the same decisions every time. That is what makes a replay reproduce
     // the live path (rules 6 and 7).
-    BrokerThrottle a{kKiteOrderLimits};
-    BrokerThrottle b{kKiteOrderLimits};
+    BrokerThrottle a{kTestLimits};
+    BrokerThrottle b{kTestLimits};
     bool identical = true;
     for (std::int64_t ms = 0; ms < 5000; ms += 37) {
         if (a.acquire(at_ms(ms)).verdict != b.acquire(at_ms(ms)).verdict) {
@@ -280,7 +271,7 @@ void time_comes_off_the_tick()
                 " a limit of 5\n", burst);
     check(burst == 10,
           "a FIXED window admits up to 2x the limit across a boundary -- a"
-          " documented cost of not carrying a timestamp per event, and Kite's"
+          " documented cost of not carrying a timestamp per event, and the broker's"
           " own limiter is not documented to be sliding either");
 }
 

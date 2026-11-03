@@ -213,7 +213,7 @@ int main() {
     // and they are the two horizons that were actually asked for.
     //
     // Downsampled from 1-minute rather than fetched separately: a 5-minute
-    // bar built from five 1-minute closes is the same series Kite would
+    // bar built from five 1-minute closes is the same series the broker would
     // return, and deriving it here keeps the session boundaries aligned with
     // the ones already being excluded.
     const Bars h1 = load_dir(root + "/spot/nifty/1m");
@@ -288,12 +288,12 @@ int main() {
     // INTRADAY is one contract's own life -- 48 sessions, no rolls inside it
     // at all -- so returns across it are clean by construction and short.
     //
-    // DAILY is Kite's CONTINUOUS series, which splices contracts at each roll.
+    // DAILY is the vendor's CONTINUOUS series, which splices contracts at each roll.
     // A splice would put a basis jump where a market move belongs, so it was
     // checked before being used: over 2,867 days paired against spot, the
     // futures-minus-spot daily return has mean +0.00 bps and sd 15.4, ZERO
     // days differ by more than 200 bps, and the largest futures moves are the
-    // COVID crash and election day, tracking spot within a percent. Kite
+    // COVID crash and election day, tracking spot within a percent. The vendor
     // back-adjusts. Roll-week dispersion is elevated (sd 20.6 against 13.1
     // elsewhere), which is the basis moving and not a splice.
     std::printf("\n  ============ FUTURES (NIFTY26SEPFUT / continuous) "

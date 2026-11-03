@@ -31,10 +31,9 @@ Two buttons beside **Run** chain the CLIs above, one after another
 (`desktop/demo_trading_page.hpp`, `demo_detail::daily_call_plan`):
 
 - **Refresh daily call**, after the 15:30 close:
-  1. `dataset/` brought current, merged, from the linked broker:
-     `altair_kite_update --provider fyers --go` when `data/fyers_session.json`
-     exists, else `altair_kite_update --go` when a Kite session does; no session
-     means the stored bars are used as they are;
+  1. `dataset/` brought current, merged, from FYERS:
+     `altair_dataset_update --go` when `data/fyers_session.json` exists; no
+     session means the stored bars are used as they are;
   2. the last two weeks of NSE bhavcopy (`(bhavcopy fetch removed: FYERS data only) --go -From ...`);
   3. `altair_forecast_curriculum --only daily`, then `--only hourly`;
   4. `altair_trader` (tick **Price UNVERIFIED expenses** until

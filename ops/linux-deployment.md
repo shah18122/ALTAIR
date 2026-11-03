@@ -26,7 +26,7 @@ building. The sections below are the original design notes.
 
 ## 0. Read this before the rest of the document
 
-**Against Zerodha Kite today, none of this buys a single microsecond you can
+**Against a retail broker API (FYERS) today, none of this buys a single microsecond you can
 trade on.**
 
 CLAUDE.md says it plainly: retail broker APIs cap you at 10–50 ms round trips.

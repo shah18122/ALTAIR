@@ -221,7 +221,7 @@ inline const QColor kWarn{QStringLiteral("#E3A34A")};
     case BookLegIssue::NoSpot:
         return QStringLiteral("The underlying has no spot quote in data/fyers_quotes.json. Refresh quotes.");
     case BookLegIssue::NoExpiry:
-        return QStringLiteral("A monthly FYERS ticker does not carry its expiry day. Put the Kite "
+        return QStringLiteral("A monthly FYERS ticker does not carry its expiry day. Build the "
                               "instrument master at data/instruments.csv to resolve it.");
     case BookLegIssue::IvUnsolved:
         return QStringLiteral("The last price admits no volatility (at or below intrinsic, or above "

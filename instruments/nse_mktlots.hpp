@@ -16,7 +16,7 @@
 //     exactly one month. Months are resolved from the HEADER.
 //   * Padded to fixed width on every field, header included.
 //   * UNDERLYING and SYMBOL are DIFFERENT: "NIFTY 50" vs "NIFTY". SYMBOL is
-//     the one that matches Kite's `name` and UDiFF's TckrSymb, so SYMBOL is
+//     the one that matches the instrument master's `name` and UDiFF's TckrSymb, so SYMBOL is
 //     the join key. Checked against all three real files.
 //   * A blank cell means the underlying does not trade that month. It is not
 //     a lot size of zero.
@@ -26,7 +26,7 @@
 #pragma once
 
 #include <instruments/contract_spec.hpp>
-#include <instruments/kite_dump.hpp>
+#include <instruments/master_csv.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -89,7 +89,7 @@ struct CivilDate {
 }
 
 /// "SEP-26" -> {2026, 9}. Returns month 0 on failure.
-[[nodiscard]] inline ExpiryMonth parse_month_header(KiteField f) noexcept {
+[[nodiscard]] inline ExpiryMonth parse_month_header(MasterField f) noexcept {
     // Trim padding first: the header is fixed-width.
     while (f.n > 0 && f.p[0] == ' ') { ++f.p; --f.n; }
     while (f.n > 0 && f.p[f.n - 1] == ' ') { --f.n; }
@@ -109,7 +109,7 @@ struct CivilDate {
     return ExpiryMonth{2000 + yy, static_cast<std::uint8_t>(m)};
 }
 
-[[nodiscard]] inline KiteField mktlots_trim(KiteField f) noexcept {
+[[nodiscard]] inline MasterField mktlots_trim(MasterField f) noexcept {
     while (f.n > 0 && (f.p[0] == ' ' || f.p[0] == '\t')) { ++f.p; --f.n; }
     while (f.n > 0 && (f.p[f.n - 1] == ' ' || f.p[f.n - 1] == '\t')) { --f.n; }
     return f;
@@ -205,19 +205,19 @@ load_mktlots(const char* csv, std::size_t len, MktLotsTable& out) noexcept {
     // ── header: the months live here, and only here ──────────────────────
     std::size_t pos = 0;
     const std::size_t he = line_end(pos);
-    detail::KiteField hf[64];
-    const std::size_t hn = detail::kite_split(csv + pos, trim_cr(pos, he) - pos,
+    detail::MasterField hf[64];
+    const std::size_t hn = detail::master_split(csv + pos, trim_cr(pos, he) - pos,
                                               hf, 64);
     if (hn < 3) {
         return std::unexpected(MktLotsError::BadHeader);
     }
     // Columns 0 and 1 are UNDERLYING and SYMBOL; the rest are months.
-    if (!detail::kite_field_is(detail::mktlots_trim(hf[0]), "UNDERLYING")
-        || !detail::kite_field_is(detail::mktlots_trim(hf[1]), "SYMBOL")) {
+    if (!detail::master_field_is(detail::mktlots_trim(hf[0]), "UNDERLYING")
+        || !detail::master_field_is(detail::mktlots_trim(hf[1]), "SYMBOL")) {
         return std::unexpected(MktLotsError::BadHeader);
     }
     for (std::size_t i = 2; i < hn; ++i) {
-        const detail::KiteField t = detail::mktlots_trim(hf[i]);
+        const detail::MasterField t = detail::mktlots_trim(hf[i]);
         if (t.n == 0) {
             continue;                       // trailing empty column
         }
@@ -240,12 +240,12 @@ load_mktlots(const char* csv, std::size_t len, MktLotsTable& out) noexcept {
         const std::size_t e = line_end(pos);
         const std::size_t stop = trim_cr(pos, e);
         if (stop > pos) {
-            detail::KiteField f[64];
-            const std::size_t n = detail::kite_split(csv + pos, stop - pos, f, 64);
+            detail::MasterField f[64];
+            const std::size_t n = detail::master_split(csv + pos, stop - pos, f, 64);
             // A short row is a footer or a note, not data. NSE files carry
             // them, and parsing one would invent a phantom underlying.
             if (n >= 3) {
-                const detail::KiteField sym = detail::mktlots_trim(f[1]);
+                const detail::MasterField sym = detail::mktlots_trim(f[1]);
                 if (sym.n > 0 && sym.n <= kMaxUnderlyingLen) {
                     if (out.count_ >= kMaxLotUnderlyings) {
                         return std::unexpected(MktLotsError::TooMany);
@@ -257,10 +257,10 @@ load_mktlots(const char* csv, std::size_t len, MktLotsTable& out) noexcept {
                         const std::size_t col = k + 2;
                         std::int64_t v = 0;
                         if (col < n) {
-                            const detail::KiteField c = detail::mktlots_trim(f[col]);
+                            const detail::MasterField c = detail::mktlots_trim(f[col]);
                             std::uint64_t u = 0;
                             if (c.n > 0
-                                && detail::kite_parse_u64(c.p, c.n,
+                                && detail::master_parse_u64(c.p, c.n,
                                                           0x7FFF'FFFFull, u)) {
                                 v = static_cast<std::int64_t>(u);
                             }

@@ -655,7 +655,7 @@ private:
         "<table cellspacing=6>"
         "<tr><td style='color:#8B949E'>Symbol</td><td><b>%1</b></td></tr>"
         "<tr><td style='color:#8B949E'>FYERS ticker</td><td>%2</td></tr>"
-        "<tr><td style='color:#8B949E'>Token (Kite)</td><td>%3</td></tr>"
+        "<tr><td style='color:#8B949E'>Token</td><td>%3</td></tr>"
         "<tr><td style='color:#8B949E'>Instrument</td><td>%4 · underlying %5</td></tr>"
         "<tr><td style='color:#8B949E'>Expiry · strike</td><td>%6 · %7</td></tr>"
         "<tr><td style='color:#8B949E'>Lot · tick</td><td>%8 · %9</td></tr>"

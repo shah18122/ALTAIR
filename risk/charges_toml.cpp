@@ -18,7 +18,7 @@ namespace {
 
 /// Days from 1970-01-01 to y-m-d, proleptic Gregorian (Howard Hinnant).
 ///
-/// DUPLICATED from `instruments/kite_dump.hpp` on purpose. CLAUDE.md: a card's
+/// DUPLICATED from `instruments/master_csv.hpp` on purpose. CLAUDE.md: a card's
 /// manifest never spans two directories, and risk/ taking a dependency on
 /// instruments/ to borrow eight lines of arithmetic would be a worse trade
 /// than writing them twice. It is a closed-form standard algorithm with no

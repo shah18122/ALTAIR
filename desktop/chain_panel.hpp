@@ -9,7 +9,7 @@
 //
 // P2-12e removed the first of those three. `data/instruments.csv` now holds
 // 108,411 real contracts, and this page reads the chain out of it THROUGH THE
-// REAL PARSER -- `instruments/kite_dump.hpp`, sink-templated, so the strike,
+// REAL PARSER -- `instruments/master_csv.hpp`, sink-templated, so the strike,
 // the lot size, the tick size and the expiry arrive as a `ContractSpec` from
 // the same code the engine uses. Rule 1 is satisfied by construction: nothing
 // on this page is a literal, and the reason that matters is in ROADMAP §6 --
@@ -37,7 +37,7 @@
 
 #pragma once
 
-#include <instruments/kite_dump.hpp>
+#include <instruments/master_csv.hpp>
 
 #include "format.hpp"
 
@@ -97,9 +97,9 @@ struct Chain {
     std::size_t expiries_seen = 0;
 };
 
-/// Read one underlying's options out of the Kite master.
+/// Read one underlying's options out of the instrument master.
 ///
-/// Uses `detail::load_kite_dump_into` with a FILTERING SINK rather than a
+/// Uses `detail::load_instrument_master_into` with a FILTERING SINK rather than a
 /// SpecStore: the store is sized for a trading universe and this is 108,411
 /// rows of which a few thousand are wanted. The sink is the documented
 /// extension point (the P1-04 carried-debt note names it), so this is not a
@@ -132,9 +132,9 @@ struct Chain {
         r.strike = s.strike.raw();
         r.lot = s.lot_size.raw();
         r.tick = s.tick_size.raw();
-        r.exchange = kite_exchange_name(s.exchange, s.segment);
+        r.exchange = order_exchange_name(s.exchange, s.segment);
         const std::uint32_t tok =
-            s.token[static_cast<std::size_t>(FeedSource::Kite)];
+            s.token[static_cast<std::size_t>(FeedSource::Wire)];
         if (s.opt_type == OptionType::CE) {
             r.has_ce = true;
             r.ce_token = tok;
@@ -149,7 +149,7 @@ struct Chain {
         return true;
     };
 
-    const auto rep = detail::load_kite_dump_into(csv.data(), csv.size(), sink,
+    const auto rep = detail::load_instrument_master_into(csv.data(), csv.size(), sink,
                                                  Timestamp{0});
     if (!rep) {
         c.error = QStringLiteral("the master did not parse");
@@ -432,15 +432,15 @@ private:
         if (!chain_.loaded) {
             head_->setText(QStringLiteral(
                 "<b style='color:#B9770B'>No instrument master.</b> %1<br>"
-                "Fetch it with <code>altair_kite_fetch "
-                "--dump-instruments data/instruments.csv</code>.")
+                "Build it with <code>altair_instrument_master "
+                "--go</code>.")
                     .arg(chain_.error));
             return;
         }
         head_->setText(QStringLiteral(
             "<b>%1 %2 option contracts</b> across %3 expiries, read from "
             "<code>data/instruments.csv</code> through "
-            "<code>instruments/kite_dump.hpp</code> — the same parser the "
+            "<code>instruments/master_csv.hpp</code> — the same parser the "
             "engine loads specs with. Every strike, lot size and tick below "
             "comes from the master; none is a literal (rule 1, and ROADMAP §6 "
             "says why: NSE has revised lot sizes mid-series).")

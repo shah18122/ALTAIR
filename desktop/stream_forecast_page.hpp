@@ -3,7 +3,7 @@
 // DATA: FYERS ONLY. Bars come from data/store/fyers/spot/<inst>/<tf>/ (the
 // FYERS candles ops/linux/fetch.py history and the nightly keep) and, on
 // "Fetch recent + train", from FYERS alone; dataset/ (TradingView exports)
-// and Kite are never read here. Five-level depth comes from ALTAIR's own
+// is never read here. Five-level depth comes from ALTAIR's own
 // recorder (data/store/depth_bars/fut/<inst>/1m/, written by altair_store
 // decode): FYERS serves no historical depth, so depth history starts on the
 // first recorded day.
@@ -229,9 +229,9 @@ inline ForecastTrainingResult train_forecast_page(const QString& root, const QSt
         }
     }
     if (fetch) {
-        // FYERS only: a failed FYERS fetch is reported, never filled from Kite.
-        const auto fresh = fetch_recent(symbol, quant_symbol_by_dir(symbol).kite_token, interval,
-                                        daily ? 120 : 20, /*fyers_only=*/true);
+        // FYERS only: a failed FYERS fetch is reported as such.
+        const auto fresh = fetch_recent(symbol, quant_symbol_by_dir(symbol).wire_token, interval,
+                                        daily ? 120 : 20);
         if (!fresh.ran) { result.error = QStringLiteral("FYERS fetch failed: %1").arg(fresh.error); return result; }
         result.provider = fresh.provider;
         for (std::size_t i = 0; i < fresh.bars.closes.size(); ++i) {
@@ -417,7 +417,7 @@ private:
         fitted_.reset(); latest_.reset(); output_->clear(); pending_ = false; live_ = false;
         stop_depth_watch();
         const QString symbol = symbols_->currentData().toString(), interval = interval_->currentData().toString();
-        token_ = quant_symbol_by_dir(symbol).kite_token;
+        token_ = quant_symbol_by_dir(symbol).wire_token;
         const auto horizon = horizon_bars_for(interval, horizon_->currentData().toInt());
         const bool use_depth = depth_->isEnabled() && depth_->isChecked();
         train_->setEnabled(false); fetch_->setEnabled(false);

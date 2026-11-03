@@ -21,9 +21,10 @@ static FundsAccountView account(BrokerId broker, std::uint64_t generation,
                                 const char* label, bool connected,
                                 std::optional<std::int64_t> cash,
                                 std::optional<std::int64_t> available,
-                                FundsSource source = FundsSource::Broker) {
+                                FundsSource source = FundsSource::Broker,
+                                std::uint64_t slot = 1) {
     FundsAccountView row;
-    row.session = {broker, 1, generation};
+    row.session = {broker, slot, generation};
     row.source = source;
     row.label = QString::fromUtf8(label);
     row.connected = connected;
@@ -46,11 +47,11 @@ int main(int argc, char** argv) {
               == QStringLiteral("0.00"),
           "known zero renders as zero, never as missing");
 
-    check(model.apply(account(BrokerId::ZerodhaKite, 1, "Kite · B1", false,
+    check(model.apply(account(BrokerId::Fyers, 1, "FYERS · B1", false,
                               std::nullopt, 25'000,
-                              FundsSource::Paper)),
-          "paper Kite snapshot is accepted as a separate account");
-    check(model.account_count() == 2, "two broker accounts stay two rows");
+                              FundsSource::Paper, 2)),
+          "paper snapshot in a second account slot is accepted as a separate account");
+    check(model.account_count() == 2, "two accounts stay two rows");
     const int total = model.total_row();
     check(model.index(total, FundsSummaryModel::Cash).data().toString()
               .contains(QStringLiteral("INCOMPLETE")),
@@ -71,7 +72,7 @@ int main(int argc, char** argv) {
     check(model.account_count() == 2, "provider segment/relogin cannot duplicate a balance");
     check(model.index(model.total_row(), FundsSummaryModel::Cash).data().toString()
               .contains(QStringLiteral("INCOMPLETE")),
-          "unknown Kite cash remains incomplete after FYERS refresh");
+          "unknown second-account cash remains incomplete after a refresh");
 
     std::printf("Funds summary: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;

@@ -1,7 +1,7 @@
 // instruments/universe.hpp — which contracts are allowed to exist at all.
 //
-// P1-09. The filter that the capacity debt made unavoidable: the live Kite
-// dump is 106'150 rows and the NSE bhavcopy 30'488, against a SpecStore of
+// P1-09. The filter that the capacity debt made unavoidable: the live
+// instrument master is 106'150 rows and the NSE bhavcopy 30'488, against a SpecStore of
 // 8'192. Without a filter the first file loaded fills the store and the second
 // is refused entirely -- which is exactly what happened the first time both
 // real files were run through the pipeline.
@@ -128,7 +128,7 @@ public:
         }
 
         // The strike band is what makes an options universe fit at all: the
-        // real Kite dump carries 40'913 calls and 40'891 puts, and all but a
+        // real instrument master carries 40'913 calls and 40'891 puts, and all but a
         // few hundred are strikes nobody will trade today.
         if (cfg_.strike_band > 0 && s.segment == Segment::Opt
             && e->reference.raw() > 0) {

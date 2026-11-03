@@ -98,8 +98,8 @@ struct PriceLevel {
 
 inline constexpr std::size_t kPricePayloadBytes = 48;
 inline constexpr std::size_t kPriceLevelBytes = 24;
-/// Fifty: the FYERS 50-level book (broker/fyers_tbt_socket.hpp). The HSM and
-/// Kite feeds send five, and a frame carries only the levels it has.
+/// Fifty: the FYERS 50-level book (broker/fyers_tbt_socket.hpp). The HSM
+/// feed sends five, and a frame carries only the levels it has.
 inline constexpr std::size_t kMaxDepthLevels = 50;
 
 /// A book frame is the payload followed by bid levels then ask levels, each

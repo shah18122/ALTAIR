@@ -26,7 +26,7 @@ of reconnect, revocation, fill, route or live-feed behaviour.
 
 | Scenario | Required evidence |
 |---|---|
-| FYERS-only, Kite-only and both-linked live routes | fresh authorised sessions and timestamped route/account logs |
+| FYERS live route | fresh authorised sessions and timestamped route/account logs |
 | Revoked/expired credentials and reconnect | controlled live-session expiry/revocation window |
 | Helper crash during an entitled request | authorised account plus captured supervisor transition |
 | Live FYERS 1m/5m discrepancy report | entitled historical API response for the chosen instruments/dates |

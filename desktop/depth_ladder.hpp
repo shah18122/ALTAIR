@@ -108,7 +108,7 @@ struct LadderView {
     // RULE 11: safe-side clamp, and deliberately silent. Drawing FEWER levels
     // than a corrupt count claims understates the book; drawing more reads
     // past the array. Of the two directions this is the one that cannot show
-    // liquidity that does not exist. feed/kite_decoder.hpp is where a bad
+    // liquidity that does not exist. the FYERS depth decoder is where a bad
     // level count is refused.
     const std::size_t na =
         b->ask_levels < kDepthLevels ? b->ask_levels : kDepthLevels;
@@ -200,7 +200,7 @@ public:
             foot_->setText(QStringLiteral(
                 "The replay tape carries trades only: <code>ReplayTick</code> "
                 "has a last price and a quantity and no depth at all. A live "
-                "Kite full-mode subscription (P2-02) is what fills this."));
+                "FYERS depth subscription is what fills this."));
             return;
         }
 

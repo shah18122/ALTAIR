@@ -10,14 +10,14 @@
 # a calendar that disagrees with the bars is worse than no calendar.
 #
 # It also cannot tell a HOLIDAY from a DATA GAP. A weekday with no bars is
-# recorded as CLOSED, and if Kite simply never served that day it is recorded
+# recorded as CLOSED, and if the data vendor simply never served that day it is recorded
 # as CLOSED wrongly. The cross-check is that NIFTY and India VIX are fetched
 # independently: a real closure hits both. Days where only ONE series is
 # missing are listed at the bottom as SUSPECT rather than being called
 # holidays -- there are 1 of them.
 #
 # RANGE: 2015-02-02 .. 2026-09-04. You asked for fifteen years; this is
-# 11.6, because that is how far Kite's
+# 11.6, because that is how far the vendor's
 # 1-minute history goes. Earlier years would have to come from a published
 # circular, and inventing them here would be exactly the kind of confident,
 # plausible, wrong reference data CLAUDE.md's gate 7 exists to catch.
@@ -243,7 +243,7 @@ date,weekday,status,bars,note
 # SUSPECT -- present in one series and not the other.
 # Not called holidays: a real closure hits both.
 #
-# 2019-07-02 was RE-FETCHED to check: Kite returns
+# 2019-07-02 was RE-FETCHED to check: the vendor returns
 # 2019-07-01 and 2019-07-03 for India VIX and nothing
 # between. A genuine vendor gap on their side, not data
 # lost here.

@@ -4,9 +4,9 @@
 //
 // THREE WINDOWS, AND THE TIGHTEST ONE BINDS.
 //
-// Kite publishes limits per SECOND, per MINUTE and per DAY, and they are not
-// redundant: a strategy can sit comfortably under 10 orders a second all
-// morning and still exhaust 3,000 in a day. Checking only the fastest window
+// A broker publishes limits per SECOND, per MINUTE and per DAY, and they are
+// not redundant: a strategy can sit comfortably under 10 orders a second all
+// morning and still exhaust a daily cap. Checking only the fastest window
 // is the mistake that gets an account rate-limited at 14:30 with positions
 // open and no way to close them.
 //
@@ -58,17 +58,11 @@ struct BrokerLimits {
     std::int32_t per_day = 0;
 };
 
-/// Kite's configured local order limits.  The daily value is intentionally
-/// conservative and remains a configuration gate, not a claim that every
-/// account has the same entitlement.
-///
-/// Named constants rather than literals at the call site, because these change
-/// and a number buried in a router is a number nobody finds when they do.
-inline constexpr BrokerLimits kKiteOrderLimits{10, 200, 3000};
-
 /// FYERS' published retail-algo ceiling is 10 orders/second.  The minute and
 /// day values are kept as explicit local caps so the router never assumes an
 /// unlimited account; they can be lowered in deployment configuration.
+/// A named constant rather than literals at the call site, because these change
+/// and a number buried in a router is a number nobody finds when they do.
 inline constexpr BrokerLimits kFyersOrderLimits{10, 200, 100'000};
 
 struct ThrottleDecision {
@@ -85,7 +79,7 @@ struct ThrottleDecision {
 /// FIXED window, not sliding, and that is a deliberate simplification with a
 /// stated cost: at a window boundary a caller can send up to 2x the limit
 /// across two adjacent windows. A sliding window avoids that and needs a
-/// timestamp per event; a fixed one needs two integers. Kite's own limiter is
+/// timestamp per event; a fixed one needs two integers. The broker's own limiter is
 /// not documented to be sliding either, so a stricter local model would refuse
 /// orders the venue would have accepted.
 class FixedWindow {
@@ -213,11 +207,10 @@ private:
     std::uint64_t refused_ = 0;
 };
 
-/// Which venues exist.  Kite and XTS retain their historical ordinals because
-/// Venue is persisted in diagnostics.  FYERS is appended rather than
-/// renumbering them.  A secondary venue is always explicitly selected; the
+/// Which venues exist.  The ordinals are persisted in diagnostics, so they are
+/// never renumbered: 1 belonged to a retired broker and is not reused.  The
 /// router never crosses brokers after an uncertain submission.
-enum class Venue : std::uint8_t { None = 0, Kite = 1, Xts = 2, Fyers = 3 };
+enum class Venue : std::uint8_t { None = 0, Xts = 2, Fyers = 3 };
 
 enum class RouteError : std::uint8_t {
     /// Every venue that could take this order is throttled.
@@ -233,51 +226,24 @@ struct RouteDecision {
     ThrottleDecision throttle{};
 };
 
-/// Pick a venue and take its token.
+/// Route an explicitly selected venue and take its throttle token.
 ///
-/// Compatibility overload for the historical Kite-only caller.  FYERS cannot
-/// be selected through this overload because it has no FYERS throttle object;
-/// refusing is safer than accidentally routing a primary FYERS order to Kite.
+/// FYERS is the only venue with an adapter (oms/fyers_adapter.hpp). XTS is
+/// refused rather than sent anywhere else: refusing beats routing to another
+/// account behind the caller's back. This function does not implement
+/// automatic execution failover; an uncertain placement is reconciled at the
+/// same venue before any new routing decision.
 [[nodiscard]] inline std::expected<RouteDecision, RouteError>
-route(Venue preferred, BrokerThrottle& kite, Timestamp now) noexcept {
+route(Venue preferred, BrokerThrottle& fyers, Timestamp now) noexcept {
     if (preferred == Venue::None) {
         return std::unexpected(RouteError::NoVenue);
     }
-    if (preferred == Venue::Xts || preferred == Venue::Fyers) {
-        // Refusing beats routing to another account behind the caller's back.
+    if (preferred != Venue::Fyers) {
         return std::unexpected(RouteError::VenueUnavailable);
     }
     RouteDecision d{};
-    d.venue = Venue::Kite;
-    d.throttle = kite.acquire(now);
-    if (d.throttle.verdict != ThrottleVerdict::Allowed) {
-        return std::unexpected(RouteError::AllThrottled);
-    }
-    return d;
-}
-
-/// Route an explicitly selected venue with independent per-broker throttles.
-///
-/// This function does not implement automatic execution failover.  If a
-/// placement result is uncertain, the caller must reconcile that order at the
-/// same venue before making any new routing decision.
-[[nodiscard]] inline std::expected<RouteDecision, RouteError>
-route(Venue preferred, BrokerThrottle& fyers, BrokerThrottle& kite,
-      Timestamp now) noexcept {
-    if (preferred == Venue::None) {
-        return std::unexpected(RouteError::NoVenue);
-    }
-    if (preferred == Venue::Xts) {
-        return std::unexpected(RouteError::VenueUnavailable);
-    }
-    RouteDecision d{};
-    if (preferred == Venue::Fyers) {
-        d.venue = Venue::Fyers;
-        d.throttle = fyers.acquire(now);
-    } else {
-        d.venue = Venue::Kite;
-        d.throttle = kite.acquire(now);
-    }
+    d.venue = Venue::Fyers;
+    d.throttle = fyers.acquire(now);
     if (d.throttle.verdict != ThrottleVerdict::Allowed) {
         return std::unexpected(RouteError::AllThrottled);
     }
@@ -287,7 +253,6 @@ route(Venue preferred, BrokerThrottle& fyers, BrokerThrottle& kite,
 [[nodiscard]] constexpr const char* describe(Venue v) noexcept {
     switch (v) {
     case Venue::Fyers: return "FYERS";
-    case Venue::Kite:  return "Kite";
     case Venue::Xts:   return "XTS";
     case Venue::None:  return "none";
     }

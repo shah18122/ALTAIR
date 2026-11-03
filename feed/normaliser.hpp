@@ -36,7 +36,7 @@ public:
         /// `require_monotonic` is forced OFF by the constructor. See the file
         /// header — on a shared gate it cannot be correct.
         PlausibilityGate::Config gate{};
-        FeedSource active = FeedSource::Kite;
+        FeedSource active = FeedSource::Fyers;
     };
 
     struct Stats {
@@ -155,8 +155,8 @@ private:
             ++stats_.flagged_stale;
         }
 
-        // D2: per-instrument ordering. EQUAL is normal — Kite's exchange_ts is
-        // one-second resolution (P2-02), so many ticks share a second. Only a
+        // D2: per-instrument ordering. EQUAL is normal — a broker exchange_ts is
+        // often one-second resolution (P2-02), so many ticks share a second. Only a
         // strictly decreasing timestamp is anomalous.
         const std::uint32_t i = static_cast<std::uint32_t>(id);
         if (i < kMaxInstruments) {

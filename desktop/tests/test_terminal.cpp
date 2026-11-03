@@ -4,7 +4,7 @@
 //
 // Before the terminal, the order ticket's instrument combo held three tokens
 // typed into order_ticket.hpp and the watchlist held every instrument in the
-// Kite master. An operator watching a strike read its token off one page and
+// instrument master. An operator watching a strike read its token off one page and
 // looked for it on another, and if the ticket did not have it -- which was the
 // case for everything except three -- it could not be requested at all.
 //
@@ -135,7 +135,7 @@ int main(int argc, char** argv)
          PositionSource::Broker}, altair::Timestamp{100'000'000'000});
     check(no_positions_result.has_value() && term.positions_model()->rowCount() == 0,
           "an absent positions section removes stale visible positions");
-    auto paper = account_fixture({broker_view::BrokerId::ZerodhaKite, 8, 1});
+    auto paper = account_fixture({broker_view::BrokerId::Fyers, 8, 1});
     const auto paper_result = term.apply_account(
         {paper, QStringLiteral("Paper · K1"), FundsSource::Paper,
          PositionSource::Paper}, altair::Timestamp{100'000'000'000});

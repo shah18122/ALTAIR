@@ -79,9 +79,9 @@ void no_broker_token_field()
     s.exchange = Exchange::NSE;
     s.segment = Segment::Opt;
     s.opt_type = OptionType::CE;
-    s.source = SpecSource::KiteDump;
+    s.source = SpecSource::InstrumentMaster;
     // The SAME contract, with two unrelated broker tokens.
-    s.token[static_cast<std::size_t>(FeedSource::Kite)] = 11111u;
+    s.token[static_cast<std::size_t>(FeedSource::Wire)] = 11111u;
     s.token[static_cast<std::size_t>(FeedSource::Xts)]  = 99999u;
     std::snprintf(s.symbol, sizeof(s.symbol), "NIFTY26SEP25000CE");
     std::snprintf(s.underlying, sizeof(s.underlying), "NIFTY");
@@ -89,25 +89,25 @@ void no_broker_token_field()
     const auto id = g_store.add(s);
     check(id.has_value(), "the contract is in the store");
 
-    const auto via_kite = g_store.id_of(FeedSource::Kite, 11111u);
+    const auto via_wire = g_store.id_of(FeedSource::Wire, 11111u);
     const auto via_xts  = g_store.id_of(FeedSource::Xts, 99999u);
-    check(via_kite.has_value() && via_xts.has_value(),
+    check(via_wire.has_value() && via_xts.has_value(),
           "both feeds' tokens resolve");
-    check(via_kite.has_value() && via_xts.has_value() && *via_kite == *via_xts,
+    check(via_wire.has_value() && via_xts.has_value() && *via_wire == *via_xts,
           "and they resolve to the SAME InstrumentId -- two number spaces, "
           "one contract");
 
     // What a decoder builds. Note there is nowhere to put a token even if you
     // wanted to: Tick has no such field, which is the point.
     Tick t{};
-    t.id = *via_kite;
-    t.source = FeedSource::Kite;
+    t.id = *via_wire;
+    t.source = FeedSource::Fyers;
     Tick u{};
     u.id = *via_xts;
     u.source = FeedSource::Xts;
 
     check(t.id == u.id,
-          "a Kite tick and an XTS tick for this contract carry the same id");
+          "a FYERS tick and an XTS tick for this contract carry the same id");
     check(t.source != u.source,
           "while `source` still records which feed produced each -- a "
           "diagnostic, not an identity");
@@ -257,7 +257,7 @@ void rides_a_ring()
     sent.last_qty = Qty{75};
     sent.volume = Qty{123456};
     sent.oi = 987654;
-    sent.source = FeedSource::Kite;
+    sent.source = FeedSource::Fyers;
     sent.flags = set_flag(0, TickFlag::Snapshot);
 
     check(g_tick_ring.try_push(sent), "a Tick pushes onto the ring");

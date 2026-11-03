@@ -6,7 +6,7 @@
 // send back after each frame (feed/fyers_hsm.hpp builds all of them). That
 // keeps the protocol testable without a socket and this file free of it.
 //
-// Unlike Kite's ticker, FYERS needs traffic from the client while the feed is
+// FYERS needs traffic from the client while the feed is
 // running (an application ping every ten seconds and periodic
 // acknowledgements), so this is a small single-threaded asio loop: one read
 // always pending, one serialized write queue, one 1-second timer.
@@ -122,7 +122,7 @@ fyers_data_socket_run(
     try {
         net::io_context ioc;
         ssl::context ctx{ssl::context::tls_client};
-        // Same policy as https_client and the Kite ticker: verification is
+        // Same policy as https_client: verification is
         // on, and the socket carries a live trading credential.
         ctx.set_verify_mode(ssl::verify_peer);
         ctx.set_default_verify_paths();

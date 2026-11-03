@@ -19,10 +19,10 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE altair_instruments altair_flags)
     add_test(NAME spec_store COMMAND altair_spec_store_test)
 
-    add_executable(altair_kite_dump_test tests/test_kite_dump.cpp)
-    target_link_libraries(altair_kite_dump_test
+    add_executable(altair_master_csv_test tests/test_master_csv.cpp)
+    target_link_libraries(altair_master_csv_test
         PRIVATE altair_instruments altair_flags)
-    add_test(NAME kite_dump COMMAND altair_kite_dump_test)
+    add_test(NAME master_csv COMMAND altair_master_csv_test)
 
     add_executable(altair_reconcile_test tests/test_reconcile.cpp)
     target_link_libraries(altair_reconcile_test

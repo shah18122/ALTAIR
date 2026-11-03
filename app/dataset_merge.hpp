@@ -2,7 +2,7 @@
 //
 // CX02-A2. Fixes C14-005, C14-006, C14-007 and the CLI half of C14-016.
 //
-// P34-01 wrote the merge inside altair_kite_update's main(), where nothing
+// P34-01 wrote the merge inside the dataset updater's main(), where nothing
 // could test it, and the audit found five ways it lost stored data:
 //
 //   1. The rewrite never checked the stream, so a disk-full or an antivirus
@@ -17,7 +17,7 @@
 //      was neither header nor row.
 //   5. One header, from whichever file was read last, was written into all.
 //
-// And it never called `verify_coverage`, so a window Kite truncated was merged
+// And it never called `verify_coverage`, so a window the broker truncated was merged
 // as if complete -- the exact failure P2-12 exists to stop, and the fetcher
 // beside it refuses.
 //
@@ -38,7 +38,7 @@
 #pragma once
 
 #include <app/price_text.hpp>
-#include <broker/kite_historical.hpp>
+#include <broker/candles.hpp>
 
 #include <atomic>
 #include <cerrno>
@@ -288,7 +288,7 @@ update_empty_answer_streak(const std::filesystem::path& state_path,
 
 /// The key two stamps must share to be the SAME BAR.
 ///
-/// dataset/spot/nifty/1d holds `2026-09-08` and Kite returns
+/// dataset/spot/nifty/1d holds `2026-09-08` and the broker returns
 /// `2026-09-08T00:00:00+05:30`. Keyed on the full string those are different
 /// bars, and P34-01's first version added a duplicate of every re-fetched day.
 /// A daily bar is identified by its DATE.

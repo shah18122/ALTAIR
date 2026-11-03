@@ -317,11 +317,7 @@ struct RunStep {
     std::vector<RunStep> plan;
     // Existence only: the session files are read by the helper, never here.
     if (QFileInfo::exists(root + QStringLiteral("/data/fyers_session.json"))) {
-        plan.push_back({QStringLiteral("dataset/ from FYERS"), QStringLiteral("altair_kite_update"), {},
-                        {QStringLiteral("--provider"), QStringLiteral("fyers"), QStringLiteral("--go")},
-                        20 * 60 * 1000, false});
-    } else if (QFileInfo::exists(root + QStringLiteral("/data/kite_session.json"))) {
-        plan.push_back({QStringLiteral("dataset/ from Kite"), QStringLiteral("altair_kite_update"), {},
+        plan.push_back({QStringLiteral("dataset/ from FYERS"), QStringLiteral("altair_dataset_update"), {},
                         {QStringLiteral("--go")}, 20 * 60 * 1000, false});
     }
     plan.push_back({QStringLiteral("curriculum, daily tracks"), QStringLiteral("altair_forecast_curriculum"), {},
@@ -402,7 +398,7 @@ public:
         daily_ = new QPushButton(QStringLiteral("Refresh daily call"), this);
         daily_->setObjectName(QStringLiteral("refreshDailyCall"));
         daily_->setToolTip(QStringLiteral(
-            "After the close: update dataset/ from the linked broker (FYERS, else Kite), "
+            "After the close: update dataset/ from FYERS, "
             "rerun the forecast curriculum (daily and hourly tracks), altair_trader and the vol premium on NSE closes. "
             "The terminal's Desk trader then reads tomorrow's call. Paper only; it takes a while."));
         status_ = new QLabel(this);

@@ -128,7 +128,7 @@ struct BrokerageRule {
     /// Percentage alternative.
     RateNano pct = 0;
     /// The charge is min(flat, pct x turnover) when both are non-zero --
-    /// Zerodha's "Rs 20 or 0.03%, whichever is lower".
+    /// The discount-broker slab "Rs 20 or 0.03%, whichever is lower".
     bool take_lower = true;
 };
 

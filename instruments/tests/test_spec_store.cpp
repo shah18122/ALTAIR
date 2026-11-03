@@ -35,12 +35,12 @@ constexpr Timestamp kOpen{1787888700000000000LL};
 
 /// Build a spec. Everything a test does not care about gets a sane default,
 /// so each test reads as the one thing it is checking.
-ContractSpec mk(const char* symbol, std::uint32_t kite_tok, std::uint32_t xts_tok,
+ContractSpec mk(const char* symbol, std::uint32_t wire_tok, std::uint32_t xts_tok,
                 std::int64_t lot = 75, std::uint64_t src_hash = 0xABCD)
 {
     ContractSpec s{};
     s.id = InstrumentId::Invalid;          // the store must overwrite this
-    s.token[static_cast<std::size_t>(FeedSource::Kite)] = kite_tok;
+    s.token[static_cast<std::size_t>(FeedSource::Wire)] = wire_tok;
     s.token[static_cast<std::size_t>(FeedSource::Xts)]  = xts_tok;
     s.lot_size = LotSize{lot};
     s.tick_size = Price{5};
@@ -117,18 +117,18 @@ void test_store_token_map_is_bidirectional()
     static SpecStore st;
     const auto a = st.add(mk("NIFTY26SEPFUT", 256265, 35001)).value();
 
-    check(st.id_of(FeedSource::Kite, 256265).value() == a, "Kite token resolves");
+    check(st.id_of(FeedSource::Wire, 256265).value() == a, "wire token resolves");
     check(st.id_of(FeedSource::Xts, 35001).value() == a, "XTS token resolves");
-    check(st.token_of(a, FeedSource::Kite).value() == 256265, "id -> Kite token");
+    check(st.token_of(a, FeedSource::Wire).value() == 256265, "id -> wire token");
     check(st.token_of(a, FeedSource::Xts).value() == 35001, "id -> XTS token");
 
     // THE REASON THIS CARD EXISTS: the same number in two feeds is two
     // different instruments. 35001 is this contract's XTS token and must not
-    // resolve as a Kite token.
-    check(st.id_of(FeedSource::Kite, 35001).error() == SpecError::NotFound,
-          "an XTS token does NOT resolve in the Kite space");
+    // resolve as a wire token.
+    check(st.id_of(FeedSource::Wire, 35001).error() == SpecError::NotFound,
+          "an XTS token does NOT resolve in the wire-token space");
 
-    check(st.id_of(FeedSource::Kite, 999999).error() == SpecError::NotFound,
+    check(st.id_of(FeedSource::Wire, 999999).error() == SpecError::NotFound,
           "an unknown token is NotFound");
 
     // A feed that does not carry the contract uses token 0.
@@ -164,7 +164,7 @@ void test_store_rejects_bad_input()
               == SpecError::DuplicateToken,
           "a duplicate token is refused");
     check(st.size() == before + 1, "and the rejection changed nothing");
-    check(st.id_of(FeedSource::Kite, 256265).has_value(),
+    check(st.id_of(FeedSource::Wire, 256265).has_value(),
           "the first instrument still resolves");
 }
 
@@ -274,7 +274,7 @@ void test_store_capacity()
     check(st.add(mk("ONE_MORE", 999999, 999998)).error() == SpecError::Full,
           "the next add is Full");
     check(st.size() == kMaxInstruments, "and the rejection changed nothing");
-    check(st.id_of(FeedSource::Kite, 1).value() == InstrumentId{0},
+    check(st.id_of(FeedSource::Wire, 1).value() == InstrumentId{0},
           "the first instrument still resolves");
 }
 
@@ -298,7 +298,7 @@ void report_throughput()
     const std::uint32_t last = 2000;
     const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < kOps; ++i) {
-        const auto r = st.id_of(FeedSource::Kite, last);
+        const auto r = st.id_of(FeedSource::Wire, last);
         sink += r.has_value() ? static_cast<std::uint32_t>(r.value()) : 0u;
     }
     const auto t1 = std::chrono::steady_clock::now();
@@ -310,7 +310,7 @@ void report_throughput()
         std::printf("    linear scan — P2-04 should add an index if this bites\n");
     }
 
-    const auto id = st.id_of(FeedSource::Kite, 1).value();
+    const auto id = st.id_of(FeedSource::Wire, 1).value();
     const auto t2 = std::chrono::steady_clock::now();
     for (int i = 0; i < kOps; ++i) {
         const auto r = st.at(id, kOpen);

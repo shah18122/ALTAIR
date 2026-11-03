@@ -543,8 +543,8 @@ parse_intent(std::string_view line) {
     }
 
     // A LIMIT with no price is a market order by accident; a MARKET with one
-    // is a limit somebody will not see. `kite_adapter.hpp` refuses the first
-    // at the wire; refusing both here means the queue never carries a record
+    // is a limit somebody will not see. `fyers_adapter.hpp` translates the
+    // type at the wire; refusing both here means the queue never carries a record
     // whose meaning depends on which module read it.
     if (in.order_type == IntentType::Limit && in.limit_paise == 0) {
         return std::unexpected(IntentError::PriceContradictsType);

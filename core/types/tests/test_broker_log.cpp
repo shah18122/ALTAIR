@@ -65,7 +65,7 @@ void event_structure() {
     event.kind = BrokerLogKind::Feed;
     event.broker = BrokerId::None;
     check(!valid(event), "invalid broker refused");
-    event.broker = BrokerId::ZerodhaKite;
+    event.broker = BrokerId::Fyers;
     event.occurred_at = Timestamp::epoch();
     check(!valid(event), "non-positive occurrence time refused");
     event.occurred_at = Timestamp{100};

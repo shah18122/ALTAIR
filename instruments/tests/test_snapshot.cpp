@@ -34,7 +34,7 @@ namespace {
 
 // ── building IST midnights from civil dates ──────────────────────────────
 // Howard Hinnant's days_from_civil. Written out here rather than pulled from
-// kite_dump.hpp because that header's copy is in its own detail namespace and
+// master_csv.hpp because that header's copy is in its own detail namespace and
 // this card's manifest does not include it.
 constexpr std::int64_t days_from_civil(std::int64_t y, unsigned m, unsigned d) noexcept
 {
@@ -230,8 +230,8 @@ ContractSpec make(SpecSource src, const char* underlying, std::uint32_t token)
     s.source = src;
     std::snprintf(s.symbol, sizeof(s.symbol), "%s25SEP", underlying);
     std::snprintf(s.underlying, sizeof(s.underlying), "%s", underlying);
-    if (src == SpecSource::KiteDump) {
-        s.token[static_cast<std::size_t>(FeedSource::Kite)] = token;
+    if (src == SpecSource::InstrumentMaster) {
+        s.token[static_cast<std::size_t>(FeedSource::Wire)] = token;
     }
     return s;
 }
@@ -251,11 +251,11 @@ void withheld_verdicts_block_through_p1_06()
     if (!verdict_withholds(v)) {
         (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 0));
     }
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 11111));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 11111));
 
     // A primary WAS loaded somewhere this run, so the missing one is an anomaly.
     (void)g_rec.add(make(SpecSource::NseMaster, "BANKNIFTY", 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "BANKNIFTY", 22222));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "BANKNIFTY", 22222));
 
     const ReconcileReport r = g_rec.reconcile();
     check(r.primary_source_seen, "a primary was seen for the un-withheld symbol");

@@ -183,7 +183,7 @@ std::string last_dataset_date(const fs::path& file) {
     return last;
 }
 
-/// The nearest index future's lot in the Kite master; `fallback` without it.
+/// The nearest index future's lot in data/instruments.csv; `fallback` without it.
 long long lot_from_master(const fs::path& master, const std::string& name, long long fallback) {
     std::ifstream in(master);
     std::string line;

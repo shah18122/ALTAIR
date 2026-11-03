@@ -72,7 +72,7 @@ inline bool count(const fyers_hsm::HsmUpdate& u, std::size_t i, std::int64_t& ou
 }
 } // namespace detail
 
-/// Map one update for `token` (a Kite instrument token). `recv_ns`: when it
+/// Map one update for `token` (an ALTAIR instrument token, live/instrument_master.hpp). `recv_ns`: when it
 /// arrived; `per`: prices per this many units (currency 100, else 1).
 /// Returns false when nothing could be taken from it.
 [[nodiscard]] inline bool to_frames(const fyers_hsm::HsmUpdate& u, std::uint32_t token, LastTrade& last,

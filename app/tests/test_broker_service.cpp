@@ -160,24 +160,20 @@ void test_service_logs_are_bounded_and_present() {
 void test_activity_projection_is_atomic_and_bounded() {
     BrokerService<FakeTransport, 4> fyers{
         BrokerId::Fyers, FakeTransport{FetchOutcome::Published}, policy()};
-    BrokerService<FakeTransport, 4> kite{
-        BrokerId::ZerodhaKite, FakeTransport{FetchOutcome::HelperDown}, policy()};
     const Timestamp now{1'000'000'000};
     (void)fyers.link({BrokerId::Fyers, 1, 1}, now);
     (void)fyers.pump(now);
-    (void)kite.link({BrokerId::ZerodhaKite, 2, 1}, now);
-    (void)kite.pump(now);
 
     broker_view::Routes routes{};
     routes.revision = 7;
     const auto path = std::filesystem::temp_directory_path() / "altair_broker_activity_test.json";
-    const auto published = publish_activity_projection(path, routes, fyers, kite, now, 10);
+    const auto published = publish_activity_projection(path, routes, fyers, now, 10);
     check(published.has_value(), "service writes a bounded activity projection");
     std::ifstream in(path, std::ios::binary);
     const std::string body{std::istreambuf_iterator<char>{in}, {}};
-    check(body.find("FYERS") != std::string::npos
-              && body.find("KITE") != std::string::npos,
-          "projection preserves both provider identities");
+    check(body.find("\"broker\":\"FYERS\"") != std::string::npos
+              && body.find("\"data_fallback\":\"NONE\"") != std::string::npos,
+          "projection names FYERS, and no fallback broker");
     check(body.find("authorization") == std::string::npos
               && body.find("token") == std::string::npos,
           "projection contains no credential marker");
@@ -186,22 +182,19 @@ void test_activity_projection_is_atomic_and_bounded() {
     std::filesystem::remove(path.string() + ".tmp", ec);
 }
 
-void test_activity_supervisor_pumps_both_services() {
+void test_activity_supervisor_pumps_the_service() {
     BrokerService<FakeTransport, 4> fyers{
         BrokerId::Fyers, FakeTransport{FetchOutcome::Published}, policy()};
-    BrokerService<FakeTransport, 4> kite{
-        BrokerId::ZerodhaKite, FakeTransport{FetchOutcome::HelperDown}, policy()};
     const Timestamp now{2'000'000'000};
     (void)fyers.link({BrokerId::Fyers, 3, 1}, now);
-    (void)kite.link({BrokerId::ZerodhaKite, 4, 1}, now);
     broker_view::Routes routes{};
     routes.revision = 1;
     const auto path = std::filesystem::temp_directory_path() / "altair_broker_supervisor_test.json";
-    BrokerActivitySupervisor supervisor{fyers, kite, path, routes};
+    BrokerActivitySupervisor supervisor{fyers, path, routes};
     check(supervisor.step(now).has_value(),
-          "supervisor pumps both providers and publishes one projection");
-    check(fyers.log_size() > 1 && kite.log_size() > 1,
-          "both provider services contributed activity during one step");
+          "supervisor pumps the FYERS service and publishes one projection");
+    check(fyers.log_size() > 1,
+          "the service contributed activity during one step");
     std::error_code ec;
     std::filesystem::remove(path, ec);
     std::filesystem::remove(path.string() + ".tmp", ec);
@@ -217,7 +210,7 @@ int main() {
     test_revoke_stops_polling();
     test_service_logs_are_bounded_and_present();
     test_activity_projection_is_atomic_and_bounded();
-    test_activity_supervisor_pumps_both_services();
+    test_activity_supervisor_pumps_the_service();
     std::printf("Broker service: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

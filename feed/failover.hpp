@@ -6,8 +6,8 @@
 //
 // IT KEYS ON recv_ts, NEVER exchange_ts.
 //
-// That is the direct consequence of P2-02's finding: Kite's exchange timestamp
-// is ONE-SECOND resolution, and two of its five modes carry none at all. A
+// That is the direct consequence of P2-02's finding: a broker's exchange
+// timestamp can be ONE-SECOND resolution, and some packet modes carry none. A
 // staleness threshold of 250 ms measured against a clock that only moves once
 // a second would fire constantly on a perfectly healthy feed. `recv_ts` comes
 // off the TSC and is locally monotonic, which is exactly what "have we heard
@@ -39,8 +39,7 @@ enum class FailoverAction : std::uint8_t {
 
 struct FailoverDecision {
     FailoverAction action = FailoverAction::None;
-    FeedSource     active = FeedSource::Kite;
-    FeedHealth     kite = FeedHealth::Unknown;
+    FeedSource     active = FeedSource::Fyers;
     FeedHealth     xts = FeedHealth::Unknown;
     FeedHealth     fyers = FeedHealth::Unknown;
 };
@@ -59,7 +58,7 @@ public:
         /// health, so an operator can see what it WOULD have done.
         bool enabled = true;
         /// The source to prefer whenever both are healthy.
-        FeedSource preferred = FeedSource::Kite;
+        FeedSource preferred = FeedSource::Fyers;
     };
 
     struct Stats {
@@ -90,7 +89,6 @@ public:
     /// Poll. `now` is a parameter — nothing here reads a clock.
     [[nodiscard]] FailoverDecision poll(Timestamp now) noexcept {
         FailoverDecision d{};
-        d.kite = health_of(FeedSource::Kite, now);
         d.xts = health_of(FeedSource::Xts, now);
         d.fyers = health_of(FeedSource::Fyers, now);
         d.active = active_;
@@ -103,11 +101,10 @@ public:
             candidate = cfg_.preferred;
             candidate_health = preferred;
         } else {
-            // Deterministic fallback order keeps the original Kite/XTS
-            // behavior and adds FYERS only when both earlier sources are not
-            // usable. The configured preferred source still wins above.
-            constexpr FeedSource order[] = {
-                FeedSource::Kite, FeedSource::Xts, FeedSource::Fyers};
+            // Deterministic fallback order: FYERS, then XTS. The configured
+            // preferred source still wins above. FeedSource::Wire is a token
+            // number space, not a feed, and is never a candidate.
+            constexpr FeedSource order[] = {FeedSource::Fyers, FeedSource::Xts};
             for (const FeedSource src : order) {
                 if (src != active_ && health_of(src, now) == FeedHealth::Live) {
                     candidate = src;

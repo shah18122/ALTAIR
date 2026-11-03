@@ -24,7 +24,7 @@
 
 namespace altair::ui {
 
-enum class CredentialBroker : std::uint8_t { Fyers, Kite };
+enum class CredentialBroker : std::uint8_t { Fyers };
 
 [[nodiscard]] inline QString find_credential_helper() {
     const QString name = QStringLiteral("altair_credential_helper");
@@ -45,7 +45,8 @@ enum class CredentialBroker : std::uint8_t { Fyers, Kite };
     CredentialBroker broker, QByteArray first, QByteArray secret,
     QByteArray redirect) {
     QByteArray frame = QByteArrayLiteral("ALTAIR-CREDENTIAL/1\nSAVE\n");
-    frame += broker == CredentialBroker::Fyers ? "FYERS\n" : "KITE\n";
+    (void)broker;   // FYERS is the only broker the helper stores
+    frame += "FYERS\n";
     frame += first.toBase64() + '\n';
     frame += secret.toBase64() + '\n';
     frame += redirect.toBase64() + '\n';
@@ -60,7 +61,8 @@ enum class CredentialBroker : std::uint8_t { Fyers, Kite };
     QByteArray frame = QByteArrayLiteral("ALTAIR-CREDENTIAL/1\n");
     frame += operation;
     frame += '\n';
-    frame += broker == CredentialBroker::Fyers ? "FYERS\n" : "KITE\n";
+    (void)broker;
+    frame += "FYERS\n";
     return frame;
 }
 
@@ -90,17 +92,9 @@ public:
         redirect_ = new QLineEdit(this);
         secret_->setEchoMode(QLineEdit::Password);
         secret_->setClearButtonEnabled(true);
-        redirect_->setPlaceholderText(broker_ == CredentialBroker::Fyers
-            ? QStringLiteral("https://…/fyersredirect")
-            : QStringLiteral("https://…/kite/callback"));
-        form->addRow(broker_ == CredentialBroker::Fyers
-                         ? QStringLiteral("FYERS app ID")
-                         : QStringLiteral("Kite API key"),
-                     first_);
-        form->addRow(broker_ == CredentialBroker::Fyers
-                         ? QStringLiteral("FYERS app secret")
-                         : QStringLiteral("Kite API secret"),
-                     secret_);
+        redirect_->setPlaceholderText(QStringLiteral("https://…/fyersredirect"));
+        form->addRow(QStringLiteral("FYERS app ID"), first_);
+        form->addRow(QStringLiteral("FYERS app secret"), secret_);
         form->addRow(QStringLiteral("Registered redirect URL"), redirect_);
         root->addLayout(form);
 

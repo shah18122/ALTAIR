@@ -88,7 +88,7 @@ int main() {
     check(!router.submit(old, local) && router.stats().stale_epoch == 1,
           "old socket epoch cannot enter the pipeline");
     const auto old_depth_generation = router.depth_generation();
-    check(router.activate(FeedSource::Kite, 9)
+    check(router.activate(FeedSource::Xts, 9)
               && router.depth_generation() == old_depth_generation + 1,
           "source transition forces consumers to reset incompatible depth");
     check(!router.submit(depth, local),

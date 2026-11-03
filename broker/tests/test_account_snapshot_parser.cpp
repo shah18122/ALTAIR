@@ -54,11 +54,11 @@ int main() {
               && numeric->typed_funds.available_trading_balance->raw() == 4250,
           "numeric JSON balances are accepted without floating point rounding");
     const auto failed = parse_account_snapshot(
-        BrokerId::ZerodhaKite, key, window,
-        ok(200, R"({"status":"success","user_id":"K"})"),
-        ok(500, "{}"), ok(200, R"({"status":"success"})"),
-        ok(200, R"({"status":"success"})"), ok(200, R"({"status":"success"})"),
-        "user_id");
+        BrokerId::None, key, window,
+        ok(200, R"({"s":"ok","fy_id":"K"})"),
+        ok(500, "{}"), ok(200, R"({"s":"ok"})"),
+        ok(200, R"({"s":"ok"})"), ok(200, R"({"s":"ok"})"),
+        "fy_id");
     check(!failed.has_value(), "a broker/session mismatch is refused");
     return failures == 0 ? 0 : 1;
 }

@@ -174,7 +174,7 @@ gauge reads its last good value, every limit is satisfied, and the board goes
 2. If positions are open and the feed is down, you are flying blind on
    valuation. That is a reason to flatten *conservatively* — hedged structures
    still should not be legged out at market.
-3. Kite's WebSocket drops routinely. Sustained loss (> 60 s) is different from a
+3. The FYERS WebSocket drops routinely. Sustained loss (> 60 s) is different from a
    reconnect; the `stale_after` budget in the gauge spec is what draws that line
    and it is configuration, not a constant in the code.
 
@@ -183,21 +183,23 @@ gauge reads its last good value, every limit is satisfied, and the board goes
 ## 6. Credential compromise
 
 The current state is not clean and this document is not the place to be
-diplomatic about it: **three Kite API secrets have been exposed in a chat
-transcript during development and have not been rotated.** They must be rotated
-before any live capital, and that item is on the go-live checklist.
+diplomatic about it: **three API secrets of the old Kite app (no longer used by
+ALTAIR) were exposed in a chat transcript during development.** Delete that app
+at the Kite developer console so they are dead; that item is on the go-live
+checklist.
 
 If a credential is compromised while live:
 
 1. Kill file first (§1).
-2. Invalidate the session at the broker (log out everywhere from the Kite
-   console). This is faster than rotating the API secret and takes effect
+2. Invalidate the session at the broker (log out of all sessions in the FYERS
+   dashboard). This is faster than rotating the app secret and takes effect
    immediately.
-3. Rotate the API secret at the Kite developer console.
-4. Update `ALTAIR_KITE_API_SECRET`. Credentials live in environment variables
-   only; `broker/` is the only directory that touches one.
-5. Delete `data/kite_session.json` — it holds a live access token, is gitignored
-   and must never be committed.
+3. Rotate the app secret at the FYERS API dashboard, and change the FYERS PIN
+   and TOTP key if the auto-login secrets may be exposed.
+4. Update the secret in the OS vault (Brokers → App credentials) and in the
+   auto-login's local secrets file or environment. None of them is in git.
+5. Delete `data/fyers_session.json` — it holds a live access token, is
+   gitignored and must never be committed.
 
 ---
 

@@ -2,7 +2,7 @@
 //
 // SINCE 2026-10-29 A THIN ADAPTER. The arithmetic lives once, in book/flow.hpp
 // (the live OBI engine's kernels: flow::imbalance, flow::weighted_imbalance,
-// flow::microprice); this file only reads a BookState (the 5-level Kite-era
+// flow::microprice); this file only reads a BookState (the 5-level
 // book) into them, so the Quant page and the feature builder keep their API
 // and there is no second copy of the math. The live engine, at 5 or 50
 // levels, is flow::FlowEngine.
@@ -54,8 +54,8 @@ sum_side(const DepthLevel* lv, std::uint8_t populated,
         || static_cast<std::size_t>(populated) > kDepthLevels) {
         return std::nullopt;
     }
-    // RULE 11: this clamp is the safety, not a shortcut past it. Kite
-    // always sends five depth slots and zero-pads the unused ones (D6), so
+    // RULE 11: this clamp is the safety, not a shortcut past it. A 5-level
+    // feed always sends five depth slots and zero-pads the unused ones (D6), so
     // summing past `populated` counts zeroed slots as resting liquidity --
     // a thin book rendered as a deep one. Taking the smaller of what the
     // caller asked for and what is REAL is the whole point of the argument.

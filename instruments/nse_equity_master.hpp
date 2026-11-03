@@ -26,9 +26,9 @@
 // THE UNDERLYING OF A CASH INSTRUMENT IS ITSELF.
 //
 // EQUITY_L's SYMBOL is RELIANCE; its NAME OF COMPANY is "Reliance Industries
-// Limited". Kite's cash rows carry tradingsymbol RELIANCE and name "RELIANCE
-// INDUSTRIES". Only the trading symbol agrees, so that is what both sides put
-// in `underlying` -- see the matching change in kite_dump.hpp. Using the
+// Limited". The instrument master's cash rows carry tradingsymbol RELIANCE and a
+// company name. Only the trading symbol agrees, so that is what both sides put
+// in `underlying` -- see the matching change in master_csv.hpp. Using the
 // company name would also have collided 6'531 BSE rows whose `name` is empty
 // onto a single key.
 
@@ -36,7 +36,7 @@
 
 #include <instruments/contract_spec.hpp>
 #include <instruments/cross_venue.hpp>
-#include <instruments/kite_dump.hpp>
+#include <instruments/master_csv.hpp>
 #include <instruments/reconcile.hpp>
 
 #include <cstddef>
@@ -89,7 +89,7 @@ struct EquityMasterIdentity {
 
 namespace detail {
 
-[[nodiscard]] inline KiteField eq_trim(KiteField f) noexcept {
+[[nodiscard]] inline MasterField eq_trim(MasterField f) noexcept {
     while (f.n > 0 && (f.p[0] == ' ' || f.p[0] == '\t')) { ++f.p; --f.n; }
     while (f.n > 0 && (f.p[f.n - 1] == ' ' || f.p[f.n - 1] == '\t')) { --f.n; }
     return f;
@@ -103,7 +103,7 @@ namespace detail {
 /// landed in the lot field and still parsed as a number. Handled now rather
 /// than the first time a company is renamed.
 [[nodiscard]] inline std::size_t
-eq_split(const char* row, std::size_t len, KiteField* out, std::size_t cap,
+eq_split(const char* row, std::size_t len, MasterField* out, std::size_t cap,
          bool& unterminated) noexcept {
     unterminated = false;
     std::size_t n = 0;
@@ -149,7 +149,7 @@ parse_equity_header(const char* header, std::size_t len) noexcept {
     if (header == nullptr || len == 0) {
         return std::unexpected(EquityMasterError::BadHeader);
     }
-    detail::KiteField f[32];
+    detail::MasterField f[32];
     bool unterminated = false;
     const std::size_t n = detail::eq_split(header, len, f, 32, unterminated);
     if (unterminated) {
@@ -161,14 +161,14 @@ parse_equity_header(const char* header, std::size_t len) noexcept {
 
     EquityColumns c{};
     for (std::size_t i = 0; i < n; ++i) {
-        const detail::KiteField t = detail::eq_trim(f[i]);
+        const detail::MasterField t = detail::eq_trim(f[i]);
         const int idx = static_cast<int>(i);
-        if (detail::kite_field_is(t, "SYMBOL"))                { c.symbol = idx; }
-        else if (detail::kite_field_is(t, "NAME OF COMPANY"))  { c.name = idx; }
-        else if (detail::kite_field_is(t, "SERIES"))           { c.series = idx; }
-        else if (detail::kite_field_is(t, "DATE OF LISTING"))  { c.listing_date = idx; }
-        else if (detail::kite_field_is(t, "MARKET LOT"))       { c.market_lot = idx; }
-        else if (detail::kite_field_is(t, "ISIN NUMBER"))      { c.isin = idx; }
+        if (detail::master_field_is(t, "SYMBOL"))                { c.symbol = idx; }
+        else if (detail::master_field_is(t, "NAME OF COMPANY"))  { c.name = idx; }
+        else if (detail::master_field_is(t, "SERIES"))           { c.series = idx; }
+        else if (detail::master_field_is(t, "DATE OF LISTING"))  { c.listing_date = idx; }
+        else if (detail::master_field_is(t, "MARKET LOT"))       { c.market_lot = idx; }
+        else if (detail::master_field_is(t, "ISIN NUMBER"))      { c.isin = idx; }
     }
     if (c.symbol < 0 || c.series < 0 || c.market_lot < 0) {
         return std::unexpected(EquityMasterError::BadHeader);
@@ -187,7 +187,7 @@ parse_equity_row(const char* row, std::size_t len, const EquityColumns& cols,
     if (row == nullptr || len == 0) {
         return std::unexpected(EquityMasterError::TooFewFields);
     }
-    detail::KiteField f[32];
+    detail::MasterField f[32];
     bool unterminated = false;
     const std::size_t n = detail::eq_split(row, len, f, 32, unterminated);
     if (unterminated) {
@@ -198,8 +198,8 @@ parse_equity_row(const char* row, std::size_t len, const EquityColumns& cols,
         return std::unexpected(EquityMasterError::TooFewFields);
     }
 
-    const detail::KiteField sym = detail::eq_trim(f[cols.symbol]);
-    const detail::KiteField lot = detail::eq_trim(f[cols.market_lot]);
+    const detail::MasterField sym = detail::eq_trim(f[cols.symbol]);
+    const detail::MasterField lot = detail::eq_trim(f[cols.market_lot]);
 
     if (sym.n == 0 || sym.n > kMaxSymbolLen || sym.n > kMaxUnderlyingLen) {
         return std::unexpected(EquityMasterError::BadSymbol);
@@ -220,7 +220,7 @@ parse_equity_row(const char* row, std::size_t len, const EquityColumns& cols,
 
     // Cash has NO expiry, and "no expiry" is Timestamp::epoch() -- the same
     // convention P1-04 uses. If the two sources disagreed about what "none"
-    // is, NIFTY-cash from NSE and NIFTY-cash from Kite would be two different
+    // is, NIFTY-cash from NSE and NIFTY-cash from the instrument master would be two different
     // contracts that never join.
     s.expiry = Timestamp::epoch();
 
@@ -234,7 +234,7 @@ parse_equity_row(const char* row, std::size_t len, const EquityColumns& cols,
     // MARKET LOT is 1 for every row in the real file. It is still parsed:
     // rule 1 has no carve-out for "obviously 1".
     std::uint64_t lotv = 0;
-    if (!detail::kite_parse_u64(lot.p, lot.n, 0x7FFF'FFFFull, lotv)
+    if (!detail::master_parse_u64(lot.p, lot.n, 0x7FFF'FFFFull, lotv)
         || lotv == 0) {
         return std::unexpected(EquityMasterError::BadNumber);
     }
@@ -242,15 +242,15 @@ parse_equity_row(const char* row, std::size_t len, const EquityColumns& cols,
 
     // No tick column in EQUITY_L. Zero, for P1-06 to fill from a broker.
     s.tick_size = Price{0};
-    s.source_hash = detail::kite_fnv1a(row, len);
+    s.source_hash = detail::master_fnv1a(row, len);
     return s;
 }
 
 /// True when `series` is in the allow-list.
 [[nodiscard]] inline bool
-series_allowed(const detail::KiteField& series, const SeriesFilter& f) noexcept {
+series_allowed(const detail::MasterField& series, const SeriesFilter& f) noexcept {
     for (std::size_t i = 0; i < f.count; ++i) {
-        if (detail::kite_field_is(series, f.allowed[i])) {
+        if (detail::master_field_is(series, f.allowed[i])) {
             return true;
         }
     }
@@ -295,7 +295,7 @@ load_equity_master(const char* csv, std::size_t len, const SeriesFilter& series,
             // The series filter runs BEFORE parsing, so a refused scrip is
             // never counted as unparseable -- deliberate refusal and breakage
             // must not share a bucket.
-            detail::KiteField f[32];
+            detail::MasterField f[32];
             bool unterm = false;
             const std::size_t n = detail::eq_split(csv + pos, stop - pos, f, 32,
                                                    unterm);
@@ -335,7 +335,7 @@ parse_equity_identity_row(const char* row, std::size_t len,
     const auto spec = parse_equity_row(row, len, cols, exchange, snapshot_at);
     if (!spec) return std::unexpected(spec.error());
 
-    detail::KiteField fields[32];
+    detail::MasterField fields[32];
     bool unterminated = false;
     const std::size_t count = detail::eq_split(row, len, fields, 32, unterminated);
     if (unterminated || cols.isin < 0

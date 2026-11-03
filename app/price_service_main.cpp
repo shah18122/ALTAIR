@@ -7,19 +7,19 @@
 // of them is a stream -- so the "Live Grid" has always been a replay and the
 // depth ladder has been handed a null book since the day it was written.
 //
-// This is the stream. It holds ONE broker connection (FYERS; Kite only when
-// asked for by name, as legacy) and republishes every tick
+// This is the stream. It holds ONE broker connection (FYERS) and republishes
+// every tick
 // on a local port as protocol frames. Anything that wants prices connects and
 // reads; nothing else needs the credential.
 //
 // TWO SOURCES, ONE PATH -- HARD RULE 6.
 //
-//   --go              live from Kite
+//   --live --go       live from FYERS
 //   --replay SYM IV   bars from dataset/, at their own timestamps
 //
 // Both go through the same encoder, the same bus and the same frames. That is
 // the rule that says a backtest which does not share the live code path is a
-// lie, and it is also what makes this testable at all: the Kite token is a
+// lie, and it is also what makes this testable at all: the FYERS token is a
 // daily credential, and a service that could only be exercised with a live one
 // would be exercised approximately never.
 //
@@ -53,30 +53,22 @@
 #include <vector>
 
 #include <app/fyers_env_session.hpp>
+#include <app/fyers_masters_fetch.hpp>
 #include <app/fyers_price_frames.hpp>
-#include <app/kite_price_frames.hpp>
 #include <app/live_feed_sources.hpp>
 #include <broker/fyers_api.hpp>
-#include <broker/credential_store.hpp>
 #include <broker/https_client.hpp>
-#include <broker/kite_ticker.hpp>
 #include <core/affinity.hpp>
 #include <feed/fyers_hsm.hpp>
 #include <feed/fyers_tbt.hpp>
-#include <feed/kite_decoder.hpp>
 #include <instruments/contract_spec.hpp>
 #include <live/obi_underlyings.hpp>
+#include <live/instrument_master.hpp>
 #include <live/universe.hpp>
 
 #include <atomic>
 #include <csignal>
 #include <optional>
-
-// FILE SCOPE, NOT THE STACK. SpecStore is 1.63 MB against a 1 MB default
-// thread stack on MSVC, and a stack-allocated one crashes with 0xC00000FD --
-// a code that names neither the object nor the file. P32-07 paid for this
-// once already.
-altair::SpecStore g_specs;
 
 namespace {
 
@@ -84,11 +76,10 @@ void usage(const char* exe) {
     std::printf(
         "Altair price service -- one process owns the feed.\n\n"
         "  %s --replay <symbol> <interval> [--port N] [--seconds N]\n"
-        "  %s --go [--port N] [--seconds N] [--tokens a,b,c]\n"
+        "  %s --go [same options as --live]\n"
         "  %s --fyers [--go] [--until HH:MM] [--strikes N] [--depth-strikes N]\n"
         "      [--no-stocks] [--atm-nifty X] [--atm-banknifty X] [--depth50 N|off]\n"
         "      [--expiries N] [--monthly]\n"
-        "  %s --kite [--go] [same options as --fyers]\n"
         "  %s --live [--go] [same options as --fyers]\n"
         "  %s --sim [--date YYYY-MM-DD] [--speed N] [--from HH:MM] [--seed N]\n\n"
         "  --fyers             the LIVE TERMINAL feed from FYERS: NIFTY, BANKNIFTY,\n"
@@ -109,13 +100,8 @@ void usage(const char* exe) {
         "                      ALTAIR_FYERS_ACCESS_TOKEN. Without --go: prints the\n"
         "                      universe and exits. Runs until --until (default 15:35\n"
         "                      IST), reconnecting after a drop.\n"
-        "  --kite              LEGACY, by hand only: the same live universe from the\n"
-        "                      Kite ticker (full mode: trades, quotes and 5-level\n"
-        "                      depth). Needs the Kite API key (OS vault or\n"
-        "                      ALTAIR_KITE_API_KEY) and today's data/kite_session.json.\n"
-        "  --live              FYERS only, when its session is good today; never a\n"
-        "                      fall-back to Kite. The desktop's \"Start live feed\"\n"
-        "                      runs this.\n"
+        "  --live              FYERS, when its session is good today. The desktop's\n"
+        "                      \"Start live feed\" runs this.\n"
         "  --sim               the same universe, SIMULATED and flagged SIM on every\n"
         "                      frame: the terminal and the live models with the\n"
         "                      market shut. --speed: simulated seconds per second\n"
@@ -125,8 +111,7 @@ void usage(const char* exe) {
         "                      dataset/ holds that day's 1-minute bars, NIFTY,\n"
         "                      BANKNIFTY and INDIA VIX follow them.\n"
         "  --replay nifty 1m   serve bars from dataset/spot/<symbol>/<iv>/\n"
-        "  --go                serve LIVE from Kite. Needs\n"
-        "                      ALTAIR_KITE_API_KEY and data/kite_session.json\n"
+        "  --go                serve LIVE (alone, the same as --live --go)\n"
         "  --port N            loopback port to publish on (default 7421)\n"
         "  --seconds N         stop after N seconds (default: run until\n"
         "                      interrupted; a replay always stops at the end)\n"
@@ -134,6 +119,8 @@ void usage(const char* exe) {
         "  --live-dir DIR      where universe.csv, watchlist.csv and feed_status.json\n"
         "                      live (default data/live in the source tree; tests\n"
         "                      point it elsewhere)\n"
+        "  --master FILE       the instrument master (default data/instruments.csv in\n"
+        "                      the source tree; tests pass a fixture)\n"
         "  --tail N            replay only the most recent N bars. A\n"
         "                      replay otherwise starts at the first bar on\n"
         "                      disk -- 2015 for NIFTY 1-minute -- and would\n"
@@ -145,35 +132,7 @@ void usage(const char* exe) {
         "It binds 127.0.0.1 only. This carries live market data derived from\n"
         "a trading credential and protocol.hpp's session layer does not exist\n"
         "yet, so there is nothing to authenticate a remote reader with.\n",
-        exe, exe, exe, exe, exe, exe);
-}
-
-/// Environment variable, or empty. _dupenv_s on MSVC because getenv is
-/// deprecated there and /W4 with warnings-as-errors will not have it.
-[[nodiscard]] std::string env_or_empty(const char* name) {
-    const char* v = std::getenv(name);
-    return v != nullptr ? std::string(v) : std::string();
-}
-
-/// Read `access_token` out of data/kite_session.json.
-///
-/// A hand-rolled eight-line scan rather than a JSON library, deliberately: the
-/// surface that touches a live trading credential should be as small as it can
-/// be, and every other binary here does the same. The value is never printed.
-[[nodiscard]] bool read_access_token(const char* path, std::string& out) {
-    std::ifstream in(path);
-    if (!in) { return false; }
-    const std::string all((std::istreambuf_iterator<char>(in)),
-                          std::istreambuf_iterator<char>());
-    const std::string key = "\"access_token\"";
-    const std::size_t at = all.find(key);
-    if (at == std::string::npos) { return false; }
-    const std::size_t q1 = all.find('"', all.find(':', at) + 1);
-    if (q1 == std::string::npos) { return false; }
-    const std::size_t q2 = all.find('"', q1 + 1);
-    if (q2 == std::string::npos) { return false; }
-    out = all.substr(q1 + 1, q2 - q1 - 1);
-    return !out.empty();
+        exe, exe, exe, exe, exe);
 }
 
 /// Bars from a dataset partition, oldest first.
@@ -339,7 +298,7 @@ void fyers_spots(const FySession& s, double& nifty, double& banknifty) {
     const auto target = altair::fyers::quotes_target(
         std::vector<std::string>{"NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX"});
     if (!auth || !target) { return; }
-    const auto r = altair::https_get_auth("api-t1.fyers.in", *target, *auth, "", std::chrono::seconds{20});
+    const auto r = altair::https_get_auth("api-t1.fyers.in", *target, *auth, std::chrono::seconds{20});
     if (!r || r->status != 200) { return; }
     const auto lp_after = [&r](const char* name) {
         const std::size_t at = r->body.find(name);
@@ -358,7 +317,7 @@ std::vector<double> fyers_last_prices(const FySession& s, const std::vector<std:
     const auto auth = altair::fyers::authorization_header(s.client.c_str(), s.access.c_str());
     const auto target = altair::fyers::quotes_target(syms);
     if (!auth || !target) { return out; }
-    const auto r = altair::https_get_auth("api-t1.fyers.in", *target, *auth, "", std::chrono::seconds{20});
+    const auto r = altair::https_get_auth("api-t1.fyers.in", *target, *auth, std::chrono::seconds{20});
     if (!r || r->status != 200) { return out; }
     for (std::size_t i = 0; i < syms.size(); ++i) {
         const std::size_t at = r->body.find("\"" + syms[i] + "\"");
@@ -524,7 +483,7 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
     }
 
     std::string host = tbt::kTbtDefaultHost, path = tbt::kTbtDefaultPath;
-    if (const auto r = altair::https_get_auth(tbt::kTbtUrlHost, tbt::kTbtUrlPath, *auth, "", std::chrono::seconds{15});
+    if (const auto r = altair::https_get_auth(tbt::kTbtUrlHost, tbt::kTbtUrlPath, *auth, std::chrono::seconds{15});
         r && r->status == 200) {
         if (const auto url = tbt::tbt_socket_url(r->body)) { host = url->first; path = url->second; }
     }
@@ -624,29 +583,7 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
 [[nodiscard]] altair::live::FyersCashNames fyers_cash_names(const std::string& live_dir, bool fetch) {
     namespace fs = std::filesystem;
     const fs::path dir = fs::path(live_dir) / "fyers_masters";
-    std::error_code ec;
-    fs::create_directories(dir, ec);
-    for (const char* seg : {"NSE_CM", "BSE_CM", "NSE_CD", "BSE_CD", "MCX_COM", "NSE_FO"}) {
-        if (!fetch) break;
-        const fs::path path = dir / (std::string(seg) + ".csv");
-        const auto stamp = fs::last_write_time(path, ec);
-        if (!ec && fs::file_time_type::clock::now() - stamp < std::chrono::hours(20)) continue;
-        const auto r = altair::https_get_auth("public.fyers.in", std::string("/sym_details/") + seg + ".csv", "", "",
-                                              std::chrono::seconds{30});
-        if (!r || r->status != 200 || r->body.size() < 1000) {
-            std::printf("  FYERS %s master: download did not work (%s); %s\n", seg,
-                        r ? ("HTTP " + std::to_string(r->status)).c_str() : "transport",
-                        fs::exists(path, ec) ? "using the copy on disk" : "names are guessed");
-            continue;
-        }
-        const fs::path tmp = path.string() + ".tmp";
-        {
-            std::ofstream f(tmp, std::ios::binary);
-            f.write(r->body.data(), static_cast<std::streamsize>(r->body.size()));
-            if (!f) continue;
-        }
-        fs::rename(tmp, path, ec);
-    }
+    if (fetch) { altair::fyers_masters::download(dir); }
     altair::live::FyersCashNames names;
     const std::size_t n = names.load(dir.string());
     std::printf("FYERS names (cash, currency, MCX): %zu scrip(s) from %s\n", n, dir.string().c_str());
@@ -654,7 +591,7 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
 }
 
 /// Stream the universe from FYERS until `deadline_unix` or Ctrl+C.
-/// Returned by run_fyers/run_kite when the market watch added scrips: the
+/// Returned by run_fyers when the market watch added scrips: the
 /// caller rebuilds the universe and reconnects with them.
 inline constexpr int kRestartForWatchlist = 10;
 
@@ -1004,194 +941,12 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     return last_error && st.trades == 0 ? 4 : 0;
 }
 
-struct KiteCreds { std::string api_key, access; };
-
-/// Kite ticker credentials: the API key from the OS vault (where Brokers >
-/// Log in · Kite saves it) or ALTAIR_KITE_API_KEY, and TODAY's access token
-/// from data/kite_session.json. Never printed. `why` says what is missing.
-[[nodiscard]] std::optional<KiteCreds> kite_creds(const std::string& session_path, std::int64_t today,
-                                                 std::string& why) {
-    KiteCreds c;
-    const auto stored = altair::broker::load_credential({"altair.kite", "api-key"});
-    c.api_key = stored ? *stored : env_or_empty("ALTAIR_KITE_API_KEY");
-    if (c.api_key.empty()) {
-        why = "no Kite API key (save it in Brokers > Log in - Kite, or set ALTAIR_KITE_API_KEY)";
-        return std::nullopt;
-    }
-    if (!read_access_token(session_path.c_str(), c.access)) {
-        why = "no Kite session (log in to Kite)";
-        return std::nullopt;
-    }
-    // A Kite token lives for one IST day: login_time must be today.
-    std::ifstream in(session_path, std::ios::binary);
-    const std::string all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    const std::size_t at = all.find("\"login_time\"");
-    const std::size_t q1 = at == std::string::npos ? at : all.find('"', all.find(':', at) + 1);
-    const std::string day = q1 == std::string::npos ? std::string{} : all.substr(q1 + 1, 10);
-    if (day != altair::live::day_text(today)) {
-        why = "the Kite session is from " + (day.empty() ? std::string("an unknown day") : day)
-              + "; log in to Kite again";
-        return std::nullopt;
-    }
-    return c;
-}
-
 /// FYERS is usable today: a session exists and its token has not expired.
 [[nodiscard]] bool fyers_usable(const std::optional<FySession>& s, std::string& why) {
     if (!s) { why = "no FYERS session (log in to FYERS)"; return false; }
     const auto key = altair::fyers_hsm::hsm_key_from_token(s->access, unix_now());
     if (!key) { why = std::string("FYERS token: ") + altair::fyers_hsm::error_text(key.error()); return false; }
     return true;
-}
-
-/// Stream the universe from the Kite ticker, full mode, until `deadline_unix`.
-int run_kite(const KiteCreds& creds, const std::vector<altair::live::LiveInstrument>& u,
-             altair::live_sources::SharedBus& bus, std::int64_t deadline_unix, const std::string& status_path,
-             const std::function<bool()>& watch_changed = {}) {
-    using altair::live_sources::FeedStatus;
-    FeedStatus st;
-    st.source = "kite";
-    st.state = "connecting";
-    st.instruments = u.size();
-    altair::live_sources::write_status(status_path, st);
-
-    // The decoder maps (Kite, token) to a canonical id; token_of[id] maps it
-    // back. Registered once per token: a reconnect after a watchlist change
-    // finds the earlier ones already there.
-    std::vector<std::uint32_t> tokens, token_of;
-    tokens.reserve(u.size());
-    for (const auto& i : u) {
-        // Kite's currency prices are not per 100 units (live/contract_units.hpp): FYERS only.
-        if (i.group == altair::live::kCurrencyGroup) continue;
-        if (!g_specs.id_of(altair::FeedSource::Kite, i.token)) {
-            altair::ContractSpec cs{};
-            cs.token[static_cast<std::size_t>(altair::FeedSource::Kite)] = i.token;
-            std::snprintf(cs.symbol, sizeof(cs.symbol), "TOKEN%u", i.token);
-            cs.lot_size = altair::LotSize{1};
-            cs.tick_size = altair::Price{1};
-            cs.price_scale = 100;
-            if (!g_specs.add(cs)) { continue; }
-        }
-        const auto id = g_specs.id_of(altair::FeedSource::Kite, i.token);
-        if (!id) { continue; }
-        const auto at = static_cast<std::size_t>(*id);
-        if (token_of.size() <= at) token_of.resize(at + 1, 0);
-        token_of[at] = i.token;
-        tokens.push_back(i.token);
-    }
-    if (tokens.empty()) {
-        st.state = "refused";
-        st.error = "nothing subscribable";
-        altair::live_sources::write_status(status_path, st);
-        return 3;
-    }
-    constexpr std::size_t kMax = 4096;
-    std::vector<altair::Tick> ticks(kMax);
-    std::vector<altair::DepthUpdate> depths(kMax);
-    std::uint32_t seq = 0;
-    bool restart = false;
-    auto last_status = std::chrono::steady_clock::now();
-    const auto on_frame = [&](const unsigned char* raw, std::size_t len) {
-        const std::int64_t recv_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        if (st.state != "streaming") { st.state = "streaming"; }
-        // Quotes first, so a row has its previous close before its price.
-        altair::kite_frames::quotes_from_frame(raw, len, recv_ns,
-            [&bus](const altair::QuotePayload& q, std::int64_t ns) { bus.quote(q, ns); });
-        const auto r = altair::decode_kite_frame(raw, len, g_specs, altair::Timestamp{recv_ns}, seq,
-                                                 ticks.data(), kMax, depths.data(), kMax);
-        if (!r) { return; }
-        for (std::size_t i = 0; i < r->ticks; ++i) {
-            const altair::Tick& t = ticks[i];
-            const auto idx = static_cast<std::size_t>(t.id);
-            if (idx >= token_of.size() || token_of[idx] == 0) { continue; }
-            altair::PricePayload p;
-            p.token = token_of[idx];
-            p.last_paise = t.last.raw();
-            p.last_qty = t.last_qty.raw();
-            p.exchange_ts_ns = t.exchange_ts.ns_since_epoch();
-            if (t.volume.raw() > 0) { p.flags |= altair::kPriceHasVolume; p.volume = t.volume.raw(); }
-            if (t.oi > 0) { p.flags |= altair::kPriceHasOi; p.oi = t.oi; }
-            if ((t.flags & static_cast<std::uint16_t>(altair::TickFlag::NoExchangeTs)) != 0) {
-                p.flags |= altair::kPriceNoExchTs;
-            }
-            const std::int64_t ns = p.exchange_ts_ns != 0 ? p.exchange_ts_ns : recv_ns;
-            bus.trade(p, ns);
-            st.engine_ns = ns;
-        }
-        for (std::size_t i = 0; i < r->depths; ++i) {
-            const altair::DepthUpdate& d = depths[i];
-            const auto idx = static_cast<std::size_t>(d.id);
-            if (idx >= token_of.size() || token_of[idx] == 0) { continue; }
-            const auto levels = static_cast<std::uint16_t>(
-                std::min<std::size_t>(altair::kMaxDepthLevels, std::max(d.bid_levels, d.ask_levels)));
-            if (levels == 0) { continue; }
-            altair::PricePayload p;
-            p.token = token_of[idx];
-            p.exchange_ts_ns = d.exchange_ts.ns_since_epoch();
-            p.flags |= altair::kPriceHasBook;
-            p.depth_levels = levels;
-            altair::PriceLevel bids[altair::kMaxDepthLevels]{};
-            altair::PriceLevel asks[altair::kMaxDepthLevels]{};
-            for (std::uint16_t k = 0; k < levels; ++k) {
-                bids[k] = {d.bid[k].px.raw(), d.bid[k].qty.raw(), d.bid[k].orders, 0};
-                asks[k] = {d.ask[k].px.raw(), d.ask[k].qty.raw(), d.ask[k].orders, 0};
-            }
-            bus.book(p, bids, asks, p.exchange_ts_ns != 0 ? p.exchange_ts_ns : recv_ns);
-        }
-        const auto now = std::chrono::steady_clock::now();
-        if (now - last_status > std::chrono::seconds(2)) {
-            last_status = now;
-            st.clients = bus.clients();
-            st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
-            altair::live_sources::write_status(status_path, st);
-            if (watch_changed && watch_changed()) restart = true;
-        }
-    };
-    const auto done = [deadline_unix, &restart] { return restart || g_stop.load() || unix_now() >= deadline_unix; };
-    std::printf("  subscribing %zu token(s) on the Kite ticker, full mode\n", tokens.size());
-    std::fflush(stdout);
-    int rc = 0;
-    for (long attempt = 0; !done(); ++attempt) {
-        if (attempt > 0) {
-            ++st.reconnects;
-            st.state = "reconnecting";
-            altair::live_sources::write_status(status_path, st);
-        }
-        // The whole session, not the ticker's 60-second default: a run that
-        // ends early (the server closed, or the connection went silent) is
-        // reconnected below, and done() stops it within a fraction of a second.
-        const auto left = std::chrono::seconds{std::max<std::int64_t>(1, deadline_unix - unix_now())};
-        const auto stats = altair::kite_ticker_run(creds.api_key, creds.access, tokens,
-                                                   altair::TickerMode::Full, on_frame, done, left);
-        if (restart) {
-            std::printf("  watchlist changed: reconnecting with the new scrips\n");
-            std::fflush(stdout);
-            return kRestartForWatchlist;
-        }
-        if (stats && done()) { break; }
-        if (stats) {
-            std::printf("  kite feed ended early; reconnecting\n");
-            std::fflush(stdout);
-            attempt = 0;   // it was streaming: not a refusal
-            std::this_thread::sleep_for(std::chrono::seconds{1});   // and never a hot loop against a closing server
-            continue;
-        }
-        st.error = altair::ticker_error_text(stats.error());
-        std::printf("  kite feed error: %s\n", st.error.c_str());
-        std::fflush(stdout);
-        if (bus.trades() == 0 && attempt >= 2) { st.state = "refused"; rc = 4; break; }
-        const long backoff = attempt < 3 ? (1L << attempt) : 8L;
-        std::this_thread::sleep_for(std::chrono::seconds{backoff});
-    }
-    if (st.state != "refused") { st.state = "stopped"; }
-    st.clients = bus.clients();
-    st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
-    altair::live_sources::write_status(status_path, st);
-    std::printf("  stopped: %llu trade(s), %llu quote(s), %llu book(s) published\n",
-                static_cast<unsigned long long>(st.trades), static_cast<unsigned long long>(st.quotes),
-                static_cast<unsigned long long>(st.books));
-    return rc;
 }
 
 }  // namespace
@@ -1202,16 +957,14 @@ int main(int argc, char** argv) {
     int seconds = 0;
     int rate = 200;
     std::size_t tail = 0;
-    // NIFTY 50, NIFTY BANK, INDIA VIX -- the three the ticker has always
-    // defaulted to. Overridable, because P38 needs an option chain here.
-    std::vector<std::uint32_t> sub_tokens{256265u, 260105u, 264969u};
-    bool fyers = false, sim = false, kite = false, live_auto = false, stocks = true;
+    bool fyers = false, sim = false, live_auto = false, stocks = true;
     int until_min = 15 * 60 + 35, from_min = 9 * 60 + 15, strikes = 20, depth_strikes = 5, expiries = 1;
     bool monthly = false;
     double speed = 1.0, atm_nifty = 0.0, atm_banknifty = 0.0;
     std::uint64_t seed = 20261001;
     std::string sim_date;   // YYYY-MM-DD: simulate that day instead of today
     std::string live_dir_arg;   // --live-dir: universe.csv and friends (default <source>/data/live)
+    std::string master_arg;     // --master: the instrument master (default <source>/data/instruments.csv)
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -1226,16 +979,6 @@ int main(int argc, char** argv) {
             port = static_cast<unsigned short>(std::atoi(argv[++i]));
         } else if (a == "--seconds" && i + 1 < argc) {
             seconds = std::atoi(argv[++i]);
-        } else if (a == "--tokens" && i + 1 < argc) {
-            sub_tokens.clear();
-            std::istringstream ts(argv[++i]);
-            std::string one;
-            while (std::getline(ts, one, ',')) {
-                if (!one.empty()) {
-                    sub_tokens.push_back(
-                        static_cast<std::uint32_t>(std::atoll(one.c_str())));
-                }
-            }
         } else if (a == "--tail" && i + 1 < argc) {
             const long long t = std::atoll(argv[++i]);
             tail = t > 0 ? static_cast<std::size_t>(t) : 0;
@@ -1245,8 +988,6 @@ int main(int argc, char** argv) {
             fyers = true;
         } else if (a == "--sim") {
             sim = true;
-        } else if (a == "--kite") {
-            kite = true;
         } else if (a == "--date" && i + 1 < argc) {
             sim_date = argv[++i];
         } else if (a == "--live") {
@@ -1269,6 +1010,8 @@ int main(int argc, char** argv) {
             expiries = std::atoi(argv[++i]);
         } else if (a == "--live-dir" && i + 1 < argc) {
             live_dir_arg = argv[++i];
+        } else if (a == "--master" && i + 1 < argc) {
+            master_arg = argv[++i];
         } else if (a == "--no-stocks") {
             stocks = false;
         } else if (a == "--depth50" && i + 1 < argc) {
@@ -1284,8 +1027,7 @@ int main(int argc, char** argv) {
         }
     }
     if (fyers) { mode = mode == "live" ? "fyers" : "fyers-dry"; }
-    else if (kite) { mode = mode == "live" ? "kite" : "kite-dry"; }
-    else if (live_auto) { mode = mode == "live" ? "auto" : "auto-dry"; }
+    else if (live_auto || mode == "live") { mode = mode == "live" ? "auto" : "auto-dry"; }
     if (sim) { mode = "sim"; }
     if (!sim_date.empty() && (altair::live::parse_day(sim_date) == 0 || mode != "sim")) {
         std::printf("--date YYYY-MM-DD goes with --sim\n");
@@ -1304,31 +1046,23 @@ int main(int argc, char** argv) {
     }
 
     // ---- the live terminal: FYERS or simulated, over the whole universe ----
-    if (mode == "fyers" || mode == "fyers-dry" || mode == "sim" || mode == "kite" || mode == "kite-dry"
-        || mode == "auto" || mode == "auto-dry") {
+    if (mode == "fyers" || mode == "fyers-dry" || mode == "sim" || mode == "auto" || mode == "auto-dry") {
         const std::string src = ALTAIR_SOURCE_DIR;
         const std::string ds = ALTAIR_DATASET_DIR;
         const std::int64_t today = sim_date.empty() ? altair::live::ist_today(unix_now())
                                                     : altair::live::parse_day(sim_date);
         std::optional<FySession> session;
-        std::optional<KiteCreds> kcreds;
         double nifty = atm_nifty, bnf = atm_banknifty;
-        // FYERS only. Kite is legacy: it streams only when asked for by name
-        // (--kite), never as a fall-back.
         if (mode == "auto" || mode == "auto-dry") {
             std::string fy_why;
             session = fyers_session(src + "/data/fyers_session.json");
             if (!fyers_usable(session, fy_why)) {
-                std::printf("no live source today.\n  FYERS: %s\n  (log in to FYERS on Brokers; Kite is legacy and is not "
-                            "used in its place)\n", fy_why.c_str());
+                std::printf("no live source today.\n  FYERS: %s\n  (log in to FYERS on Brokers, or run "
+                            "broker/tools/fyers_auto_login.py)\n", fy_why.c_str());
                 return 2;
             }
             std::printf("live source: FYERS\n");
             mode = mode == "auto" ? "fyers" : "fyers-dry";
-        } else if (mode == "kite" || mode == "kite-dry") {
-            std::string why;
-            kcreds = kite_creds(src + "/data/kite_session.json", today, why);
-            if (!kcreds) { std::printf("Kite: %s\n", why.c_str()); return 2; }
         }
         if (mode == "fyers") {
             if (!session) session = fyers_session(src + "/data/fyers_session.json");
@@ -1348,11 +1082,23 @@ int main(int argc, char** argv) {
         if (!(bnf > 0.0)) { bnf = altair::live_sources::sim_close(ds + "/spot/banknifty/1d", sim_date); std::printf("BANKNIFTY ATM from the last close in dataset/: %.2f\n", bnf); }
 
         const std::string live_dir = live_dir_arg.empty() ? src + "/data/live" : live_dir_arg;
+        const std::string master = master_arg.empty() ? src + "/data/instruments.csv" : master_arg;
         // FYERS's own names for cash scrips, and its F&O master (fetched for a
         // FYERS feed, at most once in 20 hours; a SIM only reads the copy on disk).
         const auto cash_names = fyers_cash_names(live_dir, mode == "fyers" || mode == "fyers-dry");
+        // data/instruments.csv is built from the FYERS masters
+        // (live/instrument_master.hpp) whenever a master is newer than it.
+        if (altair::live::instrument_master_stale(live_dir + "/fyers_masters", master)) {
+            altair::live::MasterBuildReport rep;
+            std::string why;
+            if (altair::live::build_instrument_master(live_dir + "/fyers_masters", master, rep, why)) {
+                std::printf("data/instruments.csv rebuilt from the FYERS masters: %zu row(s)\n", rep.rows);
+            } else {
+                std::printf("data/instruments.csv not rebuilt: %s\n", why.c_str());
+            }
+        }
         std::string err;
-        auto rows = altair::live::read_kite_master(src + "/data/instruments.csv", err);
+        auto rows = altair::live::read_instrument_master(master, err);
         if (!err.empty()) { std::printf("%s\n", err.c_str()); return 2; }
         // The index contracts listed since data/instruments.csv was written
         // (each new weekly), from FYERS's master.
@@ -1411,12 +1157,11 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::printf("wrote %s/universe.csv\n", live_dir.c_str());
-        if (mode == "fyers-dry" || mode == "kite-dry") {
+        if (mode == "fyers-dry") {
             for (std::size_t i = 0; i < uni.instruments.size() && i < 12; ++i) {
                 std::printf("  %-10u %s\n", uni.instruments[i].token, uni.instruments[i].fyers.c_str());
             }
-            std::printf("\nDRY RUN. No socket was opened. Add --go to stream from %s.\n",
-                        mode == "kite-dry" ? "Kite" : "FYERS");
+            std::printf("\nDRY RUN. No socket was opened. Add --go to stream from FYERS.\n");
             return 0;
         }
 
@@ -1428,7 +1173,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::printf("altair price service on 127.0.0.1:%u  [%s]\n", static_cast<unsigned>(bus.port()),
-                    mode == "sim" ? "SIMULATED" : mode == "kite" ? "KITE LIVE" : "FYERS LIVE");
+                    mode == "sim" ? "SIMULATED" : "FYERS LIVE");
         std::fflush(stdout);
         std::signal(SIGINT, on_stop_signal);
         std::signal(SIGTERM, on_stop_signal);
@@ -1529,13 +1274,10 @@ int main(int argc, char** argv) {
             return std::min(ist_unix(today, end), seconds_deadline);
         };
         std::int64_t deadline = deadline_of();
-        const std::function<bool()> watch_changed = [&] { return !take_new_watch().empty(); };
-        bool on_kite = mode == "kite";
         for (;;) {
             uni.instruments = known;   // everything added so far streams from the start of this run
             deadline = deadline_of();
-            const int rc = on_kite ? run_kite(*kcreds, uni.instruments, shared, deadline, status, watch_changed)
-                                   : run_fyers(*session, uni.instruments, shared, deadline, status, take_new_watch);
+            const int rc = run_fyers(*session, uni.instruments, shared, deadline, status, take_new_watch);
             // New scrips: reconnect with them (the board cache keeps the rest).
             if (rc == kRestartForWatchlist && !g_stop.load() && unix_now() < deadline) continue;
             return rc == kRestartForWatchlist ? 0 : rc;
@@ -1614,147 +1356,5 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // ---- live ------------------------------------------------------------
-    const std::string api_key = env_or_empty("ALTAIR_KITE_API_KEY");
-    std::string access;
-    if (!read_access_token("data/kite_session.json", access)) {
-        std::printf("no usable data/kite_session.json -- link a token first\n");
-        return 2;
-    }
-    if (api_key.empty()) {
-        std::printf("ALTAIR_KITE_API_KEY is not set\n");
-        return 2;
-    }
-
-    // The decoder refuses an unknown token rather than inventing a price
-    // scale, so every subscription is registered first. Scale 100 is what
-    // equity and F&O ARE; lot and tick are deliberately 1 and unused, because
-    // rule 1 says those come from the point-in-time spec store and this
-    // program does not load one -- a lot size of 1 is obviously wrong in a way
-    // that a plausible 75 typed here would not be.
-    for (std::uint32_t t : sub_tokens) {
-        altair::ContractSpec cs{};
-        cs.token[static_cast<std::size_t>(altair::FeedSource::Kite)] = t;
-        std::snprintf(cs.symbol, sizeof(cs.symbol), "TOKEN%u", t);
-        cs.lot_size = altair::LotSize{1};
-        cs.tick_size = altair::Price{1};
-        cs.price_scale = 100;
-        if (!g_specs.add(cs)) {
-            std::printf("could not register token %u\n", t);
-            return 2;
-        }
-    }
-
-    constexpr std::size_t kMaxTicks = 512;
-    constexpr std::size_t kMaxDepth = 512;
-    std::vector<altair::Tick> ticks(kMaxTicks);
-    std::vector<altair::DepthUpdate> depths(kMaxDepth);
-    std::uint32_t seq = 0;
-    std::size_t frames = 0, published = 0, unknown = 0, bad = 0;
-
-    const auto on_frame = [&](const unsigned char* raw, std::size_t len) {
-        ++frames;
-        // THE CLOCK IS READ HERE AND PASSED IN, never inside the decoder. A
-        // decoder that reads a wall clock cannot be replayed.
-        const auto now = std::chrono::system_clock::now();
-        const altair::Timestamp recv{
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                now.time_since_epoch()).count()};
-        const auto r = altair::decode_kite_frame(
-            raw, len, g_specs, recv, seq, ticks.data(), kMaxTicks,
-            depths.data(), kMaxDepth);
-        if (!r) { ++bad; return; }
-        unknown += r->unknown_token;
-
-        for (std::size_t i = 0; i < r->ticks; ++i) {
-            const altair::Tick& t = ticks[i];
-            // A TICK CARRIES CANONICAL IDENTITY, NOT A BROKER TOKEN. The
-            // token is recovered HERE, at the one boundary that legitimately
-            // knows both: SpecStore::add assigns ids densely from zero in
-            // insertion order, so id i is sub_tokens[i]. Same boundary
-            // kite_ticker_main.cpp uses, for the same reason.
-            const auto idx = static_cast<std::size_t>(t.id);
-            if (idx >= sub_tokens.size()) { continue; }
-
-            altair::PricePayload p;
-            p.token = sub_tokens[idx];
-            p.last_paise = t.last.raw();
-            p.last_qty = t.last_qty.raw();
-            p.exchange_ts_ns = t.exchange_ts.ns_since_epoch();
-            // ABSENCE IS NOT ZERO. An index reports no volume and no open
-            // interest at all, and the decoder leaves them zero; publishing
-            // them with the presence bit set would turn "this instrument has
-            // no such field" into "it measured zero".
-            if (t.volume.raw() > 0) {
-                p.flags |= altair::kPriceHasVolume;
-                p.volume = t.volume.raw();
-            }
-            if (t.oi > 0) {
-                p.flags |= altair::kPriceHasOi;
-                p.oi = t.oi;
-            }
-            if ((t.flags & static_cast<std::uint16_t>(
-                     altair::TickFlag::NoExchangeTs)) != 0) {
-                p.flags |= altair::kPriceNoExchTs;
-            }
-            bus.publish(altair::kTopicTrades, p, nullptr, nullptr,
-                        p.exchange_ts_ns != 0 ? p.exchange_ts_ns
-                                              : recv.ns_since_epoch());
-            ++published;
-        }
-
-        for (std::size_t i = 0; i < r->depths; ++i) {
-            const altair::DepthUpdate& d = depths[i];
-            const auto idx = static_cast<std::size_t>(d.id);
-            if (idx >= sub_tokens.size()) { continue; }
-            altair::PricePayload p;
-            p.token = sub_tokens[idx];
-            p.exchange_ts_ns = d.exchange_ts.ns_since_epoch();
-            const std::uint16_t levels = static_cast<std::uint16_t>(
-                std::min<std::size_t>(altair::kMaxDepthLevels,
-                                      std::max(d.bid_levels, d.ask_levels)));
-            if (levels == 0) { continue; }
-            p.flags |= altair::kPriceHasBook;
-            p.depth_levels = levels;
-            altair::PriceLevel bids[altair::kMaxDepthLevels]{};
-            altair::PriceLevel asks[altair::kMaxDepthLevels]{};
-            for (std::uint16_t k = 0; k < levels; ++k) {
-                bids[k].price_paise = d.bid[k].px.raw();
-                bids[k].qty = d.bid[k].qty.raw();
-                bids[k].orders = d.bid[k].orders;
-                asks[k].price_paise = d.ask[k].px.raw();
-                asks[k].qty = d.ask[k].qty.raw();
-                asks[k].orders = d.ask[k].orders;
-            }
-            bus.publish(altair::kTopicBook, p, bids, asks,
-                        p.exchange_ts_ns != 0 ? p.exchange_ts_ns
-                                              : recv.ns_since_epoch());
-            ++published;
-        }
-        bus.poll();
-    };
-
-    std::printf("subscribing %zu token(s), full mode\n",
-                sub_tokens.size());
-    std::fflush(stdout);
-
-    // Bounded by --seconds when given, else by the session (Ctrl-C): never
-    // by the ticker's 60-second default.
-    const auto stats = altair::kite_ticker_run(
-        api_key, access, sub_tokens, altair::TickerMode::Full, on_frame,
-        [&] { return expired() || g_stop.load(); },
-        seconds > 0 ? std::chrono::seconds{seconds} : std::chrono::seconds{24 * 3600});
-
-    std::printf("frames %zu, ticks+books published %zu, unknown token %zu, "
-                "undecodable %zu\n",
-                frames, published, unknown, bad);
-    if (!stats) {
-        std::printf("ticker ended: %s\n",
-                    altair::ticker_error_text(stats.error()));
-        return 1;
-    }
-    std::printf("delivered %llu frame(s) to subscribers, %llu coalesced\n",
-                static_cast<unsigned long long>(bus.frames_sent()),
-                static_cast<unsigned long long>(bus.coalesced()));
     return 0;
 }

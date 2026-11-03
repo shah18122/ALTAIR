@@ -5,7 +5,7 @@
 // page's:
 //
 //     "I just want NIFTY forecasted price from that particular moment. Use
-//      live data from Kite -- if the button is clicked now it should check
+//      live data -- if the button is clicked now it should check
 //      the previous candle. Train on previous data, forecast, check against
 //      actual price in past data, and make a decision maker: is the model
 //      doing good or bad?"
@@ -44,8 +44,9 @@
 //    and a model deployed off one good month is the ordinary way this goes
 //    wrong.
 //
-// THE UI STILL HAS NO NETWORK. The fetch is a subprocess, the same boundary
-// Link Kite, the quote refresh, the account fetch and the tick feed all use.
+// THE UI STILL HAS NO NETWORK. The fetch is a subprocess (altair_fyers_history),
+// the same boundary the FYERS login, the quote refresh, the account fetch and
+// the tick feed all use.
 
 #pragma once
 
@@ -87,15 +88,6 @@ namespace altair::ui {
     return start_ns + interval_ns <= now_ns;
 }
 
-/// Kite's interval name for a dataset directory name.
-[[nodiscard]] inline const char* kite_interval_for(const QString& iv) {
-    if (iv == QStringLiteral("1m"))  { return "minute"; }
-    if (iv == QStringLiteral("5m"))  { return "5minute"; }
-    if (iv == QStringLiteral("15m")) { return "15minute"; }
-    if (iv == QStringLiteral("60m")) { return "60minute"; }
-    return "day";
-}
-
 [[nodiscard]] inline std::int64_t interval_ns_for(const QString& iv) {
     if (iv == QStringLiteral("1m"))  { return 60'000'000'000LL; }
     if (iv == QStringLiteral("5m"))  { return 300'000'000'000LL; }
@@ -104,7 +96,7 @@ namespace altair::ui {
     return 86'400'000'000'000LL;
 }
 
-/// Run altair_kite_fetch for a short recent window, into a scratch directory.
+/// Run altair_fyers_history for a short recent window, into a scratch directory.
 ///
 /// SCRATCH, NOT dataset/. The UI does not write the training set. A window
 /// that appended to dataset/ every time somebody pressed a button would make
@@ -150,26 +142,20 @@ struct FetchResult {
 }
 
 [[nodiscard]] inline FetchResult
-fetch_recent(const QString& symbol_dir, std::uint32_t token,
-             const QString& interval_dir, int days, bool fyers_only = false) {
+fetch_recent(const QString& symbol_dir, [[maybe_unused]] std::uint32_t token,
+             const QString& interval_dir, int days) {
     FetchResult out;
     const QString fyers_name = QStringLiteral("altair_fyers_history");
-    const QString kite_name = QStringLiteral("altair_kite_fetch");
     const QString fyers_exe = find_forecast_helper(fyers_name);
-    const QString kite_exe = find_forecast_helper(kite_name);
 #ifdef ALTAIR_SOURCE_DIR
     const QString fyers_session = QStringLiteral(ALTAIR_SOURCE_DIR "/data/fyers_session.json");
 #else
     const QString fyers_session = QCoreApplication::applicationDirPath()
         + QStringLiteral("/../data/fyers_session.json");
 #endif
-    if (fyers_only && fyers_exe.isEmpty()) {
-        out.error = QStringLiteral("altair_fyers_history is not in this build. Build the net preset.");
-        return out;
-    }
-    if (fyers_exe.isEmpty() && kite_exe.isEmpty()) {
+    if (fyers_exe.isEmpty()) {
         out.error = QStringLiteral(
-            "No FYERS or Kite history helper is in this build. Build the net preset.");
+            "altair_fyers_history is not in this build. Build the net preset.");
         return out;
     }
 
@@ -205,37 +191,20 @@ fetch_recent(const QString& symbol_dir, std::uint32_t token,
         return {};
     };
 
-    QString fyers_error;
-    if (!fyers_exe.isEmpty() && QFileInfo::exists(fyers_session)) {
-        fyers_error = run(fyers_exe,
-            {QStringLiteral("--symbol"), fyers_symbol_for(symbol_dir),
-             QStringLiteral("--resolution"), QString::fromLatin1(fyers_resolution_for(interval_dir)),
-             QStringLiteral("--from"), from, QStringLiteral("--to"), to,
-             QStringLiteral("--out"), scratch + QStringLiteral("/fyers.csv"),
-             QStringLiteral("--force"), QStringLiteral("--go")},
-            QStringLiteral("FYERS"));
+    if (!QFileInfo::exists(fyers_session)) {
+        out.error = QStringLiteral("FYERS has no saved session today: log in on Brokers "
+                                   "(the 08:30 auto-login normally does it)");
+        return out;
     }
-    // fyers_only: the caller trains on FYERS data alone, so a failed FYERS
-    // fetch is reported as such and Kite is never asked.
-    if (out.provider.isEmpty() && !kite_exe.isEmpty() && !fyers_only) {
-        const QString kite_error = run(kite_exe,
-            {QStringLiteral("--token"), QString::number(token),
-             QStringLiteral("--interval"), QString::fromLatin1(kite_interval_for(interval_dir)),
-             QStringLiteral("--from"), from, QStringLiteral("--to"), to,
-             QStringLiteral("--out"), scratch, QStringLiteral("--volume-absent"),
-             QStringLiteral("--force"), QStringLiteral("--go")},
-            QStringLiteral("Kite"));
-        if (!kite_error.isEmpty()) {
-            out.error = fyers_error.isEmpty() ? kite_error
-                : fyers_error + QStringLiteral(" | fallback ") + kite_error;
-            return out;
-        }
-    }
-    if (out.provider.isEmpty()) {
-        out.error = fyers_error.isEmpty()
-            ? (fyers_only ? QStringLiteral("FYERS has no saved session today (log in on Brokers)")
-                          : QStringLiteral("FYERS has no saved session and Kite fetch is unavailable"))
-            : fyers_error;
+    const QString fyers_error = run(fyers_exe,
+        {QStringLiteral("--symbol"), fyers_symbol_for(symbol_dir),
+         QStringLiteral("--resolution"), QString::fromLatin1(fyers_resolution_for(interval_dir)),
+         QStringLiteral("--from"), from, QStringLiteral("--to"), to,
+         QStringLiteral("--out"), scratch + QStringLiteral("/fyers.csv"),
+         QStringLiteral("--force"), QStringLiteral("--go")},
+        QStringLiteral("FYERS"));
+    if (!fyers_error.isEmpty() || out.provider.isEmpty()) {
+        out.error = fyers_error.isEmpty() ? QStringLiteral("FYERS fetch did not run") : fyers_error;
         return out;
     }
     out.ran = true;
@@ -255,7 +224,7 @@ fetch_recent(const QString& symbol_dir, std::uint32_t token,
 
 /// The page.
 ///
-/// `live` decides whether Kite is asked. Everything else is identical, so the
+/// `live` decides whether FYERS is asked. Everything else is identical, so the
 /// offline path is the same code and not a second implementation.
 /// THE forecast page. One page, one engine path, two questions.
 ///
@@ -325,7 +294,7 @@ forecast_report(const QString& dataset_root, const QString& sym,
     // ---- 2. the live tail ------------------------------------------------
     QString live_note;
     if (live) {
-        const FetchResult fr = fetch_recent(sym, q.kite_token, interval,
+        const FetchResult fr = fetch_recent(sym, q.wire_token, interval,
                                             interval == QStringLiteral("1d")
                                                 ? 120 : 20);
         if (!fr.ran) {
@@ -336,15 +305,15 @@ forecast_report(const QString& dataset_root, const QString& sym,
                             .arg(fr.error);
         } else {
             live_note = QStringLiteral(
-                "  RECENT HISTORY PROVIDER: %1 (FYERS primary; Kite fallback)\n\n")
+                "  RECENT HISTORY PROVIDER: %1\n\n")
                             .arg(fr.provider);
-            // MERGE ON TIMESTAMP, FRESH WINS. Kite's settled value for a bar
+            // MERGE ON TIMESTAMP, FRESH WINS. The broker's settled value for a bar
             // supersedes whatever is in dataset/ -- which is the fix for the
             // frozen partial bar, not merely a refresh.
             // A MATERIAL difference is a partial bar. A tiny one is the
             // two sources disagreeing about decimal places, and replacing the
             // finer value with the coarser one would be a small loss reported
-            // as a fix. One basis point: Kite's index dailies round to one
+            // as a fix. One basis point: an index daily rounded to one
             // decimal, which on a 23,000 index is at most 0.02 bps, while the
             // India VIX partial bar this guard exists for was off by 110.
             constexpr double kMaterialBps = 1.0;
@@ -378,12 +347,12 @@ forecast_report(const QString& dataset_root, const QString& sym,
                 }
             }
             live_note = QStringLiteral(
-                "  LIVE: %1 recent bars from Kite. %2 new; %3 stored bar(s)\n"
+                "  LIVE: %1 recent bars from FYERS. %2 new; %3 stored bar(s)\n"
                 "  differed MATERIALLY and were replaced — that is the\n"
                 "  signature of a bar captured mid-session and frozen. A\n"
                 "  further %4 differed by less than a basis point and were\n"
-                "  LEFT ALONE: dataset/ carries two decimals and Kite's index\n"
-                "  dailies carry one, and overwriting the finer value with\n"
+                "  LEFT ALONE: they are decimal places, and overwriting the\n"
+                "  finer value with the coarser one\n"
                 "  the coarser one is a small loss, not a correction.\n\n")
                             .arg(fr.bars.closes.size()).arg(added)
                             .arg(replaced).arg(rounding);

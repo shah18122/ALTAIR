@@ -5,14 +5,14 @@
 // fetches once, the account panel fetches once. Each holds the credential for
 // as long as it runs and none of them is a stream.
 //
-// This is the stream. One process holds ONE Kite connection and republishes
+// This is the stream. One process holds ONE FYERS connection and republishes
 // every tick as a protocol frame on a local port. The window, the options
 // chain and anything else become read-only subscribers.
 //
 // WHAT THIS BUYS BEYOND CONVENIENCE.
 //
 // The credential surface NARROWS. Four subprocesses each reading
-// data/kite_session.json becomes one process that reads it, and the UI still
+// data/fyers_session.json becomes one process that reads it, and the UI still
 // links neither broker/ nor oms/ -- gate 3 is untouched, and the client
 // vocabulary in protocol.hpp has no word for placing an order.
 //

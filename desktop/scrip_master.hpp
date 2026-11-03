@@ -7,7 +7,7 @@
 //   options, CD = currency; MCX is FO only) -> Symbol -> Expiry -> Type
 //   (FUT, CE, PE; FUT unless you pick an option) -> Strike (options only).
 // Each choice lists only what exists under the ones before it, read from
-// data/instruments.csv (the Kite master: NSE/BSE equity, NFO and BFO, MCX
+// data/instruments.csv (the instrument master: NSE/BSE equity, NFO and BFO, MCX
 // with a known lot and the INR currency pairs, live/contract_units.hpp), and
 // the bar shows the one contract they name -- its trading symbol, lot, tick
 // and token -- before Add (or Enter) puts it in the watch.
@@ -64,7 +64,7 @@ struct MasterScrip {
 }
 
 /// The NSE and BSE equities, the NSE and BSE F&O contracts, MCX (with a known
-/// lot) and the INR currency pairs of data/instruments.csv (the Kite master).
+/// lot) and the INR currency pairs of data/instruments.csv (the instrument master).
 /// Read on first use: it is ~9 MB.
 [[nodiscard]] inline std::vector<MasterScrip> load_master_scrips(const QString& path) {
     std::vector<MasterScrip> out;
@@ -364,7 +364,7 @@ private:
         if (token_ != 0 && on_add) on_add(token_);
     }
     /// The segments the chosen exchange has: MCX is FO only; CD shows where
-    /// the master has currency for that exchange (Kite's lists NSE's, CDS).
+    /// the master has currency for that exchange (it lists NSE's as CDS).
     void fill_segments() {
         const QString ex = exchange_->currentText();
         auto* model = qobject_cast<QStandardItemModel*>(segment_->model());

@@ -67,8 +67,7 @@ namespace snapshot_detail {
 }
 
 [[nodiscard]] inline bool success(std::string_view body) noexcept {
-    return field_value(body, "status") == "success"
-        || field_value(body, "s") == "ok";
+    return field_value(body, "s") == "ok";
 }
 
 [[nodiscard]] inline std::expected<Notional, SnapshotParseError>
@@ -124,8 +123,8 @@ amount_paise(std::string_view text) noexcept {
 
 } // namespace snapshot_detail
 
-/// Parse the five read-only provider responses. `account_key` is `user_id` for
-/// Kite and `fy_id` for FYERS. The caller supplies a session and observation
+/// Parse the five read-only provider responses. `account_key` is `fy_id` for
+/// FYERS. The caller supplies a session and observation
 /// window, so this parser never reads credentials or a clock.
 [[nodiscard]] inline std::expected<AccountSnapshot, SnapshotParseError>
 parse_account_snapshot(BrokerId broker, SessionKey session,

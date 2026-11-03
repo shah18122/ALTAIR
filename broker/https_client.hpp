@@ -1,10 +1,10 @@
-// broker/https_client.hpp -- one HTTPS POST, and nothing else.
+// broker/https_client.hpp -- a JSON POST and an authorised GET over TLS.
 //
-// P2-10c. The piece that was missing while `broker/tools/kite_login.py` stood
-// in: Altair's C++ had no HTTP client, so the one call in the Kite handshake
-// could not be made from the engine. It can now.
+// P2-10c. The FYERS session exchange (validate-authcode), the REST data
+// calls (history, quotes, account, the TBT URL) and the public FYERS symbol
+// masters all go through here.
 //
-// DELIBERATELY MINIMAL. This is a form POST to one known host, used a handful
+// DELIBERATELY MINIMAL. These are calls to a few known hosts, made a handful
 // of times a day, on a path where latency does not matter. It is not a general
 // HTTP client and should not grow into one: the tick feed is a WebSocket and
 // gets its own transport, and anything else that wants to talk HTTP should
@@ -26,7 +26,7 @@
 //     a valid certificate for another domain would otherwise pass.
 //
 // THE SECRET NEVER TOUCHES THIS FILE. The caller passes a body that has
-// already been assembled, and `broker/kite_session.hpp` computes the checksum.
+// already been assembled (app/fyers_login_main.cpp computes the appIdHash).
 // Nothing here logs a body, and the response is returned rather than printed.
 
 #pragma once
@@ -111,110 +111,6 @@ namespace detail {
 }
 
 } // namespace detail
-
-/// POST an `application/x-www-form-urlencoded` body over TLS.
-///
-/// `host` without scheme (for example "api.kite.trade"), `target` the path
-/// (for example "/session/token"). `timeout` applies to each transport
-/// operation, not to the call as a whole.
-///
-/// A completed exchange is a success WHATEVER the status; only transport
-/// failures take the error path. Callers check `status`.
-[[nodiscard]] inline std::expected<HttpResponse, HttpError>
-https_post_form(std::string_view host, std::string_view target,
-                std::string_view body,
-                std::string_view api_version = "3",
-                std::chrono::seconds timeout = std::chrono::seconds{20})
-{
-    namespace beast = boost::beast;
-    namespace http = beast::http;
-    namespace net = boost::asio;
-    namespace ssl = net::ssl;
-    using tcp = net::ip::tcp;
-
-    try {
-        net::io_context ioc;
-        ssl::context ctx{ssl::context::tls_client};
-
-        // Verification, on. See the header note -- the default is off and the
-        // failure is invisible.
-        ctx.set_verify_mode(ssl::verify_peer);
-        ctx.set_default_verify_paths();
-        // And on Windows that call leaves the store EMPTY, so the platform
-        // roots are loaded explicitly. Zero roots is fatal: continuing would
-        // mean verifying against nothing, which is not verifying.
-        if (detail::load_platform_roots(ctx.native_handle()) == 0) {
-            return std::unexpected(HttpError::TlsFailed);
-        }
-
-        tcp::resolver resolver{ioc};
-        beast::ssl_stream<beast::tcp_stream> stream{ioc, ctx};
-
-        const std::string host_s{host};
-        // SNI. Without it the server cannot select the right certificate.
-        if (!SSL_set_tlsext_host_name(stream.native_handle(), host_s.c_str())) {
-            return std::unexpected(HttpError::TlsFailed);
-        }
-        // And the certificate must be FOR this host, not merely valid.
-        stream.set_verify_callback(ssl::host_name_verification(host_s));
-
-        boost::system::error_code ec;
-        const auto results = resolver.resolve(host_s, "443", ec);
-        if (ec) { return std::unexpected(HttpError::ResolveFailed); }
-
-        beast::get_lowest_layer(stream).expires_after(timeout);
-        beast::get_lowest_layer(stream).connect(results, ec);
-        if (ec) { return std::unexpected(HttpError::ConnectFailed); }
-
-        beast::get_lowest_layer(stream).expires_after(timeout);
-        stream.handshake(ssl::stream_base::client, ec);
-        if (ec) { return std::unexpected(HttpError::TlsFailed); }
-
-        http::request<http::string_body> req{http::verb::post,
-                                             std::string{target}, 11};
-        req.set(http::field::host, host_s);
-        req.set(http::field::user_agent, "altair/0.1");
-        req.set(http::field::content_type,
-                "application/x-www-form-urlencoded");
-        if (!api_version.empty())
-            req.set("X-Kite-Version", std::string{api_version});
-        req.body() = std::string{body};
-        req.prepare_payload();
-
-        beast::get_lowest_layer(stream).expires_after(timeout);
-        http::write(stream, req, ec);
-        if (ec) { return std::unexpected(HttpError::TransportFailed); }
-
-        beast::flat_buffer buffer;
-        http::response<http::string_body> res;
-        beast::get_lowest_layer(stream).expires_after(timeout);
-        http::read(stream, buffer, res, ec);
-        if (ec) { return std::unexpected(HttpError::TransportFailed); }
-
-        HttpResponse out{};
-        out.status = res.result_int();
-        out.body = res.body();
-
-        // Shutdown is best-effort. Many servers close without the TLS
-        // close_notify, and treating that as a failure would turn every
-        // successful call into an error.
-        beast::get_lowest_layer(stream).expires_after(std::chrono::seconds{5});
-        boost::system::error_code shut;
-        stream.shutdown(shut);
-
-        // A completed HTTP exchange is a SUCCESS of this function, whatever
-        // the status. Only transport failures take the error path.
-        //
-        // That split is deliberate: Kite puts a machine-readable reason in the
-        // body of a 400, and std::expected cannot carry a body on the error
-        // side. Folding a 400 into an error code would turn "your
-        // request_token is expired" into "it did not work". Callers check
-        // `status`; `HttpError` means the exchange never happened at all.
-        return out;
-    } catch (const std::exception&) {
-        return std::unexpected(HttpError::Unknown);
-    }
-}
 
 /// POST an `application/json` body over TLS.
 ///
@@ -374,34 +270,23 @@ https_fyers_request(std::string_view method, std::string_view host, std::string_
     }
 }
 
-/// GET over TLS with a Kite `Authorization` header.
-///
-/// P2-12b. Added because the historical candle API is a GET and this file had
-/// only a form POST -- it was written for the session exchange, which is the
-/// one call Altair made until now.
+/// GET over TLS with an `Authorization` header.
 ///
 /// THE AUTHORIZATION HEADER CARRIES A LIVE TRADING CREDENTIAL.
 ///
-/// Kite's scheme is `Authorization: token <api_key>:<access_token>`, and the
-/// access_token in it is valid until the next morning and can place orders.
-/// So it is taken as a parameter and NEVER logged, never put in the target,
-/// never in a query string. The caller builds it from
-/// `data/kite_session.json`; nothing here reads a file or an environment
-/// variable, which keeps the set of code that touches a credential small
-/// enough to audit.
+/// FYERS's scheme is `Authorization: <client_id>:<access_token>`, and the
+/// access token in it is valid for the trading day. So it is taken as a
+/// parameter and NEVER logged, never put in the target, never in a query
+/// string. Nothing here reads a file or an environment variable, which keeps
+/// the set of code that touches a credential small enough to audit. A public
+/// file (the FYERS symbol masters) passes an empty header.
 ///
-/// Same success contract as the POST: a completed exchange is a success
-/// whatever the status, because Kite puts the machine-readable reason in the
-/// body of a 400 and folding that into an error code would turn "your token
-/// expired" into "it did not work".
-///
-/// NOT EXERCISED AGAINST THE LIVE API. There are no credentials on this
-/// machine's test path, so this compiles and has never made a real call. That
-/// is stated here rather than discovered later.
+/// A completed exchange is a success whatever the status, because the broker
+/// puts the machine-readable reason in the body of a 4xx and folding that into
+/// an error code would turn "your token expired" into "it did not work".
 [[nodiscard]] inline std::expected<HttpResponse, HttpError>
 https_get_auth(std::string_view host, std::string_view target,
                std::string_view authorization,
-               std::string_view api_version = "3",
                std::chrono::seconds timeout = std::chrono::seconds{20},
                std::uint64_t max_body_bytes = 64ull * 1024 * 1024)
 {
@@ -447,8 +332,6 @@ https_get_auth(std::string_view host, std::string_view target,
         req.set(http::field::user_agent, "altair/0.1");
         if (!authorization.empty())   // a public file (the FYERS symbol masters) takes none
             req.set(http::field::authorization, std::string{authorization});
-        if (!api_version.empty())
-            req.set("X-Kite-Version", std::string{api_version});
         req.prepare_payload();
 
         beast::get_lowest_layer(stream).expires_after(timeout);
@@ -461,8 +344,8 @@ https_get_auth(std::string_view host, std::string_view target,
         // `http::read` into a `response<string_body>` builds a parser with
         // Beast's DEFAULT body limit of 8 MB, and exceeding it fails as a
         // generic transport error -- no status, no body, nothing naming the
-        // size. Kite's full instrument master is larger than that (every
-        // option strike on every expiry), so the first attempt to download it
+        // size. A full instrument master is larger than that (every option
+        // strike on every expiry), and the first attempt to download one
         // returned "TRANSPORT FAILED" and looked like a network fault.
         //
         // The limit is raised, not removed. An unbounded body is a memory

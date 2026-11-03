@@ -1,8 +1,8 @@
 // app/live_feed_sources.hpp -- the price service's FYERS and simulated sources.
 //
 // altair_price_service owns the feed and republishes it on 127.0.0.1:7421.
-// It had two sources: Kite live (--go) and a one-series replay. These are the
-// two the live terminal runs on:
+// Besides a one-series replay, these are the two sources the live terminal
+// runs on:
 //
 //   --fyers --go   FYERS' data socket for the whole live universe
 //                  (live/universe.hpp): indices, futures, the option chains,
@@ -19,7 +19,7 @@
 // see them: to them a replayed trade would be a fresh print.
 //
 // ONE THREAD OWNS THE BUS. The bus is not thread-safe, and the source loops
-// (FYERS, Kite, the simulator) block on their sockets. A source does not lock
+// (FYERS, the simulator) block on their sockets. A source does not lock
 // anything: it pushes each update into a single-producer ring, and the bus's
 // owner thread drains the ring, keeps the board, publishes, accepts
 // subscribers and flushes outboxes. Nothing is dropped between a source and

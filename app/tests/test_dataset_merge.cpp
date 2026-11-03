@@ -52,7 +52,7 @@ void spit(const fs::path& p, const std::string& s) {
     out << s;
 }
 
-/// A candle stamped at 00:00 IST on `date`, which is how Kite stamps a daily.
+/// A candle stamped at 00:00 IST on `date`, which is how FYERS stamps a daily.
 altair::RawCandle day_candle(const char* date, double close) {
     std::int64_t d = 0;
     (void)altair::parse_date(date, d);
@@ -309,7 +309,7 @@ void series_update_lock_serializes_full_updates(const fs::path& dir) {
 
 void empty_answer_over_trading_days_is_not_nothing_new(const fs::path& dir) {
     std::printf("\nCX02-A2c empty_answer_over_trading_days_is_not_nothing_new\n");
-    const fs::path state = dir / ".kite_update_empty_answers_test";
+    const fs::path state = dir / ".dataset_update_empty_answers_test";
     int incomplete_attempts = 0;
     std::uint64_t persisted_count = 0;
     for (int attempt = 0; attempt < 3; ++attempt) {
@@ -411,7 +411,7 @@ void incomplete_coverage_merges_nothing() {
     }
     check(ds::judge_coverage(got, "2026-07-01", "2026-08-29", 5)
               == ds::Coverage::Incomplete,
-          "a window Kite truncated is INCOMPLETE -- the old updater merged it");
+          "a window the broker truncated is INCOMPLETE -- the old updater merged it");
     check(ds::judge_coverage({}, "2026-07-01", "2026-08-29", 5)
               == ds::Coverage::Incomplete,
           "an empty answer to a 60-day question is incomplete");

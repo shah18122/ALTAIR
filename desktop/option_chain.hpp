@@ -8,7 +8,7 @@
 // THE NUMBERS ARE A MODEL UNTIL OPTION QUOTES ARRIVE, AND THE SCREEN SAYS SO.
 //
 // No option has ever been ticked in this tree -- dataset/opt/ does not exist
-// and the Kite token expired -- so there is no market price to invert for
+// and the broker session expired -- so there is no market price to invert for
 // implied volatility. The chain is therefore Black-76 at ONE volatility:
 //
 //   NIFTY       India VIX, which IS the market's 30-day implied vol for NIFTY.
@@ -18,7 +18,7 @@
 //               in the dataset, and borrowing NIFTY's would understate it.
 //
 // The strikes, lots, ticks, expiries and tokens are all REAL -- read from the
-// Kite instrument master by the engine's own parser. Only the prices and
+// instrument master by the engine's own parser. Only the prices and
 // Greeks are modelled, and the header says which vol was used and where it
 // came from.
 //
@@ -316,7 +316,7 @@ private:
         val_from_tick_ = from_tick;
 
         // TIME TO EXPIRY, to 15:30 IST on the expiry date. The master stores
-        // IST midnight (instruments/kite_dump.hpp is explicit that reading it
+        // IST midnight (instruments/master_csv.hpp is explicit that reading it
         // as UTC would land 5h30m early, which on expiry day is the
         // difference between a live contract and a dead one).
         const double years =

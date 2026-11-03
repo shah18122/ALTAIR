@@ -87,14 +87,14 @@ out.write(f"""# config/nse_calendar.csv -- the NSE trading calendar, DERIVED FRO
 # a calendar that disagrees with the bars is worse than no calendar.
 #
 # It also cannot tell a HOLIDAY from a DATA GAP. A weekday with no bars is
-# recorded as CLOSED, and if Kite simply never served that day it is recorded
+# recorded as CLOSED, and if the data vendor simply never served that day it is recorded
 # as CLOSED wrongly. The cross-check is that NIFTY and India VIX are fetched
 # independently: a real closure hits both. Days where only ONE series is
 # missing are listed at the bottom as SUSPECT rather than being called
 # holidays -- there are {len(mismatch)} of them.
 #
 # RANGE: {first} .. {last}. You asked for fifteen years; this is
-# {round((last - first).days / 365.25, 1)}, because that is how far Kite's
+# {round((last - first).days / 365.25, 1)}, because that is how far the vendor's
 # 1-minute history goes. Earlier years would have to come from a published
 # circular, and inventing them here would be exactly the kind of confident,
 # plausible, wrong reference data CLAUDE.md's gate 7 exists to catch.
@@ -140,7 +140,7 @@ if mismatch:
     out.write('# SUSPECT -- present in one series and not the other.\n')
     out.write('# Not called holidays: a real closure hits both.\n')
     out.write('#\n')
-    out.write('# 2019-07-02 was RE-FETCHED to check: Kite returns\n')
+    out.write('# 2019-07-02 was RE-FETCHED to check: the vendor returns\n')
     out.write('# 2019-07-01 and 2019-07-03 for India VIX and nothing\n')
     out.write('# between. A genuine vendor gap on their side, not data\n')
     out.write('# lost here.\n')

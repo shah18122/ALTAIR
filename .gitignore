@@ -36,14 +36,13 @@ config/*.local.toml
 config/*.local.env
 **/fyers_session.json.tmp
 **/fyers_login_refused.txt
-**/kite_session.json
 **/fyers_session.json
 **/fyers_login_state.txt
 **/mt_accounts.json
 **/*credentials*
 **/*api_key*
 # Found during the whole-project audit (2026-09-27). The FYERS webhook work
-# wrote these next to kite_session.json, and .gitignore did not cover them: a
+# wrote these next to the session file, and .gitignore did not cover them: a
 # live 53-byte webhook secret, the account snapshot, and the redacted-event
 # log were each one `git add -A` away from history. Same rule as every other
 # credential artifact on this list -- pulled with a credential, per-machine,
@@ -102,23 +101,26 @@ __pycache__/
 *.pyc
 venv/
 
-# Exchange and broker master files are tracked with dataset/ (see DATA above).
+# Exchange master files are tracked with dataset/ (see DATA above).
 
 # client/ devDependencies. TypeScript only, and it never ships.
 node_modules/
 
-# P2-12e: the Kite instrument master (8.8 MB) is tracked with dataset/.
+# data/instruments.csv is GENERATED from the FYERS public masters
+# (altair_instrument_master, or the price service when it is stale). It is
+# rebuilt daily and never tracked; so are the masters and FYERS history pulls.
+data/instruments.csv
+data/instruments.csv.building
+data/fyers_history/
 
 # Account and quote snapshots hold live account state and market data
-# pulled with a credential. Same rule as kite_session.json: they are
+# pulled with a credential. Same rule as fyers_session.json: they are
 # regenerable from the API and must never enter git.
-**/kite_account.json
-**/kite_quotes.json
 **/fyers_quotes.json
+**/fyers_watchlist_quotes.json
 # P32-07. The live tick status file and any tick store the ticker writes.
 # Same rule: pulled with a credential, and a tick store is a recording of a
 # real session on a real account.
-**/kite_ticks.json
 # The FYERS live-feed status file and its optional JSONL recording: same rule.
 **/fyers_ticks.json
 **/fyers*.jsonl
@@ -184,3 +186,8 @@ data/live/
 .~lock.*#
 # The F11+F12 resume writes an audit copy next to the kill request.
 data/kill_request.json.cleared.json
+
+# Files the retired second-broker integration wrote on older machines. The
+# code is gone; these stay ignored so a stale credential file can never be
+# committed by accident.
+**/kite_*.json

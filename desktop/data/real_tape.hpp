@@ -81,7 +81,7 @@ struct RealTape {
 /// The instruments the grid shows, in Smit's stated priority order:
 /// NIFTY spot, then the NIFTY future, then India VIX.
 ///
-/// Tokens are the ones looked up from the Kite master in P2-12e, not typed
+/// Tokens are the ones looked up from the instrument master in P2-12e, not typed
 /// from memory -- and they are here rather than in a literal at the call site
 /// so there is one place to correct if a contract rolls.
 [[nodiscard]] inline std::vector<TapeInstrument> tape_instruments() {
@@ -174,7 +174,7 @@ struct RealTape {
     //
     // "last 5 sessions" is true of a tape ending today and of one ending three
     // weeks ago, and they look identical on screen. The dataset is filled by a
-    // manual fetch that needs a daily Kite login, so a stale tape is the
+    // manual fetch that needs a daily broker login, so a stale tape is the
     // NORMAL state rather than an edge case, and the first and last bar dates
     // are the only thing that distinguishes them.
     out.first_ns = rows.empty() ? 0 : rows.front().ts;

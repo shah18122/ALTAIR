@@ -1,7 +1,7 @@
 // live/contract_units.hpp -- what one lot of an MCX or currency contract is,
-// which the Kite master does not say, and when those markets close.
+// which the instrument master does not say, and when those markets close.
 //
-// LOTS. The Kite master gives lot_size 1 for every MCX and currency contract
+// LOTS. data/instruments.csv gives lot_size 1 for every MCX and currency contract
 // (an order there is in lots). The paper book counts units -- an NFO lot of
 // 75 is 75 units -- so P&L is quantity x price move. These are the units one
 // lot moves by per rupee of quoted price, from the MCX and NSE contract

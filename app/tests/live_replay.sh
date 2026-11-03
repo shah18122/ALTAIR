@@ -42,7 +42,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-feed=(--sim --date "$day" --from 09:15 --strikes 10 --depth-strikes 1 --no-stocks --live-dir "$work/feed" --port "$port")
+# The contracts listed on the SIM day (NIFTY/BANKNIFTY F&O, the indices, NYKAA):
+# a fixed fixture, because data/instruments.csv is rebuilt from today's FYERS
+# masters and no longer lists 2026-09 expiries.
+master="$src/app/tests/fixtures/instruments_2026-09.csv"
+feed=(--sim --date "$day" --from 09:15 --strikes 10 --depth-strikes 1 --no-stocks --live-dir "$work/feed" --master "$master" --port "$port")
 
 # The universe first (the engine reads it at start), from the same options.
 "$ps_bin" "${feed[@]}" --seconds 1 > "$work/universe.log" 2>&1 || true

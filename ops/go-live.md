@@ -30,7 +30,7 @@ development of this repo:
 
 | # | Item | Evidence | State |
 |---|---|---|---|
-| 1.1 | **Rotate the exposed API secrets** | New secret issued at the Kite console; the three exposed during development are dead | ❌ **OPEN** — three secrets were pasted into a development transcript |
+| 1.1 | **Kill the exposed API secrets** | The old Kite app (ALTAIR no longer uses Kite) is deleted at the Kite console, so the three secrets exposed during development are dead | ❌ **OPEN** — three secrets were pasted into a development transcript |
 | 1.2 | **`charges.toml` verified against a real contract note** | `last_verified` holds an ISO date and `verified_by` a name | ❌ **OPEN** — the file says `UNVERIFIED` |
 | 1.3 | **Phase 0 gate: clean build under clang** | `-Wall -Wextra -Wpedantic -Wconversion`, zero warnings | ❌ **BLOCKED** — no clang on this box, no WSL distribution, shell not elevated |
 | 1.4 | **Live feed subscription** | A full-mode WebSocket delivering depth, not candles | ❌ **OPEN** — `feed/` decoders are built and tested; nothing subscribes |
@@ -102,7 +102,7 @@ was a small sample. Do not size on a result that has not survived more data.
 | 5.3 | Monitoring wired to a person | A `Stale` board at 09:20 must reach a phone, not a log file |
 | 5.4 | Every gauge has a real staleness budget | An unwatched gauge is one nobody notices the loss of |
 | 5.5 | DR runbook read *before* it is needed | [`disaster-recovery.md`](disaster-recovery.md) — and it has never been rehearsed |
-| 5.6 | Credentials in environment variables only | `broker/` is the only directory that touches one; `data/kite_session.json` is gitignored |
+| 5.6 | Credentials in environment variables only | `broker/` is the only directory that touches one; `data/fyers_session.json` is gitignored |
 
 ---
 

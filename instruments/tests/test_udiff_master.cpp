@@ -108,10 +108,10 @@ void real_stock_option_row()
         return;
     }
     check(std::strcmp(s->underlying, "ABCAPITAL") == 0,
-          "underlying is TckrSymb -- which is what Kite's `name` carries, so "
+          "underlying is TckrSymb -- which is what the master's `name` carries, so "
           "P1-06's key can match");
     check(std::strcmp(s->symbol, "ABCAPITAL26NOV410CE") == 0,
-          "symbol is FinInstrmNm, the same shape as Kite's tradingsymbol");
+          "symbol is FinInstrmNm, the same shape as the master's tradingsymbol");
     check(s->segment == Segment::Opt, "STO is a stock OPTION");
     check(s->opt_type == OptionType::CE, "CE");
     check(s->strike == Price{41'000},
@@ -143,7 +143,7 @@ void futures_leave_strike_and_type_empty()
     check(std::strcmp(s->underlying, "NIFTY") == 0, "underlying NIFTY");
     check(s->lot_size == LotSize{65},
           "lot size 65 -- the LIVE NIFTY lot, and it matches both "
-          "fo_mktlots and the Kite dump exactly");
+          "fo_mktlots and the instrument master exactly");
 
     // A future carrying a strike is not a future.
     char bad[512];
@@ -269,14 +269,14 @@ void three_way_agreement_on_real_values()
     check(load_udiff_master(doc, std::strlen(doc), Exchange::NSE, g_rec,
                             kSnap).has_value(), "the NSE master loads");
 
-    // Kite's dump says the same contract, same lot. Real values, real quoting.
-    const char* kite =
+    // The instrument master says the same contract, same lot. Real values, real quoting.
+    const char* master =
         "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,"
         "strike,tick_size,lot_size,instrument_type,segment,exchange\n"
         "13579,246,NIFTY26OCTFUT,\"NIFTY\",0,2026-10-27,0,0.05,65,FUT,"
         "NFO-FUT,NFO\n";
-    check(load_kite_dump(kite, std::strlen(kite), g_rec, kSnap).has_value(),
-          "and the Kite dump loads into the same reconciler");
+    check(load_instrument_master(master, std::strlen(master), g_rec, kSnap).has_value(),
+          "and the instrument master loads into the same reconciler");
 
     const ReconcileReport rep = g_rec.reconcile();
     check(rep.contracts == 1,
@@ -289,13 +289,13 @@ void three_way_agreement_on_real_values()
     check(v->verdict == ReconcileVerdict::Agreed, "verdict Agreed");
     check(v->merged.lot_size == LotSize{65},
           "merged lot size 65 -- the same number in the NSE bhavcopy, "
-          "fo_mktlots and the Kite dump");
+          "fo_mktlots and the instrument master");
     check(v->merged.tick_size == Price{5},
-          "and the tick comes from KITE, because UDiFF carries none -- which "
+          "and the tick comes from THE MASTER, because UDiFF carries none -- which "
           "is exactly the cross-check the three-way design exists for");
     check(v->merged.source == SpecSource::NseMaster,
           "with the exchange master winning precedence for everything else");
-    check(v->merged.token[static_cast<std::size_t>(FeedSource::Kite)] == 13579,
+    check(v->merged.token[static_cast<std::size_t>(FeedSource::Wire)] == 13579,
           "and the broker token carried through");
 }
 

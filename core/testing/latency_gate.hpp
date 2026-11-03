@@ -5,7 +5,7 @@
 //
 // A BUDGET ASSERTED IN AN UNOPTIMISED BUILD MEASURES THE WRONG PROGRAM.
 //
-// `ctest --preset debug` failed three tests -- kite_decoder, normaliser and
+// `ctest --preset debug` failed three tests -- a feed decoder, normaliser and
 // l2_book -- and all three failures were latency assertions. The decoder
 // measured 7692 ns against a 3 us budget it clears comfortably at -O2. Nothing
 // was wrong with the code. The assertion was checking a binary that is never

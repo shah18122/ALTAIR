@@ -1,7 +1,7 @@
 // desktop/account_widgets.hpp -- the presentation pieces the account page
 // needed and did not have.
 //
-// P32-02. Smit asked for the Kite Account page to stop being five panes of
+// P32-02. Smit asked for the broker Account page to stop being five panes of
 // monospace text and become buttons and cards.
 //
 // WHY A MONOSPACE DUMP WAS THE WRONG SHAPE HERE SPECIFICALLY.

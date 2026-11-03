@@ -239,7 +239,7 @@ private:
         put(r, 3, has_master
                       ? QStringLiteral("LIVE")
                       : QStringLiteral("no instrument master; fetch it with "
-                                       "altair_kite_fetch --dump-instruments"),
+                                       "altair_instrument_master --go"),
             has_master ? green : amber);
         ++r;
 

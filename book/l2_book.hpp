@@ -1,6 +1,6 @@
 // book/l2_book.hpp — the L2 order book.
 //
-// P2-08. Kite's full mode and XTS 1502 both deliver a five-level SNAPSHOT, not
+// P2-08. FYERS' 5-level depth and XTS 1502 both deliver a five-level SNAPSHOT, not
 // deltas, so applying an update is a replace and O(1) is trivial at this depth.
 // A price-keyed map would be slower, would allocate, and would model a problem
 // Altair does not have. If a tick-by-tick order-level feed ever arrives, that

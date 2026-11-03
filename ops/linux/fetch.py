@@ -14,7 +14,7 @@ place an order: they call only FYERS's read-only history and data endpoints.
             data/fyers_meta/ (--run then runs the meta-trader on it)
   depth     record 5-level depth until 15:30 IST to data/ticks/depth-<yyyymmdd>.jsonl
             for altair_depth_study
-  audit     cross-check dataset/ against FYERS (and Kite with --with-kite), then
+  audit     cross-check dataset/ against FYERS, then
             write data/verified/data_audit.xlsx with altair_data_audit
 
     ops/linux/fetch.py history --go
@@ -65,7 +65,7 @@ def near_month_tag(today: dt.date) -> str:
 
 
 def instruments_future(name: str) -> dict | None:
-    """The near future of `name` from the Kite instrument master in git (expiry on or after today)."""
+    """The near future of `name` from data/instruments.csv (built from the FYERS masters; expiry on or after today)."""
     p = ROOT / "data" / "instruments.csv"
     if not p.is_file():
         return None
@@ -255,11 +255,11 @@ def cmd_audit(a) -> int:
         with open(logf, "a") as f:
             f.write(line + "\n")
 
-    frm = dt.date.fromisoformat(a.frm).replace(day=1)  # Kite refuses part-months
+    frm = dt.date.fromisoformat(a.frm).replace(day=1)  # windows start on the 1st of a month
     to = dt.date.fromisoformat(a.to) if a.to else dt.date.today()
-    indices = [("spot", "nifty", "NSE:NIFTY50-INDEX", "256265"), ("spot", "banknifty", "NSE:NIFTYBANK-INDEX", "260105"),
-               ("spot", "indiavix", "NSE:INDIAVIX-INDEX", "264969")]
-    tfs = [("1m", "1", "minute"), ("5m", "5", "5minute"), ("15m", "15", "15minute"), ("60m", "60", "60minute"), ("1d", "D", "day")]
+    indices = [("spot", "nifty", "NSE:NIFTY50-INDEX"), ("spot", "banknifty", "NSE:NIFTYBANK-INDEX"),
+               ("spot", "indiavix", "NSE:INDIAVIX-INDEX")]
+    tfs = [("1m", "1"), ("5m", "5"), ("15m", "15"), ("60m", "60"), ("1d", "D")]
     fut = instruments_future("NIFTY")
     if not fut:
         note("no current NIFTY future in data/instruments.csv; futures skipped")
@@ -278,46 +278,16 @@ def cmd_audit(a) -> int:
                 code, last = run(fy, args, quiet=True)
                 note(f"ok      FYERS {sym} {tf} {y}" if code == 0 else f"skipped FYERS {sym} {tf} {y} -- {last}")
 
-        for seg, inst, sym, _ in indices:
-            for tf, fres, _ in tfs:
+        for seg, inst, sym in indices:
+            for tf, fres in tfs:
                 get_fyers(seg, inst, sym, tf, fres, False)
         if fut:
-            for tf, fres, _ in tfs:
+            for tf, fres in tfs:
                 get_fyers("fut", "nifty", "NSE:" + fut["tradingsymbol"], tf, fres, True)
-        if a.with_kite:
-            kt = require_tools("audit", "altair_kite_fetch")["altair_kite_fetch"]
-
-            def get_kite(seg, inst, token, tf, kint, index, cont):
-                d = base / "kite" / seg / inst / tf
-                d.mkdir(parents=True, exist_ok=True)
-                for y, s, e in years(frm, to):
-                    marker = d / f".done_{y}"
-                    if marker.is_file() and not a.force:
-                        continue
-                    args = ["--token", token, "--out", str(d), "--interval", kint, "--from", s.isoformat(),
-                            "--to", e.isoformat(), "--force", "--go"]
-                    if index:
-                        args.append("--volume-absent")
-                    if cont:
-                        args += ["--continuous", "--oi"]
-                    code, last = run(kt, args, quiet=True)
-                    if code == 0:
-                        marker.touch()
-                        note(f"ok      Kite {token} {tf} {y}")
-                    else:
-                        note(f"skipped Kite {token} {tf} {y} -- {last}")
-
-            for seg, inst, _, token in indices:
-                for tf, _, kint in tfs:
-                    get_kite(seg, inst, token, tf, kint, True, False)
-            if fut:
-                get_kite("fut", "nifty", fut["instrument_token"], "1d", "day", False, True)
     audit = require_tools("audit", "altair_data_audit")["altair_data_audit"]
     args = ["--dataset", "dataset", "--out", "data/verified"]
     if (base / "fyers").is_dir():
         args += ["--broker", "FYERS=data/broker_audit/fyers"]
-    if (base / "kite").is_dir():
-        args += ["--broker", "Kite=data/broker_audit/kite"]
     if subprocess.run([str(audit), *args], cwd=ROOT).returncode != 0:
         print("altair_data_audit failed")
         return 1
@@ -348,7 +318,6 @@ def main() -> int:
     d.add_argument("--symbols", default="")
     au = common(sub.add_parser("audit"))
     au.add_argument("--audit-only", action="store_true")
-    au.add_argument("--with-kite", action="store_true")
     a = ap.parse_args()
     return {"history": cmd_history, "universe": cmd_universe, "pairs": cmd_pairs, "meta": cmd_meta,
             "depth": cmd_depth, "audit": cmd_audit}[a.cmd](a)

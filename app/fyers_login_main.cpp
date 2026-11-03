@@ -350,7 +350,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     const auto profile = altair::https_get_auth(
-        "api-t1.fyers.in", "/api/v3/profile", *authorization, "");
+        "api-t1.fyers.in", "/api/v3/profile", *authorization);
     const auto profile_status = profile
         ? json_string(profile->body, "s") : std::optional<std::string>{};
     const auto profile_id = profile

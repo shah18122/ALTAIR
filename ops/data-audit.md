@@ -8,7 +8,7 @@
    close = last, volume = sum, OI = last) and compared bar by bar. Only
    complete buckets are compared, so a gap is reported as a gap, not as a wrong
    bar. Other sources kept in `_superseded_*` folders are compared too.
-2. **Does the data agree with the broker?** FYERS and Kite candles, fetched
+2. **Does the data agree with the broker?** FYERS candles, fetched
    read-only into `data/broker_audit/`, are compared bar by bar.
 
 Each series is also checked on its own: unparseable rows, duplicate and
@@ -22,15 +22,15 @@ to 15:40 (the dataset's futures bars and FYERS' symbol master both run there).
 
 ## Run it
 
-On your PC, after `ops/build.sh net` and linking FYERS and Kite:
+On your PC, after `ops/build.sh net` and linking FYERS:
 
 ```bash
 python3 ops/linux/fetch.py audit
 ```
 
-That fetches both brokers year by year (resumable; missing years are logged to
+That fetches FYERS year by year (resumable; missing years are logged to
 `data/broker_audit/fetch_log.txt` and skipped), runs the audit and opens the
-workbook. Options: `-From 2020-01-01`, `-SkipKite`, `-SkipFyers`,
+workbook. Options: `-From 2020-01-01`, `-SkipFyers`,
 `-AuditOnly` (compare what is already fetched), `-Force` (re-fetch),
 `-NoOpen`.
 
