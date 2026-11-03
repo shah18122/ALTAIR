@@ -90,7 +90,7 @@ void every_safety_dimension_refuses() {
     e.auth = AuthStatus::Rejected;
     check(!authorize_broker_dispatch(r, e, g, now), "rejected login refuses");
     e = evidence();
-    e.session.broker = BrokerId::Fyers;
+    e.session.broker = static_cast<BrokerId>(2);   // not a broker ALTAIR routes to
     e.account_session = e.session;
     g.session = e.session;
     check(!authorize_broker_dispatch(r, e, g, now), "wrong order broker refuses");

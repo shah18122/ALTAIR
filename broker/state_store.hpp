@@ -38,7 +38,8 @@ public:
             return std::unexpected(StateStoreError::InvalidProvider);
         if (value.schema_version != broker_view::kSchemaVersion)
             return std::unexpected(StateStoreError::SchemaMismatch);
-        if (broker_view::valid(value.session)
+        // An unbound session (None) is allowed; any other broker id must be ours.
+        if (value.session.broker != broker_view::BrokerId::None
             && value.session.broker != provider_)
             return std::unexpected(StateStoreError::ProviderMismatch);
         return map_publish(evidence_.publish(value));

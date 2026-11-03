@@ -119,6 +119,8 @@ void usage(const char* exe) {
         "  --live-dir DIR      where universe.csv, watchlist.csv and feed_status.json\n"
         "                      live (default data/live in the source tree; tests\n"
         "                      point it elsewhere)\n"
+        "  --master FILE       the instrument master (default data/instruments.csv in\n"
+        "                      the source tree; tests pass a fixture)\n"
         "  --tail N            replay only the most recent N bars. A\n"
         "                      replay otherwise starts at the first bar on\n"
         "                      disk -- 2015 for NIFTY 1-minute -- and would\n"
@@ -962,6 +964,7 @@ int main(int argc, char** argv) {
     std::uint64_t seed = 20261001;
     std::string sim_date;   // YYYY-MM-DD: simulate that day instead of today
     std::string live_dir_arg;   // --live-dir: universe.csv and friends (default <source>/data/live)
+    std::string master_arg;     // --master: the instrument master (default <source>/data/instruments.csv)
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -1007,6 +1010,8 @@ int main(int argc, char** argv) {
             expiries = std::atoi(argv[++i]);
         } else if (a == "--live-dir" && i + 1 < argc) {
             live_dir_arg = argv[++i];
+        } else if (a == "--master" && i + 1 < argc) {
+            master_arg = argv[++i];
         } else if (a == "--no-stocks") {
             stocks = false;
         } else if (a == "--depth50" && i + 1 < argc) {
@@ -1077,22 +1082,23 @@ int main(int argc, char** argv) {
         if (!(bnf > 0.0)) { bnf = altair::live_sources::sim_close(ds + "/spot/banknifty/1d", sim_date); std::printf("BANKNIFTY ATM from the last close in dataset/: %.2f\n", bnf); }
 
         const std::string live_dir = live_dir_arg.empty() ? src + "/data/live" : live_dir_arg;
+        const std::string master = master_arg.empty() ? src + "/data/instruments.csv" : master_arg;
         // FYERS's own names for cash scrips, and its F&O master (fetched for a
         // FYERS feed, at most once in 20 hours; a SIM only reads the copy on disk).
         const auto cash_names = fyers_cash_names(live_dir, mode == "fyers" || mode == "fyers-dry");
         // data/instruments.csv is built from the FYERS masters
         // (live/instrument_master.hpp) whenever a master is newer than it.
-        if (altair::live::instrument_master_stale(live_dir + "/fyers_masters", src + "/data/instruments.csv")) {
+        if (altair::live::instrument_master_stale(live_dir + "/fyers_masters", master)) {
             altair::live::MasterBuildReport rep;
             std::string why;
-            if (altair::live::build_instrument_master(live_dir + "/fyers_masters", src + "/data/instruments.csv", rep, why)) {
+            if (altair::live::build_instrument_master(live_dir + "/fyers_masters", master, rep, why)) {
                 std::printf("data/instruments.csv rebuilt from the FYERS masters: %zu row(s)\n", rep.rows);
             } else {
                 std::printf("data/instruments.csv not rebuilt: %s\n", why.c_str());
             }
         }
         std::string err;
-        auto rows = altair::live::read_instrument_master(src + "/data/instruments.csv", err);
+        auto rows = altair::live::read_instrument_master(master, err);
         if (!err.empty()) { std::printf("%s\n", err.c_str()); return 2; }
         // The index contracts listed since data/instruments.csv was written
         // (each new weekly), from FYERS's master.

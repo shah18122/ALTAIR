@@ -33,7 +33,8 @@ void evidence_publication() {
     check(store.read(out).value_or(0) == 2 && out.auth == AuthStatus::Authenticated,
           "new reader sees replacement snapshot");
 
-    first.session.broker = BrokerId::None;
+    // FYERS is the only broker, so "another provider" is an id nobody issues.
+    first.session.broker = static_cast<BrokerId>(2);
     check(!store.publish(first)
               && store.publish(first).error() == StateStoreError::ProviderMismatch,
           "wrong provider evidence refused");
