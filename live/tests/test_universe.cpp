@@ -100,6 +100,13 @@ int main() {
         check(find(u3, "NIFTY26O0624000CE") != nullptr && find(u3, "NIFTY26OCT24000CE") != nullptr
                   && u3.instruments.size() == u2.instruments.size(),
               "--monthly adds the month's last expiry to the nearest weekly");
+        // Expiry day (2026-10-06 is the weekly's): the straddle sellers sell the
+        // NEXT expiry (live/straddle.hpp), so it is streamed beside today's.
+        LiveUniverseOptions o6 = o;
+        o6.today = parse_day("2026-10-06");
+        const auto u6 = build_universe(rows, stocks, o6);
+        check(find(u6, "NIFTY26O0624000CE") != nullptr && find(u6, "NIFTY26OCT24000CE") != nullptr,
+              "on expiry day the expiring weekly and the next expiry are both streamed");
     }
     {
         // FYERS's F&O master adds the weeklies a stale Kite master lacks.

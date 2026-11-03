@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include <analytics/greeks.hpp>
 
 #include <algorithm>
@@ -87,7 +88,7 @@ struct FadePolicy {
     double strike_step = 0.0;      ///< from the instrument master, never a literal
     double lot_size = 0.0;         ///< from the spec store, never a literal
     int lots = 1;
-    double rate = 0.065;           ///< continuously compounded, for the forward and discounting
+    double rate = kInrRiskFreeRate; ///< continuously compounded, for the forward and discounting
     double slippage_pts = 0.5;     ///< premium points given up on each fill
     double min_premium = 0.05;     ///< a sale that would receive less is not made
 };

@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include <analytics/iv.hpp>
 #include <live/universe.hpp>
 
@@ -47,7 +48,7 @@ struct Minute {
 
 class AtmIvRecorder {
 public:
-    AtmIvRecorder(const std::vector<live::LiveInstrument>& universe, std::string underlying, double rate = 0.065)
+    AtmIvRecorder(const std::vector<live::LiveInstrument>& universe, std::string underlying, double rate = kInrRiskFreeRate)
         : underlying_(std::move(underlying)), rate_(rate) {
         for (const auto& in : universe) {
             if (in.underlying != underlying_) { continue; }

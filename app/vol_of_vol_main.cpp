@@ -1,5 +1,10 @@
 // app/vol_of_vol_main.cpp -- altair_vol_of_vol: sell vol-of-vol on real option closes.
 //
+// RESEARCH ONLY. Every variant BUYS options (the ATM straddle that cancels the
+// strangle's vega, or the whole mirror), and Smit's rule is that ALTAIR never
+// buys options. No live or paper model trades it and none may; this tool only
+// measures the premium, and every report it writes says so.
+//
 // strategies/vol_of_vol.hpp on the FYERS chains altair_fyers_chain saves
 // (app/fyers_chain.hpp; the NSE bhavcopy only with --bhavcopy): each week, short the 25-delta strangle of the
 // first monthly expiry at least 10 sessions out, long the ATM straddle lots
@@ -16,6 +21,7 @@
 //
 // Writes <out>/vol_of_vol/: trades_<instrument>_<variant>.csv, summary.csv.
 
+#include <analytics/inr_rate.hpp>
 #include <app/bhavcopy.hpp>
 #include <app/fyers_chain.hpp>
 #include <app/demo_costs.hpp>
@@ -42,7 +48,8 @@ namespace dc = altair::demo_costs;
 
 void usage(const char* exe) {
     std::printf(
-        "  Sell vol-of-vol: short the 25-delta strangle, long the ATM straddle, vega-neutral, delta hedged.\n\n"
+        "  Sell vol-of-vol: short the 25-delta strangle, long the ATM straddle, vega-neutral, delta hedged.\n"
+        "  RESEARCH ONLY: it buys options, which ALTAIR never does in a trading model.\n\n"
         "    %s [--fyers-chain DIR] [--bhavcopy] [--bhavcopy-dir DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
         "       [--strangle-lots N] [--hold N] [--slippage-pts P] [--rate R] [--unverified-costs]\n\n"
         "    --fyers-chain DIR     FYERS chains saved by altair_fyers_chain (default data/store/fyers_chain)\n"
@@ -87,7 +94,8 @@ int main(int argc, char** argv) {
     fs::path out = "data/verified", bhav_dir = "data/bhavcopy", chain_dir = "data/store/fyers_chain";
     std::string which = "both";
     bool use_bhavcopy = false;
-    double rate = 0.065, slip = 1.0, lots = 5, hold = 5;
+    std::printf("altair_vol_of_vol: RESEARCH ONLY -- every variant buys options, which no ALTAIR trading model may do.\n");
+    double rate = altair::kInrRiskFreeRate, slip = 1.0, lots = 5, hold = 5;
     bool unverified = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};

@@ -58,6 +58,7 @@
 // same inputs, same id.
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/iv.hpp>
 #include <analytics/vix.hpp>
@@ -366,7 +367,7 @@ public:
     /// (empty until there are that many) and over the session so far.
     struct VolViews { std::string vol, chain; std::size_t vol_rows = 0, chain_rows = 0; };
 
-    [[nodiscard]] VolViews vol_views(double rate = 0.065) const {
+    [[nodiscard]] VolViews vol_views(double rate = kInrRiskFreeRate) const {
         constexpr std::int64_t kExpirySec = 15 * 3600 + 30 * 60;   // options expire at the 15:30 close
         constexpr double kYearSec = 365.0 * 86'400.0;
         VolViews out;

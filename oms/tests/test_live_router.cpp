@@ -261,8 +261,8 @@ int main() {
         check(read.verdict == RouterArmVerdict::Armed && arm.strategy("arbitrage") && arm.strategy("arbitrage")->on
                   && arm.strategy("ohl") && !arm.strategy("ohl")->on,
               "the arm carries each strategy's switch");
-        check(arm.strategy("option_arb") != nullptr && !arm.strategy("option_arb")->on,
-              "a strategy with caps missing or past the ceilings is off, and the arm itself stands");
+        check(arm.strategy("option_arb") == nullptr,
+              "option arbitrage buys options: the arm never carries it, switched on or not");
         const RouterInstrument f = fut();
         const RouterBook book{0, 0, -120'050};
         const auto strat = [](OrderIntent in, const char* by) { in.by = by; return in; };
