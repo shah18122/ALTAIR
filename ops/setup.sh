@@ -49,6 +49,18 @@ while [ $# -gt 0 ]; do
 done
 
 step() { printf '\n== %s\n' "$*"; }
+# A fresh EC2 box runs unattended-upgrades for its first minutes and holds the
+# apt/dpkg locks: wait for them (up to 15 minutes) instead of failing.
+apt_get() {
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        [ "$waited" = 0 ] && echo "waiting for another apt/dpkg run to finish (unattended-upgrades on a new server)..."
+        waited=$((waited + 5))
+        [ "$waited" -ge 900 ] && { echo "apt/dpkg still locked after 15 minutes; run setup.sh again later" >&2; return 1; }
+        sleep 5
+    done
+    apt-get -o DPkg::Lock::Timeout=600 "$@"
+}
 as_user() { sudo -u "$user" -H env ALTAIR_QT_ROOT="$qt_root" "$@"; }
 
 [ "$(id -u)" = 0 ] || { echo "run it with sudo: sudo ops/setup.sh" >&2; exit 2; }
@@ -73,10 +85,10 @@ pkgs=(build-essential cmake ninja-build git curl python3 python3-venv rsync chro
 missing=()
 for p in "${pkgs[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
 if [ "${#missing[@]}" -gt 0 ]; then
-    apt-get update -q
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${missing[@]}"
+    apt_get update -q
+    DEBIAN_FRONTEND=noninteractive apt_get install -y -q "${missing[@]}"
 fi
-DEBIAN_FRONTEND=noninteractive apt-get install -y -q --only-upgrade "${pkgs[@]}" >/dev/null
+DEBIAN_FRONTEND=noninteractive apt_get install -y -q --only-upgrade "${pkgs[@]}" >/dev/null
 echo "packages: ${#pkgs[@]} present (${#missing[@]} newly installed)"
 
 step "2/9 Qt $qt_version"
@@ -163,8 +175,8 @@ if [ "$dcv" = 1 ]; then
     # A desktop for the DCV session, then DCV itself from Amazon's archive
     # (the archive name carries the Ubuntu version: 24.04 -> ubuntu2404).
     if ! dpkg -s ubuntu-desktop-minimal >/dev/null 2>&1; then
-        apt-get update -q
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -q ubuntu-desktop-minimal gnome-terminal
+        apt_get update -q
+        DEBIAN_FRONTEND=noninteractive apt_get install -y -q ubuntu-desktop-minimal gnome-terminal
     fi
     if ! dpkg -s nice-dcv-server >/dev/null 2>&1; then
         arch="$(dpkg --print-architecture)"
@@ -175,7 +187,7 @@ if [ "$dcv" = 1 ]; then
         gpg --import "$tmp/NICE-GPG-KEY" 2>/dev/null || true
         curl -fsSL -o "$tmp/$tgz" "https://d1uj6qtbmh3dt5.cloudfront.net/$tgz"
         tar -xzf "$tmp/$tgz" -C "$tmp"
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$tmp"/nice-dcv-*/nice-dcv-server_*.deb \
+        DEBIAN_FRONTEND=noninteractive apt_get install -y -q "$tmp"/nice-dcv-*/nice-dcv-server_*.deb \
             "$tmp"/nice-dcv-*/nice-dcv-web-viewer_*.deb "$tmp"/nice-dcv-*/nice-xdcv_*.deb
         rm -rf "$tmp"
     fi
