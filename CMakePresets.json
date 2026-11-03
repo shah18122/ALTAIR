@@ -86,8 +86,24 @@
       }
     },
     {
+      "name": "linux",
+      "displayName": "Linux server - Release, tests, Qt desktop from ALTAIR_QT_ROOT",
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ALTAIR_BUILD_TESTS": "ON",
+        "ALTAIR_BUILD_BENCH": "OFF",
+        "ALTAIR_QT_ROOT": "$env{ALTAIR_QT_ROOT}"
+      }
+    },
+    {
       "name": "macos-arm64",
-      "displayName": "macOS Apple Silicon — RelWithDebInfo, tests",
+      "displayName": "macOS Apple Silicon \u2014 RelWithDebInfo, tests",
       "inherits": "base",
       "condition": {
         "type": "equals",
@@ -133,6 +149,10 @@
       "name": "net",
       "configurePreset": "net",
       "jobs": 4
+    },
+    {
+      "name": "linux",
+      "configurePreset": "linux"
     },
     {
       "name": "macos-arm64",
@@ -213,6 +233,17 @@
         "exclude": {
           "label": "experiment"
         }
+      }
+    },
+    {
+      "name": "linux",
+      "configurePreset": "linux",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": false,
+        "timeout": 600
       }
     },
     {

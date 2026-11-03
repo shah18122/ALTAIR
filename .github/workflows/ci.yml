@@ -3,7 +3,9 @@
 #   linux (GCC 13 / libstdc++)   engine, broker helpers, all tests
 #   linux (Clang 18 / libc++)    the same with Apple's standard library, so a
 #                                macOS break shows up here in minutes
-#   windows (MSVC + Qt 6.8.3)    the primary platform: engine and the Qt desktop
+#   linux (GCC 13 + Qt 6.8.3)    the server platform: engine, helpers and the Qt
+#                                terminal (run under Amazon DCV)
+#   windows (MSVC + Qt 6.8.3)    engine and the Qt desktop on Windows
 #
 # Tests labelled `dataset` read dataset/ and the instrument masters. When they
 # are in the checkout CI runs them too; without them it runs `ctest -LE dataset`.
@@ -126,6 +128,46 @@ jobs:
             sel=(-LE 'dataset|experiment')
           fi
           ctest --test-dir build "${sel[@]}" -j 4 --timeout 1200 --output-on-failure
+
+  linux-desktop:
+    name: linux (GCC 13, Qt 6.8.3 desktop)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      QT_VERSION: "6.8.3"
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies and Qt
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ninja-build libboost-dev libssl-dev libtomlplusplus-dev \
+            libgl1-mesa-dev libegl1 libxkbcommon0 libxkbcommon-x11-0 libfontconfig1 libdbus-1-3
+          python3 -m pip install --break-system-packages aqtinstall
+          python3 -m aqt install-qt linux desktop "$QT_VERSION" linux_gcc_64 -O "$HOME/Qt"
+          echo "ALTAIR_QT_ROOT=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
+
+      - name: Configure (linux preset)
+        run: cmake --preset linux
+
+      - name: Build
+        run: |
+          set +e
+          cmake --build --preset linux -j 4 -- -k 0 > build.txt 2>&1
+          rc=$?
+          tail -40 build.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::compiler errors"
+            grep -n -A6 -E ' error: |^FAILED: ' build.txt | head -300
+            echo "::endgroup::"
+          fi
+          exit "$rc"
+
+      - name: Test
+        run: |
+          if [ -d dataset ]; then exclude='experiment'; else exclude='dataset|experiment'; fi
+          ctest --preset linux -LE "$exclude" -j 4 --output-on-failure
 
   windows:
     name: windows (MSVC, Qt 6.8.3 desktop)
