@@ -15,6 +15,7 @@ at 09:14 with a position open, or at 15:25 with a feed down.
 | [`go-live.md`](go-live.md) | P12-06 | Before the first rupee of real capital |
 | [`live-terminal.md`](live-terminal.md) | | Running the Terminal, the models engine and the LIVE switch |
 | [`demo-trading.md`](demo-trading.md) | | Running the paper strategies and reading their results |
+| [`fyers-auto-login.md`](fyers-auto-login.md) | | Setting up the daily FYERS login (TOTP + PIN, no browser) or fixing it |
 | [`recorder.md`](recorder.md) | | Recording every FYERS session unattended, the nightly store, snapshot, retrain and data push, and the activity log |
 | [`forecast-curriculum.md`](forecast-curriculum.md) | | Retraining the forecasters and checking for leaks |
 | [`data-audit.md`](data-audit.md) | | Checking `dataset/` against its sources |

@@ -36,10 +36,13 @@ powershell -ExecutionPolicy Bypass -File ops\fetch_fyers_history.ps1 -Go
 powershell -ExecutionPolicy Bypass -File ops\nightly.ps1 -Go
 ```
 
-**Every morning:** log in to FYERS once (Brokers page, or
-`altair_fyers_login`). The token lasts one day and needs the browser. Until
-you do, the log says `waiting for today's FYERS login` every 30 minutes, and
-the recorder starts by itself as soon as the feed comes up.
+**Every morning, nothing to do.** The `ALTAIR FYERS Login` task (08:30) logs
+in with TOTP + PIN and writes the day's token; the recorder runs the same
+login again while it waits for a session. One-time setup and the details are
+in [`fyers-auto-login.md`](fyers-auto-login.md). If the auto-login is not set
+up or FYERS refuses it, log in by hand (Brokers page, or `altair_fyers_login`);
+until a session exists the log says `waiting for today's FYERS login` every 30
+minutes, and the recorder starts by itself as soon as the feed comes up.
 
 Check the tasks: `Get-ScheduledTask 'ALTAIR*' | Get-ScheduledTaskInfo`.
 Remove them: `ops\install_tasks.ps1 -Remove -Go`.
