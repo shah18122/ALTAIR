@@ -1148,8 +1148,15 @@ if(ALTAIR_BUILD_TESTS)
         Qt6::Core Qt6::Gui Qt6::Network Qt6::Widgets)
     target_include_directories(altair_terminal_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    # The terminal test's root is a copy in the build tree: data/instruments.csv
+    # is the fixed 2026-09 contract fixture (the real one is rebuilt from
+    # today's FYERS masters and is not in git), config/ is the repo's own.
+    set(ALTAIR_TERMINAL_TEST_ROOT "${CMAKE_CURRENT_BINARY_DIR}/terminal_test_root")
+    configure_file(${CMAKE_SOURCE_DIR}/app/tests/fixtures/instruments_2026-09.csv
+                   ${ALTAIR_TERMINAL_TEST_ROOT}/data/instruments.csv COPYONLY)
+    file(COPY ${CMAKE_SOURCE_DIR}/config DESTINATION ${ALTAIR_TERMINAL_TEST_ROOT})
     target_compile_definitions(altair_terminal_test PRIVATE
-        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        ALTAIR_SOURCE_DIR="${ALTAIR_TERMINAL_TEST_ROOT}"
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
         ALTAIR_INTENT_FILE="${CMAKE_SOURCE_DIR}/data/order_intents.jsonl"
         ALTAIR_KILL_REQUEST_FILE="${CMAKE_SOURCE_DIR}/data/kill_request.json"
@@ -1157,8 +1164,8 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DEV_CREDENTIALS)
     set_target_properties(altair_terminal_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_terminal COMMAND altair_terminal_test)
-    # Check [5] prices the option chain from the instrument master and
-    # dataset/ (neither in git): CI runs `ctest -LE dataset`.
+    # Check [5] prices the option chain from the instrument master fixture and
+    # dataset/: without dataset/ CI runs `ctest -LE dataset`.
     set_tests_properties(desktop_terminal PROPERTIES LABELS dataset)
 
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)

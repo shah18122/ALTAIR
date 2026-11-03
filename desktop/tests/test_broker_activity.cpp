@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     auto* filter = panel.findChild<QLineEdit*>(QStringLiteral("activityFilter"));
     check(filter != nullptr, "activity filter is discoverable");
     if (filter != nullptr) {
-        filter->setText(QStringLiteral("FYERS"));
+        filter->setText(QStringLiteral("helper"));
         check(panel.visible_event_count() == 1,
               "filter keeps only matching activity rows");
     }
