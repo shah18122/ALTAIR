@@ -106,11 +106,11 @@ namespace altair::ui {
     // Altair.app/Contents/MacOS -> Contents/Helpers (packaged macOS)
     tried << QCoreApplication::applicationDirPath()
                  + QStringLiteral("/../Helpers/") + exe;
-    // build/<preset>/desktop -> build/net/app
+    // build/<preset>/desktop -> build/<preset>/app
     tried << QCoreApplication::applicationDirPath()
                  + QStringLiteral("/../../net/app/") + exe;
 #ifdef ALTAIR_SOURCE_DIR
-    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/linux/app/") + exe;
 #endif
     for (const QString& p : tried) {
         const QFileInfo fi(p);
@@ -300,8 +300,8 @@ private:
         if (exe_.isEmpty()) {
             outcome_->show_state(LoginOutcomeKind::Problem, QStringLiteral(
                 "<b>altair_kite_login is not in this build.</b> It needs the "
-                "<code>net</code> preset: run <code>ops/build.sh</code> in "
-                "PowerShell, then start the desktop from <code>build\\net\\desktop</code>."));
+                "network libraries (Boost, OpenSSL): run <code>sudo ops/setup.sh</code> (or <code>ops/build.sh</code>), then start "
+                "the desktop from <code>build/linux/desktop</code>."));
             say(QStringLiteral("\n· altair_kite_login was not found"));
             return;
         }
@@ -431,7 +431,7 @@ private:
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../../net/app/") + exe;
 #ifdef ALTAIR_SOURCE_DIR
-        tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+        tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/linux/app/") + exe;
 #endif
         QString found;
         for (const QString& c : tried) {

@@ -38,6 +38,7 @@
 #include "trade_log_tabs.hpp"
 #include "daily_findings_page.hpp"
 #include "work_log_page.hpp"
+#include "server_page.hpp"
 #include "command_palette.hpp"
 #include "saved_layouts.hpp"
 #include "chart/chart_widget.hpp"
@@ -1769,6 +1770,8 @@ private:
         // 42: order-book imbalance, as Smit's formulas define it, for any instrument
         // the feed streams, off the Terminal's own stream (desktop/obi_page.hpp).
         pages_->addWidget(new OrderBookImbalancePage(terminal_->stream(), source_root()));
+        // 43: the Linux server: scheduled jobs, latency tuning, Install or update (desktop/server_page.hpp).
+        pages_->addWidget(new ServerPage(source_root()));
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.

@@ -320,7 +320,7 @@ private:
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../../net/app/") + exe;
 #ifdef ALTAIR_SOURCE_DIR
-        tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+        tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/linux/app/") + exe;
 #endif
         QString found;
         for (const QString& c : tried) {
