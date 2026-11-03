@@ -18,9 +18,11 @@
 # The desktop starts its own feed only when nothing streams, so it simply
 # connects to this one when it opens.
 #
-# THE FYERS LOGIN IS STILL DAILY. A FYERS token lasts one day and is issued in
-# the browser: log in on the Brokers page (or run altair_fyers_login) once each
-# morning. Until then the activity log says "waiting for today's FYERS login".
+# THE FYERS LOGIN IS AUTOMATIC. A FYERS token lasts one day. The "ALTAIR FYERS
+# Login" task (08:30, ops\fyers_login.ps1) gets it with TOTP + PIN, and this
+# script runs the same login again whenever it is waiting for a session (it
+# does nothing when today's session already works). Until a session exists the
+# activity log says "waiting for today's FYERS login".
 #
 #   powershell -ExecutionPolicy Bypass -File ops\record_session.ps1            # dry run
 #   powershell -ExecutionPolicy Bypass -File ops\record_session.ps1 -Go
@@ -93,9 +95,10 @@ while ((Get-AltairIstNow) -lt $end -and -not $rec.HasExited) {
         $why = (Get-Content (Join-Path $logDir "price_service-$day.out.txt") -Tail 3 -ErrorAction SilentlyContinue) -join ' | '
         if ($why -match 'no live source today|no valid FYERS session|session') {
             if ($null -eq $waitingSince -or ((Get-AltairIstNow) - $waitingSince).TotalMinutes -ge 30) {
-                Write-AltairLog record WARN "waiting for today's FYERS login (Brokers page, or altair_fyers_login): $why"
+                Write-AltairLog record WARN "waiting for today's FYERS login (ops\fyers_login.ps1, Brokers page, or altair_fyers_login): $why"
                 $waitingSince = Get-AltairIstNow
             }
+            & "$PSScriptRoot\fyers_login.ps1" -Go | Out-Null
         } else {
             Write-AltairLog record WARN "the feed exited ($($feed.ExitCode)): $why"
         }

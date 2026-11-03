@@ -65,6 +65,14 @@ else()
 endif()
 
 if(ALTAIR_BUILD_TESTS)
+    # The FYERS TOTP auto-login (broker/tools/fyers_auto_login.py) against a
+    # simulated FYERS: no network, no credential.
+    find_package(Python3 3.9 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME fyers_auto_login_py
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_fyers_auto_login.py)
+    endif()
+
     add_executable(altair_fyers_webhook_test tests/test_fyers_webhook.cpp)
     target_link_libraries(altair_fyers_webhook_test PRIVATE altair_broker altair_flags)
     add_test(NAME fyers_webhook COMMAND altair_fyers_webhook_test)

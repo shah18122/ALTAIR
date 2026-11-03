@@ -1,5 +1,6 @@
 # ops/install_tasks.ps1 -- register ALTAIR's Windows scheduled tasks (or remove them).
 #
+#   ALTAIR FYERS Login Mon-Fri 08:30 ops\fyers_login.ps1 -Go       (today's FYERS token, TOTP + PIN, no browser)
 #   ALTAIR Recorder   Mon-Fri 08:50  ops\record_session.ps1 -Go   (records the session to 15:45)
 #   ALTAIR Nightly    Mon-Fri 20:00  ops\nightly.ps1 -Go          (store, snapshot, retrain, push)
 #   ALTAIR Chain Open  Mon-Fri 09:20 ops\chain_snapshot.ps1 -Go   (every NIFTY/BANKNIFTY strike, by REST)
@@ -24,6 +25,7 @@ param(
     [switch]$Go,
     [switch]$Remove,
     [switch]$WhetherLoggedOn,
+    [string]$LoginAt = '08:30',
     [string]$RecordAt = '08:50',
     [string]$NightlyAt = '20:00',
     [string]$ChainOpenAt = '09:20',
@@ -34,7 +36,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 . "$PSScriptRoot\altair_log.ps1"
-$names = @('ALTAIR Recorder', 'ALTAIR Nightly', 'ALTAIR Chain Open', 'ALTAIR Chain Close', 'ALTAIR FYERS Chain')
+$names = @('ALTAIR FYERS Login', 'ALTAIR Recorder', 'ALTAIR Nightly', 'ALTAIR Chain Open', 'ALTAIR Chain Close', 'ALTAIR FYERS Chain')
 
 if ($Remove) {
     foreach ($n in $names) {
@@ -49,6 +51,8 @@ if ($Remove) {
 
 $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $tasks = @(
+    @{ name = 'ALTAIR FYERS Login'; at = $LoginAt; script = 'fyers_login.ps1'; hours = 1
+       what = 'Logs in to FYERS with TOTP + PIN (no browser) and writes data\fyers_session.json for the day. Credentials come from Windows Credential Manager.' },
     @{ name = 'ALTAIR Recorder'; at = $RecordAt; script = 'record_session.ps1'; hours = 8
        what = 'Records the whole FYERS session (ticks, quotes, 5/50-level books) to data\store\tapes, whether or not ALTAIR is open.' },
     @{ name = 'ALTAIR Nightly'; at = $NightlyAt; script = 'nightly.ps1'; hours = 10
