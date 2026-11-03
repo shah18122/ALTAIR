@@ -78,7 +78,7 @@ The recorder stops by itself below 2 GB free.
 
 ## IV, RV and VIX, every minute
 
-The nightly decode turns the day's tapes into two more files in
+The nightly decode turns the day's tapes into three more files in
 `data\store\ticks\<day>\`, each reading stamped at the END of its minute
 (when it was known):
 
@@ -86,6 +86,7 @@ The nightly decode turns the day's tapes into two more files in
 |---|---|---|
 | `vol_1m.csv` | index × expiry × minute | spot, India VIX (as streamed), parity forward, ATM strike, ATM IV, the expiry's model-free vol by the India VIX strip (`term_vol`), the chain's own 30-day VIX (`chain_vix30`), RV over the last 15 and 60 minutes and the session so far |
 | `chain_iv_1m.csv` | option × minute | price (mid of the best bid/ask, else last trade), Black-76 IV against that expiry's forward, delta, vega per vol point, OI |
+| `depth_1m.csv` | instrument with a book × minute | five-level depth sums (`models/depth_features.hpp`): books seen, touch OBI, 5-level OBI plain and weighted, spread in bps, last microprice offset from the mid in bps, 5-level OFI and its absolute sum. The near futures' rows are also written to `data\store\depth_bars\fut\<inst>\1m\<day>.csv`, the Forecast page's "5-level depth" input |
 
 IV, `term_vol` and RV are annualised fractions (0.15 is 15 vol); the VIX
 columns are index points. RV is `sqrt(mean r² × 375 × 252)` from the index's

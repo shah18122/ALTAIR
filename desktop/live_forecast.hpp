@@ -151,7 +151,7 @@ struct FetchResult {
 
 [[nodiscard]] inline FetchResult
 fetch_recent(const QString& symbol_dir, std::uint32_t token,
-             const QString& interval_dir, int days) {
+             const QString& interval_dir, int days, bool fyers_only = false) {
     FetchResult out;
 #if defined(_WIN32)
     const QString fyers_name = QStringLiteral("altair_fyers_history.exe");
@@ -168,6 +168,10 @@ fetch_recent(const QString& symbol_dir, std::uint32_t token,
     const QString fyers_session = QCoreApplication::applicationDirPath()
         + QStringLiteral("/../data/fyers_session.json");
 #endif
+    if (fyers_only && fyers_exe.isEmpty()) {
+        out.error = QStringLiteral("altair_fyers_history is not in this build. Build the net preset.");
+        return out;
+    }
     if (fyers_exe.isEmpty() && kite_exe.isEmpty()) {
         out.error = QStringLiteral(
             "No FYERS or Kite history helper is in this build. Build the net preset.");
@@ -216,7 +220,9 @@ fetch_recent(const QString& symbol_dir, std::uint32_t token,
              QStringLiteral("--force"), QStringLiteral("--go")},
             QStringLiteral("FYERS"));
     }
-    if (out.provider.isEmpty() && !kite_exe.isEmpty()) {
+    // fyers_only: the caller trains on FYERS data alone, so a failed FYERS
+    // fetch is reported as such and Kite is never asked.
+    if (out.provider.isEmpty() && !kite_exe.isEmpty() && !fyers_only) {
         const QString kite_error = run(kite_exe,
             {QStringLiteral("--token"), QString::number(token),
              QStringLiteral("--interval"), QString::fromLatin1(kite_interval_for(interval_dir)),
@@ -232,7 +238,8 @@ fetch_recent(const QString& symbol_dir, std::uint32_t token,
     }
     if (out.provider.isEmpty()) {
         out.error = fyers_error.isEmpty()
-            ? QStringLiteral("FYERS has no saved session and Kite fetch is unavailable")
+            ? (fyers_only ? QStringLiteral("FYERS has no saved session today (log in on Brokers)")
+                          : QStringLiteral("FYERS has no saved session and Kite fetch is unavailable"))
             : fyers_error;
         return out;
     }

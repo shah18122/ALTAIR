@@ -162,6 +162,15 @@ void test_decode(const fs::path& root) {
     const std::string books = slurp(root / "ticks" / "books.csv");
     check(books.find(",NSE:NIFTY26OCTFUT,50,25110:75:1;") != std::string::npos && books.find("25117.45:3750:50,fyers_live") != std::string::npos,
           "books.csv holds all 50 levels a side");
+    dec.finish_depth();
+    const std::string depth = dec.depth_csv();
+    check(depth.rfind("time_end,fyers,books,", 0) == 0
+              && depth.find("\n2026-10-26T09:16:00+05:30,NSE:NIFTY26OCTFUT,1,0,0,0,") != std::string::npos,
+          "depth_1m.csv: the book's minute stamped at its END, five levels read, equal sizes are balanced");
+    const auto depth_series = dec.depth_series_csv();
+    check(depth_series.size() == 1 && depth_series.contains("fut/nifty"),
+          "only the near future's depth goes to depth_bars/ (an index has no book)");
+    check(dec.stats().depth_minutes == 1 && dec.stats().depth_out_of_order == 0, "one depth minute, none refused");
     check(slurp(root / "ticks" / "trades.csv").find("2026-10-26T09:15:01.000+05:30,NSE:NIFTY26OCTFUT,25110,75,1075") != std::string::npos,
           "trades.csv stamps exchange time in IST");
 }

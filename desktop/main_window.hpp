@@ -1452,8 +1452,10 @@ private:
         // freeze would arrive late enough to read as a different bug.
         // Fit off the UI thread. The retained terminal PriceClient provides
         // read-only trade updates; each admitted trade runs cached inference.
+        // The repository root, not dataset/: the page trains on FYERS candles
+        // (data/store/fyers/) and the recorder's depth (data/store/depth_bars/).
         pages_->addWidget(new StreamForecastPage(
-            terminal_->stream(), QStringLiteral(ALTAIR_DATASET_DIR), this));
+            terminal_->stream(), QStringLiteral(ALTAIR_SOURCE_DIR), this));
 
 
         // P21-03. Momentum and mean reversion. The button label says what
