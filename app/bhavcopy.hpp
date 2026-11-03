@@ -21,7 +21,7 @@
 //
 // The files are broker-independent exchange data, but they are bulky and
 // fetched per user: they live in data/bhavcopy/ (git-ignored). Fetch them
-// with ops/fetch_bhavcopy.ps1.
+// with an NSE bhavcopy download (no longer shipped).
 
 #pragma once
 

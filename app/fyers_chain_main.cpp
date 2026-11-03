@@ -14,7 +14,7 @@
 //
 // Read-only: market data only, no orders. Dry run by default. A day already
 // saved is kept unless --force. Exit 3 means the FYERS login has expired
-// (ops/fyers_chain.ps1 logs it and skips); exit 1 means nothing was saved.
+// (ops/linux/fyers_chain.py logs it and skips); exit 1 means nothing was saved.
 #include <app/dataset_merge.hpp>
 #include <app/fyers_chain.hpp>
 #include <app/fyers_env_session.hpp>

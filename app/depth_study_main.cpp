@@ -6,7 +6,7 @@
 //
 // Input: depth recorded by
 //   altair_fyers_ticker --symbols ... --depth --jsonl data\ticks\depth-<date>.jsonl --stamp --seconds 22800 --go
-// (ops/record_depth.ps1 does exactly that for a session). Recordings are
+// (ops/linux/fetch.py depth does exactly that for a session). Recordings are
 // broker data: data/ticks/ is git-ignored.
 //
 // For each symbol and horizon: the contemporaneous fit (the paper's), then the
@@ -42,7 +42,7 @@ void usage(const char* exe) {
         "    --horizons S    seconds ahead to predict (default 1,5,30)\n"
         "    --lookback S    seconds of order flow behind each prediction (default 5)\n"
         "    --step-ms N     grid step (default 1000)\n\n"
-        "  Record first: ops\\record_depth.ps1 (altair_fyers_ticker --depth --jsonl ... --stamp).\n", exe);
+        "  Record first: ops/linux/fetch.py depth (altair_fyers_ticker --depth --jsonl ... --stamp).\n", exe);
 }
 
 std::string fixed(double v, int d) {
@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
         files.push_back(in);
     }
     if (files.empty()) {
-        std::printf("  no .jsonl recordings under %s\n  record a session first: powershell -ExecutionPolicy Bypass -File ops\\record_depth.ps1 -Go\n",
+        std::printf("  no .jsonl recordings under %s\n  record a session first: ops/linux/fetch.py depth --go\n",
                     in.string().c_str());
         return 1;
     }

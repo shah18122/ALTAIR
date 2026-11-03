@@ -10,7 +10,7 @@
 // THREE SOURCES OF OPTION PRICES, NAMED ON EVERY OUTPUT:
 //   fyers      (default) FYERS chain closes ALTAIR saved itself
 //              (app/fyers_chain.hpp; altair_fyers_chain saves them daily into
-//              data/store/fyers_chain, ops/chain_snapshot.ps1's 15:27 snapshot
+//              data/store/fyers_chain, ops/linux/chain_snapshot.py's 15:27 snapshot
 //              fills a day with none): real straddles and futures, as many days
 //              as have been recorded -- FYERS serves no expired contracts.
 //   synthetic  Black-76 at INDIA VIX (BANKNIFTY: VIX x the 20-day realised-vol

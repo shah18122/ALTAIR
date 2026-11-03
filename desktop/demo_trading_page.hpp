@@ -282,11 +282,7 @@ private:
 }
 
 [[nodiscard]] inline QString find_helper(const QString& name) {
-#if defined(_WIN32)
-    const QString exe = name + QStringLiteral(".exe");
-#else
     const QString exe = name;
-#endif
     const QString app = QCoreApplication::applicationDirPath();
     QStringList tried{app + QStringLiteral("/") + exe, app + QStringLiteral("/../app/") + exe,
                       app + QStringLiteral("/../Helpers/") + exe, app + QStringLiteral("/../../net/app/") + exe};
@@ -300,37 +296,18 @@ private:
     return {};
 }
 
-/// One step of a chained run (the "Refresh daily call" and bhavcopy buttons).
+/// One step of a chained run (the "Refresh daily call" button).
 struct RunStep {
     QString label;          ///< what the status line names
     QString helper;         ///< a research CLI found by find_helper; empty when `program` is set
-    QString program;        ///< a system program (PowerShell), run as given
+    QString program;        ///< a system program, run as given
     QStringList args;
     int timeout_ms = 30 * 60 * 1000;
     bool required = true;   ///< a failure stops the chain; otherwise it is noted and the chain goes on
 };
 
-/// PowerShell, for ops/fetch_bhavcopy.ps1: Windows' own, else pwsh if installed.
-[[nodiscard]] inline QString powershell_program() {
-#if defined(_WIN32)
-    return QStringLiteral("powershell");
-#else
-    return QStandardPaths::findExecutable(QStringLiteral("pwsh"));
-#endif
-}
-
-/// ops/fetch_bhavcopy.ps1 from `from` to today. It keeps every day already
-/// under data/bhavcopy/, so a rerun fetches only what is missing.
-[[nodiscard]] inline RunStep bhavcopy_step(const QString& root, const QString& from, int timeout_ms) {
-    return {QStringLiteral("NSE F&O bhavcopy from %1").arg(from), {}, powershell_program(),
-            {QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
-             QStringLiteral("-File"), root + QStringLiteral("/ops/fetch_bhavcopy.ps1"), QStringLiteral("-Go"),
-             QStringLiteral("-From"), from},
-            timeout_ms, false};
-}
-
 /// "Refresh daily call", after the close: bring dataset/ current from the
-/// linked broker, top up the bhavcopy, rerun the curriculum's daily and hourly
+/// linked broker, rerun the curriculum's daily and hourly
 /// tracks (the logs altair_trader reads; two passes, because one full run
 /// prints past HelperProcess's output limit), then altair_trader -- whose
 /// last row of days.csv is the call the terminal's Desk trader acts on -- and
@@ -343,8 +320,6 @@ struct RunStep {
         plan.push_back({QStringLiteral("dataset/ from FYERS"), QStringLiteral("altair_dataset_update"), {},
                         {QStringLiteral("--go")}, 20 * 60 * 1000, false});
     }
-    if (!powershell_program().isEmpty())
-        plan.push_back(bhavcopy_step(root, today.addDays(-14).toString(Qt::ISODate), 20 * 60 * 1000));
     plan.push_back({QStringLiteral("curriculum, daily tracks"), QStringLiteral("altair_forecast_curriculum"), {},
                     {QStringLiteral("--only"), QStringLiteral("daily")}, 90 * 60 * 1000, true});
     plan.push_back({QStringLiteral("curriculum, hourly tracks"), QStringLiteral("altair_forecast_curriculum"), {},
@@ -423,13 +398,9 @@ public:
         daily_ = new QPushButton(QStringLiteral("Refresh daily call"), this);
         daily_->setObjectName(QStringLiteral("refreshDailyCall"));
         daily_->setToolTip(QStringLiteral(
-            "After the close: update dataset/ from FYERS, top up the NSE bhavcopy, "
+            "After the close: update dataset/ from FYERS, "
             "rerun the forecast curriculum (daily and hourly tracks), altair_trader and the vol premium on NSE closes. "
             "The terminal's Desk trader then reads tomorrow's call. Paper only; it takes a while."));
-        bhav_ = new QPushButton(QStringLiteral("Fetch NSE bhavcopy"), this);
-        bhav_->setToolTip(QStringLiteral(
-            "ops/fetch_bhavcopy.ps1 from 2015: NSE's end-of-day F&O files into data/bhavcopy/. Days already "
-            "there are kept, so after the first time it only fetches what is new."));
         status_ = new QLabel(this);
         status_->setStyleSheet(QStringLiteral("color:%1;").arg(QString::fromLatin1(theme_token::kTextMuted)));
         status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -438,7 +409,6 @@ public:
         controls->addWidget(unverified_);
         controls->addWidget(reread);
         controls->addWidget(daily_);
-        controls->addWidget(bhav_);
         controls->addWidget(status_, 1);
         v->addLayout(controls);
 
@@ -540,14 +510,6 @@ public:
             const QDate today = QDateTime::currentDateTimeUtc().addSecs(5 * 3600 + 30 * 60).date();
             run_chain(demo_detail::daily_call_plan(root_dir_, unverified_->isChecked(), today),
                       QStringLiteral("daily call"));
-        });
-        connect(bhav_, &QPushButton::clicked, this, [this] {
-            if (demo_detail::powershell_program().isEmpty()) {
-                status_->setText(QStringLiteral("no PowerShell here: run ops/fetch_bhavcopy.ps1 -Go by hand"));
-                return;
-            }
-            run_chain({demo_detail::bhavcopy_step(root_dir_, QStringLiteral("2015-01-01"), 4 * 60 * 60 * 1000)},
-                      QStringLiteral("bhavcopy"));
         });
         connect(rule_, &QComboBox::currentIndexChanged, this, [this](int) { load_rule(); });
         connect(instrument_, &QComboBox::currentIndexChanged, this, [this](int) { refilter(); });
@@ -961,7 +923,6 @@ private:
     void set_running(bool on) {
         run_->setEnabled(!on);
         daily_->setEnabled(!on);
-        bhav_->setEnabled(!on);
     }
 
     /// Run `plan` one step after another on helper_. A required step that
@@ -1028,7 +989,6 @@ private:
     QString chain_title_;
     QStringList chain_notes_;
     QPushButton* daily_{};
-    QPushButton* bhav_{};
     QLabel* banner_{};
     QLabel* status_{};
     QLabel* totals_{};

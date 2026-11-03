@@ -1,6 +1,6 @@
 // app/training_store.hpp -- recorded FYERS sessions and dataset/ as ONE training input.
 //
-// Two jobs, both run nightly by ops/nightly.ps1 through altair_store:
+// Two jobs, both run nightly by ops/linux/nightly.py through altair_store:
 //
 // 1. DECODE a day's session tapes (altair_feed_recorder, live/tape.hpp) into
 //    canonical files. The tape stays the lossless record; these are views:

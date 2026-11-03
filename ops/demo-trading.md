@@ -13,12 +13,12 @@ desktop's **Strategies → Demo Trading** page runs them and shows the results.
 |---|---|---|---|
 | Band models selling options, 1 lot | `strategies/band_option_fade.hpp` | `altair_band_option_demo` | `data/verified/band_option_demo/{trades_<rule>,summary,meta}.csv` |
 | Pairs hedged with futures | `strategies/pairs_futures.hpp` | `altair_pairs_futures` | `data/verified/pairs_futures/{trades,windows,summary,ratio}.csv` |
-| Stock legs for the pairs | `ops/fetch_pairs.ps1` | `altair_fyers_history` | `data/pairs/<name>/1d/fyers.csv` (git-ignored: broker data) |
+| Stock legs for the pairs | `ops/linux/fetch.py pairs` | `altair_fyers_history` | `data/pairs/<name>/1d/fyers.csv` (git-ignored: broker data) |
 | Volatility premium, delta hedged | `strategies/vol_premium.hpp`, `analytics/har_rv.hpp` | `altair_vol_premium` | `data/verified/vol_premium/{trades_<variant>,summary,signals,forecast_eval,meta}.csv` |
-| Real option prices | `app/bhavcopy.hpp` | `ops/fetch_bhavcopy.ps1` | `data/bhavcopy/<YYYY>/*.csv` (git-ignored) |
+| Real option prices | `app/bhavcopy.hpp` | `(bhavcopy fetch removed: FYERS data only)` | `data/bhavcopy/<YYYY>/*.csv` (git-ignored) |
 | Cross-sectional stat-arb | `strategies/residual_reversion.hpp` | `altair_resid_reversion` | `data/verified/resid_reversion/{trades,daily}_<variant>.csv`, `summary.csv`, `meta.csv` |
-| Stock universe | `config/universe_nifty50.csv` | `ops/fetch_universe.ps1` | `data/pairs/<symbol>/1d/fyers.csv` (git-ignored, shared with the pairs) |
-| Order-book study | `book/depth_study.hpp` | `altair_depth_study` (record with `ops/record_depth.ps1`) | `data/verified/depth_study/summary.csv`; recordings in `data/ticks/` (git-ignored) |
+| Stock universe | `config/universe_nifty50.csv` | `ops/linux/fetch.py universe` | `data/pairs/<symbol>/1d/fyers.csv` (git-ignored, shared with the pairs) |
+| Order-book study | `book/depth_study.hpp` | `altair_depth_study` (record with `ops/linux/fetch.py depth`) | `data/verified/depth_study/summary.csv`; recordings in `data/ticks/` (git-ignored) |
 | One model over every model's output | `models/meta_trader.hpp` | `altair_trader` (reads the curriculum's `data/verified/forecast_log/`) | `data/verified/altair_trader/{trades,days,weights}.csv`, `summary.txt` |
 
 Every CLI here needs tomlplusplus, which provides the charges schedule.
@@ -34,7 +34,7 @@ Two buttons beside **Run** chain the CLIs above, one after another
   1. `dataset/` brought current, merged, from FYERS:
      `altair_dataset_update --go` when `data/fyers_session.json` exists; no
      session means the stored bars are used as they are;
-  2. the last two weeks of NSE bhavcopy (`ops/fetch_bhavcopy.ps1 -Go -From ...`);
+  2. the last two weeks of NSE bhavcopy (`(bhavcopy fetch removed: FYERS data only) --go -From ...`);
   3. `altair_forecast_curriculum --only daily`, then `--only hourly`;
   4. `altair_trader` (tick **Price UNVERIFIED expenses** until
      `config/charges.toml` is verified, or it refuses to decide);
@@ -43,7 +43,7 @@ Two buttons beside **Run** chain the CLIs above, one after another
   chain goes on. 3 and 4 are required. The last NIFTY row of
   `altair_trader/days.csv` is then the call the Terminal's **Desk trader**
   (ops/live-terminal.md) acts on the next session, on paper.
-- **Fetch NSE bhavcopy** runs `ops/fetch_bhavcopy.ps1 -Go -From 2015-01-01`.
+- **Fetch NSE bhavcopy** runs `(bhavcopy fetch removed: FYERS data only) --go -From 2015-01-01`.
   Days already in `data/bhavcopy/` are kept, so only the first run is long.
 
 The Run selector also has **Vol premium on NSE closes (bhavcopy)**: the same
@@ -173,11 +173,11 @@ selling, not intraday decay. Checking the clock needs intraday option
 candles. FYERS serves these for contracts that are still listed, so a few
 months of current-month strikes would calibrate it.
 
-```powershell
-build\net\app\altair_band_option_demo.exe                                   # all rules, variance clock, gross only
-build\net\app\altair_band_option_demo.exe --unverified-costs                # + expenses, stamped
-build\net\app\altair_band_option_demo.exe --clock calendar --unverified-costs
-build\net\app\altair_band_option_demo.exe --rules strangle,strangle-stop2x --clock trading
+```bash
+build/linux/app/altair_band_option_demo                                   # all rules, variance clock, gross only
+build/linux/app/altair_band_option_demo --unverified-costs                # + expenses, stamped
+build/linux/app/altair_band_option_demo --clock calendar --unverified-costs
+build/linux/app/altair_band_option_demo --rules strangle,strangle-stop2x --clock trading
 ```
 
 Output in `data/verified/band_option_demo/`:
@@ -252,11 +252,10 @@ put skew. Synthetic pricing therefore overstates the premium a straddle
 seller collects, possibly by most of the 2.4 points. The real test is the
 same engine on NSE's own closes:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File ops\fetch_bhavcopy.ps1 -From 2015-01-01           # dry run: lists the files
-powershell -ExecutionPolicy Bypass -File ops\fetch_bhavcopy.ps1 -From 2015-01-01 -Go       # fetch (paced; ~2,900 days)
-build\net\app\altair_vol_premium.exe --source bhavcopy --unverified-costs `
-    --vix-log data\verified\forecast_log\india_vix_daily.csv
+```bash
+# bhavcopy files are no longer fetched (FYERS data only); this reads ones already on disk
+build/linux/app/altair_vol_premium --source bhavcopy --unverified-costs \
+    --vix-log data/verified/forecast_log/india_vix_daily.csv
 ```
 
 `app/bhavcopy.hpp` reads both NSE formats: the legacy `fo…bhav.csv` through
@@ -364,10 +363,10 @@ the result. Historical membership is not transcribed.
 
 **Real results need the FYERS data**, which this environment cannot reach:
 
-```powershell
-.\build\net\app\altair_fyers_login.exe
-powershell -ExecutionPolicy Bypass -File ops\fetch_universe.ps1 -Go     # 50 stocks, daily, from 2015
-build\net\app\altair_resid_reversion.exe --unverified-costs
+```bash
+build/linux/app/altair_fyers_login
+python3 ops/linux/fetch.py universe --go     # 50 stocks, daily, from 2015
+build/linux/app/altair_resid_reversion --unverified-costs
 ```
 
 ## Order-book research (the HFT question)
@@ -398,10 +397,10 @@ market where it doesn't scores R² 0.002, with the sign right 50 % of the time.
 `altair_fyers_ticker` already subscribes to 5-level depth. `--stamp` (new)
 adds the receive time that depth messages lack:
 
-```powershell
-.\build\net\app\altair_fyers_login.exe
-powershell -ExecutionPolicy Bypass -File ops\record_depth.ps1 -Go     # before 09:15; listens to 15:30
-build\net\app\altair_depth_study.exe --in data\ticks                # after a week of sessions
+```bash
+build/linux/app/altair_fyers_login
+python3 ops/linux/fetch.py depth --go     # before 09:15; listens to 15:30
+build/linux/app/altair_depth_study --in data/ticks                # after a week of sessions
 ```
 
 **What to expect, honestly.**
@@ -448,11 +447,11 @@ Pairs are listed in `config/pairs.csv`:
 
 The stock legs need FYERS data:
 
-```powershell
-.\build\net\app\altair_fyers_login.exe
-powershell -ExecutionPolicy Bypass -File ops\fetch_pairs.ps1          # dry run: prints the requests
-powershell -ExecutionPolicy Bypass -File ops\fetch_pairs.ps1 -Go      # fetch daily candles from 2015
-build\net\app\altair_pairs_futures.exe --unverified-costs
+```bash
+build/linux/app/altair_fyers_login
+python3 ops/linux/fetch.py pairs          # dry run: prints the requests
+python3 ops/linux/fetch.py pairs --go      # fetch daily candles from 2015
+build/linux/app/altair_pairs_futures --unverified-costs
 ```
 
 **NIFTY-BANKNIFTY result** (2000-2026):

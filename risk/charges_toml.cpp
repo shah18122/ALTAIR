@@ -371,12 +371,7 @@ load_charges(const char* text, std::size_t len,
 std::expected<ChargesLoadReport, ChargesError>
 load_charges_file(const char* path,
                   std::vector<ChargeSchedule>& out) noexcept {
-    #ifdef _MSC_VER
-    std::FILE* f = nullptr;
-    if (::fopen_s(&f, path, "rb") != 0) { f = nullptr; }
-#else
     std::FILE* f = std::fopen(path, "rb");
-#endif
     if (f == nullptr) {
         return std::unexpected(ChargesError::FileNotFound);
     }

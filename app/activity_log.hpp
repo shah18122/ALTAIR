@@ -12,7 +12,7 @@
 //
 // SEVERAL WRITERS, ONE FILE. The C++ binaries and the PowerShell scripts both
 // write it. On Windows the file is opened for append with writers denied
-// (_SH_DENYWR), and ops/altair_log.ps1 opens it with FileShare.Read -- the same
+// (_SH_DENYWR), and ops/linux/altair_ops.py appends whole lines too -- the same
 // rule from both sides, so two writers wait for each other instead of
 // interleaving. On POSIX a single O_APPEND write of one line is atomic.
 // A writer that cannot get the file in about two seconds drops the line and
@@ -33,15 +33,8 @@
 #include <string_view>
 #include <thread>
 
-#if defined(_WIN32)
-#  include <fcntl.h>
-#  include <io.h>
-#  include <share.h>
-#  include <sys/stat.h>
-#else
 #  include <fcntl.h>
 #  include <unistd.h>
-#endif
 
 namespace altair::activity {
 
@@ -127,25 +120,10 @@ inline bool write(const std::filesystem::path& root, std::string_view component,
     line += ' ';
     line += redact(message);
     line += '\n';
-#if defined(_WIN32)
-    int fd = -1;
-    for (int i = 0; i < 80 && fd < 0; ++i) {
-        const errno_t rc = _wsopen_s(&fd, file.c_str(), _O_CREAT | _O_WRONLY | _O_APPEND | _O_BINARY,
-                                     _SH_DENYWR, _S_IREAD | _S_IWRITE);
-        if (rc == 0 && fd >= 0) break;
-        fd = -1;
-        if (rc != EACCES) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    }
-    if (fd < 0) { std::printf("activity log busy; line dropped: %s", line.c_str()); return false; }
-    const bool ok = _write(fd, line.data(), static_cast<unsigned>(line.size())) == static_cast<int>(line.size());
-    (void)_close(fd);
-#else
     const int fd = ::open(file.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
     if (fd < 0) { std::printf("activity log unavailable; line dropped: %s", line.c_str()); return false; }
     const bool ok = ::write(fd, line.data(), line.size()) == static_cast<ssize_t>(line.size());
     (void)::close(fd);
-#endif
     return ok;
 }
 

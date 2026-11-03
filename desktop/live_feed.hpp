@@ -116,9 +116,6 @@ public:
 public Q_SLOTS:
     void listen() {
         QString exe = QStringLiteral("altair_fyers_ticker");
-#if defined(_WIN32)
-        exe += QStringLiteral(".exe");
-#endif
         QStringList tried;
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../app/") + exe;
@@ -139,7 +136,7 @@ public Q_SLOTS:
         if (found.isEmpty()) {
             status_->setText(QStringLiteral(
                 "%1 is not in this build. It needs the `net` "
-                "preset: build.bat net").arg(exe));
+                "preset: ops/build.sh").arg(exe));
             return;
         }
 

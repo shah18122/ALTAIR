@@ -47,23 +47,6 @@
 //     leaving them defined produces a wall of unrelated errors deep in Beast.
 //
 // Three separate collisions, and not one of their error messages points here.
-#if defined(_WIN32)
-#  ifndef WIN32_LEAN_AND_MEAN
-#    define WIN32_LEAN_AND_MEAN
-#  endif
-#  ifndef NOMINMAX
-#    define NOMINMAX
-#  endif
-#  include <winsock2.h>
-#  include <windows.h>
-#  include <wincrypt.h>
-#  undef X509_NAME
-#  undef X509_EXTENSIONS
-#  undef PKCS7_ISSUER_AND_SERIAL
-#  undef PKCS7_SIGNER_INFO
-#  undef OCSP_REQUEST
-#  undef OCSP_RESPONSE
-#endif
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/io_context.hpp>
@@ -122,32 +105,9 @@ namespace detail {
 /// Returns how many roots were added. Zero means the store could not be read,
 /// which the caller treats as fatal rather than continuing unverified.
 [[nodiscard]] inline int load_platform_roots(::SSL_CTX* ssl_ctx) noexcept {
-#if defined(_WIN32)
-    HCERTSTORE store = ::CertOpenSystemStoreA(0, "ROOT");
-    if (store == nullptr) { return 0; }
-    ::X509_STORE* x_store = ::SSL_CTX_get_cert_store(ssl_ctx);
-    if (x_store == nullptr) { ::CertCloseStore(store, 0); return 0; }
-
-    int added = 0;
-    PCCERT_CONTEXT ctx = nullptr;
-    while ((ctx = ::CertEnumCertificatesInStore(store, ctx)) != nullptr) {
-        const unsigned char* p = ctx->pbCertEncoded;
-        ::X509* x = ::d2i_X509(nullptr, &p,
-                               static_cast<long>(ctx->cbCertEncoded));
-        if (x == nullptr) { continue; }
-        // A duplicate is not an error: the store legitimately carries the
-        // same root more than once, and treating that as a failure would
-        // reject a healthy machine.
-        if (::X509_STORE_add_cert(x_store, x) == 1) { ++added; }
-        ::X509_free(x);
-    }
-    ::CertCloseStore(store, 0);
-    return added;
-#else
     // Everywhere else the compiled-in paths are correct.
     (void)ssl_ctx;
     return 1;
-#endif
 }
 
 } // namespace detail

@@ -1,0 +1,18 @@
+[Unit]
+Description=ALTAIR: store, snapshot, leak-checked retrain, push
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=@USER@
+Group=@USER@
+WorkingDirectory=@ROOT@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/altair/altair.env
+ExecStart=/usr/bin/python3 @ROOT@/ops/linux/nightly.py --go
+TimeoutStopSec=60
+RuntimeMaxSec=10h
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

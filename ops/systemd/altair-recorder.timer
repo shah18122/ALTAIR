@@ -1,0 +1,10 @@
+[Unit]
+Description=ALTAIR: start the session recorder
+
+[Timer]
+OnCalendar=Mon..Fri 08:50 Asia/Kolkata
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

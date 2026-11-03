@@ -33,15 +33,7 @@ option(ALTAIR_NATIVE_ARCH      "Compile for the host CPU"    ON)
 # CMAKE_PREFIX_PATH, desktop/ skips itself and the engine still builds. The
 # default is where aqtinstall put it on this box; it is off C: because C: had
 # 7.8 GB free against a 230 GB disk.
-if(WIN32)
-    # D: on the first box; C: is the usual aqtinstall / Qt installer place.
-    set(_altair_qt_default "D:/Qt/6.8.3/msvc2022_64")
-    if(NOT EXISTS "${_altair_qt_default}" AND EXISTS "C:/Qt/6.8.3/msvc2022_64")
-        set(_altair_qt_default "C:/Qt/6.8.3/msvc2022_64")
-    endif()
-else()
-    set(_altair_qt_default "")
-endif()
+set(_altair_qt_default "")
 set(ALTAIR_QT_ROOT "${_altair_qt_default}" CACHE PATH "Qt 6 install prefix")
 unset(_altair_qt_default)
 if(EXISTS "${ALTAIR_QT_ROOT}")
@@ -54,28 +46,16 @@ option(ALTAIR_STRICT_INVARIANTS "Check conservation laws every tick" ON)
 # ─────────────────────────────────────────────────────────────────────────────
 add_library(altair_flags INTERFACE)
 
-if(MSVC)
-    target_compile_options(altair_flags INTERFACE
-        /W4 /permissive- /Zc:__cplusplus /Zc:preprocessor /EHsc /utf-8
-        /bigobj /wd4324           # 4324: structure padded due to alignas — intentional
-        $<$<CONFIG:RelWithDebInfo>:/O2 /Oi /Ot /GS- /Zi>
-        $<$<CONFIG:Release>:/O2 /Oi /Ot /GS->
-    )
-    if(ALTAIR_NATIVE_ARCH)
-        target_compile_options(altair_flags INTERFACE /arch:AVX2)
-    endif()
-else()
-    target_compile_options(altair_flags INTERFACE
-        -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
-        -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused
-        -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion
-        -Wformat=2 -Wimplicit-fallthrough
-        $<$<CONFIG:RelWithDebInfo>:-O2 -g -fno-omit-frame-pointer>
-        $<$<CONFIG:Release>:-O3 -fno-omit-frame-pointer>
-    )
-    if(ALTAIR_NATIVE_ARCH)
-        target_compile_options(altair_flags INTERFACE -march=native -mtune=native)
-    endif()
+target_compile_options(altair_flags INTERFACE
+    -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+    -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused
+    -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion
+    -Wformat=2 -Wimplicit-fallthrough
+    $<$<CONFIG:RelWithDebInfo>:-O2 -g -fno-omit-frame-pointer>
+    $<$<CONFIG:Release>:-O3 -fno-omit-frame-pointer>
+)
+if(ALTAIR_NATIVE_ARCH)
+    target_compile_options(altair_flags INTERFACE -march=native -mtune=native)
 endif()
 
 if(ALTAIR_STRICT_INVARIANTS)
@@ -105,49 +85,14 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 
 if(ALTAIR_ENABLE_ASAN)
-    if(MSVC)
-        # MSVC has had AddressSanitizer since VS 2019 16.9 and it works.
-        # /RTC1 -- which CMake puts in the default Debug flags -- is
-        # INCOMPATIBLE with it and the compiler refuses the combination, so it
-        # is stripped here rather than left for whoever next selects the
-        # preset to decode.
-        target_compile_options(altair_flags INTERFACE /fsanitize=address)
-        foreach(_cfg "" _DEBUG _RELWITHDEBINFO)
-            string(REPLACE "/RTC1" "" CMAKE_CXX_FLAGS${_cfg}
-                   "${CMAKE_CXX_FLAGS${_cfg}}")
-            string(REPLACE "/RTC1" "" CMAKE_C_FLAGS${_cfg}
-                   "${CMAKE_C_FLAGS${_cfg}}")
-        endforeach()
-        message(STATUS "ASAN: ON (MSVC /fsanitize=address, /RTC1 stripped)")
-    else()
-        target_compile_options(altair_flags INTERFACE
-            -fsanitize=address,undefined -fno-sanitize-recover=all)
-        target_link_options(altair_flags INTERFACE
-            -fsanitize=address,undefined)
-        message(STATUS "ASAN: ON (address,undefined)")
-    endif()
+    target_compile_options(altair_flags INTERFACE
+        -fsanitize=address,undefined -fno-sanitize-recover=all)
+    target_link_options(altair_flags INTERFACE
+        -fsanitize=address,undefined)
+    message(STATUS "ASAN: ON (address,undefined)")
 endif()
 
 if(ALTAIR_ENABLE_TSAN)
-    if(MSVC)
-        # MSVC HAS NO ThreadSanitizer. There is no flag to add and no
-        # workaround; clang-cl does not ship one either.
-        #
-        # This REFUSES rather than warning, because a warning at configure time
-        # scrolls past and the suite then passes, and a passing suite named
-        # `tsan` is a claim that the orderings were checked. They were not, and
-        # cannot be, on this toolchain. Run the preset under GCC or Clang --
-        # which is item 3 of Phase 0's re-gate list, and is still the way to
-        # discharge it.
-        message(FATAL_ERROR
-            "ALTAIR_ENABLE_TSAN: MSVC has no ThreadSanitizer, so this preset "
-            "cannot do what its name says. It used to configure anyway and "
-            "run an UNINSTRUMENTED Debug build, which reported green and meant "
-            "nothing.\n"
-            "Run this preset on Linux with GCC or Clang. On Windows use the "
-            "`asan` preset, which IS instrumented, or `debug` for a plain "
-            "build.")
-    endif()
     target_compile_options(altair_flags INTERFACE -fsanitize=thread)
     target_link_options(altair_flags    INTERFACE -fsanitize=thread)
     message(STATUS "TSAN: ON")
@@ -248,22 +193,8 @@ set(CPACK_PACKAGE_NAME "Altair")
 set(CPACK_PACKAGE_VENDOR "Altair")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_FILE_NAME "Altair-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
-if(APPLE)
-    set(CPACK_GENERATOR "DragNDrop")
-elseif(WIN32)
-    set(CPACK_GENERATOR "ZIP")
-else()
-    set(CPACK_GENERATOR "TGZ")
-endif()
+set(CPACK_GENERATOR "TGZ")
 include(CPack)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ASAN runtime next to every executable. AFTER every add_subdirectory, because
-# it walks the targets they declared -- called earlier it would see none and
-# stage nothing, which is the silent failure it exists to prevent.
-# ─────────────────────────────────────────────────────────────────────────────
-include(cmake/AsanRuntime.cmake)
-altair_stage_asan_runtime()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary

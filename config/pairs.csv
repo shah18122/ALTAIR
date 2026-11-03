@@ -2,7 +2,7 @@
 # daily closes live.
 #
 # NIFTY-BANKNIFTY reads dataset/ (tracked). Every stock pair reads data/pairs/
-# (git-ignored: broker data, not ours to publish), which ops/fetch_pairs.ps1
+# (git-ignored: broker data, not ours to publish), which ops/linux/fetch.py pairs
 # fills from FYERS on a machine with a session -- a pair whose data is absent
 # is reported as such, not skipped silently.
 #

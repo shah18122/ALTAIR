@@ -15,23 +15,6 @@
 // loop. desktop/ cannot call it: the UI may not link broker/.
 #pragma once
 
-#if defined(_WIN32)
-#  ifndef WIN32_LEAN_AND_MEAN
-#    define WIN32_LEAN_AND_MEAN
-#  endif
-#  ifndef NOMINMAX
-#    define NOMINMAX
-#  endif
-#  include <winsock2.h>
-#  include <windows.h>
-#  include <wincrypt.h>
-#  undef X509_NAME
-#  undef X509_EXTENSIONS
-#  undef PKCS7_ISSUER_AND_SERIAL
-#  undef PKCS7_SIGNER_INFO
-#  undef OCSP_REQUEST
-#  undef OCSP_RESPONSE
-#endif
 
 #include <broker/https_client.hpp>   // detail::load_platform_roots
 

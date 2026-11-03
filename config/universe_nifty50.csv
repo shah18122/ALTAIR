@@ -15,7 +15,7 @@
 #
 # Sectors are this file's own grouping; a stock is hedged against the
 # leave-one-out mean of its sector peers (strategies/residual_reversion.hpp).
-# Directories are shared with config/pairs.csv; ops/fetch_universe.ps1 fills them.
+# Directories are shared with config/pairs.csv; ops/linux/fetch.py universe fills them.
 symbol,fyers,sector,dir
 AXISBANK,NSE:AXISBANK-EQ,banks,data/pairs/axisbank/1d
 HDFCBANK,NSE:HDFCBANK-EQ,banks,data/pairs/hdfcbank/1d

@@ -1,21 +1,15 @@
 #include <broker/credential_store.hpp>
 
 #include <array>
+#include <cerrno>
+#include <cstdlib>
 #include <limits>
+#include <string>
 
-#if defined(_WIN32)
-#  ifndef WIN32_LEAN_AND_MEAN
-#    define WIN32_LEAN_AND_MEAN
-#  endif
-#  ifndef NOMINMAX
-#    define NOMINMAX
-#  endif
-#  include <windows.h>
-#  include <wincred.h>
-#elif defined(__APPLE__)
-#  include <CoreFoundation/CoreFoundation.h>
-#  include <Security/Security.h>
-#endif
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 
 namespace altair::broker {
 namespace {
@@ -24,56 +18,50 @@ namespace {
     return valid_credential_key(key.service) && valid_credential_key(key.account);
 }
 
-#if defined(_WIN32)
-[[nodiscard]] std::expected<std::wstring, CredentialError>
-wide(std::string_view value) noexcept {
-    if (value.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-        return std::unexpected(CredentialError::TooLong);
-    const int count = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-        value.data(), static_cast<int>(value.size()), nullptr, 0);
-    if (count <= 0) return std::unexpected(CredentialError::InvalidKey);
-    std::wstring out(static_cast<std::size_t>(count), L'\0');
-    if (::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-        static_cast<int>(value.size()), out.data(), count) != count)
-        return std::unexpected(CredentialError::PlatformFailure);
-    return out;
+// THE LINUX VAULT. One file a credential, in a directory only this user can
+// open: $ALTAIR_CREDENTIAL_DIR, else $XDG_CONFIG_HOME/altair/credentials,
+// else ~/.config/altair/credentials. The directory is 0700 and each file 0600.
+// A file another user owns, or one group or others can read, is refused rather
+// than read: that is a vault someone has tampered with. Writes go to a temp
+// file that is fsync'd and renamed, so a crash never leaves half a secret.
+// Keys are validated first (letters, digits, - _ .), so a name can never climb
+// out of the directory.
+[[nodiscard]] std::string vault_dir() {
+    if (const char* d = std::getenv("ALTAIR_CREDENTIAL_DIR"); d != nullptr && *d != '\0') return d;
+    if (const char* x = std::getenv("XDG_CONFIG_HOME"); x != nullptr && *x == '/') return std::string{x} + "/altair/credentials";
+    if (const char* h = std::getenv("HOME"); h != nullptr && *h == '/') return std::string{h} + "/.config/altair/credentials";
+    return {};
 }
 
-[[nodiscard]] std::expected<std::wstring, CredentialError>
-target(const CredentialKey& key) noexcept {
-    return wide("Altair/" + key.service + "/" + key.account);
-}
-#elif defined(__APPLE__)
-class CfValue {
-public:
-    explicit CfValue(CFTypeRef value = nullptr) noexcept : value_(value) {}
-    ~CfValue() { if (value_) CFRelease(value_); }
-    CfValue(const CfValue&) = delete;
-    CfValue& operator=(const CfValue&) = delete;
-    [[nodiscard]] CFTypeRef get() const noexcept { return value_; }
-private:
-    CFTypeRef value_;
-};
-
-[[nodiscard]] CFStringRef cf_string(std::string_view value) noexcept {
-    return CFStringCreateWithBytes(kCFAllocatorDefault,
-        reinterpret_cast<const UInt8*>(value.data()),
-        static_cast<CFIndex>(value.size()), kCFStringEncodingUTF8, false);
+[[nodiscard]] std::string vault_file(const std::string& dir, const CredentialKey& key) {
+    return dir + "/" + key.service + "__" + key.account;
 }
 
-[[nodiscard]] CFMutableDictionaryRef query(const CredentialKey& key) noexcept {
-    CFMutableDictionaryRef result = CFDictionaryCreateMutable(kCFAllocatorDefault,
-        0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    if (!result) return nullptr;
-    CfValue service{cf_string(key.service)};
-    CfValue account{cf_string(key.account)};
-    if (!service.get() || !account.get()) { CFRelease(result); return nullptr; }
-    CFDictionarySetValue(result, kSecClass, kSecClassGenericPassword);
-    CFDictionarySetValue(result, kSecAttrService, service.get());
-    CFDictionarySetValue(result, kSecAttrAccount, account.get());
-    return result;
+[[nodiscard]] bool make_private_dir(const std::string& dir) noexcept {
+    // Create each missing component; only the last one has to be private.
+    for (std::size_t at = 1; at <= dir.size(); ++at) {
+        if (at != dir.size() && dir[at] != '/') continue;
+        const std::string part = dir.substr(0, at);
+        if (::mkdir(part.c_str(), at == dir.size() ? 0700 : 0755) != 0 && errno != EEXIST) return false;
+    }
+    struct stat st {};
+    if (::lstat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != ::geteuid()) return false;
+    if ((st.st_mode & 077) != 0 && ::chmod(dir.c_str(), 0700) != 0) return false;
+    return true;
 }
-#endif
+
+[[nodiscard]] bool write_all(int fd, std::string_view data) noexcept {
+    while (!data.empty()) {
+        const ssize_t n = ::write(fd, data.data(), data.size());
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        data.remove_prefix(static_cast<std::size_t>(n));
+    }
+    return true;
+}
+
 
 } // namespace
 
@@ -93,95 +81,70 @@ store_credential(const CredentialKey& key, std::string_view secret) noexcept {
     if (secret.empty()) return std::unexpected(CredentialError::EmptySecret);
     if (secret.size() > kMaxCredentialSecretBytes)
         return std::unexpected(CredentialError::TooLong);
-#if defined(_WIN32)
-    const auto name = target(key);
-    if (!name) return std::unexpected(name.error());
-    CREDENTIALW credential{};
-    credential.Type = CRED_TYPE_GENERIC;
-    credential.TargetName = const_cast<wchar_t*>(name->c_str());
-    credential.CredentialBlobSize = static_cast<DWORD>(secret.size());
-    credential.CredentialBlob = reinterpret_cast<LPBYTE>(
-        const_cast<char*>(secret.data()));
-    credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
-    credential.UserName = const_cast<wchar_t*>(L"Altair");
-    if (!::CredWriteW(&credential, 0))
+    try {
+        const std::string dir = vault_dir();
+        if (dir.empty() || !make_private_dir(dir)) return std::unexpected(CredentialError::PlatformFailure);
+        const std::string file = vault_file(dir, key);
+        const std::string tmp = file + ".tmp." + std::to_string(::getpid());
+        const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+        if (fd < 0) return std::unexpected(CredentialError::PlatformFailure);
+        const bool ok = write_all(fd, secret) && ::fsync(fd) == 0;
+        ::close(fd);
+        if (!ok || ::rename(tmp.c_str(), file.c_str()) != 0) {
+            ::unlink(tmp.c_str());
+            return std::unexpected(CredentialError::PlatformFailure);
+        }
+        return {};
+    } catch (...) {
         return std::unexpected(CredentialError::PlatformFailure);
-    return {};
-#elif defined(__APPLE__)
-    CfValue q{query(key)};
-    if (!q.get()) return std::unexpected(CredentialError::PlatformFailure);
-    (void)::SecItemDelete(static_cast<CFDictionaryRef>(q.get()));
-    auto* mutable_q = static_cast<CFMutableDictionaryRef>(const_cast<void*>(q.get()));
-    CfValue data{CFDataCreate(kCFAllocatorDefault,
-        reinterpret_cast<const UInt8*>(secret.data()),
-        static_cast<CFIndex>(secret.size()))};
-    if (!data.get()) return std::unexpected(CredentialError::PlatformFailure);
-    CFDictionarySetValue(mutable_q, kSecValueData, data.get());
-    return ::SecItemAdd(mutable_q, nullptr) == errSecSuccess
-        ? std::expected<void, CredentialError>{}
-        : std::unexpected(CredentialError::PlatformFailure);
-#else
-    return std::unexpected(CredentialError::Unsupported);
-#endif
+    }
 }
 
 std::expected<std::string, CredentialError>
 load_credential(const CredentialKey& key) noexcept {
     if (!valid(key)) return std::unexpected(CredentialError::InvalidKey);
-#if defined(_WIN32)
-    const auto name = target(key);
-    if (!name) return std::unexpected(name.error());
-    PCREDENTIALW raw = nullptr;
-    if (!::CredReadW(name->c_str(), CRED_TYPE_GENERIC, 0, &raw)) {
-        return std::unexpected(::GetLastError() == ERROR_NOT_FOUND
-            ? CredentialError::NotFound : CredentialError::PlatformFailure);
-    }
-    std::string secret(reinterpret_cast<const char*>(raw->CredentialBlob),
-                       raw->CredentialBlobSize);
-    ::SecureZeroMemory(raw->CredentialBlob, raw->CredentialBlobSize);
-    ::CredFree(raw);
-    return secret;
-#elif defined(__APPLE__)
-    CfValue q{query(key)};
-    if (!q.get()) return std::unexpected(CredentialError::PlatformFailure);
-    auto* mutable_q = static_cast<CFMutableDictionaryRef>(const_cast<void*>(q.get()));
-    CFDictionarySetValue(mutable_q, kSecReturnData, kCFBooleanTrue);
-    CFDictionarySetValue(mutable_q, kSecMatchLimit, kSecMatchLimitOne);
-    CFTypeRef raw = nullptr;
-    const OSStatus status = ::SecItemCopyMatching(mutable_q, &raw);
-    if (status == errSecItemNotFound) return std::unexpected(CredentialError::NotFound);
-    CfValue data{raw};
-    if (status != errSecSuccess || !raw || CFGetTypeID(raw) != CFDataGetTypeID())
+    try {
+        const std::string dir = vault_dir();
+        if (dir.empty()) return std::unexpected(CredentialError::PlatformFailure);
+        const int fd = ::open(vault_file(dir, key).c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0) {
+            return std::unexpected(errno == ENOENT ? CredentialError::NotFound : CredentialError::PlatformFailure);
+        }
+        struct stat st {};
+        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != ::geteuid() || (st.st_mode & 077) != 0
+            || st.st_size <= 0 || st.st_size > static_cast<off_t>(kMaxCredentialSecretBytes)) {
+            ::close(fd);
+            return std::unexpected(CredentialError::PlatformFailure);
+        }
+        std::string out(static_cast<std::size_t>(st.st_size), '\0');
+        std::size_t got = 0;
+        while (got < out.size()) {
+            const ssize_t n = ::read(fd, out.data() + got, out.size() - got);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) break;
+            got += static_cast<std::size_t>(n);
+        }
+        ::close(fd);
+        if (got != out.size()) return std::unexpected(CredentialError::PlatformFailure);
+        return out;
+    } catch (...) {
         return std::unexpected(CredentialError::PlatformFailure);
-    const auto* bytes = CFDataGetBytePtr(static_cast<CFDataRef>(raw));
-    const CFIndex size = CFDataGetLength(static_cast<CFDataRef>(raw));
-    return std::string(reinterpret_cast<const char*>(bytes),
-                       static_cast<std::size_t>(size));
-#else
-    return std::unexpected(CredentialError::Unsupported);
-#endif
+    }
 }
 
 std::expected<void, CredentialError>
 erase_credential(const CredentialKey& key) noexcept {
     if (!valid(key)) return std::unexpected(CredentialError::InvalidKey);
-#if defined(_WIN32)
-    const auto name = target(key);
-    if (!name) return std::unexpected(name.error());
-    if (!::CredDeleteW(name->c_str(), CRED_TYPE_GENERIC, 0))
-        return std::unexpected(::GetLastError() == ERROR_NOT_FOUND
-            ? CredentialError::NotFound : CredentialError::PlatformFailure);
-    return {};
-#elif defined(__APPLE__)
-    CfValue q{query(key)};
-    if (!q.get()) return std::unexpected(CredentialError::PlatformFailure);
-    const OSStatus status = ::SecItemDelete(static_cast<CFDictionaryRef>(q.get()));
-    if (status == errSecItemNotFound) return std::unexpected(CredentialError::NotFound);
-    return status == errSecSuccess ? std::expected<void, CredentialError>{}
-        : std::unexpected(CredentialError::PlatformFailure);
-#else
-    return std::unexpected(CredentialError::Unsupported);
-#endif
+    try {
+        const std::string dir = vault_dir();
+        if (dir.empty()) return std::unexpected(CredentialError::PlatformFailure);
+        if (::unlink(vault_file(dir, key).c_str()) != 0) {
+            return std::unexpected(errno == ENOENT ? CredentialError::NotFound : CredentialError::PlatformFailure);
+        }
+        return {};
+    } catch (...) {
+        return std::unexpected(CredentialError::PlatformFailure);
+    }
 }
 
 } // namespace altair::broker

@@ -1,0 +1,19 @@
+[Unit]
+Description=ALTAIR: today's FYERS login (TOTP + PIN, no browser)
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=@USER@
+Group=@USER@
+WorkingDirectory=@ROOT@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/altair/altair.env
+# Exit 2 credentials missing, 3 FYERS refused, 4 network, 5 write (see the script).
+ExecStart=/usr/bin/python3 @ROOT@/broker/tools/fyers_auto_login.py --root @ROOT@
+TimeoutStopSec=30
+RuntimeMaxSec=10min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

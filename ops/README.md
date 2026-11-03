@@ -10,7 +10,7 @@ at 09:14 with a position open, or at 15:25 with a feed down.
 
 | File | Card | Read it when |
 |---|---|---|
-| [`linux-deployment.md`](linux-deployment.md) | P12-01 | Moving off the Windows dev box |
+| [`linux-deployment.md`](linux-deployment.md) | P12-01 | Tuning the Linux server for latency |
 | [`disaster-recovery.md`](disaster-recovery.md) | P12-05 | Something is wrong right now |
 | [`go-live.md`](go-live.md) | P12-06 | Before the first rupee of real capital |
 | [`live-terminal.md`](live-terminal.md) | | Running the Terminal, the models engine and the LIVE switch |
@@ -22,9 +22,11 @@ at 09:14 with a position open, or at 15:25 with a feed down.
 | [`fyers-webhook.md`](fyers-webhook.md) | | Exposing the FYERS order webhook |
 | [`phase8-acceptance.md`](phase8-acceptance.md) | | What still needs an entitled account or licensed data |
 
-The `.ps1` scripts here fetch data on Windows (bhavcopy, universe, pairs,
-depth tapes), record and store each session (`record_session`, `nightly`,
-`push_data`, `install_tasks`; see `recorder.md`), save the option chains from FYERS
+`ops/setup.sh` installs or updates everything on the Linux server, and
+`ops/build.sh` builds. The Python jobs in `linux/` fetch data from FYERS
+(`fetch.py`: history, universe, pairs, meta, depth tapes, broker audit), record
+and store each session (`record_session`, `nightly`, `push_data`; systemd timers
+from `install.sh`, see `recorder.md`), save the option chains from FYERS
 before they expire (`chain_snapshot`, `fyers_chain`) and audit the broker account. Research notes and paper
 references moved to [`../docs/research/`](../docs/research).
 
@@ -32,8 +34,8 @@ references moved to [`../docs/research/`](../docs/research).
 
 **Every claim states whether it has been verified, and on what.**
 
-Altair has been built and tested on exactly one machine: Windows 10 Pro, MSVC
-2022, `--preset default`. Every Linux number below is a *plan*, and every
+Altair builds and tests on Linux only (CI: GCC 13, Clang 18, ASan, TSan and
+the Qt desktop; preset `linux`). Every latency number below is a *plan*, and every
 runbook step that has never been executed against a live broker says so. An
 operations document that reads as though it has been rehearsed, when it has
 not, is worse than no document — it is followed under pressure by someone who

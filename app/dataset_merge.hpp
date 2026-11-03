@@ -63,17 +63,9 @@
 #include <thread>
 #include <vector>
 
-#if defined(_WIN32)
-#  include <fcntl.h>
-#  include <io.h>
-#  include <process.h>
-#  include <share.h>
-#  include <sys/stat.h>
-#else
 #  include <fcntl.h>
 #  include <sys/file.h>
 #  include <unistd.h>
-#endif
 
 namespace altair::dataset {
 
@@ -125,11 +117,7 @@ replace_file_checked(const std::filesystem::path& path, std::string_view bytes) 
     const auto ticket = sequence.fetch_add(1, std::memory_order_relaxed);
     const auto clock = static_cast<std::uint64_t>(
         std::chrono::steady_clock::now().time_since_epoch().count());
-#if defined(_WIN32)
-    const auto pid = static_cast<std::uint64_t>(_getpid());
-#else
     const auto pid = static_cast<std::uint64_t>(::getpid());
-#endif
 
     std::filesystem::path tmp;
     std::FILE* f = nullptr;
@@ -138,13 +126,8 @@ replace_file_checked(const std::filesystem::path& path, std::string_view bytes) 
         tmp += ".tmp." + std::to_string(pid) + "." + std::to_string(clock)
                + "." + std::to_string(ticket + attempt);
         int open_error = 0;
-#if defined(_WIN32)
-        const errno_t rc = _wfopen_s(&f, tmp.c_str(), L"wx");
-        open_error = static_cast<int>(rc);
-#else
         f = std::fopen(tmp.c_str(), "wx");
         if (f == nullptr) { open_error = errno; }
-#endif
         if (f != nullptr) { break; }
         if (open_error != EEXIST) {
             return std::unexpected(ReplaceError::OpenTemp);
@@ -227,32 +210,15 @@ public:
     UpdateStateLock& operator=(const UpdateStateLock&) = delete;
 
     ~UpdateStateLock() {
-#if defined(_WIN32)
-        if (fd_ >= 0) { (void)::_close(fd_); }
-#else
         if (fd_ >= 0) {
             (void)::flock(fd_, LOCK_UN);
             (void)::close(fd_);
         }
-#endif
     }
 
     [[nodiscard]] bool acquire(const std::filesystem::path& path) noexcept {
-#if defined(_WIN32)
-        constexpr unsigned attempts = 400;
-        for (unsigned i = 0; i < attempts; ++i) {
-            const errno_t rc = _wsopen_s(&fd_, path.c_str(),
-                _O_CREAT | _O_RDWR | _O_BINARY, _SH_DENYRW,
-                _S_IREAD | _S_IWRITE);
-            if (rc == 0 && fd_ >= 0) { return true; }
-            if (rc != EACCES && rc != EAGAIN) { return false; }
-            std::this_thread::sleep_for(std::chrono::milliseconds(25));
-        }
-        return false;
-#else
         fd_ = ::open(path.c_str(), O_CREAT | O_RDWR, 0666);
         return fd_ >= 0 && ::flock(fd_, LOCK_EX) == 0;
-#endif
     }
 
 private:

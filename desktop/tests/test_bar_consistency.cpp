@@ -258,10 +258,7 @@ void test_cli_contract() {
     const QString base_path = dir.filePath("base.csv");
     const QString target_path = dir.filePath("target.csv");
     check(write(base_path, csv(fixture(1))) && write(target_path, csv(fixture(5))), "write CLI fixtures");
-    QString binary = QCoreApplication::applicationDirPath() + "/altair_bar_consistency";
-#ifdef Q_OS_WIN
-    binary += ".exe";
-#endif
+    const QString binary = QCoreApplication::applicationDirPath() + "/altair_bar_consistency";
     const QStringList args{"--base", base_path, "--target", target_path,
                            "--base-minutes", "1", "--target-minutes", "5"};
     auto run = [&](QStringList arguments, int code) {

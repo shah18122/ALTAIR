@@ -20,19 +20,9 @@ int main(int argc, char** argv) {
     std::uint16_t port = 8787;
     if (argc == 2) port = static_cast<std::uint16_t>(std::strtoul(argv[1], nullptr, 10));
     std::string configured;
-#if defined(_MSC_VER)
-    char* raw_secret = nullptr;
-    std::size_t raw_length = 0;
-    (void)_dupenv_s(&raw_secret, &raw_length, "ALTAIR_FYERS_WEBHOOK_SECRET");
-    if (raw_secret != nullptr) {
-        configured.assign(raw_secret, raw_length == 0 ? std::strlen(raw_secret) : raw_length);
-        std::free(raw_secret);
-    }
-#else
     if (const char* raw_secret = std::getenv("ALTAIR_FYERS_WEBHOOK_SECRET")) {
         configured = raw_secret;
     }
-#endif
     if (configured.empty()) {
         std::ifstream secret_file{"data/fyers_webhook_secret.txt", std::ios::binary};
         if (secret_file) {

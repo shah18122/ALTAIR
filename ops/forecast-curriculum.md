@@ -24,8 +24,8 @@ scored.
 
 ## Run it
 
-```powershell
-build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified
+```bash
+build/linux/app/altair_forecast_curriculum --dataset dataset --out data/verified
 ```
 
 The first pass runs 20 tracks; the second pass runs 42 more, each a first-pass
@@ -39,8 +39,8 @@ Options:
 - `--jobs N`: how many tracks run in parallel. The default is the machine's core count.
 - `--other-cost-bp X`.
 - `--only TEXT`: run only tracks whose name contains it, e.g. `--only 5m`; `--skip TEXT` leaves them out, e.g. `--skip 1m`.
-- `--bhavcopy DIR` (default `data\bhavcopy`, fetched by `ops\fetch_bhavcopy.ps1 -Go`) and `--recorded-iv DIR`
-  (default `data\live\iv`, written by `altair_iv_record`): the implied vol of the "+ ivrv" tracks. `--no-ivrv`
+- `--bhavcopy DIR` (default `data/bhavcopy`, fetched by `(bhavcopy fetch removed: FYERS data only) --go`) and `--recorded-iv DIR`
+  (default `data/live/iv`, written by `altair_iv_record`): the implied vol of the "+ ivrv" tracks. `--no-ivrv`
   leaves those tracks out.
 - `--no-bands`, `--no-log`.
 - `--no-feeds`: skip the second pass.
@@ -703,7 +703,7 @@ First pass, every model learning from every row,
   which then lost. The forward test is the clean measure.
 
 ### What would improve it next
-- **Broker-verified data:** run `ops\broker_audit.ps1`, then repeat the run.
+- **Broker-verified data:** run `ops/linux/fetch.py audit`, then repeat the run.
 - **Inputs beyond price:** option-chain OI/PCR and IV skew, FII/DII flows, GIFT Nifty and the US close.
 - **Order-book data:** the Atlas's microstructure rows (order-book imbalance, microprice, VPIN, Kyle's lambda) need recorded depth and trades, and they are the Atlas's likeliest source of short-horizon direction edge.
 - **A forward test** of the daily Consensus 75 % filter from October 2026, on data this run has never seen.

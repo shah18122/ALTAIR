@@ -183,11 +183,7 @@ void a_shape_mismatch_is_refused()
     // Corrupt the recorded struct size, as a future build with a wider Tick
     // would legitimately produce.
     std::FILE* f = nullptr;
-#if defined(_MSC_VER)
-    (void)::fopen_s(&f, kPath, "r+b");
-#else
     f = std::fopen(kPath, "r+b");
-#endif
     check(f != nullptr, "the file reopens for patching");
     if (f != nullptr) {
         std::fseek(f, static_cast<long>(offsetof(TickStoreHeader, tick_bytes)),
@@ -218,11 +214,7 @@ void a_truncated_tail_is_reported()
 
     // Chop the last record in half -- exactly what a crash mid-write leaves.
     std::FILE* f = nullptr;
-#if defined(_MSC_VER)
-    (void)::fopen_s(&f, kPath, "rb");
-#else
     f = std::fopen(kPath, "rb");
-#endif
     std::fseek(f, 0, SEEK_END);
     const long full = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
@@ -230,11 +222,7 @@ void a_truncated_tail_is_reported()
     const std::size_t got = std::fread(buf, 1, sizeof(buf), f);
     std::fclose(f);
 
-#if defined(_MSC_VER)
-    (void)::fopen_s(&f, kPath, "wb");
-#else
     f = std::fopen(kPath, "wb");
-#endif
     (void)std::fwrite(buf, 1, got - 20, f);      // 20 bytes short
     std::fclose(f);
     check(full > 20, "the file was long enough to truncate meaningfully");
@@ -270,11 +258,7 @@ void bad_magic_and_version()
     std::printf("\n5 bad_magic_and_version\n");
 
     std::FILE* f = nullptr;
-#if defined(_MSC_VER)
-    (void)::fopen_s(&f, kPath, "wb");
-#else
     f = std::fopen(kPath, "wb");
-#endif
     TickStoreHeader h{};
     h.magic = 0xDEADBEEF;
     (void)std::fwrite(&h, sizeof(h), 1, f);
@@ -285,11 +269,7 @@ void bad_magic_and_version()
           "a file that is not an Altair store is BadMagic, not a parse attempt");
 
     // Right magic, wrong file version.
-#if defined(_MSC_VER)
-    (void)::fopen_s(&f, kPath, "wb");
-#else
     f = std::fopen(kPath, "wb");
-#endif
     h.magic = kTickStoreMagic;
     h.store_version = kTickStoreVersion + 1;
     (void)std::fwrite(&h, sizeof(h), 1, f);
@@ -315,11 +295,7 @@ void unknown_tag_stops_the_read()
     (void)g_w.close();
 
     std::FILE* f = nullptr;
-#if defined(_MSC_VER)
-    (void)::fopen_s(&f, kPath, "ab");
-#else
     f = std::fopen(kPath, "ab");
-#endif
     const std::uint8_t junk = 0x7F;
     (void)std::fwrite(&junk, 1, 1, f);
     std::fclose(f);

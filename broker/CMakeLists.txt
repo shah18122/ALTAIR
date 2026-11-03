@@ -18,13 +18,6 @@ add_library(altair::credential_store ALIAS altair_credential_store)
 target_include_directories(altair_credential_store PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(altair_credential_store PUBLIC altair_flags)
-if(WIN32)
-    target_link_libraries(altair_credential_store PRIVATE Advapi32)
-elseif(APPLE)
-    find_library(ALTAIR_SECURITY_FRAMEWORK Security REQUIRED)
-    target_link_libraries(altair_credential_store PRIVATE
-        "${ALTAIR_SECURITY_FRAMEWORK}")
-endif()
 
 target_include_directories(altair_broker INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(altair_broker INTERFACE
@@ -51,12 +44,6 @@ if(OpenSSL_FOUND AND Boost_FOUND)
         OpenSSL::SSL
         OpenSSL::Crypto
         Boost::headers)
-    if(WIN32)
-        # CertOpenSystemStore / CertEnumCertificatesInStore. Needed because
-        # OpenSSL's default verify paths are empty on Windows, so the platform
-        # trust store has to be loaded by hand -- see broker/https_client.hpp.
-        target_link_libraries(altair_broker_net INTERFACE crypt32)
-    endif()
     set(ALTAIR_HAVE_NET ON CACHE INTERNAL "broker net half is available")
     message(STATUS "altair: broker net half ENABLED (OpenSSL + Boost ${Boost_VERSION})")
 else()
@@ -84,9 +71,6 @@ if(ALTAIR_BUILD_TESTS)
         add_executable(altair_ws_pump_test tests/test_ws_pump.cpp)
         target_link_libraries(altair_ws_pump_test PRIVATE altair_flags Boost::headers Threads::Threads)
         target_include_directories(altair_ws_pump_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        if(WIN32)
-            target_link_libraries(altair_ws_pump_test PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME ws_pump COMMAND altair_ws_pump_test)
         set_tests_properties(ws_pump PROPERTIES LABELS concurrency)
     endif()

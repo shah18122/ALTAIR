@@ -121,13 +121,7 @@ constexpr const char* kBuiltinDump =
 char* slurp(const char* path, std::size_t& len)
 {
     std::FILE* f = nullptr;
-#if defined(_MSC_VER)
-    if (::fopen_s(&f, path, "rb") != 0) {
-        f = nullptr;
-    }
-#else
     f = std::fopen(path, "rb");
-#endif
     if (f == nullptr) {
         return nullptr;
     }

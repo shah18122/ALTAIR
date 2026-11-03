@@ -52,51 +52,37 @@ research/     paper pipeline, and paper replications that showed no edge (resear
 threshold_strategy/  your threshold strategy workbooks and TradingView exports
 ops/          runbooks
 docs/         status page, research notes and references, archive
-scripts/legacy/  old GUI-only build scripts (use build.bat net)
+scripts/legacy/  old GUI-only build scripts (use ops/build.sh net)
 ```
 
 ## Build
 
-Requirements: CMake 3.28+, Ninja and a C++23 compiler (MSVC 2022, GCC 13+,
-Clang 18+ or Apple Clang 16). Networking helpers need Boost (Asio/Beast) and
-OpenSSL. The desktop needs Qt 6.8+ (Core, Gui, Network, Svg, Widgets).
+ALTAIR runs on Linux only (Ubuntu 24.04; in production an EC2 server whose
+desktop you reach through Amazon DCV). It needs CMake 3.28+, Ninja, GCC 13+ or
+Clang 18+, Boost (Asio/Beast), OpenSSL, toml++ and Qt 6.8 (Core, Gui, Network,
+Svg, Widgets).
 
-### Windows (primary)
-
-```bat
-build.bat net        :: FYERS feed + broker helpers via vcpkg (use this one): build what changed, no tests
-build.bat net app    :: only the apps (desktop, price service, live engine): fastest after an edit
-build.bat net test   :: build everything, then run the tests in parallel
-build.bat net full   :: configure afresh + build + test (the old behaviour)
-build.bat            :: same modes, preset "default" (no vcpkg)
-```
-
-Configure runs only the first time (or with `full`); ninja re-runs CMake by
-itself when a CMakeLists.txt changes.
-
-On Windows, CMake defaults Qt to `D:/Qt/6.8.3/msvc2022_64`, or
-`C:/Qt/6.8.3/msvc2022_64` when D: has none; pass `-DALTAIR_QT_ROOT=<path>` to
-use another install. The desktop is at
-`build\<preset>\desktop\altair_desktop.exe`.
-
-### Linux
+### One click: install or update everything
 
 ```bash
-sudo apt-get install ninja-build libboost-dev libssl-dev
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-      -DALTAIR_BUILD_BENCH=OFF -DALTAIR_NATIVE_ARCH=OFF
-cmake --build build
+sudo ops/setup.sh            # packages, Qt 6.8.3, git pull, build, systemd timers, desktop icons
+sudo ops/setup.sh --test     # ... and run the tests
 ```
 
-### macOS (Apple Silicon)
+Run it again any time: it only does what is missing or out of date, and it
+refuses to rebuild in market hours or under a running ALTAIR job (`--force`
+overrides). It also puts **ALTAIR** and **Update ALTAIR** icons on the desktop.
+
+### By hand
 
 ```bash
-brew install ninja boost openssl@3
-export ALTAIR_QT_ROOT=$HOME/Qt/6.8.3/macos        # optional, for the desktop
-cmake --preset macos-arm64 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
-cmake --build --preset macos-arm64
-cmake --install build/macos-arm64 --prefix ./stage   # Altair.app + helpers
+export ALTAIR_QT_ROOT=/opt/altair/qt/6.8.3/gcc_64   # where setup.sh puts Qt
+ops/build.sh          # preset "linux" (Release): build what changed, no tests
+ops/build.sh app      # only the apps (desktop, price service, live engine)
+ops/build.sh test     # build, then run the tests in parallel
 ```
+
+The desktop is at `build/linux/desktop/altair_desktop`.
 
 ## Test
 
@@ -156,10 +142,10 @@ produced by FYERS' official SDK.
 `altair_data_audit` checks `dataset/` across timeframes (every coarser bar
 rebuilt from every finer one), against its other sources, and against FYERS
 candles, and writes `data/verified/data_audit.xlsx` (one sheet per
-instrument) plus one merged CSV per instrument per timeframe. On Windows:
+instrument) plus one merged CSV per instrument per timeframe:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File ops\broker_audit.ps1
+```bash
+python3 ops/linux/fetch.py audit
 ```
 
 See [ops/data-audit.md](ops/data-audit.md) for the checks and the findings.
@@ -182,8 +168,8 @@ other index, INDIA VIX and every model. Two targets per track: next-bar
 direction, and an 80 % range band (scored on how narrow it can be). A
 Tradability sheet gives the accuracy each track needs to pay its costs.
 
-```powershell
-build\net\app\altair_forecast_curriculum.exe --dataset dataset --out data\verified --leak-check
+```bash
+build/linux/app/altair_forecast_curriculum --dataset dataset --out data/verified --leak-check
 ```
 
 `--leak-check` proves that no forecast saw its future. At two cuts per track,
@@ -268,12 +254,12 @@ Demo Trading** page runs both and shows trades, per-model totals and equity.
   with futures.
   - On VIX-priced (synthetic) options it earns in every year to 2025 (t ≈ 5),
     but the forecast adds nothing over selling every month.
-  - Real prices come from NSE bhavcopy (`ops/fetch_bhavcopy.ps1`,
+  - Real prices come from NSE bhavcopy (`(bhavcopy fetch removed: FYERS data only)`,
     `--source bhavcopy`).
 - `altair_resid_reversion`: the quant-fund version of pairs. Each NIFTY 50
   stock's residual against the market and its sector peers is traded on an
   OU s-score (Avellaneda-Lee) with many small hedged positions.
-  - The stock data comes from FYERS (`ops/fetch_universe.ps1`).
+  - The stock data comes from FYERS (`ops/linux/fetch.py universe`).
   - The universe is today's members, so results carry survivorship bias.
 - `altair_trader`: one model over every model. Every base model's
   out-of-sample call (161 inputs, 7 daily tracks) feeds a ridge stack that is
@@ -292,12 +278,12 @@ Demo Trading** page runs both and shows trades, per-model totals and equity.
   - See `ops/demo-trading.md`.
 - `altair_depth_study`: the HFT question asked honestly. It tests whether
   order flow imbalance, imbalance and microprice in recorded FYERS depth
-  (`ops/record_depth.ps1`, `altair_fyers_ticker --stamp`) predict the next
+  (`ops/linux/fetch.py depth`, `altair_fyers_ticker --stamp`) predict the next
   mid move out of sample, and by more than half the spread.
 - `altair_pairs_futures`: walk-forward Engle-Granger pairs, long one future
   and short the other in whole lots, over `config/pairs.csv` (NIFTY-BANKNIFTY,
   CIPLA-SUNPHARMA, HDFCBANK-ICICIBANK and more). Stock legs come from FYERS via
-  `ops/fetch_pairs.ps1`. The BANKNIFTY/NIFTY ratio passed 2.6 on 91 days in
+  `ops/linux/fetch.py pairs`. The BANKNIFTY/NIFTY ratio passed 2.6 on 91 days in
   2019-20 (max 2.661).
 
 Expenses are refused while `config/charges.toml` is unverified. Pass
@@ -309,8 +295,7 @@ feature cards in [research/papers/index.md](research/papers/index.md).
 
 | Workflow | Runs | What it proves |
 |---|---|---|
-| [`ci.yml`](.github/workflows/ci.yml) | Push to `main`, every PR | Linux GCC 13 and Clang 18/libc++ build and test; ASan+UBSan over the suite and TSan over the `concurrency` tests; Windows MSVC builds the engine and the Qt 6.8.3 desktop and runs the tests |
-| [`macos-arm64.yml`](.github/workflows/macos-arm64.yml) | Manual for now (Actions → Run workflow), parked until the macOS compile errors are fixed | Phase 1 evidence on real Apple Silicon: native build and tests, Darwin memory and clock paths, `Altair.app` bundle and launch |
+| [`ci.yml`](.github/workflows/ci.yml) | Push to `main`, every PR | Linux GCC 13 and Clang 18/libc++ build and test; ASan+UBSan over the suite and TSan over the `concurrency` tests; the Linux Qt 6.8.3 desktop build and its tests; the Python ops jobs, install scripts and systemd timers |
 
 ## Engineering rules (short form)
 

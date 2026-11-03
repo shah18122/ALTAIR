@@ -30,9 +30,6 @@
 #include <cstdint>
 #include <expected>
 
-#if defined(_MSC_VER)
-#include <intrin.h>
-#endif
 
 namespace altair {
 
@@ -188,22 +185,6 @@ namespace detail {
     const std::uint64_t b = r < 0 ? (~static_cast<std::uint64_t>(r) + 1u)
                                   : static_cast<std::uint64_t>(r);
 
-#if defined(_MSC_VER) && defined(_M_X64)
-    std::uint64_t hi = 0;
-    std::uint64_t lo = _umul128(a, b, &hi);
-    // Round half away from zero: add kRateScale/2 before dividing.
-    const std::uint64_t half = static_cast<std::uint64_t>(kRateScale) / 2u;
-    const std::uint64_t lo2 = lo + half;
-    if (lo2 < lo) {
-        ++hi;
-    }
-    if (hi >= static_cast<std::uint64_t>(kRateScale)) {
-        return false;                       // quotient would exceed 64 bits
-    }
-    std::uint64_t rem = 0;
-    const std::uint64_t q = _udiv128(hi, lo2, static_cast<std::uint64_t>(kRateScale),
-                                     &rem);
-#else
     const unsigned __int128 prod = static_cast<unsigned __int128>(a) * b
                                  + static_cast<unsigned __int128>(kRateScale / 2);
     const unsigned __int128 qq = prod / static_cast<unsigned __int128>(kRateScale);
@@ -212,7 +193,6 @@ namespace detail {
         return false;
     }
     const std::uint64_t q = static_cast<std::uint64_t>(qq);
-#endif
 
     if (q > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         return false;

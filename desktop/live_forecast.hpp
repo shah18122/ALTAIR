@@ -145,11 +145,7 @@ struct FetchResult {
 fetch_recent(const QString& symbol_dir, [[maybe_unused]] std::uint32_t token,
              const QString& interval_dir, int days) {
     FetchResult out;
-#if defined(_WIN32)
-    const QString fyers_name = QStringLiteral("altair_fyers_history.exe");
-#else
     const QString fyers_name = QStringLiteral("altair_fyers_history");
-#endif
     const QString fyers_exe = find_forecast_helper(fyers_name);
 #ifdef ALTAIR_SOURCE_DIR
     const QString fyers_session = QStringLiteral(ALTAIR_SOURCE_DIR "/data/fyers_session.json");
