@@ -272,12 +272,26 @@ std::int64_t last_weekday_of_month(std::int64_t day, int weekday) {
     return d;
 }
 
+/// The weekday (0 = Monday) of a monthly expiry in the month starting `month_start`:
+/// Thursday, and Tuesday from September 2025; BANKNIFTY's was the last WEDNESDAY
+/// from March to December 2024 (NSE, Feb 2024; back to Thursday from 1 Jan 2025).
+int monthly_weekday(int u, std::int64_t month_start) {
+    if (month_start >= civil(2025, 9, 1)) return 1;
+    if (u == 1 && month_start >= civil(2024, 3, 1) && month_start < civil(2025, 1, 1)) return 2;
+    return 3;
+}
+
 /// The nearest expiry on or after `day`: NIFTY weekly (monthly before
-/// 2019-02-11), BANKNIFTY monthly; Thursday until 2025-08-31, Tuesday after;
-/// a holiday moves it to the session before.
+/// 2019-02-11), BANKNIFTY monthly; Thursday until 2025-08-31, Tuesday after
+/// (BANKNIFTY's monthly: see monthly_weekday); a holiday moves it to the
+/// session before.
 std::int64_t expiry_for(int u, std::int64_t day, const Calendar& cal) {
     const std::int64_t tuesday_from = civil(2025, 9, 1);
     const bool weekly = u == 0 && day >= civil(2019, 2, 11);
+    const auto month_start = [](std::int64_t d) {
+        const auto c = da::audit_civil_from_days(d);
+        return civil(static_cast<int>(c.y), static_cast<int>(c.m), 1);
+    };
     for (std::int64_t probe = day, i = 0; i < 80; ++i) {
         std::int64_t target;
         if (weekly) {
@@ -285,12 +299,12 @@ std::int64_t expiry_for(int u, std::int64_t day, const Calendar& cal) {
             target = probe;
             while (da::audit_weekday(target) != wd) ++target;
         } else {
-            target = last_weekday_of_month(probe, probe >= tuesday_from ? 1 : 3);
+            target = last_weekday_of_month(probe, monthly_weekday(u, month_start(probe)));
             if (target < probe) {
                 const auto c = da::audit_civil_from_days(probe);
                 const std::int64_t next = civil(c.m == 12 ? static_cast<int>(c.y) + 1 : static_cast<int>(c.y),
                                                 c.m == 12 ? 1 : static_cast<int>(c.m) + 1, 1);
-                target = last_weekday_of_month(next, next >= tuesday_from ? 1 : 3);
+                target = last_weekday_of_month(next, monthly_weekday(u, next));
             }
         }
         const std::int64_t e = cal.prev_trading(target);

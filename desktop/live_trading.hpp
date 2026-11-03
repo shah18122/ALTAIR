@@ -14,7 +14,8 @@
 // sending and cancels what is open.
 //
 // STRATEGIES. The arm also carries each auto strategy's own switch and caps
-// ("strategies": arbitrage, ohl, option_arb -- oms/live_router.hpp). A
+// ("strategies": arbitrage, ohl -- oms/live_router.hpp; option arbitrage buys
+// options, so it is paper only and not offered here). A
 // strategy switched on sends its own orders, without asking, through the same
 // router, only while LIVE is on; all are off unless switched on here.
 #pragma once
@@ -80,7 +81,6 @@ struct LiveStrategyCaps {
     return {
         {QStringLiteral("arbitrage"), QStringLiteral("Arbitrage (NSE \u2194 BSE)"), false, 1, 2'50'000.0, 20, 2'000.0},
         {QStringLiteral("ohl"), QStringLiteral("OHL threshold"), false, 1, 25'00'000.0, 4, 2'000.0},
-        {QStringLiteral("option_arb"), QStringLiteral("Option arbitrage"), false, 1, 25'00'000.0, 12, 2'000.0},
     };
 }
 

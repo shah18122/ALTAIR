@@ -36,6 +36,7 @@
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include <analytics/har_rv.hpp>
 #include <analytics/iv.hpp>
 #include <app/bhavcopy.hpp>
@@ -282,12 +283,12 @@ struct SessionRv {
 }
 
 /// The bhavcopy's (opt-in): stamped 18:00.
-[[nodiscard]] inline IvSeries iv_from_bhavcopy(const std::map<std::int64_t, bhavcopy::Day>& days, double rate = 0.065) {
+[[nodiscard]] inline IvSeries iv_from_bhavcopy(const std::map<std::int64_t, bhavcopy::Day>& days, double rate = kInrRiskFreeRate) {
     return iv_from_chain(days, rate, kBhavKnownSec);
 }
 
 /// The FYERS chains' (app/fyers_chain.hpp load_dir): stamped 15:45.
-[[nodiscard]] inline IvSeries iv_from_fyers_chain(const std::map<std::int64_t, bhavcopy::Day>& days, double rate = 0.065) {
+[[nodiscard]] inline IvSeries iv_from_fyers_chain(const std::map<std::int64_t, bhavcopy::Day>& days, double rate = kInrRiskFreeRate) {
     return iv_from_chain(days, rate, kFyersChainKnownSec);
 }
 

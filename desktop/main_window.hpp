@@ -1452,8 +1452,10 @@ private:
         // freeze would arrive late enough to read as a different bug.
         // Fit off the UI thread. The retained terminal PriceClient provides
         // read-only trade updates; each admitted trade runs cached inference.
+        // The repository root, not dataset/: the page trains on FYERS candles
+        // (data/store/fyers/) and the recorder's depth (data/store/depth_bars/).
         pages_->addWidget(new StreamForecastPage(
-            terminal_->stream(), QStringLiteral(ALTAIR_DATASET_DIR), this));
+            terminal_->stream(), QStringLiteral(ALTAIR_SOURCE_DIR), this));
 
 
         // P21-03. Momentum and mean reversion. The button label says what
@@ -1691,7 +1693,7 @@ private:
                        QStringLiteral("<b>Option arbitrage.</b> Put-call parity (conversion / reversal against the future) and "
                                       "box spreads, entered when the lock beats every leg's expenses and spreads in and out; "
                                       "the order book's imbalance orders the legs and stops a lock the book says is about to "
-                                      "vanish. Demo by default; real only with LIVE on and Auto: Option arb ticked."));
+                                      "vanish. Paper only: every lock buys an option, and ALTAIR never buys options."));
         }
         pages_->addWidget(arb_page);
 

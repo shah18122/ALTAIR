@@ -104,13 +104,15 @@ int main(int argc, char** argv) {
     trade(12468226, 2401200, 65, t0 + 1'000'000);
     trade(12468226, 2401250, 130, t0 + 2'000'000);   // an uptick
     // The options expire on 6 October, the future on 27 October: the chain
-    // carries the future's mid (24012.40) back 21 days at 6.5 %, a forward of
-    // about 23922.8. Priced at 13 % vol on that forward with 5.19 days left,
-    // the 24000 call is ~109.8 and the put ~186.8 -- so both invert to ~13 %.
-    quote(1001, 15000, 10950, 11010);
-    trade(1001, 10980, 65, t0 + 3'000'000);
-    quote(1002, 20000, 18650, 18710);
-    trade(1002, 18680, 65, t0 + 4'000'000);
+    // carries the future's mid (24012.40) back 21 days at the INR risk-free
+    // rate (analytics/inr_rate.hpp, 5.57 %), a forward of about 23935.6. Priced
+    // at 13 % vol on that forward with 5.19 days left, the 24000 call is ~118.1
+    // and the put ~182.5 -- so both invert to ~13 %.
+    static_assert(altair::kInrRiskFreeRate == 0.0557, "reprice the options below at the new rate");
+    quote(1001, 15000, 11780, 11840);
+    trade(1001, 11810, 65, t0 + 3'000'000);
+    quote(1002, 20000, 18218, 18278);
+    trade(1002, 18248, 65, t0 + 4'000'000);
     PricePayload book;
     book.token = 12468226;
     book.flags = kPriceHasBook | kPriceSimulated;
@@ -188,7 +190,6 @@ int main(int argc, char** argv) {
     const QString ce_iv = g->item(0, LiveChainView::CIv) ? g->item(0, LiveChainView::CIv)->text() : QString();
     const QString pe_iv = g->item(0, LiveChainView::PIv) ? g->item(0, LiveChainView::PIv)->text() : QString();
     std::printf("    chain IV: CE %s, PE %s\n", qPrintable(ce_iv), qPrintable(pe_iv));
-    std::printf("    chain head: %s\n", qPrintable(chain->header_text()));
     check(!ce_iv.isEmpty() && ce_iv != QStringLiteral("—") && !pe_iv.isEmpty() && pe_iv != QStringLiteral("—"),
           "IV is inverted from the market price on both sides");
     check(std::fabs(ce_iv.toDouble() - pe_iv.toDouble()) < 1.0 && std::fabs(ce_iv.toDouble() - 13.0) < 1.0,
@@ -228,7 +229,7 @@ int main(int argc, char** argv) {
         put.c.token = 1002; put.c.symbol = QStringLiteral("NIFTY26O0624000PE"); put.c.call = false;
         check(gw.add(leg) && gw.add(put) && !gw.add(leg), "a strike joins Greek Watch once");
         gw.refresh();
-        const GreekRow r = greek_row(&client, gw.legs()[0], 0.065);
+        const GreekRow r = greek_row(&client, gw.legs()[0], altair::kInrRiskFreeRate);
         std::printf("    Greek Watch CE: IV %.2f %%, delta %.3f, gamma %.6f, vega %.2f, theta %.2f\n",
                     r.iv * 100.0, r.delta, r.gamma, r.vega, r.theta);
         check(std::fabs(r.iv - 0.13) < 0.01 && r.delta > 0.4 && r.delta < 0.6 && r.gamma > 0 && r.vega > 0 && r.theta < 0,

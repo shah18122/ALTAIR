@@ -37,6 +37,7 @@
 // Writes <out>/vol_premium/: trades_<variant>.csv, summary.csv,
 // signals.csv, forecast_eval.csv, meta.csv.
 
+#include <analytics/inr_rate.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/har_rv.hpp>
 #include <app/bhavcopy.hpp>
@@ -74,7 +75,7 @@ void usage(const char* exe) {
         "       [--source fyers|synthetic|bhavcopy] [--fyers-chain DIR] [--chain-snap DIR] [--bhavcopy-dir DIR]\n"
         "       [--min-sessions N] [--exit-sessions N]\n"
         "       [--slippage-pts P] [--rate R] [--vix-log FILE] [--vix-model NAME] [--events FILE]\n"
-        "       [--monthly-halt RS] [--max-risk RS] [--unverified-costs]\n"
+        "       [--monthly-halt RS] [--max-risk RS] [--unverified-costs] [--weeklies]\n"
         "       [--rv-ceiling V] [--max-drawdown RS] [--max-vega RS]\n\n"
         "    --source S            fyers (default: the chains altair_fyers_chain saved), synthetic (VIX-priced),\n"
         "                          or bhavcopy (NSE closes; opt-in, not FYERS data)\n"
@@ -92,6 +93,10 @@ void usage(const char* exe) {
         "                          lose RS rupees in it (Chen & Sebastian's monthly loss rule)\n"
         "    --max-risk RS         adds har-0-risk: no sale when a 3-sd move to expiry would lose more than RS\n"
         "    --unverified-costs    price expenses from an UNVERIFIED config/charges.toml, stamped\n"
+        "    --weeklies            NIFTY on its WEEKLY expiries too, from the saved FYERS chains (--source fyers):\n"
+        "                          every expiry is a candidate, the forward of one with no future is put-call parity\n"
+        "                          at the strike nearest the index, and the hedge is priced at that forward. Use a\n"
+        "                          small --min-sessions (e.g. 2) and --exit-sessions 0 for a week's life\n"
         "    --rv-ceiling V        har-0-limits: no entry above this trailing 20-session realised vol (default 0 = off)\n"
         "    --max-drawdown RS     har-0-limits: no entries once closed trades draw down this many rupees (default 100000; 0 = off)\n"
         "    --max-vega RS         har-0-limits: rupees per vol point the straddle may carry (default 0 = off)\n", exe);
@@ -163,9 +168,9 @@ int main(int argc, char** argv) {
     fs::path root = "dataset", out = "data/verified", bhav_dir = "data/bhavcopy";
     fs::path chain_dir = "data/store/fyers_chain", snap_dir = "data/store/chain_snap";
     std::string which = "both", source = "fyers", vix_log, vix_model = "Hedge", events_file;
-    double rate = 0.065, slip = 1.0, min_s = 10, exit_s = 1, month_halt = 0.0, max_risk = 0.0;
+    double rate = altair::kInrRiskFreeRate, slip = 1.0, min_s = 10, exit_s = 1, month_halt = 0.0, max_risk = 0.0;
     double rv_ceiling = 0.0, max_dd = 100'000.0, max_vega = 0.0;
-    bool unverified = false;
+    bool unverified = false, weeklies = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
         const bool has = i + 1 < argc;
@@ -190,6 +195,7 @@ int main(int argc, char** argv) {
         if (a == "--max-drawdown" && has) { if (!parse_double(argv[++i], max_dd) || max_dd < 0.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--max-vega" && has) { if (!parse_double(argv[++i], max_vega) || max_vega < 0.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--unverified-costs") { unverified = true; continue; }
+        if (a == "--weeklies") { weeklies = true; continue; }
         usage(argv[0]);
         return 2;
     }
@@ -512,7 +518,7 @@ int main(int argc, char** argv) {
             if (source == "fyers") {
                 altair::fyers_chain::LoadReport fr;
                 bhav = std::make_shared<std::map<std::int64_t, altair::bhavcopy::Day>>(
-                    altair::fyers_chain::load_dir(chain_dir, in.name, fr, true, snap_dir));
+                    altair::fyers_chain::load_dir(chain_dir, in.name, fr, !(weeklies && in.name == "NIFTY"), snap_dir));
                 std::printf("  %s FYERS chains: %zu saved day(s), %zu from 15:27 snapshots, %zu option and %zu futures rows\n",
                             in.name.c_str(), fr.days, fr.snapshot_days, fr.option_rows, fr.future_rows);
                 if (bhav->empty()) {
@@ -540,13 +546,27 @@ int main(int argc, char** argv) {
                 m.spot.push_back(D.close[k->second]);
                 d_index.push_back(k->second);
                 for (const auto& [e, f] : bd.fut) { m.expiries.insert(e); }
+                if (weeklies && in.name == "NIFTY") for (const auto& [e, chain] : bd.opt) { m.expiries.insert(e); }
             }
             const auto days = m.day;
+            const auto spots = m.spot;
             const auto B = bhav;
-            m.forward = [days, B](std::size_t i, std::int64_t e) {
+            m.forward = [days, spots, B, rate](std::size_t i, std::int64_t e) {
                 const auto& d = B->at(days[i]);
                 const auto f = d.fut.find(e);
-                return f == d.fut.end() ? std::nan("") : f->second;
+                if (f != d.fut.end()) { return f->second; }
+                // A weekly has no future: put-call parity at the traded strike nearest the index.
+                const auto o = d.opt.find(e);
+                if (o == d.opt.end()) { return std::nan(""); }
+                double best = std::nan(""), fwd = std::nan("");
+                for (const auto& [k, leg] : o->second) {
+                    if (!std::isfinite(leg.call) || !std::isfinite(leg.put)) { continue; }
+                    if (!std::isfinite(best) || std::fabs(k - spots[i]) < std::fabs(best - spots[i])) {
+                        best = k;
+                        fwd = k + (leg.call - leg.put) * std::exp(rate * static_cast<double>(e - days[i]) / 365.0);
+                    }
+                }
+                return fwd;
             };
             m.strike_near = [days, B](std::size_t i, std::int64_t e, double level) {
                 const auto& d = B->at(days[i]);

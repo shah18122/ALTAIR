@@ -41,12 +41,22 @@
 // demo, unless --unverified-costs (the desktop's "Price UNVERIFIED expenses")
 // says to price them anyway; every row and the page then say UNVERIFIED.
 //
+// HISTORY (NSE review, 2026-11-02). HAR, the previous close and the book
+// rules read FYERS history: --history DIR, else the newest snapshot in
+// data/store/snapshots/ (the nightly's FYERS-only merge), else
+// data/store/fyers/. Only when none exists does it fall back to dataset/,
+// and then -- as when the newest session in the history is older than the
+// previous trading day -- the straddle sellers do not sell, and every day
+// says why. A month-old previous close makes "realised so far" a month's
+// move; non-FYERS bars break Smit's FYERS-only rule.
+//
 // IT CANNOT TRADE. It reads a loopback socket and writes files. It links no
 // broker and no OMS, and there is no order anywhere in it.
 
 #include <app/data_audit.hpp>
 #include <app/demo_costs.hpp>
 #include <app/forecast_tracks.hpp>
+#include <app/fyers_source.hpp>
 #include <app/live_bundle.hpp>
 #include <app/live_direction.hpp>
 #include <app/live_real_orders.hpp>
@@ -255,6 +265,46 @@ bool write_atomic(const fs::path& path, const std::string& body) {
     return lv::live_replace_file(tmp.string(), path.string());
 }
 
+/// Where the engine's history comes from: --history, else the newest
+/// snapshot before `today`, else the FYERS store, else dataset/ (not FYERS).
+struct HistorySource { fs::path dir; std::string what; bool fyers = false; };
+
+[[nodiscard]] HistorySource find_history(const fs::path& root, const fs::path& asked, std::int64_t today) {
+    std::error_code ec;
+    if (!asked.empty()) return {asked, "--history " + asked.string(), altair::app::is_fyers_folder(asked) || fs::exists(asked / "_snapshot.json", ec)};
+    std::string best;
+    for (const auto& e : fs::directory_iterator(root / "data/store/snapshots", ec)) {
+        const std::string n = e.path().filename().string();
+        const std::int64_t d = n.size() == 10 ? lv::parse_day(n) : 0;
+        if (d > 0 && d < today && fs::exists(e.path() / "_snapshot.json", ec) && n > best) best = n;
+    }
+    if (!best.empty()) return {root / "data/store/snapshots" / best, "snapshot " + best + " (FYERS)", true};
+    if (fs::exists(root / "data/store/fyers/spot", ec)) return {root / "data/store/fyers", "data/store/fyers (FYERS)", true};
+    return {root / "dataset", "dataset/ (NOT FYERS)", false};
+}
+
+/// Why the history cannot price today, or empty: more than one weekday (a
+/// holiday) between the newest session in it and today.
+[[nodiscard]] std::string stale_history(std::int64_t last_day, std::int64_t today, const std::set<std::int64_t>& holidays) {
+    if (last_day <= 0) return "no history";
+    int missing = 0;
+    for (std::int64_t d = last_day + 1; d < today; ++d) {
+        const std::int64_t wd = (d + 4) % 7;   // 1970-01-01 was a Thursday: 0 = Sunday
+        if (wd >= 1 && wd <= 5 && !holidays.contains(d)) ++missing;
+    }
+    return missing == 0 ? std::string() : "history ends " + lv::day_text(last_day) + ", " + std::to_string(missing) + " session(s) before today";
+}
+
+/// NSE trading holidays from config/nse_holidays.csv (date,name).
+[[nodiscard]] std::set<std::int64_t> read_holidays(const fs::path& path) {
+    std::set<std::int64_t> out;
+    std::ifstream in(path);
+    for (std::string line; std::getline(in, line);)
+        if (line.size() >= 10 && line[0] >= '0' && line[0] <= '9')
+            if (const std::int64_t d = lv::parse_day(line.substr(0, 10)); d > 0) out.insert(d);
+    return out;
+}
+
 void usage(const char* exe) {
     std::printf(
         "  The live models, paper-trading on altair_price_service's stream.\n\n"
@@ -263,6 +313,8 @@ void usage(const char* exe) {
         "    --until    stop once the feed's own clock reaches this IST time (default 15:40)\n"
         "    --seconds  stop after N seconds (tests)\n"
         "    --root     the tree holding dataset/, config/ and data/ (default: the source tree)\n"
+        "    --history DIR  FYERS history laid out like dataset/ (default: the newest data/store/snapshots/<day>,\n"
+        "               else data/store/fyers; dataset/ only as a last resort, and then no straddle sells)\n"
         "    --unverified-costs  price expenses from config/charges.toml although it is UNVERIFIED;\n"
         "               every expense and net figure is then marked UNVERIFIED\n"
         "    --date     the day being traded, for a simulated past day (--sim --date): history\n"
@@ -277,6 +329,8 @@ void usage(const char* exe) {
         "                         conservative estimate, not SPAN: live/margin.hpp)\n"
         "    --monthly-halt RS    the books straddle stops selling for the month once its closed trades lose RS\n"
         "    --straddle-max-risk RS  the books straddle sells only when a 3-sd move would lose at most RS a lot\n"
+        "    --straddle-max-gap-loss RS  every straddle seller sells only when a 4 % gap would lose at most RS a lot\n"
+        "                         (logged on every reading either way; off by default)\n"
         "    --straddle-leg-stop PCT the books straddle and the strangle buy back BOTH legs once either leg's ask is\n"
         "                        PCT %% above its sale price (default 50; 0 = off; the plain straddle never stops)\n"
         "    --gate-z Z           a direction call trades only when its value clears zero by Z\n"
@@ -311,6 +365,8 @@ int main(int argc, char** argv) {
     lv::LiveExecPolicy policy;
     lv::LiveRiskLimits limits;
     double gate_z = 1.0;   // standard errors a direction call's value must clear
+    double straddle_max_gap_loss = 0.0;   // every straddle seller's stress cap (a 4 % gap); 0 = off
+    fs::path history_asked;
     double monthly_halt = 0.0, straddle_max_risk = 0.0;   // the books straddle's monthly halt and per-trade risk cap; 0 = off
     double straddle_leg_stop = 0.50;                       // the books straddle's and strangle's per-leg stop; 0 = off
     // The tape is on by default: tuning needs FYERS's own ticks, and FYERS
@@ -339,6 +395,8 @@ int main(int argc, char** argv) {
         if (a == "--gate-z" && has) { gate_z = std::atof(argv[++i]); continue; }
         if (a == "--monthly-halt" && has) { monthly_halt = std::max(0.0, std::atof(argv[++i])); continue; }
         if (a == "--straddle-max-risk" && has) { straddle_max_risk = std::max(0.0, std::atof(argv[++i])); continue; }
+        if (a == "--straddle-max-gap-loss" && has) { straddle_max_gap_loss = std::max(0.0, std::atof(argv[++i])); continue; }
+        if (a == "--history" && has) { history_asked = argv[++i]; continue; }
         if (a == "--straddle-leg-stop" && has) { straddle_leg_stop = std::max(0.0, std::atof(argv[++i]) / 100.0); continue; }
         if (a == "--record") { record = record_asked = true; continue; }
         if (a == "--no-record") { record = false; continue; }
@@ -500,10 +558,12 @@ int main(int argc, char** argv) {
 
     // ---- history inputs ----------------------------------------------------
     std::string note;
-    std::printf("history through %s\n", lv::day_text(today - 1).c_str());
-    const auto nifty5 = history_5m(root / "dataset/spot/nifty/5m", today);
-    const auto bnf5 = history_5m(root / "dataset/spot/banknifty/5m", today);
-    const auto vix5 = history_5m(root / "dataset/spot/indiavix/5m", today);
+    const auto holidays = read_holidays(root / "config/nse_holidays.csv");
+    const HistorySource hist = find_history(root, history_asked, today);
+    std::printf("history: %s, before %s\n", hist.what.c_str(), lv::day_text(today).c_str());
+    const auto nifty5 = history_5m(hist.dir / "spot/nifty/5m", today);
+    const auto bnf5 = history_5m(hist.dir / "spot/banknifty/5m", today);
+    const auto vix5 = history_5m(hist.dir / "spot/indiavix/5m", today);
     const auto nrv = daily_rv(nifty5), brv = daily_rv(bnf5);
     const auto nv = vol_inputs("NIFTY", nrv, note);
     const auto bv = vol_inputs("BANKNIFTY", brv, note);
@@ -516,7 +576,7 @@ int main(int argc, char** argv) {
     bst.vol = bv;
     {
         std::vector<double> vc;
-        for (const auto& [d, c] : daily_closes(root / "dataset/spot/indiavix/1d", today)) if (c > 0.0) vc.push_back(c);
+        for (const auto& [d, c] : daily_closes(hist.dir / "spot/indiavix/1d", today)) if (c > 0.0) vc.push_back(c);
         if (!vc.empty()) nst.vix_close = bst.vix_close = vc.back();
         if (vc.size() > 60)
             if (const auto f = altair::har_forecast(vc, vc.size() - 1, 1))
@@ -524,8 +584,20 @@ int main(int argc, char** argv) {
         std::printf("  INDIA VIX close %.2f, HAR forecast of today's close %.2f\n", nst.vix_close, nst.vix_forecast);
     }
 
-    const auto nd = daily_closes(root / "dataset/spot/nifty/1d", today);
-    const auto bd = daily_closes(root / "dataset/spot/banknifty/1d", today);
+    const auto nd = daily_closes(hist.dir / "spot/nifty/1d", today);
+    const auto bd = daily_closes(hist.dir / "spot/banknifty/1d", today);
+    // The straddle sellers sell only on fresh FYERS history (see the header).
+    for (auto* x : {&nst, &bst}) {
+        const auto& rv = x == &nst ? nrv : brv;
+        std::string why = stale_history(rv.empty() ? 0 : rv.back().day, today, holidays);
+        if (!hist.fyers) why = "history is not FYERS (" + hist.what + ")" + (why.empty() ? std::string() : "; " + why);
+        if (!why.empty()) {
+            x->rules.blocked = "no sale: " + why + " -- fetch FYERS history (ops/linux/fetch.py history) or run the nightly";
+            std::printf("  %s straddles: %s\n", x->vol.under.c_str(), x->rules.blocked.c_str());
+        }
+        x->holidays = holidays;
+        x->rules.max_gap_loss = straddle_max_gap_loss;
+    }
 
     // The options-book rules (live/straddle.hpp). The plain straddles above
     // stay the control; beside them a "books" straddle with the rules on and
@@ -576,8 +648,13 @@ int main(int argc, char** argv) {
         lv::LiveStraddleInputs strangle = *base;
         strangle.closes = closes;
         strangle.rules.leg_delta = 0.16;
-        for (auto* x : {&books, &strangle}) {
-            x->rules.leg_stop_pct = straddle_leg_stop;
+        // The 0DTE control: the plain straddle that keeps selling the contract expiring today.
+        lv::LiveStraddleInputs zero = *base;
+        zero.closes = closes;
+        zero.rules.tag = "0DTE";
+        zero.rules.expiry_day = lv::ExpiryDayRule::Sell;
+        books.rules.leg_stop_pct = strangle.rules.leg_stop_pct = straddle_leg_stop;   // the 0DTE control, like the plain straddle, never stops
+        for (auto* x : {&books, &strangle, &zero}) {
             x->rules.month_closed_pnl = month_pnl(lv::LiveStraddleModel(*x).name());
             book_rules.push_back(*x);
         }

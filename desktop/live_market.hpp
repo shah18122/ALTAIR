@@ -34,6 +34,7 @@
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include "price_client.hpp"
 #include "scrip_master.hpp"
 #include "simple_mode.hpp"
@@ -1112,7 +1113,7 @@ private:
     qint64 fut_expiry_ = 0, expiry_day_ = 0;
     double atm_ = 0.0, requested_center_ = 0.0;
     ChainSmile smile_;
-    double rate_ = 0.065;
+    double rate_ = altair::kInrRiskFreeRate;
     QString today_ = QDate::currentDate().toString(Qt::ISODate);
 };
 

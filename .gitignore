@@ -33,6 +33,9 @@ vcpkg_installed/
 .env.*
 config/secrets.toml
 config/*.local.toml
+config/*.local.env
+**/fyers_session.json.tmp
+**/fyers_login_refused.txt
 **/kite_session.json
 **/fyers_session.json
 **/fyers_login_state.txt

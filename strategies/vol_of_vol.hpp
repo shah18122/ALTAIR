@@ -35,6 +35,7 @@
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/iv.hpp>
 #include <analytics/vanna_volga.hpp>
@@ -77,7 +78,7 @@ struct VovPolicy {
     VovGate gate = VovGate::Always;
     std::size_t lookback = 60;       ///< closes of butterfly history the gate's median uses
     std::size_t min_history = 20;    ///< fewer butterflies than this: the gate stays shut
-    double rate = 0.065;
+    double rate = kInrRiskFreeRate;
     std::size_t min_sessions = 10;   ///< to expiry, at entry
     std::size_t exit_sessions = 2;   ///< close once this many or fewer remain
     std::size_t hold_sessions = 5;   ///< close after this many closes, then trade afresh

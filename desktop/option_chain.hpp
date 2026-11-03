@@ -36,6 +36,7 @@
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include "theme.hpp"
 #include "chain_panel.hpp"
 #include "data/series_io.hpp"
@@ -330,9 +331,10 @@ private:
         dte_ = years * 365.0;
 
         // FORWARD, not spot: Black-76 prices off the future, which is what an
-        // index option settles against. No dividend yield -- NIFTY pays one,
-        // so this forward is slightly RICH and calls slightly overpriced.
-        const double F = spot_paise_ * std::exp(kRate * years);
+        // index option settles against: spot carried at the rate less the
+        // index's dividend yield (kDivYield; without it the forward is rich,
+        // calls look dear against puts and the ATM strike sits too high).
+        const double F = spot_paise_ * std::exp((kRate - kDivYield) * years);
 
         // The strikes in view: the nearest-to-forward, +/- width.
         std::vector<const ChainRow*> all;
@@ -508,7 +510,11 @@ private:
     /// The risk-free rate the model uses, SHOWN in the header rather than
     /// buried. Near the RBI repo rate; a percent either way moves a
     /// short-dated option's price by very little and its rho by exactly that.
-    static constexpr double kRate = 0.065;
+    static constexpr double kRate = altair::kInrRiskFreeRate;
+    /// NIFTY's trailing dividend yield, roughly (the figure the desktop's
+    /// worked examples use); BANKNIFTY's is close. Put-call parity on the live
+    /// chain is the better forward where both legs quote (live/straddle.hpp).
+    static constexpr double kDivYield = 0.012;
 
     QComboBox* under_ = nullptr;
     QComboBox* expiry_ = nullptr;

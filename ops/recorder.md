@@ -11,11 +11,11 @@ Everything it does goes into one log.
          altair_price_service --live (unless the desktop's is already up) ─► 127.0.0.1:7421
          altair_feed_recorder ─► data/store/tapes/<day>/*.tape          (until 15:45)
 20:00  ALTAIR Nightly    ops/linux/nightly.py
-         altair_store decode    ─► data/store/ticks/<day>\ (bars, IV/VIX/RV, option IVs), data/store/tape_bars\
-         altair_iv_record       ─► data/live/iv\
-         altair_fyers_history   ─► data/store/fyers\   (official candles, 7-day backfill)
-         altair_store snapshot  ─► data/store/snapshots/<day>\   (one cutoff)
-         altair_forecast_curriculum --leak-check ─► data/store/runs/<day>\  (LATEST.txt if clean)
+         altair_store decode    ─► data/store/ticks/<day>/ (bars, IV/VIX/RV, option IVs), data/store/tape_bars/
+         altair_iv_record       ─► data/live/iv/
+         altair_fyers_history   ─► data/store/fyers/   (official candles, 7-day backfill)
+         altair_store snapshot  ─► data/store/snapshots/<day>/   (one cutoff)
+         altair_forecast_curriculum --leak-check ─► data/store/runs/<day>/  (LATEST.txt if clean)
          ops/linux/push_data.py      ─► github.com/shah18122/altair-data (private)
 always data/logs/altair-<day>.log   (30 days kept, credentials masked)
 ```
@@ -37,10 +37,13 @@ python3 ops/linux/fetch.py history --go
 python3 ops/linux/nightly.py --go
 ```
 
-**Every morning:** log in to FYERS once (Brokers page, or
-`altair_fyers_login`). The token lasts one day and needs the browser. Until
-you do, the log says `waiting for today's FYERS login` every 30 minutes, and
-the recorder starts by itself as soon as the feed comes up.
+**Every morning, nothing to do.** The `altair-fyers-login` timer (08:30 IST) logs
+in with TOTP + PIN and writes the day's token; the recorder runs the same
+login again while it waits for a session. One-time setup and the details are
+in [`fyers-auto-login.md`](fyers-auto-login.md). If the auto-login is not set
+up or FYERS refuses it, log in by hand (Brokers page, or `altair_fyers_login`);
+until a session exists the log says `waiting for today's FYERS login` every 30
+minutes, and the recorder starts by itself as soon as the feed comes up.
 
 Check the timers: `systemctl list-timers 'altair-*'`; a job's output:
 `journalctl -u altair-nightly`. Remove them: `sudo ops/install.sh --remove --go`.
@@ -79,14 +82,15 @@ The recorder stops by itself below 2 GB free.
 
 ## IV, RV and VIX, every minute
 
-The nightly decode turns the day's tapes into two more files in
-`data/store/ticks/<day>\`, each reading stamped at the END of its minute
+The nightly decode turns the day's tapes into three more files in
+`data/store/ticks/<day>/`, each reading stamped at the END of its minute
 (when it was known):
 
 | File | One row | Columns |
 |---|---|---|
 | `vol_1m.csv` | index × expiry × minute | spot, India VIX (as streamed), parity forward, ATM strike, ATM IV, the expiry's model-free vol by the India VIX strip (`term_vol`), the chain's own 30-day VIX (`chain_vix30`), RV over the last 15 and 60 minutes and the session so far |
 | `chain_iv_1m.csv` | option × minute | price (mid of the best bid/ask, else last trade), Black-76 IV against that expiry's forward, delta, vega per vol point, OI |
+| `depth_1m.csv` | instrument with a book × minute | five-level depth sums (`models/depth_features.hpp`): books seen, touch OBI, 5-level OBI plain and weighted, spread in bps, last microprice offset from the mid in bps, 5-level OFI and its absolute sum. The near futures' rows are also written to `data/store/depth_bars/fut/<inst>/1m/<day>.csv`, the Forecast page's "5-level depth" input |
 
 IV, `term_vol` and RV are annualised fractions (0.15 is 15 vol); the VIX
 columns are index points. RV is `sqrt(mean r² × 375 × 252)` from the index's
@@ -94,7 +98,7 @@ columns are index points. RV is `sqrt(mean r² × 375 × 252)` from the index's
 previous minute's; with neither it is left out. `chain_vix30` leaves out
 expiries of 7 days or less, as NSE does, and is empty with fewer than two
 other expiries. A minute with no option priced still gets a row with spot,
-India VIX and RV. `data/live/iv\` (the nearest expiry's ATM IV, which the
+India VIX and RV. `data/live/iv/` (the nearest expiry's ATM IV, which the
 models already read) is still written as before.
 
 ## One schema, one cutoff: how the sources merge
@@ -106,7 +110,7 @@ Every bar in a snapshot is `time,open,high,low,close,volume,oi,source`:
 
 By default the snapshot is FYERS data only: `fyers` (official candles), with
 `tape` (bars built from the recording) filling gaps. `nightly.py --with-dataset`
-adds your `dataset\` files under FYERS, and `--with-bhavcopy` the NSE bhavcopy.
+adds your `dataset/` files under FYERS, and `--with-bhavcopy` the NSE bhavcopy.
 With more than one source they go lowest priority first: `dataset`, then `fyers`.
 For the same bar time:
 
@@ -119,7 +123,7 @@ For the same bar time:
 | `tape` vs anyone | tape only adds a missing bar, never replaces one |
 
 A row is never stitched together from two sources. `_provenance.csv` lists
-which source each stretch of bars came from. Your `dataset\` files are never
+which source each stretch of bars came from. Your `dataset/` files are never
 modified: the snapshot is a separate tree.
 
 Every series, plus the bhavcopy and recorded IV beside them, stops at the end
@@ -149,7 +153,7 @@ the journals). Values that look like credentials (`access_token=`, `Bearer`,
 
 `shah18122/altair-data` (private). Only compact daily files go there: 1-minute
 bars of every instrument, the FYERS candles, IV, the reports and the log
-(`README.md` there has the layout), now also `vol\` and `chain_iv\`. Tapes never go. The push script refuses
+(`README.md` there has the layout), now also `vol/` and `chain_iv/`. Tapes never go. The push script refuses
 any folder without the `.altair-data-repo` marker, refuses a clone whose
 origin is the public ALTAIR repo, and checks every file for credentials by
 name and by content before it commits. It pushes with your own git login and

@@ -14,8 +14,11 @@ altair-recorder.timer runs this at 08:50 IST, Monday to Friday. It:
   3. if the feed stops (no FYERS login yet, a drop), tries again every
      5 minutes until 15:30, and says so in the activity log.
 
-THE FYERS LOGIN IS STILL DAILY: log in on the terminal's Brokers page (through
-the DCV screen) each morning. Until then the log says "waiting for today's FYERS login".
+THE FYERS LOGIN IS AUTOMATIC. The altair-fyers-login timer (08:30) gets the
+day's token with TOTP + PIN (broker/tools/fyers_auto_login.py), and this job
+runs the same login again whenever it is waiting for a session (it does nothing
+when today's session already works). Until a session exists the log says
+"waiting for today's FYERS login".
 
     ops/linux/record_session.py          # dry run
     ops/linux/record_session.py --go
@@ -39,6 +42,18 @@ def feed_up(port: int = 7421) -> bool:
             return True
     except OSError:
         return False
+
+
+def auto_login() -> None:
+    """Today's FYERS login by TOTP + PIN; a no-op when the session already works."""
+    script = ROOT / "broker" / "tools" / "fyers_auto_login.py"
+    if not script.is_file():
+        return
+    try:
+        subprocess.run([sys.executable, str(script), "--root", str(ROOT)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log("record", "WARN", f"auto-login did not finish: {type(e).__name__}")
 
 
 def main() -> int:
@@ -95,8 +110,9 @@ def main() -> int:
             why = tail(feed_out)
             if any(k in why for k in ("no live source today", "no valid FYERS session", "session")):
                 if waiting_since is None or (ist_now() - waiting_since).total_seconds() >= 1800:
-                    log("record", "WARN", f"waiting for today's FYERS login (Brokers page): {why}")
+                    log("record", "WARN", f"waiting for today's FYERS login (fyers_auto_login.py, Brokers page, or altair_fyers_login): {why}")
                     waiting_since = ist_now()
+                auto_login()
             else:
                 log("record", "WARN", f"the feed exited ({feed.returncode}): {why}")
             feed = None

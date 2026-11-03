@@ -26,11 +26,13 @@
 //     to tick up) first, a SELL whose book leans to the ask likewise.
 // It decides on every quote of one of its legs.
 //
-// Paper by default. Real orders only while LIVE is armed AND its own switch
-// (Auto: Option arb) is on, through the order router with its caps.
+// PAPER ONLY. Every lock buys an option, and Smit's rule is that ALTAIR never
+// buys options (2026-10-25), so the order router has no switch for it
+// (oms/live_router.hpp, 2026-11-02): it is kept as a measurement.
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include <live/engine.hpp>
 
 #include <algorithm>
@@ -44,7 +46,7 @@
 namespace altair::live {
 
 struct LiveOptionArbRule {
-    double rate = 0.065;           ///< carry for the premium legs
+    double rate = kInrRiskFreeRate; ///< carry for the premium legs
     double margin_bp = 3.0;        ///< of the reference price (strike, box width), over costs, to enter
     double exit_bp = 0.5;          ///< unwind when what is left to make is under this
     int levels = 5;                ///< book levels the imbalance reads

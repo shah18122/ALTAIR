@@ -1,5 +1,10 @@
 # Demo trading: band-fade short options and futures pairs
 
+> **2026-11-02.** The tables below came from NSE bhavcopy closes, NIFTY lots
+> of 75 and BANKNIFTY lots of 35. ALTAIR uses FYERS data only now, and the lots
+> are 65 / 30, so read them as history, not evidence. The current state is in
+> docs/STATUS.md; how the paper sellers are judged, docs/research/paper-evaluation.md.
+
 Paper trades only. Nothing here reaches a broker (real orders go only through
 the Terminal's LIVE switch: ops/live-terminal.md). Two research CLIs write CSVs under `data/verified/`, and the
 desktop's **Strategies → Demo Trading** page runs them and shows the results.

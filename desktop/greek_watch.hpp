@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include "live_market.hpp"
 
 #include <QDialog>
@@ -319,7 +320,7 @@ private:
     std::vector<GreekLeg> legs_;
     QTimer timer_;
     QString store_;
-    double rate_ = 0.065;
+    double rate_ = altair::kInrRiskFreeRate;
 };
 
 } // namespace altair::ui

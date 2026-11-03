@@ -296,10 +296,14 @@ inline void add_chains(const std::vector<LiveKiteRow>& rows, const std::string& 
     if (!(spot > 0.0)) { rep.notes.push_back(under + ": no spot to centre the chain on"); return; }
     // The nearest --expiries of them (NIFTY: the weeklies and the monthly among
     // them; BANKNIFTY: monthlies only), each centred on the same spot.
+    // An expiry that ends today does not count: on expiry day the straddle
+    // sellers sell the next one (live/straddle.hpp), so it must be streamed too.
     std::set<std::int64_t> chosen;
+    int counted = 0;
     for (const std::int64_t e : expiries) {
-        if (static_cast<int>(chosen.size()) >= std::max(1, o.expiries)) break;
+        if (counted >= std::max(1, o.expiries)) break;
         chosen.insert(e);
+        if (e != o.today) ++counted;
     }
     // --monthly: the nearest expiry that is the last of its calendar month, so
     // NIFTY's monthly is streamed even when three weeklies come before it.

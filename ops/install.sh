@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ops/install.sh -- register ALTAIR's scheduled jobs as systemd timers (or remove them).
 #
+#   altair-fyers-login.timer   Mon-Fri 08:30 IST  broker/tools/fyers_auto_login.py (TOTP + PIN, no browser)
 #   altair-recorder.timer      Mon-Fri 08:50 IST  ops/linux/record_session.py --go (records to 15:45)
 #   altair-chain-open.timer    Mon-Fri 09:20 IST  ops/linux/chain_snapshot.py --go
 #   altair-chain-close.timer   Mon-Fri 15:27 IST  ops/linux/chain_snapshot.py --go
@@ -36,7 +37,7 @@ while [ $# -gt 0 ]; do
 done
 
 dest=/etc/systemd/system
-timers=(altair-recorder altair-chain-open altair-chain-close altair-fyers-chain altair-nightly)
+timers=(altair-fyers-login altair-recorder altair-chain-open altair-chain-close altair-fyers-chain altair-nightly)
 units=("$here"/systemd/*.service "$here"/systemd/*.timer)
 
 if [ "$remove" = 1 ]; then

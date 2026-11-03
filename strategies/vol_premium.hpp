@@ -42,6 +42,7 @@
 
 #pragma once
 
+#include <analytics/inr_rate.hpp>
 #include <analytics/gamma_trading.hpp>
 #include <analytics/option_math.hpp>
 #include <analytics/vol_cone.hpp>
@@ -89,7 +90,7 @@ struct VrpMarket {
 struct VrpPolicy {
     double lot_size = 0.0;           ///< from the spec store, never a literal
     int lots = 1;
-    double rate = 0.065;
+    double rate = kInrRiskFreeRate;
     double entry_spread = 0.02;      ///< implied minus forecast vol, annualised: 0.02 = 2 vol points
     std::size_t min_sessions = 10;   ///< to expiry, at entry
     std::size_t exit_sessions = 1;   ///< buy back once this many or fewer remain
