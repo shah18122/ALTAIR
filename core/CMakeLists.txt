@@ -49,4 +49,8 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_affinity_test PRIVATE altair_affinity)
     add_test(NAME affinity COMMAND altair_affinity_test
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    add_executable(altair_host_tuning_test tests/test_host_tuning.cpp)
+    target_link_libraries(altair_host_tuning_test PRIVATE altair_flags)
+    target_include_directories(altair_host_tuning_test PRIVATE ${CMAKE_SOURCE_DIR})
+    add_test(NAME host_tuning COMMAND altair_host_tuning_test)
 endif()

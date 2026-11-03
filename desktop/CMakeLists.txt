@@ -72,6 +72,7 @@ qt_add_executable(altair_desktop
     saved_layouts.hpp
     daily_findings_page.hpp
     work_log_page.hpp
+    server_page.hpp
     obi_page.hpp
     workspace_pages.hpp
     workspace_layout.hpp
@@ -363,18 +364,15 @@ endforeach()
 # property (the Qt6::Network paragraph above); it links no engine library.
 qt_add_executable(altair_news news/news_main.cpp news/rss.hpp)
 target_link_libraries(altair_news PRIVATE altair_flags Qt6::Core Qt6::Network)
-set_target_properties(altair_news PROPERTIES WIN32_EXECUTABLE OFF)
 add_dependencies(altair_desktop altair_news)
 
 # CX06 cold-path, read-only data audit. No broker, OMS or existing writer dependency.
 qt_add_executable(altair_bar_consistency data/bar_consistency.cpp)
 target_link_libraries(altair_bar_consistency PRIVATE altair_flags Qt6::Core)
-set_target_properties(altair_bar_consistency PROPERTIES WIN32_EXECUTABLE OFF)
 
 if(ALTAIR_BUILD_TESTS)
     qt_add_executable(altair_news_test tests/test_news.cpp news/rss.hpp)
     target_link_libraries(altair_news_test PRIVATE altair_flags Qt6::Core)
-    set_target_properties(altair_news_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_news COMMAND altair_news_test)
 
     qt_add_executable(altair_credential_setup_test
@@ -385,8 +383,6 @@ if(ALTAIR_BUILD_TESTS)
         Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_credential_setup_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_credential_setup_test
-        PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_credential_setup COMMAND altair_credential_setup_test)
 
     qt_add_executable(altair_fyers_link_test
@@ -398,8 +394,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_types Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_fyers_link_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_fyers_link_test
-        PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_fyers_link COMMAND altair_fyers_link_test)
 
     qt_add_executable(altair_fyers_panel_test
@@ -412,8 +406,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_fyers_panel_test PRIVATE
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    set_target_properties(altair_fyers_panel_test
-        PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_fyers_panel COMMAND altair_fyers_panel_test)
     set_tests_properties(desktop_fyers_panel PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -434,8 +426,7 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_HELPER_PROCESS_CHILD="$<TARGET_FILE:altair_helper_process_child>")
     add_dependencies(altair_helper_process_test altair_helper_process_child)
     set_target_properties(altair_helper_process_test
-        PROPERTIES WIN32_EXECUTABLE OFF
-                   OUTPUT_NAME altair_helper_process_ipc_test)
+        PROPERTIES OUTPUT_NAME altair_helper_process_ipc_test)
     add_test(NAME desktop_helper_process COMMAND altair_helper_process_test)
 
     # Exercise the real shell, but never inherit its real account/dataset paths.
@@ -455,7 +446,6 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_SESSION_FILE="data/kite_session.json"
         ALTAIR_INTENT_FILE="data/order_intents.jsonl"
         ALTAIR_KILL_REQUEST_FILE="data/kill_request.json")
-    set_target_properties(altair_navigation_shell_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_navigation_shell COMMAND altair_navigation_shell_test)
     add_test(NAME desktop_navigation_shell_125 COMMAND altair_navigation_shell_test)
     add_test(NAME desktop_navigation_shell_200 COMMAND altair_navigation_shell_test)
@@ -470,14 +460,12 @@ if(ALTAIR_BUILD_TESTS)
     qt_add_executable(test_bar_consistency tests/test_bar_consistency.cpp)
     target_link_libraries(test_bar_consistency PRIVATE altair_flags Qt6::Core)
     add_dependencies(test_bar_consistency altair_bar_consistency)
-    set_target_properties(test_bar_consistency PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_bar_consistency COMMAND test_bar_consistency)
 
     # CX06: presentation-only registry, menus, persistence and keyboard tests.
     qt_add_executable(altair_navigation_test tests/test_navigation.cpp)
     target_link_libraries(altair_navigation_test PRIVATE
         altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
-    set_target_properties(altair_navigation_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_navigation COMMAND altair_navigation_test)
     set_tests_properties(desktop_navigation PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -494,7 +482,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_types altair_time altair_feed Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_desktop_filter_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_desktop_filter_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_filter COMMAND altair_desktop_filter_test)
 
     # candles.hpp has no Q_OBJECT, so this one needs no moc and no Qt at all
@@ -507,8 +494,6 @@ if(ALTAIR_BUILD_TESTS)
         chart/chart_widget.hpp)
     target_link_libraries(altair_desktop_chart_test PRIVATE
         altair_types altair_time altair_feed Qt6::Core Qt6::Gui Qt6::Widgets)
-    set_target_properties(altair_desktop_chart_test
-        PROPERTIES WIN32_EXECUTABLE OFF)
     target_include_directories(altair_desktop_chart_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME desktop_chart COMMAND altair_desktop_chart_test)
@@ -524,7 +509,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_types altair_time altair_feed Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_depth_ladder_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_depth_ladder_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_depth_ladder COMMAND altair_depth_ladder_test)
 
     # Runs against the REAL series in dataset/, not a fixture. dataset/ is
@@ -540,7 +524,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_types altair_time Qt6::Core Qt6::Gui)
     target_include_directories(altair_broker_status_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_broker_status_test PROPERTIES WIN32_EXECUTABLE OFF)
     # THE TEST NEEDS THE SAME DEFINE AS THE UI, and it has to be set HERE.
     #
     # The first attempt put it beside the altair_desktop define higher up in
@@ -564,7 +547,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_types altair_time Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_broker_activity_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_broker_activity_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_broker_activity COMMAND altair_broker_activity_test)
     set_tests_properties(desktop_broker_activity PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -579,7 +561,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_types altair_time altair_feed Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_kite_panel_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_kite_panel_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_kite_panel COMMAND altair_kite_panel_test)
 
     # P22-04. The Overnight Gap page has its OWN reader, and a reader is where
@@ -601,8 +582,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_overnight_page_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
-    set_target_properties(altair_overnight_page_test
-        PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_overnight_page COMMAND altair_overnight_page_test)
     # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
     set_tests_properties(desktop_overnight_page PROPERTIES LABELS dataset)
@@ -623,8 +602,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_options_page_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
-    set_target_properties(altair_options_page_test
-        PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_options_page COMMAND altair_options_page_test)
 
     # P23-05. Renders EVERY compute page and asserts the dataset-backed ones
@@ -659,7 +636,6 @@ if(ALTAIR_BUILD_TESTS)
             ALTAIR_HAVE_CHARGES_TOML=1
             ALTAIR_CHARGES_TOML="${CMAKE_SOURCE_DIR}/config/charges.toml")
     endif()
-    set_target_properties(altair_pages_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_pages COMMAND altair_pages_test)
     # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
     set_tests_properties(desktop_pages PROPERTIES LABELS dataset)
@@ -670,7 +646,6 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_model_job_test PRIVATE Qt6::Core)
     target_include_directories(altair_model_job_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_model_job_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_model_job COMMAND altair_model_job_test)
 
     qt_add_executable(altair_compute_page_test
@@ -691,7 +666,6 @@ if(ALTAIR_BUILD_TESTS)
             ALTAIR_HAVE_CHARGES_TOML=1
             ALTAIR_CHARGES_TOML="${CMAKE_SOURCE_DIR}/config/charges.toml")
     endif()
-    set_target_properties(altair_compute_page_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_compute_page COMMAND altair_compute_page_test)
     set_tests_properties(desktop_compute_page PROPERTIES TIMEOUT 30 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -710,8 +684,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_order_ticket_test PRIVATE
         ALTAIR_INTENT_VECTORS="${CMAKE_SOURCE_DIR}/oms/tests/vectors/intents.jsonl")
-    set_target_properties(altair_order_ticket_test
-        PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_order_ticket COMMAND altair_order_ticket_test)
 
     # CX02-B5. The halt request file: absent, present and UNREADABLE are three
@@ -725,8 +697,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_types altair_time Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_kill_switch_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_kill_switch_test
-        PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_kill_switch COMMAND altair_kill_switch_test)
 
     # P32-01. The terminal's WIRE. The merge itself is layout; the wire is the
@@ -758,8 +728,6 @@ if(ALTAIR_BUILD_TESTS)
             Qt6::Core Qt6::Network)
         target_include_directories(altair_price_client_test
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        set_target_properties(altair_price_client_test
-            PROPERTIES WIN32_EXECUTABLE OFF)
         add_test(NAME desktop_price_client COMMAND altair_price_client_test)
 
         # Start here: ALTAIR in plain words -- the state from its files, the verdicts.
@@ -768,7 +736,6 @@ if(ALTAIR_BUILD_TESTS)
             altair_types altair_time altair_server altair_flags Boost::headers Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
         target_compile_definitions(altair_start_page_test PRIVATE ALTAIR_KILL_REQUEST_FILE="data/kill_request.json")
         target_include_directories(altair_start_page_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        set_target_properties(altair_start_page_test PROPERTIES WIN32_EXECUTABLE OFF)
         add_test(NAME desktop_start_page COMMAND altair_start_page_test)
         set_tests_properties(desktop_start_page PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -785,8 +752,6 @@ if(ALTAIR_BUILD_TESTS)
             Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
         target_include_directories(altair_live_market_test
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        set_target_properties(altair_live_market_test
-            PROPERTIES WIN32_EXECUTABLE OFF)
         add_test(NAME desktop_live_market COMMAND altair_live_market_test)
 
         # The paper order book behind + / − and its windows, and the market
@@ -803,8 +768,6 @@ if(ALTAIR_BUILD_TESTS)
             Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
         target_include_directories(altair_paper_oms_test
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        set_target_properties(altair_paper_oms_test
-            PROPERTIES WIN32_EXECUTABLE OFF)
         add_test(NAME desktop_paper_oms COMMAND altair_paper_oms_test)
         set_tests_properties(desktop_paper_oms PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -822,8 +785,6 @@ if(ALTAIR_BUILD_TESTS)
             Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
         target_include_directories(altair_live_models_test
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        set_target_properties(altair_live_models_test
-            PROPERTIES WIN32_EXECUTABLE OFF)
         add_test(NAME desktop_live_models COMMAND altair_live_models_test)
         # The Order Book Imbalance page: every book and print of one instrument, from the
         # real bus and client, through book/flow.hpp.
@@ -841,8 +802,6 @@ if(ALTAIR_BUILD_TESTS)
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
         target_compile_definitions(altair_obi_page_test
             PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-        set_target_properties(altair_obi_page_test
-            PROPERTIES WIN32_EXECUTABLE OFF)
         add_test(NAME desktop_obi_page COMMAND altair_obi_page_test)
         set_tests_properties(desktop_obi_page PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -859,7 +818,6 @@ if(ALTAIR_BUILD_TESTS)
                 ALTAIR_HAVE_CHARGES_TOML=1
                 ALTAIR_CHARGES_TOML="${CMAKE_SOURCE_DIR}/config/charges.toml")
         endif()
-        set_target_properties(altair_trade_stats_test PROPERTIES WIN32_EXECUTABLE OFF)
         add_test(NAME desktop_trade_stats COMMAND altair_trade_stats_test)
         set_tests_properties(desktop_trade_stats PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -867,7 +825,6 @@ if(ALTAIR_BUILD_TESTS)
         qt_add_executable(altair_message_bar_test tests/test_message_bar.cpp message_bar.hpp)
         target_link_libraries(altair_message_bar_test PRIVATE altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
         target_include_directories(altair_message_bar_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        set_target_properties(altair_message_bar_test PROPERTIES WIN32_EXECUTABLE OFF)
         add_test(NAME desktop_message_bar COMMAND altair_message_bar_test)
         set_tests_properties(desktop_message_bar PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -885,7 +842,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_types Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_atlas_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_atlas_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_atlas COMMAND altair_atlas_test)
 
     qt_add_executable(altair_pair_trading_test
@@ -899,14 +855,12 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_pair_trading_test PRIVATE
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    set_target_properties(altair_pair_trading_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_pair_trading COMMAND altair_pair_trading_test)
 
     add_executable(altair_format_test tests/test_format.cpp)
     target_link_libraries(altair_format_test PRIVATE altair_flags Qt6::Core)
     target_include_directories(altair_format_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_format_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_format COMMAND altair_format_test)
 
     qt_add_executable(altair_position_table_test
@@ -916,7 +870,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_flags altair_types altair_time Qt6::Core Qt6::Gui)
     target_include_directories(altair_position_table_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_position_table_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_position_table COMMAND altair_position_table_test)
 
     qt_add_executable(altair_funds_summary_test
@@ -926,7 +879,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_flags altair_types altair_time Qt6::Core Qt6::Gui)
     target_include_directories(altair_funds_summary_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_funds_summary_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_funds_summary COMMAND altair_funds_summary_test)
 
     # GETS-style Terminal: FYERS account/quote decoding, the Greek book, every
@@ -944,7 +896,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_risk Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_gets_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_gets_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_gets COMMAND altair_gets_test)
 
     # The Demo Trading page reads the band-fade and pairs CSVs: fixtures only,
@@ -960,7 +911,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_demo_trading_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_demo_trading_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_demo_trading COMMAND altair_demo_trading_test)
     set_tests_properties(desktop_demo_trading PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -974,7 +924,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_backtests_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_backtests_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_backtests COMMAND altair_backtests_test)
     set_tests_properties(desktop_backtests PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -998,7 +947,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_trade_logs_test PRIVATE
         ALTAIR_DATASET_DIR="dataset")
-    set_target_properties(altair_trade_logs_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_trade_logs COMMAND altair_trade_logs_test)
     set_tests_properties(desktop_trade_logs PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -1010,6 +958,7 @@ if(ALTAIR_BUILD_TESTS)
         daily_findings_page.hpp
         saved_layouts.hpp
         work_log_page.hpp
+        server_page.hpp
         trade_reason.hpp
         demo_trading_page.hpp
         strategy_record.hpp)
@@ -1017,7 +966,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_workstation_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_workstation_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_workstation COMMAND altair_workstation_test)
     set_tests_properties(desktop_workstation PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -1029,7 +977,6 @@ if(ALTAIR_BUILD_TESTS)
         altair_flags altair_types altair_time Qt6::Core Qt6::Gui Qt6::Widgets)
     target_include_directories(altair_arbitrage_workspace_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_arbitrage_workspace_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_arbitrage_workspace COMMAND altair_arbitrage_workspace_test)
 
     qt_add_executable(altair_terminal_test
@@ -1063,7 +1010,6 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_QUOTE_FILE="${CMAKE_SOURCE_DIR}/data/kite_quotes.json"
         ALTAIR_TICKS_FILE="${CMAKE_SOURCE_DIR}/data/kite_ticks.json"
         ALTAIR_DEV_CREDENTIALS)
-    set_target_properties(altair_terminal_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_terminal COMMAND altair_terminal_test)
     # Check [5] prices the option chain from the instrument master and
     # dataset/ (neither in git): CI runs `ctest -LE dataset`.
@@ -1085,7 +1031,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_kite_link_test PRIVATE
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    set_target_properties(altair_kite_link_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_kite_link COMMAND altair_kite_link_test)
     set_tests_properties(desktop_kite_link PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -1098,7 +1043,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_bar_csv_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
-    set_target_properties(altair_bar_csv_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_bar_csv COMMAND altair_bar_csv_test)
     # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
     set_tests_properties(desktop_bar_csv PROPERTIES LABELS dataset)
@@ -1112,7 +1056,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_fits_test PRIVATE
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset")
-    set_target_properties(altair_fits_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_fits COMMAND altair_fits_test)
     # Reads dataset/ (not in git): CI runs `ctest -LE dataset`.
     set_tests_properties(desktop_fits PROPERTIES LABELS dataset)

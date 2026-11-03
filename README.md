@@ -65,6 +65,7 @@ Svg, Widgets).
 ```bash
 sudo ops/setup.sh            # packages, Qt 6.8.3, git pull, build, systemd timers, desktop icons
 sudo ops/setup.sh --test     # ... and run the tests
+sudo ops/setup.sh --dcv      # first run on EC2: + GNOME desktop and Amazon DCV (port 8443)
 ```
 
 Run it again any time: it only does what is missing or out of date, and it

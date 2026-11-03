@@ -30,9 +30,9 @@ void registry_contract() {
         "Forecast", "Strategies", "Overnight Gap", "Options", "Basis", "Flagging",
         "Microstructure", "Sizing & Limits", "Cointegration", "Memory", "Link Kite",
         "Neural", "Features", "Arbitrage", "Model Atlas", "FYERS Primary", "Brokers",
-        "Demo Trading", "Threshold", "About", "Start here", "Backtests", "Daily findings", "Work log", "Order Book Imbalance"};
+        "Demo Trading", "Threshold", "About", "Start here", "Backtests", "Daily findings", "Work log", "Order Book Imbalance", "Server"};
     check(nav_page_names() == expected,
-          "all legacy labels plus Brokers, Demo Trading, Threshold, About, Start here, Backtests, Daily findings, Work log and Order Book Imbalance are registered");
+          "all legacy labels plus Brokers, Demo Trading, Threshold, About, Start here, Backtests, Daily findings, Work log, Order Book Imbalance and Server are registered");
     QSet<QString> ids;
     QSet<int> order;
     for (int i = 0; i < expected.size(); ++i) {
@@ -41,8 +41,8 @@ void registry_contract() {
               "label and stable ID resolve to the same legacy page");
     }
     for (const int i : kNavigationOrder) order.insert(i);
-    check(ids.size() == 43 && order.size() == 24 && !ids.contains(QString{}),
-          "43 identities and 24 sidebar destinations");
+    check(ids.size() == 44 && order.size() == 25 && !ids.contains(QString{}),
+          "44 identities and 25 sidebar destinations");
     check(kNavigationOrder.front() == 38, "Start here heads the sidebar");
     // The model pages open from the Model Atlas, not the sidebar.
     for (const int model_page : {9, 10, 16, 17, 18, 27, 29, 30, 13, 7, 24, 26, 25, 23})
@@ -61,7 +61,7 @@ void registry_contract() {
           nav_page_index(QStringLiteral("not a page")) == -1 &&
           nav_page_index(QStringLiteral("market.order-book-imbalance")) == 42 &&
           nav_page_index(QStringLiteral("market.order-flow")) == 42 &&
-          nav_page_id(-1).isEmpty() && nav_page_id(43).isEmpty(), "lookup boundary behavior");
+          nav_page_id(-1).isEmpty() && nav_page_id(44).isEmpty(), "lookup boundary behavior");
 }
 void tree_and_menu() {
     WorkspaceNavigation nav;
@@ -91,7 +91,7 @@ void tree_and_menu() {
     nav.populate_menu(&menu);
     QList<QAction*> actions;
     routes(&menu, actions);
-    check(actions.size() == 24 + nav.recent_pages().size(), "seven native submenus and recent routes expose sidebar pages");
+    check(actions.size() == 25 + nav.recent_pages().size(), "seven native submenus and recent routes expose sidebar pages");
     int checked = 0;
     for (auto* action : actions) checked += action->isChecked() ? 1 : 0;
     check(checked >= 1, "workspace menus visibly mark the current route");
@@ -114,7 +114,7 @@ void tree_and_menu() {
             check(invoked == entry->data().toInt(), "compact popup retains page mapping");
         }
     }
-    check(compact_routes == 24, "all sidebar pages reachable in compact mode");
+    check(compact_routes == 25, "all sidebar pages reachable in compact mode");
     int compact_checked = 0;
     for (auto* button : buttons)
         for (auto* entry : button->menu()->actions())
@@ -205,7 +205,7 @@ void search_keyboard() {
     search.show();
     auto* query = search.findChild<QLineEdit*>();
     auto* results = search.findChild<QListWidget*>();
-    check(results->count() == 38, "search exposes every canonical destination, model pages included");
+    check(results->count() == 39, "search exposes every canonical destination, model pages included");
     for (const auto& alias : {QStringLiteral("Kite"), QStringLiteral("FYERS"), QStringLiteral("Link Kite")}) {
         query->setText(alias);
         check(results->count() == 1 && results->item(0)->data(Qt::UserRole).toInt() == 34,

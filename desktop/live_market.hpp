@@ -151,7 +151,7 @@ namespace live_detail {
     QStringList tried{app + QStringLiteral("/") + exe, app + QStringLiteral("/../app/") + exe,
                       app + QStringLiteral("/../Helpers/") + exe, app + QStringLiteral("/../../net/app/") + exe};
 #ifdef ALTAIR_SOURCE_DIR
-    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/linux/app/") + exe;
 #endif
     for (const QString& path : tried) {
         const QFileInfo file(path);

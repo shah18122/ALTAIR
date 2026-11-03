@@ -5,6 +5,7 @@
 #include "../daily_findings_page.hpp"
 #include "../saved_layouts.hpp"
 #include "../work_log_page.hpp"
+#include "../server_page.hpp"
 
 #include <QApplication>
 #include <QTemporaryDir>
@@ -95,6 +96,30 @@ int main(int argc, char** argv) {
     QString why;
     (void)git_history(root, &why);
     check(!why.isEmpty(), "outside a repository the history says why it is empty");
+
+    // ---- the Server page -----------------------------------------------------
+    {
+        const auto m = parse_systemctl_show("LoadState=loaded\nActiveState=inactive\nResult=exit-code\nExecMainStatus=3\n"
+                                            "ExecMainStartTimestamp=Tue 2026-11-03 08:30:00 IST\n");
+        check(m.value("Result") == "exit-code" && m.size() == 5, "systemctl show parses to keys and values");
+        check(job_outcome(m) == "ended: exit-code (exit 3)", "a failed job says how it ended");
+        auto ok = m;
+        ok["Result"] = "success";
+        check(job_outcome(ok) == "ok", "a good run says ok");
+        check(job_outcome(parse_systemctl_show("LoadState=not-found\n")).startsWith("not installed"), "a missing unit says how to install it");
+        auto never = ok;
+        never["ExecMainStartTimestamp"] = "";
+        check(job_outcome(never) == "not run yet", "a timer that has not fired yet says so");
+        const QStringList cmd = update_command("/srv/altair");
+        check(cmd.first() == "x-terminal-emulator" && cmd.last().contains("sudo '/srv/altair/ops/setup.sh'"),
+              "Install or update runs sudo ops/setup.sh in a terminal");
+        check(kServerJobs.size() == 6 && QString(kServerJobs[0].unit) == "altair-fyers-login",
+              "the six scheduled jobs, the login first");
+        ServerPage page(root);
+        page.refresh_all();
+        check(page.jobs()->rowCount() == 6 && page.detail()->toPlainText().contains("Latency tuning in effect"),
+              "the page lists the jobs and the latency tuning");
+    }
 
     // ---- palette matching ---------------------------------------------------
     check(palette_score("atl", "Model Atlas") > 0 && palette_score("xyz", "Model Atlas") < 0, "letters in order match; others do not");
