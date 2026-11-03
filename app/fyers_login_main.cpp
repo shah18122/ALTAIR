@@ -30,17 +30,8 @@
 namespace {
 
 std::string env_or_empty(const char* name) {
-#if defined(_MSC_VER)
-    char* buf = nullptr;
-    std::size_t len = 0;
-    if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) return {};
-    std::string out{buf};
-    std::free(buf);
-    return out;
-#else
     const char* value = std::getenv(name);
     return value == nullptr ? std::string{} : std::string{value};
-#endif
 }
 
 std::string vault_or_env(std::string_view account, const char* environment) {
@@ -158,11 +149,7 @@ std::string now_utc() {
     const auto now = std::chrono::system_clock::to_time_t(
         std::chrono::system_clock::now());
     std::tm tm{};
-#if defined(_WIN32)
-    gmtime_s(&tm, &now);
-#else
     gmtime_r(&now, &tm);
-#endif
     char out[32]{};
     std::strftime(out, sizeof(out), "%Y-%m-%dT%H:%M:%SZ", &tm);
     return out;

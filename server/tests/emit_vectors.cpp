@@ -62,13 +62,7 @@ int written = 0;
 /// would apply to the whole translation unit.
 [[nodiscard]] std::FILE* xfopen(const char* path, const char* mode) noexcept
 {
-#if defined(_MSC_VER)
-    std::FILE* f = nullptr;
-    if (::fopen_s(&f, path, mode) != 0) { return nullptr; }
-    return f;
-#else
     return std::fopen(path, mode);
-#endif
 }
 
 /// One hex digit, or -1. Explicit rather than sscanf: the parse is four lines

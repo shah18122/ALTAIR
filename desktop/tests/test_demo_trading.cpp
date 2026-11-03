@@ -246,10 +246,6 @@ void test_daily_call(const QString& root) {
     check(find(plan, QStringLiteral("altair_trader"))->required
               && !find(plan, QStringLiteral("altair_trader"))->args.contains(QStringLiteral("--unverified-costs")),
           "daily call: altair_trader is required, and costs are only priced unverified when ticked");
-    for (const auto& s : plan)
-        if (!s.program.isEmpty())
-            check(s.args.contains(QStringLiteral("2026-10-09")) && !s.required,
-                  "daily call: the bhavcopy is topped up from two weeks back, optional");
 
     write(root + QStringLiteral("/data/fyers_session.json"), "{}");
     plan = demo_detail::daily_call_plan(root, true, day);

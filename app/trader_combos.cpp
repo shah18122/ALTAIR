@@ -4,7 +4,7 @@
 // the combination search (models/combo_search.hpp) tries every rule that
 // joins them and trades, walk-forward, the ones that have been earning.
 //
-// WHAT IT READS (FYERS ONLY). --fyers DIR, as ops/fetch_fyers_meta.ps1 writes it:
+// WHAT IT READS (FYERS ONLY). --fyers DIR, as ops/linux/fetch.py meta writes it:
 //   DIR/SOURCE.txt                 must say FYERS (the fetch script writes it)
 //   DIR/NIFTY/1m, DIR/BANKNIFTY/1m the indices, one-minute bars
 //   DIR/INDIAVIX/1d                India VIX daily closes; DIR/INDIAVIX/1m if present
@@ -782,7 +782,7 @@ int combos_main(int argc, char** argv) {
     const bool is_fyers = source.find("FYERS") != std::string::npos;
     if (!is_fyers && !opt.not_fyers) {
         std::printf("%s has no SOURCE.txt saying FYERS. The meta-trader reads FYERS data only\n"
-                    "(ops/fetch_fyers_meta.ps1 writes it). --not-fyers runs a smoke test on other data,\n"
+                    "(ops/linux/fetch.py meta writes it). --not-fyers runs a smoke test on other data,\n"
                     "stamped NOT FYERS DATA, never a result.\n", opt.fyers.string().c_str());
         return 2;
     }

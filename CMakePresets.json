@@ -100,24 +100,6 @@
         "ALTAIR_BUILD_BENCH": "OFF",
         "ALTAIR_QT_ROOT": "$env{ALTAIR_QT_ROOT}"
       }
-    },
-    {
-      "name": "macos-arm64",
-      "displayName": "macOS Apple Silicon \u2014 RelWithDebInfo, tests",
-      "inherits": "base",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_OSX_ARCHITECTURES": "arm64",
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.3",
-        "ALTAIR_BUILD_TESTS": "ON",
-        "ALTAIR_BUILD_BENCH": "OFF",
-        "ALTAIR_QT_ROOT": "$env{ALTAIR_QT_ROOT}"
-      }
     }
   ],
   "buildPresets": [
@@ -153,10 +135,6 @@
     {
       "name": "linux",
       "configurePreset": "linux"
-    },
-    {
-      "name": "macos-arm64",
-      "configurePreset": "macos-arm64"
     }
   ],
   "testPresets": [
@@ -238,17 +216,6 @@
     {
       "name": "linux",
       "configurePreset": "linux",
-      "output": {
-        "outputOnFailure": true
-      },
-      "execution": {
-        "stopOnFailure": false,
-        "timeout": 600
-      }
-    },
-    {
-      "name": "macos-arm64",
-      "configurePreset": "macos-arm64",
       "output": {
         "outputOnFailure": true
       },

@@ -17,16 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <vector>
-#elif defined(__linux__)
+#if defined(__linux__)
 #include <unistd.h>
 #endif
 
@@ -53,25 +44,7 @@ struct CacheTopology {
 /// fallback is reporting a guess as a measurement.
 [[nodiscard]] inline CacheTopology read_cache_topology() {
     CacheTopology t;
-#if defined(_WIN32)
-    DWORD bytes = 0;
-    GetLogicalProcessorInformation(nullptr, &bytes);
-    if (bytes > 0) {
-        std::vector<SYSTEM_LOGICAL_PROCESSOR_INFORMATION> info(
-            bytes / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
-        if (GetLogicalProcessorInformation(info.data(), &bytes)) {
-            for (const auto& e : info) {
-                if (e.Relationship != RelationCache) { continue; }
-                const CACHE_DESCRIPTOR& c = e.Cache;
-                if (c.Type != CacheData && c.Type != CacheUnified) { continue; }
-                if (c.Level == 1 && t.l1d == 0) { t.l1d = c.Size; t.line = c.LineSize; }
-                if (c.Level == 2 && t.l2 == 0) { t.l2 = c.Size; }
-                if (c.Level == 3 && t.l3 == 0) { t.l3 = c.Size; }
-            }
-            t.from_os = t.l1d != 0;
-        }
-    }
-#elif defined(__linux__) && defined(_SC_LEVEL1_DCACHE_SIZE)
+#if defined(__linux__) && defined(_SC_LEVEL1_DCACHE_SIZE)
     const long l1 = sysconf(_SC_LEVEL1_DCACHE_SIZE);
     const long ln = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
     const long l2 = sysconf(_SC_LEVEL2_CACHE_SIZE);

@@ -68,15 +68,7 @@ namespace detail {
 /// UNIT: none. PRECONDITION: path and mode non-null. Returns nullptr on failure.
 [[nodiscard]] inline std::FILE* session_fopen(const char* path,
                                               const char* mode) noexcept {
-#if defined(_MSC_VER)
-    std::FILE* f = nullptr;
-    if (::fopen_s(&f, path, mode) != 0) {
-        return nullptr;
-    }
-    return f;
-#else
     return std::fopen(path, mode);
-#endif
 }
 
 } // namespace detail

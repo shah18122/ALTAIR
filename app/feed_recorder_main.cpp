@@ -11,7 +11,7 @@
 // altair_tune, altair_exec_study and `altair_store decode` read it unchanged.
 //
 // WHY A SEPARATE PROCESS. The engine records only while the desktop runs it.
-// This runs from a Windows scheduled task (ops/install_tasks.ps1) whether the
+// This runs from a systemd timer (ops/install.sh) whether the
 // desktop is open or not, and it decides nothing, so it cannot be wrong about
 // anything but bytes.
 //
@@ -101,7 +101,7 @@ void usage(const char* exe) {
         "    --min-free-gb  stop recording below this much free disk (default 2)\n"
         "    --go           record. Without it this prints what it would do and exits.\n\n"
         "  Start the feed first (altair_price_service --live --go), or let\n"
-        "  ops\\record_session.ps1 do both. It waits for the feed and reconnects.\n",
+        "  ops/linux/record_session.py do both. It waits for the feed and reconnects.\n",
         exe);
 }
 

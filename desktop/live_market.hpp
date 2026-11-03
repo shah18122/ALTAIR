@@ -145,11 +145,7 @@ namespace live_detail {
 }
 
 [[nodiscard]] inline QString find_helper(const QString& name) {
-#if defined(_WIN32)
-    const QString exe = name + QStringLiteral(".exe");
-#else
     const QString exe = name;
-#endif
     const QString app = QCoreApplication::applicationDirPath();
     QStringList tried{app + QStringLiteral("/") + exe, app + QStringLiteral("/../app/") + exe,
                       app + QStringLiteral("/../Helpers/") + exe, app + QStringLiteral("/../../net/app/") + exe};
@@ -2071,7 +2067,7 @@ private:
         if (feed_ != nullptr) return;
         const QString exe = live_detail::find_helper(QStringLiteral("altair_price_service"));
         if (exe.isEmpty()) {
-            note_ = QStringLiteral("altair_price_service is not built (it needs Boost; build the net preset: .\\build.bat net).");
+            note_ = QStringLiteral("altair_price_service is not built (it needs Boost; build the net preset: ops/build.sh).");
             refresh_status();
             return;
         }

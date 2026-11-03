@@ -4,7 +4,7 @@
 // NSE bhavcopy, and a tool that cannot tell where its bars came from must not
 // guess. A folder counts as FYERS when it carries a SOURCE.txt naming FYERS
 // (written by the fetch scripts), or when it sits under a folder named
-// `fyers` -- the layout of ops/broker_audit.ps1
+// `fyers` -- the layout of ops/linux/fetch.py audit
 // (data\broker_audit\fyers\<segment>\<instrument>\<tf>) and of the recorder
 // store (data\store\fyers\...).
 

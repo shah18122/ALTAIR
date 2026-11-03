@@ -1324,11 +1324,7 @@ private:
     /// the build folder where nothing reads it, while reporting success.
     void on_refresh_quotes() {
         QString exe =
-#if defined(_WIN32)
-            QStringLiteral("altair_kite_quote.exe");
-#else
             QStringLiteral("altair_kite_quote");
-#endif
         QStringList tried;
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../app/") + exe;

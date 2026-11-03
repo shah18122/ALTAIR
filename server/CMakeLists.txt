@@ -60,27 +60,19 @@ if(ALTAIR_BUILD_TESTS)
         add_executable(altair_price_bus_test tests/test_price_bus.cpp)
         target_link_libraries(altair_price_bus_test
             PRIVATE altair_server Boost::headers)
-        if(WIN32)
-            # Boost.Asio auto-links ws2_32 on MSVC via a pragma, but mswsock
-            # is needed for the overlapped path and is not always pulled in.
-            target_link_libraries(altair_price_bus_test PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME price_bus COMMAND altair_price_bus_test)
 
         # All three topics interleaved; each keeps its own sequence.
         add_executable(altair_price_bus_topics_test tests/test_price_bus_topics.cpp)
         target_link_libraries(altair_price_bus_topics_test
             PRIVATE altair_server Boost::headers)
-        if(WIN32)
-            target_link_libraries(altair_price_bus_topics_test PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME price_bus_topics COMMAND altair_price_bus_topics_test)
         # Runs threads: the TSan CI job runs exactly the `concurrency` label.
         set_tests_properties(price_bus PROPERTIES LABELS concurrency)
         message(STATUS "altair: price bus ENABLED (Boost ${Boost_VERSION})")
     else()
         message(STATUS "altair: price bus test skipped -- no Boost. It needs "
-                       "the `net` preset (build.bat net).")
+                       "the `net` preset (ops/build.sh).")
     endif()
 
     add_executable(altair_emit_vectors tests/emit_vectors.cpp)

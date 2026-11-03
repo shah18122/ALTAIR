@@ -27,11 +27,7 @@ namespace altair::ui {
 enum class CredentialBroker : std::uint8_t { Fyers, Kite };
 
 [[nodiscard]] inline QString find_credential_helper() {
-#if defined(_WIN32)
-    const QString name = QStringLiteral("altair_credential_helper.exe");
-#else
     const QString name = QStringLiteral("altair_credential_helper");
-#endif
     const QString app = QCoreApplication::applicationDirPath();
     const QStringList candidates{
         app + QStringLiteral("/") + name,
@@ -81,7 +77,7 @@ public:
         auto* note = new QLabel(
             QStringLiteral(
                 "Values briefly pass through this setup form and a private pipe, "
-                "then are stored by Windows Credential Manager or macOS Keychain. "
+                "then are stored in a private file vault (~/.config/altair/credentials, owner-only). "
                 "They are never written to project files or process arguments."),
             this);
         note->setWordWrap(true);

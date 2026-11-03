@@ -188,6 +188,7 @@ int main(int argc, char** argv) {
     const QString ce_iv = g->item(0, LiveChainView::CIv) ? g->item(0, LiveChainView::CIv)->text() : QString();
     const QString pe_iv = g->item(0, LiveChainView::PIv) ? g->item(0, LiveChainView::PIv)->text() : QString();
     std::printf("    chain IV: CE %s, PE %s\n", qPrintable(ce_iv), qPrintable(pe_iv));
+    std::printf("    chain head: %s\n", qPrintable(chain->header_text()));
     check(!ce_iv.isEmpty() && ce_iv != QStringLiteral("—") && !pe_iv.isEmpty() && pe_iv != QStringLiteral("—"),
           "IV is inverted from the market price on both sides");
     check(std::fabs(ce_iv.toDouble() - pe_iv.toDouble()) < 1.0 && std::fabs(ce_iv.toDouble() - 13.0) < 1.0,

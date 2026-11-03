@@ -177,13 +177,7 @@ load_toml_file(const char* path, ConfigSnapshot& out) noexcept
         return std::unexpected(TomlError::FileNotFound);
     }
     std::FILE* f = nullptr;
-#if defined(_MSC_VER)
-    if (::fopen_s(&f, path, "rb") != 0) {
-        f = nullptr;
-    }
-#else
     f = std::fopen(path, "rb");
-#endif
     if (f == nullptr) {
         return std::unexpected(TomlError::FileNotFound);
     }

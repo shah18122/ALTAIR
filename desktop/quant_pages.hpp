@@ -3162,11 +3162,7 @@ private:
 
     // Beside the running executable first, then the sibling build tree.
     const QString exe =
-#if defined(_WIN32)
-        QStringLiteral("altair_neural_5m_test.exe");
-#else
         QStringLiteral("altair_neural_5m_test");
-#endif
     QStringList tried;
     tried << QCoreApplication::applicationDirPath()
                  + QStringLiteral("/../models/") + exe;
@@ -3181,7 +3177,7 @@ private:
     if (found.isEmpty()) {
         return s + QStringLiteral(
             "  altair_neural_5m_test was not found. It is built with the\n"
-            "  tests; run build.bat and press again.\n");
+            "  tests; run ops/build.sh and press again.\n");
     }
 
     QProcess proc;

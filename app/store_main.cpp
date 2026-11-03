@@ -6,7 +6,7 @@
 //
 // What each writes, and the merge rule, are in app/training_store.hpp. Both are
 // offline: no network, no credential. Both say what they did in the activity
-// log (app/activity_log.hpp). ops/nightly.ps1 runs them in order.
+// log (app/activity_log.hpp). ops/linux/nightly.py runs them in order.
 #include <app/activity_log.hpp>
 #include <app/training_store.hpp>
 

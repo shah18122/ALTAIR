@@ -136,10 +136,9 @@ int main(int argc, char** argv)
         auto* out = panel.outcome();
         check(out != nullptr && !out->isHidden()
                   && out->kind() == LoginOutcomeKind::Problem
-                  && out->text().contains(QStringLiteral("build.bat net")),
+                  && out->text().contains(QStringLiteral("ops/build.sh")),
               "with no helper built, the click explains how to build it");
     }
-#ifndef _WIN32
     {
         QTemporaryDir dir;
         const QString script = dir.filePath(QStringLiteral("fake_kite_login.sh"));
@@ -163,7 +162,6 @@ int main(int argc, char** argv)
               "credentials missing: the message names the form that fixes it");
         check(out->url().isEmpty(), "no login link is offered when there is no URL");
     }
-#endif
 
     // -----------------------------------------------------------------------
     // 5. Both brokers' snapshots read into one book.

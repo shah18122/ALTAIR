@@ -231,7 +231,7 @@ struct DayRv { std::int64_t day = 0; double rv = 0.0, gap2 = 0.0, close = 0.0; }
     }
     if (with_data < 20) {
         in.why = std::to_string(with_data) + " of " + std::to_string(stocks.size())
-               + " stocks have daily closes in data/pairs/ (run ops/fetch_universe.ps1 -Go)";
+               + " stocks have daily closes in data/pairs/ (run ops/linux/fetch.py universe --go)";
         return in;
     }
     for (std::size_t k = 1; k < days.size(); ++k) {

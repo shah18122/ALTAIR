@@ -1336,7 +1336,7 @@ private:
         if (now_ms - router_started_ms_ < 15'000) return;   // a router that keeps dying is not restarted every second
         const QString exe = live_detail::find_helper(QStringLiteral("altair_order_router"));
         if (exe.isEmpty()) {
-            router_note_ = QStringLiteral("altair_order_router is not built (build the net preset: .\\build.bat net)");
+            router_note_ = QStringLiteral("altair_order_router is not built (build the net preset: ops/build.sh)");
             return;
         }
         router_started_ms_ = now_ms;

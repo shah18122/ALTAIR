@@ -63,7 +63,7 @@ inline constexpr std::int64_t kDaySec = 86'400;
 inline constexpr std::int64_t kCloseSec = 15 * 3600 + 30 * 60;
 /// NSE puts the day's F&O bhavcopy out in the evening.
 inline constexpr std::int64_t kBhavKnownSec = 18 * 3600;
-/// altair_fyers_chain saves the day's chain closes at 15:45 (ops/fyers_chain.ps1).
+/// altair_fyers_chain saves the day's chain closes at 15:45 (ops/linux/fyers_chain.py).
 inline constexpr std::int64_t kFyersChainKnownSec = 15 * 3600 + 45 * 60;
 /// Five-minute bars in a full session, 09:15 to 15:30.
 inline constexpr double kSessionBars = 75.0;

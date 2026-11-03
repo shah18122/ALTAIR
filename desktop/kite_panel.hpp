@@ -311,11 +311,7 @@ private:
     /// nothing reads it, while reporting success.
     void fetch() {
         QString exe =
-#if defined(_WIN32)
-            QStringLiteral("altair_kite_account.exe");
-#else
             QStringLiteral("altair_kite_account");
-#endif
         QStringList tried;
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../app/") + exe;
@@ -339,7 +335,7 @@ private:
             // "the token expired" -- they need different actions.
             status_->setText(QStringLiteral(
                 "altair_kite_account is not in this build. It needs the "
-                "`net` preset: build.bat net"));
+                "`net` preset: ops/build.sh"));
             return;
         }
 
@@ -397,7 +393,7 @@ private:
                 "the broker's HTTP surface would hold it only by good "
                 "manners.<br><br>"
                 "Run this, then press the button above:<br>"
-                "<code>&nbsp;&nbsp;.\\build\\net\\app\\altair_kite_account.exe "
+                "<code>&nbsp;&nbsp;build/linux/app/altair_kite_account "
                 "--go</code>").arg(snapshot_));
             funds_cards_->clear();
             funds_cards_->add_wide(new StatCard(

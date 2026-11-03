@@ -151,17 +151,8 @@ void usage(const char* exe) {
 /// Environment variable, or empty. _dupenv_s on MSVC because getenv is
 /// deprecated there and /W4 with warnings-as-errors will not have it.
 [[nodiscard]] std::string env_or_empty(const char* name) {
-#if defined(_WIN32)
-    char* buf = nullptr;
-    std::size_t len = 0;
-    if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) { return {}; }
-    std::string v(buf);
-    std::free(buf);
-    return v;
-#else
     const char* v = std::getenv(name);
     return v != nullptr ? std::string(v) : std::string();
-#endif
 }
 
 /// Read `access_token` out of data/kite_session.json.

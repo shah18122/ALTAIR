@@ -7,33 +7,34 @@ the leak check, and pushes the compact part to the private data repo.
 Everything it does goes into one log.
 
 ```
-08:50  ALTAIR Recorder   ops\record_session.ps1
+08:50  ALTAIR Recorder   ops/linux/record_session.py
          altair_price_service --live (unless the desktop's is already up) ─► 127.0.0.1:7421
-         altair_feed_recorder ─► data\store\tapes\<day>\*.tape          (until 15:45)
-20:00  ALTAIR Nightly    ops\nightly.ps1
-         altair_store decode    ─► data\store\ticks\<day>\ (bars, IV/VIX/RV, option IVs), data\store\tape_bars\
-         altair_iv_record       ─► data\live\iv\
-         altair_fyers_history   ─► data\store\fyers\   (official candles, 7-day backfill)
-         altair_store snapshot  ─► data\store\snapshots\<day>\   (one cutoff)
-         altair_forecast_curriculum --leak-check ─► data\store\runs\<day>\  (LATEST.txt if clean)
-         ops\push_data.ps1      ─► github.com/shah18122/altair-data (private)
-always data\logs\altair-<day>.log   (30 days kept, credentials masked)
+         altair_feed_recorder ─► data/store/tapes/<day>/*.tape          (until 15:45)
+20:00  ALTAIR Nightly    ops/linux/nightly.py
+         altair_store decode    ─► data/store/ticks/<day>\ (bars, IV/VIX/RV, option IVs), data/store/tape_bars\
+         altair_iv_record       ─► data/live/iv\
+         altair_fyers_history   ─► data/store/fyers\   (official candles, 7-day backfill)
+         altair_store snapshot  ─► data/store/snapshots/<day>\   (one cutoff)
+         altair_forecast_curriculum --leak-check ─► data/store/runs/<day>\  (LATEST.txt if clean)
+         ops/linux/push_data.py      ─► github.com/shah18122/altair-data (private)
+always data/logs/altair-<day>.log   (30 days kept, credentials masked)
 ```
 
-## One-time setup (Windows, `S:\altair`)
+## One-time setup (the Linux server)
 
-```powershell
-cd S:\altair
-.\build.bat net                                    # builds altair_feed_recorder and altair_store too
+```bash
+cd ~/altair
+sudo ops/setup.sh                                    # packages, Qt, build, timers, launchers
 # the data repo, cloned NEXT TO altair (any folder works):
-git clone https://github.com/shah18122/altair-data S:\altair-data
-"repo = 'S:\altair-data'" | Set-Content config\data_push.local.toml   # git-ignored
-# the two scheduled tasks:
-powershell -ExecutionPolicy Bypass -File ops\install_tasks.ps1          # dry run: shows what it registers
-powershell -ExecutionPolicy Bypass -File ops\install_tasks.ps1 -Go
+git clone git@github.com:shah18122/altair-data.git ~/altair-data
+echo "repo = '$HOME/altair-data'" > config/data_push.local.toml   # git-ignored
+# setup.sh already registered the timers; to see or redo them:
+sudo ops/install.sh          # dry run: shows what it registers
+sudo ops/install.sh --go
+systemctl list-timers 'altair-*'
 # first night only: all the FYERS price history there is (spot 1m from 2018, futures from 2019)
-powershell -ExecutionPolicy Bypass -File ops\fetch_fyers_history.ps1 -Go
-powershell -ExecutionPolicy Bypass -File ops\nightly.ps1 -Go
+python3 ops/linux/fetch.py history --go
+python3 ops/linux/nightly.py --go
 ```
 
 **Every morning:** log in to FYERS once (Brokers page, or
@@ -41,13 +42,13 @@ powershell -ExecutionPolicy Bypass -File ops\nightly.ps1 -Go
 you do, the log says `waiting for today's FYERS login` every 30 minutes, and
 the recorder starts by itself as soon as the feed comes up.
 
-Check the tasks: `Get-ScheduledTask 'ALTAIR*' | Get-ScheduledTaskInfo`.
-Remove them: `ops\install_tasks.ps1 -Remove -Go`.
+Check the timers: `systemctl list-timers 'altair-*'`; a job's output:
+`journalctl -u altair-nightly`. Remove them: `sudo ops/install.sh --remove --go`.
 
-The tasks run while you are logged on to Windows. With `-WhetherLoggedOn` they
-also run when you're logged off, but then the push can't use your git login.
-The PC must be on, or asleep with wake timers allowed. A task that missed its
-time runs as soon as the PC is back.
+The jobs run as the user who logs in to the DCV desktop, whether or not anyone
+is logged in, and push with that user's git login (a deploy key for the data
+repo). Times are IST whatever the server's clock zone. A job that missed its
+time, because the server was stopped, runs as soon as it is back.
 
 ## What is recorded
 
@@ -64,7 +65,7 @@ it with a wider universe than the desktop's default:
 
 The 50-level book is limited by FYERS, not by ALTAIR: a Standard plan gives
 **one** 50-level symbol at a time, so every other instrument gets 5 levels.
-Options: `record_session.ps1 -Expiries 4 -Strikes 60 -DepthStrikes 20`.
+Options: `ops/linux/record_session.py -Expiries 4 -Strikes 60 -DepthStrikes 20`.
 FYERS allows 5,000 symbols a socket, and the default is well under that.
 
 A SIM or replay feed is never recorded. If the desktop's own feed (1 expiry,
@@ -79,7 +80,7 @@ The recorder stops by itself below 2 GB free.
 ## IV, RV and VIX, every minute
 
 The nightly decode turns the day's tapes into two more files in
-`data\store\ticks\<day>\`, each reading stamped at the END of its minute
+`data/store/ticks/<day>\`, each reading stamped at the END of its minute
 (when it was known):
 
 | File | One row | Columns |
@@ -93,7 +94,7 @@ columns are index points. RV is `sqrt(mean r² × 375 × 252)` from the index's
 previous minute's; with neither it is left out. `chain_vix30` leaves out
 expiries of 7 days or less, as NSE does, and is empty with fewer than two
 other expiries. A minute with no option priced still gets a row with spot,
-India VIX and RV. `data\live\iv\` (the nearest expiry's ATM IV, which the
+India VIX and RV. `data/live/iv\` (the nearest expiry's ATM IV, which the
 models already read) is still written as before.
 
 ## One schema, one cutoff: how the sources merge
@@ -104,8 +105,8 @@ Every bar in a snapshot is `time,open,high,low,close,volume,oi,source`:
 - An absent volume or OI is left empty. It's never written as 0.
 
 By default the snapshot is FYERS data only: `fyers` (official candles), with
-`tape` (bars built from the recording) filling gaps. `nightly.ps1 -WithDataset`
-adds your `dataset\` files under FYERS, and `-WithBhavcopy` the NSE bhavcopy.
+`tape` (bars built from the recording) filling gaps. `nightly.py --with-dataset`
+adds your `dataset\` files under FYERS, and `--with-bhavcopy` the NSE bhavcopy.
 With more than one source they go lowest priority first: `dataset`, then `fyers`.
 For the same bar time:
 
@@ -126,11 +127,11 @@ of the same IST day. A snapshot gets an id, a hash of its inputs and the rule,
 and it is never rebuilt over. The run records the id it trained on, so any run
 can be traced back to the exact data it saw. The curriculum's `--leak-check`
 then proves that no forecast saw its own future. A run is promoted
-(`runs\LATEST.txt`) only when that check passes.
+(`runs/LATEST.txt`) only when that check passes.
 
 ## The activity log
 
-`data\logs\altair-<day>.log`, one line an event:
+`data/logs/altair-<day>.log`, one line an event:
 
 ```
 2026-10-26T09:15:02.118+05:30 [recorder] INFO recording the live feed
@@ -142,7 +143,7 @@ It covers the recorder, the feed starts, the nightly steps, the push, and
 every round trip of the day with its reasons in and out (paper and live, from
 the journals). Values that look like credentials (`access_token=`, `Bearer`,
 `pin`, `secret`, …) are masked before a line is written. The C++ side is
-`app/activity_log.hpp`; the PowerShell side is `ops/altair_log.ps1`.
+`app/activity_log.hpp`; the PowerShell side is `ops/linux/altair_ops.py`.
 
 ## The data repo
 
@@ -157,9 +158,9 @@ push carries it.
 
 ## By hand
 
-```powershell
-build\net\app\altair_feed_recorder.exe --go                    # record now, to 15:45
-build\net\app\altair_store.exe decode --day 2026-10-26 --ticks # also every trade, quote and book as CSV
-build\net\app\altair_store.exe snapshot --cutoff 2026-10-26 --source dataset=dataset --source fyers=data\store\fyers --fill tape=data\store\tape_bars
-powershell -ExecutionPolicy Bypass -File ops\nightly.ps1 -Go -Day 2026-10-26 -Only daily   # quick retrain
+```bash
+build/linux/app/altair_feed_recorder --go                    # record now, to 15:45
+build/linux/app/altair_store decode --day 2026-10-26 --ticks # also every trade, quote and book as CSV
+build/linux/app/altair_store snapshot --cutoff 2026-10-26 --source dataset=dataset --source fyers=data/store/fyers --fill tape=data/store/tape_bars
+python3 ops/linux/nightly.py --go --day 2026-10-26 --only daily   # quick retrain
 ```

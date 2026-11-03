@@ -140,13 +140,7 @@ public:
 private:
     static std::FILE* fopen_portable(const char* path, const char* mode) noexcept {
         std::FILE* f = nullptr;
-#if defined(_MSC_VER)
-        if (::fopen_s(&f, path, mode) != 0) {
-            f = nullptr;
-        }
-#else
         f = std::fopen(path, mode);
-#endif
         return f;
     }
 
