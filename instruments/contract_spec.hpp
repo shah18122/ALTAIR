@@ -34,15 +34,20 @@ namespace altair {
 /// live in ContractSpec::token. Assigned by the store, dense from 0.
 enum class InstrumentId : std::uint32_t { Invalid = 0xFFFF'FFFFu };
 
-/// Which feed a broker token belongs to. UNIT: none.
-enum class FeedSource : std::uint8_t { Kite = 0, Xts = 1, Fyers = 2 };
+/// Which number space a token belongs to. UNIT: none.
+///   Wire  -- ALTAIR's own instrument token, the identity on the price wire:
+///            exchange token x 256 + segment code (live/instrument_master.hpp
+///            builds data/instruments.csv from FYERS's masters with it).
+///   Xts   -- XTS's ExchangeInstrumentID (unbuilt adapter).
+///   Fyers -- the FYERS feed. Ordinals are fixed: tokens index arrays by them.
+enum class FeedSource : std::uint8_t { Wire = 0, Xts = 1, Fyers = 2 };
 inline constexpr std::size_t kFeedSourceCount = 3;
 
 /// Which authority a spec's contract detail came from. UNIT: none.
 enum class SpecSource : std::uint8_t {
     NseMaster = 0,   // primary for NSE lot size, tick size, expiry
     BseMaster = 1,   // primary for BSE
-    KiteDump  = 2,   // cross-check
+    InstrumentMaster = 2,   // data/instruments.csv (from FYERS's masters): cross-check
     XtsMaster = 3,   // cross-check
     Manual    = 4    // a human override; always flagged
 };
@@ -74,7 +79,7 @@ struct ContractSpec {
     InstrumentId id;
 
     /// Per-feed broker token, 0 when that feed does not carry this contract.
-    /// UNIT: none. Kite's instrument_token and XTS's ExchangeInstrumentID are
+    /// UNIT: none. ALTAIR's wire token and XTS's ExchangeInstrumentID are
     /// DIFFERENT NUMBER SPACES — index by FeedSource, never compare across.
     std::uint32_t token[kFeedSourceCount];
 
@@ -138,8 +143,8 @@ struct ContractSpec {
 static_assert(std::is_trivially_copyable_v<ContractSpec>,
               "ContractSpec must ride a seqlock unchanged");
 
-/// Wire units per rupee for a segment, as Kite encodes them.
-/// UNIT: units/rupee. Confirmed against gokiteconnect's convertPrice.
+/// Wire units per rupee for a segment.
+/// UNIT: units/rupee. NSE currency derivatives quote to 10^-7 rupees.
 [[nodiscard]] constexpr std::int64_t default_price_scale(Segment s) noexcept {
     return s == Segment::Currency ? 10'000'000LL : 100LL;
 }

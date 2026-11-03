@@ -179,7 +179,7 @@ int main(int argc, char** argv) {
                 symbol, iv, chunk.from, chunk.to, continuous);
             if (!request) return std::nullopt;
             const auto response = altair::https_get_auth("api-t1.fyers.in", *request,
-                *authorization, "", std::chrono::seconds{30});
+                *authorization, std::chrono::seconds{30});
             if (!response) {
                 std::printf("FYERS history transport failed for %s to %s\n",
                             chunk.from.c_str(), chunk.to.c_str());

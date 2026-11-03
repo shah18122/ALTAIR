@@ -1,14 +1,15 @@
 // live/universe.hpp -- what the live terminal streams, and under which token.
 //
-// The desktop names every instrument by its Kite instrument_token: the strip
-// tiles, the option chain, the order ticket and the position table all key on
-// it, and data/instruments.csv (the Kite master) is where strikes, lots and
-// ticks come from. FYERS names the same contracts by ticker. So the live feed
-// subscribes by FYERS ticker and publishes under the Kite token, and this file
-// is the one place the two are paired.
+// The desktop names every instrument by its ALTAIR instrument token: the
+// strip tiles, the option chain, the order ticket and the position table all
+// key on it, and data/instruments.csv (built from FYERS's public symbol
+// masters by live/instrument_master.hpp) is where tokens, strikes, lots and
+// ticks come from. FYERS streams the same contracts by ticker. So the live
+// feed subscribes by FYERS ticker and publishes under the ALTAIR token, and
+// this file is the one place the two are paired.
 //
 // THE PAIRING IS BY NAME, AND THE NAMES ARE THE SAME. NSE derivatives carry
-// the same trading symbol at both brokers ("NIFTY26OCTFUT",
+// the exchange's trading symbol in the master and at FYERS ("NIFTY26OCTFUT",
 // "NIFTY26O0623850CE": underlying, YY, then MMM for a monthly or M DD for a
 // weekly), and FYERS prefixes the exchange: "NSE:NIFTY26OCTFUT". Equities are
 // "NSE:<symbol>-EQ" (config/universe_nifty50.csv carries each one), indices
@@ -75,9 +76,9 @@ enum class LiveKind : std::uint8_t { Index, Future, Call, Put, Equity };
 }
 
 struct LiveInstrument {
-    std::uint32_t token = 0;     ///< Kite instrument_token: the identity on the wire
+    std::uint32_t token = 0;     ///< ALTAIR instrument token: the identity on the wire
     std::string fyers;           ///< "NSE:NIFTY26OCTFUT"
-    std::string symbol;          ///< Kite trading symbol, for display
+    std::string symbol;          ///< trading symbol (data/instruments.csv), for display
     std::string underlying;      ///< "NIFTY", "BANKNIFTY", "SBIN"
     LiveKind kind = LiveKind::Index;
     std::int64_t expiry_day = 0; ///< days since 1970-01-01; 0 for none
@@ -128,7 +129,7 @@ inline constexpr std::uint32_t kLiveVixToken = 264969u;
     return buf;
 }
 
-/// One CSV line into fields, honouring double quotes (Kite quotes `name`).
+/// One CSV line into fields, honouring double quotes (the master quotes `name`).
 [[nodiscard]] inline std::vector<std::string> split_csv(const std::string& line) {
     std::vector<std::string> out;
     std::string cur;
@@ -142,8 +143,8 @@ inline constexpr std::uint32_t kLiveVixToken = 264969u;
     return out;
 }
 
-/// One row of the Kite master, the fields this file reads.
-struct LiveKiteRow {
+/// One row of data/instruments.csv (live/instrument_master.hpp), the fields this file reads.
+struct LiveMasterRow {
     std::uint32_t token = 0;
     std::uint32_t exchange_token = 0;   ///< the exchange's own token (BSE: scrip code); 0 if absent
     std::string symbol, name, type, segment, exchange;
@@ -152,8 +153,8 @@ struct LiveKiteRow {
     std::int64_t lot = 0;
 };
 
-[[nodiscard]] inline std::vector<LiveKiteRow> read_kite_master(const std::string& path, std::string& error) {
-    std::vector<LiveKiteRow> rows;
+[[nodiscard]] inline std::vector<LiveMasterRow> read_instrument_master(const std::string& path, std::string& error) {
+    std::vector<LiveMasterRow> rows;
     std::ifstream in(path);
     if (!in) { error = "cannot open " + path; return rows; }
     std::string line;
@@ -169,7 +170,7 @@ struct LiveKiteRow {
               c_xtok = col("exchange_token");   // optional
     if (c_tok < 0 || c_sym < 0 || c_name < 0 || c_exp < 0 || c_str < 0 || c_tick < 0 || c_lot < 0
         || c_type < 0 || c_seg < 0 || c_ex < 0) {
-        error = path + " is not a Kite instrument master (missing columns)";
+        error = path + " is not an ALTAIR instrument master (missing columns); rebuild it with altair_instrument_master";
         return rows;
     }
     const auto at = [](const std::vector<std::string>& f, int i) -> const std::string& {
@@ -178,7 +179,7 @@ struct LiveKiteRow {
     };
     while (std::getline(in, line)) {
         const auto f = split_csv(line);
-        LiveKiteRow r;
+        LiveMasterRow r;
         const unsigned long long tok = std::strtoull(at(f, c_tok).c_str(), nullptr, 10);
         if (tok == 0 || tok > 0xFFFFFFFFull) continue;
         r.token = static_cast<std::uint32_t>(tok);
@@ -201,12 +202,13 @@ struct LiveKiteRow {
 /// Add to `rows` the index futures and options of `unders` from FYERS's
 /// public F&O master (public.fyers.in/sym_details/NSE_FO.csv: no header;
 /// 0 fytoken, 3 lot, 4 tick, 8 expiry (epoch, the 15:30 close), 9 ticker,
-/// 12 exchange token, 13 underlying, 15 strike, 16 CE/PE/XX), as Kite rows:
-/// a Kite master on disk goes stale (weeklies listed after it was written
-/// are missing), FYERS's is current every day. A contract already in `rows`
-/// (same trading symbol) is left as it is. The token is Kite's own formula,
-/// exchange token * 256 + 2 (NFO). Returns how many rows were added.
-inline std::size_t add_fyers_fo(std::vector<LiveKiteRow>& rows, std::istream& in, const std::set<std::string>& unders) {
+/// 12 exchange token, 13 underlying, 15 strike, 16 CE/PE/XX), as master rows:
+/// a data/instruments.csv built yesterday misses a weekly listed today, and
+/// FYERS's master is current every day. A contract already in `rows` (same
+/// trading symbol) is left as it is. The token is ALTAIR's formula
+/// (live/instrument_master.hpp), exchange token * 256 + 2 (NFO). Returns how
+/// many rows were added.
+inline std::size_t add_fyers_fo(std::vector<LiveMasterRow>& rows, std::istream& in, const std::set<std::string>& unders) {
     std::set<std::string> have;
     for (const auto& r : rows) have.insert(r.symbol);
     std::size_t added = 0;
@@ -220,7 +222,7 @@ inline std::size_t add_fyers_fo(std::vector<LiveKiteRow>& rows, std::istream& in
         const unsigned long long xtok = std::strtoull(f[12].c_str(), nullptr, 10);
         const long long expiry = std::atoll(f[8].c_str());
         if (xtok == 0 || xtok > 0xFFFFFFull || expiry <= 0) continue;
-        LiveKiteRow r;
+        LiveMasterRow r;
         r.exchange_token = static_cast<std::uint32_t>(xtok);
         r.token = static_cast<std::uint32_t>(xtok * 256 + 2);
         r.symbol = sym;
@@ -284,10 +286,10 @@ struct LiveUniverse {
 
 namespace detail {
 
-inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& under, double spot,
+inline void add_chain(const std::vector<LiveMasterRow>& rows, const std::string& under, double spot,
                       const LiveUniverseOptions& o, const std::string& group, LiveUniverse& rep, std::int64_t expiry);
 
-inline void add_chains(const std::vector<LiveKiteRow>& rows, const std::string& under, double spot,
+inline void add_chains(const std::vector<LiveMasterRow>& rows, const std::string& under, double spot,
                        const LiveUniverseOptions& o, const std::string& group, LiveUniverse& rep) {
     std::set<std::int64_t> expiries;
     for (const auto& r : rows)
@@ -318,7 +320,7 @@ inline void add_chains(const std::vector<LiveKiteRow>& rows, const std::string& 
     for (const std::int64_t e : chosen) add_chain(rows, under, spot, o, group, rep, e);
 }
 
-inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& under, double spot,
+inline void add_chain(const std::vector<LiveMasterRow>& rows, const std::string& under, double spot,
                       const LiveUniverseOptions& o, const std::string& group, LiveUniverse& rep, std::int64_t expiry) {
     std::set<double> strikes;
     for (const auto& r : rows)
@@ -355,7 +357,7 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
 
 } // namespace detail
 
-[[nodiscard]] inline LiveUniverse build_universe(const std::vector<LiveKiteRow>& rows,
+[[nodiscard]] inline LiveUniverse build_universe(const std::vector<LiveMasterRow>& rows,
                                                    const std::vector<LiveStock>& stocks,
                                                    const LiveUniverseOptions& o) {
     LiveUniverse rep;
@@ -370,10 +372,10 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
     index(kLiveVixToken, "NSE:INDIAVIX-INDEX", "INDIA VIX", "INDIAVIX");
 
     for (const char* under : {"NIFTY", "BANKNIFTY"}) {
-        std::vector<const LiveKiteRow*> fut;
+        std::vector<const LiveMasterRow*> fut;
         for (const auto& r : rows)
             if (r.segment == "NFO-FUT" && r.name == under && r.expiry_day >= o.today) fut.push_back(&r);
-        std::sort(fut.begin(), fut.end(), [](const LiveKiteRow* a, const LiveKiteRow* b) { return a->expiry_day < b->expiry_day; });
+        std::sort(fut.begin(), fut.end(), [](const LiveMasterRow* a, const LiveMasterRow* b) { return a->expiry_day < b->expiry_day; });
         if (fut.empty()) rep.notes.push_back(std::string{under} + ": no future on or after today in the master");
         for (std::size_t i = 0; i < fut.size() && static_cast<int>(i) < o.futures; ++i) {
             LiveInstrument in;
@@ -399,7 +401,7 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
         const auto have = [&rep](std::uint32_t tok) {
             return std::any_of(rep.instruments.begin(), rep.instruments.end(), [tok](const LiveInstrument& i) { return i.token == tok; });
         };
-        const LiveKiteRow* eq = nullptr;
+        const LiveMasterRow* eq = nullptr;
         for (const auto& r : rows)
             if (r.segment == "NSE" && r.exchange == "NSE" && r.type == "EQ" && r.symbol == sym) { eq = &r; break; }
         if (eq == nullptr) rep.notes.push_back(sym + ": not an NSE equity in the master");
@@ -416,10 +418,10 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
             in.depth = true;
             rep.instruments.push_back(std::move(in));
         }
-        std::vector<const LiveKiteRow*> fut;
+        std::vector<const LiveMasterRow*> fut;
         for (const auto& r : rows)
             if (r.segment == "NFO-FUT" && r.name == sym && r.expiry_day >= o.today) fut.push_back(&r);
-        std::sort(fut.begin(), fut.end(), [](const LiveKiteRow* a, const LiveKiteRow* b) { return a->expiry_day < b->expiry_day; });
+        std::sort(fut.begin(), fut.end(), [](const LiveMasterRow* a, const LiveMasterRow* b) { return a->expiry_day < b->expiry_day; });
         if (fut.empty()) rep.notes.push_back(sym + ": no future on or after today in the master");
         for (std::size_t i = 0; i < fut.size() && i < 2; ++i) {
             if (have(fut[i]->token)) continue;
@@ -441,7 +443,7 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
     }
 
     if (o.stocks) {
-        std::map<std::string, const LiveKiteRow*> eq;
+        std::map<std::string, const LiveMasterRow*> eq;
         for (const auto& r : rows)
             if (r.segment == "NSE" && r.exchange == "NSE" && r.type == "EQ") eq.emplace(r.symbol, &r);
         for (const auto& s : stocks) {
@@ -462,7 +464,7 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
         if (o.bse_twins) {
             // The same stocks on BSE (live/arbitrage.hpp). FYERS names a BSE
             // equity "BSE:<SYM>-<group>"; every NIFTY 50 stock is in group A.
-            std::map<std::string, const LiveKiteRow*> bse;
+            std::map<std::string, const LiveMasterRow*> bse;
             for (const auto& r : rows)
                 if (r.segment == "BSE" && r.exchange == "BSE" && r.type == "EQ") bse.emplace(r.symbol, &r);
             for (const auto& s : stocks) {
@@ -483,14 +485,14 @@ inline void add_chain(const std::vector<LiveKiteRow>& rows, const std::string& u
         }
     }
     if (o.stocks && o.stock_futures) {
-        std::map<std::string, std::vector<const LiveKiteRow*>> fut;
+        std::map<std::string, std::vector<const LiveMasterRow*>> fut;
         for (const auto& r : rows)
             if (r.segment == "NFO-FUT" && r.expiry_day >= o.today) fut[r.name].push_back(&r);
         for (const auto& s : stocks) {
             auto it = fut.find(s.symbol);
             if (it == fut.end()) { rep.notes.push_back(s.symbol + ": no stock future in the master"); continue; }
             auto& v = it->second;
-            std::sort(v.begin(), v.end(), [](const LiveKiteRow* a, const LiveKiteRow* b) { return a->expiry_day < b->expiry_day; });
+            std::sort(v.begin(), v.end(), [](const LiveMasterRow* a, const LiveMasterRow* b) { return a->expiry_day < b->expiry_day; });
             for (std::size_t k = 0; k < v.size() && k < 2; ++k) {
                 LiveInstrument in;
                 in.token = v[k]->token;
@@ -641,15 +643,15 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
     return out;
 }
 
-/// One row of the Kite master as a streamable instrument: what the market
+/// One row of the instrument master as a streamable instrument: what the market
 /// watch's scrip search adds. NSE and BSE equity take FYERS's own name, looked
 /// up by exchange token in `names` (live/fyers_names.hpp; guessed without it:
-/// "NSE:<SYM>-EQ", "BSE:<SYM>-A"); NSE F&O -> "NSE:<SYM>" (FYERS and Kite
-/// share the derivative trading symbol). MCX futures and options with a known
+/// "NSE:<SYM>-EQ", "BSE:<SYM>-A"); NSE F&O -> "NSE:<SYM>" (the master
+/// keeps FYERS's derivative trading symbol). MCX futures and options with a known
 /// lot (live/contract_units.hpp) and the INR currency pairs on NSE (CDS) and
 /// BSE (BCD) stream too, looked up the same way and quoted per 100 units for
 /// currency. Other exchanges and segments are not streamed; nullopt says so.
-[[nodiscard]] inline std::optional<LiveInstrument> instrument_from_master(const LiveKiteRow& r,
+[[nodiscard]] inline std::optional<LiveInstrument> instrument_from_master(const LiveMasterRow& r,
                                                                          const FyersCashNames* names = nullptr) {
     LiveInstrument in;
     in.token = r.token;
@@ -665,7 +667,7 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
         return in;
     }
     if (r.exchange == "BSE" && r.segment == "BSE" && r.type == "EQ") {
-        // The Kite master does not carry the BSE group: FYERS's master does.
+        // The master drops the BSE group: FYERS's names carry it.
         in.kind = LiveKind::Equity;
         in.fyers = fyers_cash_name(true, r.symbol, r.exchange_token, names);
         in.underlying = r.symbol;
@@ -733,7 +735,7 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
     return in.group == kCurrencyGroup ? kCurrencyQuotePer : 1;
 }
 
-/// data/live/watchlist.csv: the scrips the market watch added, by Kite token.
+/// data/live/watchlist.csv: the scrips the market watch added, by ALTAIR token.
 /// "token,symbol" with a header; unreadable lines are skipped.
 [[nodiscard]] inline std::vector<std::uint32_t> read_watchlist(const std::string& path) {
     std::vector<std::uint32_t> out;
@@ -750,12 +752,12 @@ struct LiveMinute { std::int64_t end_ns = 0; double close = 0.0; };
 
 /// The universe plus the watchlist's additions (tokens already present or
 /// not streamable are skipped and named in `notes`).
-inline void add_watchlist(std::vector<LiveInstrument>& u, const std::vector<LiveKiteRow>& master,
+inline void add_watchlist(std::vector<LiveInstrument>& u, const std::vector<LiveMasterRow>& master,
                           const std::vector<std::uint32_t>& tokens, std::vector<std::string>& notes,
                           const FyersCashNames* names = nullptr) {
     for (std::uint32_t t : tokens) {
         if (std::any_of(u.begin(), u.end(), [t](const LiveInstrument& i) { return i.token == t; })) continue;
-        const auto row = std::find_if(master.begin(), master.end(), [t](const LiveKiteRow& r) { return r.token == t; });
+        const auto row = std::find_if(master.begin(), master.end(), [t](const LiveMasterRow& r) { return r.token == t; });
         if (row == master.end()) { notes.push_back("watchlist token " + std::to_string(t) + " is not in the master"); continue; }
         auto in = instrument_from_master(*row, names);
         if (!in) {

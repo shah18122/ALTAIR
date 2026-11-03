@@ -1,6 +1,6 @@
 // P37-02 acceptance tests for server/price_bus.hpp.
 //
-// A REAL SOCKET, ON LOOPBACK, WITH NO KITE ANYWHERE.
+// A REAL SOCKET, ON LOOPBACK, WITH NO BROKER ANYWHERE.
 //
 // The bus is the piece that cannot be proved by reasoning: it has a socket, a
 // queue, and a policy for what happens when the reader stops. So this binds an

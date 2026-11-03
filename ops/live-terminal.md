@@ -8,17 +8,15 @@ set, through the order router (see *LIVE orders* below). The live models run on
 the same stream and paper-trade (demo-trade) their own signals by themselves.
 
 ```
-FYERS socket ─┐  (+ the 50-level book)
-              ├─► altair_price_service --live ──► 127.0.0.1:7421 ──► Terminal (watch, chain, 50-level depth, T&S, orders)
-Kite ticker ──┘    (or --sim [--date D])                          └► altair_live_engine ──► data/live/ ──► Models, Arbitrage
+FYERS socket ──►  altair_price_service --live ──► 127.0.0.1:7421 ──► Terminal (watch, chain, 50-level depth, T&S, orders)
+(+ the 50-level book)  (or --sim [--date D])                     └► altair_live_engine ──► data/live/ ──► Models, Arbitrage
 Terminal (LIVE on) ──► data/order_intents.jsonl ──► altair_order_router ──► FYERS orders API ──► data/live_orders/
 ```
 
 ## Running it (Windows, market hours)
 
-1. **Log in for the day** on **Brokers**, to either broker:
-   - **Log in to FYERS**, or
-   - **Log in to Kite**.
+1. **Log in for the day** on **Brokers** with **Log in to FYERS**, or let
+   the 08:30 FYERS auto-login (`broker/tools/fyers_auto_login.py`) do it.
 
    If a login can't start, the reason appears under the button. For example,
    "app credentials are not saved yet" puts the cursor in the form that fixes
@@ -27,9 +25,7 @@ Terminal (LIVE on) ──► data/order_intents.jsonl ──► altair_order_rou
    Monday to Friday**, the Terminal runs `altair_price_service --live --go
    --until 15:45` by itself whenever nothing streams (checked every 30 s), and
    stops it at 15:45:
-   - FYERS only: the feed needs today's FYERS session. Kite is legacy, kept
-     in the collapsed **Legacy: Kite** corner of Brokers, and is never used in
-     FYERS's place (`altair_price_service --kite` still runs it by hand).
+   - FYERS only: the feed needs today's FYERS session.
    - A feed that exits with an error (no FYERS login today, a holiday) is
      tried again five minutes later; the status line says why.
 3. **The models start by themselves** once the feed streams. There is no
@@ -56,7 +52,7 @@ From a shell, the same steps:
 ```
 altair_price_service --live            # dry run: says which broker it would use, writes the universe
 altair_price_service --live --go       # live, FYERS only, until 15:35 IST (--until HH:MM)
-altair_price_service --fyers --go      # FYERS only        (--kite --go: Kite only)
+altair_price_service --fyers --go      # the same, spelt out
 altair_price_service --sim --date 2026-09-24 --from 10:00 --speed 30   # that day, simulated, 30x
 altair_live_engine [--unverified-costs] [--date 2026-09-24]   # stops at 15:35 on the feed's clock, or a quiet minute after 15:30
 altair_live_engine --latency-ms 250 --quote-age-s 10 --entry-timeout-s 60 --max-positions 80 \
@@ -72,8 +68,6 @@ altair_readiness                                 # the gates before any money (e
 Credentials:
 - **FYERS:** `data/fyers_session.json`, or on a headless host
   `ALTAIR_FYERS_CLIENT_ID` and `ALTAIR_FYERS_ACCESS_TOKEN`.
-- **Kite:** the API key from the OS vault (Brokers → Log in · Kite → App
-  credentials) or `ALTAIR_KITE_API_KEY`, plus today's `data/kite_session.json`.
 
 ## The Terminal
 
@@ -154,15 +148,14 @@ Credentials:
   The quick-add box beside it still takes a typed symbol. The scrip goes into
   `data/live/watchlist.csv`.
   - The feed picks it up within a few seconds: SIM adds it in place, and FYERS
-    and Kite reconnect with it.
+    reconnects with it.
   - **Delete** removes the selected scrip; right-click → *Restore removed
     scrips* brings removed ones back.
 - **MCX and currency (prices and paper orders only).** The loader's
   Exchange list has **MCX** (segment FO: futures and options) and NSE has
-  **CD** (currency; BSE's CD appears when the master lists BSE currency, which
-  Kite's does not). They stream from FYERS with the 5-level book; real orders
+  **CD** (currency; BSE's CD appears when the master lists BSE currency). They stream from FYERS with the 5-level book; real orders
   for them are refused by the Terminal and the order router.
-  - **Lots in units.** The Kite master says lot 1 for both, so
+  - **Lots in units.** The master says lot 1 for both, so
     `live/contract_units.hpp` holds what a lot is: CRUDEOIL 100 barrels, GOLD
     100 (1 kg quoted per 10 g), SILVER 30 kg, NATURALGAS 1,250 mmBtu, COPPER
     2,500 kg, and so on (96 % of the MCX contracts in the 2026-10 master). An
@@ -331,7 +324,7 @@ FYERS order book with the tag `AL…`.
 
 ## What streams
 
-The universe is built at feed start from `data/instruments.csv` (the Kite master)
+The universe is built at feed start from `data/instruments.csv` (built from the FYERS masters)
 and `config/universe_nifty50.csv`. It is written to `data/live/universe.csv`.
 
 | Group | What | Depth |
@@ -364,10 +357,10 @@ every level a sparse diff skips. That was the "wrong prices after level 5":
 this decoder had copied the SDK, and now places each level at its `num`.
 While an instrument's 50-level book is fresh it
 replaces the HSM's five levels; if FYERS refuses a subscription the reason is
-printed and that instrument keeps five. Kite and the HSM socket send five
+printed and that instrument keeps five. The HSM socket sends five
 levels; SIM sends fifty.
 
-- **Identity:** everything is published under the Kite instrument token the desktop
+- **Identity:** everything is published under the ALTAIR instrument token the desktop
   already uses. FYERS tickers are the same trading symbol prefixed `NSE:`, and any
   ticker FYERS does not know is printed at start.
 - **ATM:** fixed when the feed starts, from a FYERS quote (falling back to the last
@@ -379,14 +372,14 @@ levels; SIM sends fifty.
     with the stream's current sequence number.
   - Terminals already connected never see them. To a running terminal, a
     replayed trade would look like a fresh print.
-- **One thread owns the bus.** Sources (FYERS, Kite, SIM) push each update
+- **One thread owns the bus.** Sources (FYERS, SIM) push each update
   into a ring. The bus's thread publishes, accepts subscribers and flushes;
   there is no lock on the path.
   - A full ring makes the source wait. It never drops.
   - A slow *subscriber* is coalesced by the bus (oldest frames first) and sees
     a sequence gap.
-- **Kite reads never block a stop.** The ticker reads asynchronously in short
-  slices (`broker/ws_pump.hpp`).
+- **Socket reads never block a stop.** The FYERS socket reads asynchronously in short
+  slices.
   - A stop, the session's end, or 30 s with no frame at all (not even a
     heartbeat) ends a read at once.
   - The feed reconnects if the session isn't over. It used to stop after 60 s.
@@ -395,7 +388,7 @@ Each instrument carries three frame types:
 - trade: LTP, last quantity, volume and OI;
 - quote (`server/quote_payload.hpp`): OHLC, previous close, best bid/ask with
   sizes, ATP, total buy/sell, circuits and last-trade time;
-- book: up to fifty levels a side (five from the HSM socket and Kite).
+- book: up to fifty levels a side (five from the HSM socket).
 
 ## The watch in detail
 
@@ -583,9 +576,9 @@ the tape for replays). The plain straddle stays the control, without a stop.
 |---|---|---|
 | `universe.csv` | price service | what streams, and under which token |
 | `depth_request.csv` | Terminal | the scrip on screen (`fyers,token`): the 50-level slot moves to it |
-| `feed_status.json` | price service | source (fyers, kite or sim), state, counts, last error; every 30 s instruments subscribed, priced, booked, with a fresh 50-level book, and the first with no price |
+| `feed_status.json` | price service | source (fyers or sim), state, counts, last error; every 30 s instruments subscribed, priced, booked, with a fresh 50-level book, and the first with no price |
 | `price_service.log` | Terminal (the feed's output) | everything the price service prints this run; `price_service.prev.log` the run before |
-| `watchlist.csv` | Terminal (Insert / ＋ Add scrip) | scrips added to the watch, by Kite token; the price service streams them |
+| `watchlist.csv` | Terminal (Insert / ＋ Add scrip) | scrips added to the watch, by ALTAIR token; the price service streams them |
 | `watch_removed.csv` | Terminal (Delete) | scrips removed from the watch |
 | `paper/manual_orders.csv` | Terminal | every paper order and each change of state (+ / − orders) |
 | `paper/manual_trades.csv` | Terminal | every paper fill, at the bid or ask it dealt at, with expenses |
@@ -835,7 +828,7 @@ at start and print what they did (`bus: core 2, highest`).
   `ops/fetch_universe.ps1 -Go`. Until then it abstains and says why.
 - **History through yesterday matters.** The vol band, strangles, pairs and
   direction models read `dataset/` for HAR, the spread and the walk-forward. Keep
-  it current (`altair_kite_update` or `altair_fyers_history`).
+  it current (`altair_dataset_update` or `altair_fyers_history`).
 - **The engine must be running by 09:15** to catch the 09:20 strangles and the
   10:15 direction decisions. A late start is reported, not back-filled.
 - **The strangle sells the nearest streamed expiry at the real bid.** The backtest

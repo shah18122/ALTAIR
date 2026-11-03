@@ -51,14 +51,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE altair_oms altair_risk altair_flags)
     add_test(NAME oms_reconcile COMMAND altair_oms_reconcile_test)
 
-    # Links altair_broker for the P2-11 endpoint and parameter constants, and
-    # altair_risk for Side. The adapter TRANSLATES only -- it never sends, so
-    # this test needs no network and no credential.
-    add_executable(altair_kite_adapter_test tests/test_kite_adapter.cpp)
-    target_link_libraries(altair_kite_adapter_test
-        PRIVATE altair_oms altair_broker altair_risk altair_flags)
-    add_test(NAME kite_adapter COMMAND altair_kite_adapter_test)
-
     add_executable(altair_throttle_test tests/test_throttle.cpp)
     target_link_libraries(altair_throttle_test PRIVATE altair_oms altair_flags)
     add_test(NAME throttle COMMAND altair_throttle_test)

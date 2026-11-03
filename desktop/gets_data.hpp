@@ -8,7 +8,7 @@
 // enters this address space.
 //
 // This file turns their raw FYERS bodies into typed rows, resolves each
-// ticker (instruments/fyers_symbol.hpp, then the Kite master for the dates a
+// ticker (instruments/fyers_symbol.hpp, then the instrument master for the dates a
 // monthly ticker does not carry), and builds:
 //   * the engine's BookLeg list for the Greek screens (risk/option_book.hpp);
 //   * a typed broker_view::AccountSnapshot, so the Terminal's existing
@@ -439,15 +439,15 @@ resolve_gets_instrument(const QString& symbol, const MasterIndex* master, int re
               : ex == QStringLiteral("MCX") ? Segment::Commodity : Segment::Cash;
     if (master != nullptr && master->loaded()) {
         const QString body = symbol.section(QLatin1Char(':'), 1);
-        const QString kite_exchange = ex == QStringLiteral("MCX") ? QStringLiteral("MCX")
+        const QString order_exchange = ex == QStringLiteral("MCX") ? QStringLiteral("MCX")
             : derivative ? (g.exchange == Exchange::BSE ? QStringLiteral("BFO") : QStringLiteral("NFO"))
                          : ex;
-        const QString kite_symbol = derivative ? body : body.section(QLatin1Char('-'), 0, -2);
-        const InstrumentProfile p = master->find_symbol(kite_exchange, kite_symbol);
+        const QString master_symbol = derivative ? body : body.section(QLatin1Char('-'), 0, -2);
+        const InstrumentProfile p = master->find_symbol(order_exchange, master_symbol);
         if (p.found) {
             if (p.lot_size > 0) g.lot = p.lot_size;
             if (derivative && p.expiry_ns > 0) {
-                // The Kite master dates expiry at IST midnight; trading stops at 15:30.
+                // The instrument master dates expiry at IST midnight; trading stops at 15:30.
                 constexpr std::int64_t kDayNs = 86'400'000'000'000LL;
                 constexpr std::int64_t kCloseNs = (15 * 3600 + 30 * 60) * 1'000'000'000LL;
                 const std::int64_t into_day = ((p.expiry_ns + kIstOffset.raw()) % kDayNs + kDayNs) % kDayNs;

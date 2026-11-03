@@ -104,9 +104,6 @@ std::optional<BrokerKeys> keys(std::string_view broker) {
     if (broker == "FYERS")
         return BrokerKeys{"altair.fyers",
                           {"client-id", "app-secret", "redirect-uri"}};
-    if (broker == "KITE")
-        return BrokerKeys{"altair.kite",
-                          {"api-key", "api-secret", "redirect-uri"}};
     return std::nullopt;
 }
 

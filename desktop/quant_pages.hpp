@@ -257,11 +257,11 @@ struct QuantSymbol {
     const char* dir;      ///< the dataset/ directory: nifty, banknifty, ...
     const char* label;    ///< what to call it on screen
     bool tradeable;       ///< false for an index of implied vol
-    /// Kite's instrument_token. P33-01: the live forecast has to ask Kite for
-    /// the newest candle, and Kite is addressed by token. It lives here rather
+    /// The ALTAIR instrument token. P33-01: the live forecast has to ask FYERS for
+    /// the newest candle, and the symbol is resolved from the token. It lives here rather
     /// than in a second table because two lists of the same three instruments
     /// is one list that will go out of step.
-    std::uint32_t kite_token;
+    std::uint32_t wire_token;
 };
 
 [[nodiscard]] inline const QuantSymbol* quant_symbols(std::size_t& n) {
@@ -1593,7 +1593,7 @@ private:
 ///
 /// THERE IS NO OPTION CHAIN, AND THIS PAGE SAYS SO BEFORE IT SHOWS A NUMBER.
 ///
-/// `dataset/opt/` does not exist and no Kite option subscription is running,
+/// `dataset/opt/` does not exist and no FYERS option subscription is running,
 /// so NOTHING on this page is a market measurement. Every figure is a
 /// SELF-CONSISTENCY CHECK: price a known option, solve the volatility back out
 /// of that price, and report how much was lost on the round trip. A page that
@@ -1601,7 +1601,7 @@ private:
 /// finding, so the headings say what they are.
 ///
 /// That is still worth having on screen, for the reason P20-02 gave about the
-/// Kite panel: a renderer that has never rendered is the one that crashes when
+/// broker panel: a renderer that has never rendered is the one that crashes when
 /// real data finally arrives. This exercises Black-76, the IV solver, the
 /// error propagator, the SVI fit and its butterfly scan, on every launch.
 ///
@@ -1615,7 +1615,7 @@ private:
     QString s = QStringLiteral(
         "OPTIONS — greeks, implied vol, surface\n\n"
         "――― WHAT THIS IS NOT ―――\n\n"
-        "  There is no option chain. dataset/opt/ does not exist and no Kite\n"
+        "  There is no option chain. dataset/opt/ does not exist and no FYERS\n"
         "  option subscription is running, so NOTHING below is a market\n"
         "  measurement and no smile here came from a price anyone quoted.\n\n"
         "  Every figure is a self-consistency check: price a known option,\n"
@@ -1837,7 +1837,7 @@ private:
         "  non-dividend stock (b = r) an American call never is, which is the\n"
         "  textbook result and a useful thing for this table to reproduce.\n\n"
         "――― WHAT WOULD MAKE THIS A MARKET PAGE ―――\n\n"
-        "  1. A Kite option subscription (P2-02, full mode) or a dump into\n"
+        "  1. A FYERS option subscription (depth mode) or a dump into\n"
         "     dataset/opt/nifty/. Neither exists.\n"
         "  2. The forward from the FUTURE, not the spot — dataset/fut/nifty/\n"
         "     has bars, so this is the nearest gap to close.\n"
@@ -2351,7 +2351,7 @@ private:
     QString s = QStringLiteral(
         "MICROSTRUCTURE — imbalance, microprice, VPIN, Kyle's lambda\n\n"
         "――― THERE IS NO DEPTH ―――\n\n"
-        "  No Kite full-mode subscription is running, so the feed has never\n"
+        "  No FYERS depth subscription is running, so the feed has never\n"
         "  delivered an L2 book. Nothing here is a market measurement.\n\n"
         "  And it cannot be reconstructed from dataset/: order-book imbalance\n"
         "  decays in 10–200 ms, so at five-minute bars the quantity does not\n"
@@ -2442,7 +2442,7 @@ private:
     }
     s += QStringLiteral(
         "――― WHAT WOULD MAKE THIS REAL ―――\n\n"
-        "  A Kite full-mode subscription (P2-02). Depth arrives, the Live Grid\n"
+        "  A FYERS depth subscription. Depth arrives, the Live Grid\n"
         "  depth pane fills, and every number above becomes a measurement\n"
         "  instead of a demonstration. Nothing else on this page changes.\n");
     return s;
@@ -3147,7 +3147,7 @@ private:
 /// purge -- is exactly that failure with more places to make it. Running the
 /// binary means the page cannot drift from the test, because it IS the test.
 ///
-/// The same pattern as the Link Kite panel, and for the same reason: launching
+/// The same pattern as the broker link panel, and for the same reason: launching
 /// a process is how you consume something you must not duplicate.
 [[nodiscard]] inline QString neural_report() {
     QString s = QStringLiteral(

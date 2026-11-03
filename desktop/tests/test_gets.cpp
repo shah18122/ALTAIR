@@ -164,7 +164,7 @@ void test_instruments(const MasterIndex& master) {
           "weekly: expiry from the ticker, priced off NIFTY 50");
     const auto monthly = resolve_gets_instrument(QStringLiteral("NSE:NIFTY26OCT25500PE"), nullptr, 2026);
     check(!monthly.expiry && !monthly.lot, "monthly without a master: expiry and lot unknown");
-    check(master.loaded(), "Kite master fixture loads");
+    check(master.loaded(), "instrument master fixture loads");
     const auto resolved = resolve_gets_instrument(QStringLiteral("NSE:NIFTY26OCT25500PE"), &master, 2026);
     const QDateTime at = resolved.expiry
         ? QDateTime::fromMSecsSinceEpoch(resolved.expiry->ns_since_epoch() / 1'000'000, QTimeZone(19800))

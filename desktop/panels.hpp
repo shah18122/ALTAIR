@@ -67,6 +67,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <cmath>
 #include <functional>
 #include <stdexcept>
 #include <utility>
@@ -238,7 +239,7 @@ public:
         auto* v = new QVBoxLayout(this);
 
         auto* head = new QLabel(
-            QStringLiteral("<h3>Broker wiring — FYERS primary / Kite secondary</h3>"),
+            QStringLiteral("<h3>Broker wiring — FYERS</h3>"),
             this);
         v->addWidget(head);
 
@@ -252,18 +253,15 @@ public:
         // the rows use, and only the parts that cannot change are literal.
         auto* note = new QLabel(
             QStringLiteral(
-                "FYERS is the configured primary route and Kite is the explicit "
-                "secondary. FYERS has a paper-safe auth vocabulary, but its live "
-                "transport is not yet wired into this desktop. Kite has a "
-                "parser, decoder, order <i>translation</i>, HTTPS transport and %1. "
-                "<b>XTS is withdrawn</b>; it is not a fallback venue. <b>No broker "
-                "can carry an order from this read-only desktop today</b>: "
-                "<code>oms/kite_adapter.hpp</code> builds the POST body and "
-                "nothing in <code>oms/</code> sends it, which is P4-05's "
-                "design rather than an omission.")
+                "FYERS is the only broker: market data through altair_price_service, "
+                "the account through altair_fyers_account, and a daily login that "
+                "renews itself before the open. There is %1. "
+                "<b>XTS is withdrawn</b>; it is not a fallback venue. <b>No order "
+                "is sent from this read-only desktop</b>: orders go through the "
+                "engine's OMS gate, never the window.")
                 .arg(session_present()
-                         ? QStringLiteral("a session on disk")
-                         : QStringLiteral("no session")),
+                         ? QStringLiteral("a FYERS session on disk")
+                         : QStringLiteral("no FYERS session on disk")),
             this);
         note->setWordWrap(true);
         set_role(note, QStringLiteral("note"));
@@ -287,16 +285,14 @@ public:
         auto* verdict = new QLabel(this);
         verdict->setWordWrap(true);
         const bool fyers = can_trade(QStringLiteral("FYERS"));
-        const bool kite = can_trade(QStringLiteral("Kite"));
         verdict->setText(
-            QStringLiteral("<b>Broker priority — FYERS: PRIMARY (%1) · Kite: SECONDARY (%2)</b>"
+            QStringLiteral("<b>Broker — FYERS (%1)</b>"
                            "  <span style='color:#8B949E'>(XTS withdrawn; read-only UI)</span>")
-                .arg(fyers ? QStringLiteral("ready") : QStringLiteral("not ready"),
-                     kite ? QStringLiteral("ready") : QStringLiteral("not ready")));
+                .arg(fyers ? QStringLiteral("ready") : QStringLiteral("not ready")));
         verdict->setStyleSheet(
             QStringLiteral("color:%1;padding:6px;")
-                .arg(fyers && kite ? QStringLiteral("#3FB950")
-                                   : QStringLiteral("#B9770B")));
+                .arg(fyers ? QStringLiteral("#3FB950")
+                           : QStringLiteral("#B9770B")));
         v->addWidget(verdict);
     }
 };
@@ -307,7 +303,7 @@ class FyersPanel final : public QWidget {
 public:
     explicit FyersPanel(QWidget* parent = nullptr) : QWidget(parent) {
         auto* v = new QVBoxLayout(this);
-        v->addWidget(new QLabel(QStringLiteral("<h2>FYERS — Primary broker</h2>"), this));
+        v->addWidget(new QLabel(QStringLiteral("<h2>FYERS — the broker</h2>"), this));
 
         const FyersState state = probe_fyers();
         auto* status = new QLabel(
@@ -320,10 +316,10 @@ public:
 
         auto* table = fact_table({QStringLiteral("Property"), QStringLiteral("Value")}, this);
         const QList<QPair<QString, QString>> rows{
-            {QStringLiteral("Configured role"), QStringLiteral("PRIMARY")},
-            {QStringLiteral("Secondary broker"), QStringLiteral("Zerodha Kite")},
-            {QStringLiteral("1-minute history"), QStringLiteral("FYERS resolution 1; authenticated export required")},
-            {QStringLiteral("Live transport"), QStringLiteral("Not enabled in this desktop build")},
+            {QStringLiteral("Configured role"), QStringLiteral("THE ONLY BROKER")},
+            {QStringLiteral("Daily login"), QStringLiteral("automatic at 08:30 (broker/tools/fyers_auto_login.py)")},
+            {QStringLiteral("History"), QStringLiteral("altair_dataset_update / altair_fyers_history")},
+            {QStringLiteral("Live transport"), QStringLiteral("altair_price_service --live (HSM socket)")},
             {QStringLiteral("Order submission"), QStringLiteral("Read-only / paper-safe; no order is sent")},
         };
         table->setRowCount(rows.size());
@@ -335,7 +331,7 @@ public:
         v->addWidget(table, 1);
 
         auto* note = new QLabel(
-            QStringLiteral("Use this page to confirm broker priority. Credentials are read from the local environment only; token values are never rendered here. The Kite account remains available under Accounts as the secondary route."), this);
+            QStringLiteral("Use this page to confirm the broker setup. Credentials are read from the local environment only; token values are never rendered here. "), this);
         note->setWordWrap(true);
         set_role(note, QStringLiteral("note"));
         v->addWidget(note);
@@ -1004,7 +1000,7 @@ private:
 // ---------------------------------------------------------------------------
 // P29-02 — the quote snapshot the watchlist reads
 //
-// `altair_kite_quote` writes it; this window reads it and never calls the API.
+// `altair_fyers_quotes` writes it; this window reads it and never calls the API.
 // Same shape as the account snapshot and for the same reason: desktop/ does
 // not link broker/, so the network half lives in a separate process and the
 // UI reads a file.
@@ -1012,11 +1008,9 @@ private:
 // AN INDEX HAS NO BOOK, AND THAT IS NOT THE SAME AS NO SNAPSHOT.
 //
 // NIFTY 50 is computed from things that trade; it does not trade itself, so
-// there is nothing to bid for. `broker/kite_quote.hpp` says so in its own
-// tests -- "an index does not trade ... `has_touch()` says so rather than
-// returning zeros" -- and the watchlist must render that differently from a
-// row it simply has no data for. Blank in both cases would collapse two facts
-// into one.
+// there is nothing to bid for: FYERS quotes it with no bid and no ask, and the
+// watchlist must render that differently from a row it simply has no data
+// for. Blank in both cases would collapse two facts into one.
 // ---------------------------------------------------------------------------
 
 struct QuoteRow {
@@ -1046,11 +1040,34 @@ struct QuoteSnapshot {
     }
 };
 
-[[nodiscard]] inline QuoteSnapshot load_quotes(const QString& path) {
+/// The FYERS ticker for a master row: what /data/quotes and the data socket
+/// call it. NSE equity is "-EQ" unless the symbol already carries its series,
+/// an index is "-INDEX", BSE cash is group A, derivatives are spelt as the
+/// master spells them.
+[[nodiscard]] inline QString fyers_ticker_for(const InstrumentProfile& p, const QString& typed) {
+    const QString sym = p.found ? p.symbol : typed;
+    if (sym.isEmpty()) return {};
+    if (!p.found || p.order_exchange == QStringLiteral("NSE")) {
+        if (sym.contains(QLatin1Char(' ')) || sym == QStringLiteral("INDIAVIX"))
+            return QStringLiteral("NSE:%1-INDEX").arg(QString(sym).remove(QLatin1Char(' ')));
+        const bool series = sym.size() > 3 && sym.lastIndexOf(QLatin1Char('-')) == sym.size() - 3;
+        return series ? QStringLiteral("NSE:%1").arg(sym) : QStringLiteral("NSE:%1-EQ").arg(sym);
+    }
+    if (p.order_exchange == QStringLiteral("BSE")) return QStringLiteral("BSE:%1-A").arg(sym);
+    if (p.order_exchange == QStringLiteral("BFO") || p.order_exchange == QStringLiteral("BCD"))
+        return QStringLiteral("BSE:%1").arg(sym);
+    if (p.order_exchange == QStringLiteral("MCX")) return QStringLiteral("MCX:%1").arg(sym);
+    return QStringLiteral("NSE:%1").arg(sym);   // NFO, CDS
+}
+
+/// Read altair_fyers_quotes' file (schema 1: the raw /data/quotes bodies),
+/// keyed back to watchlist tokens through `token_of` (FYERS ticker -> token).
+[[nodiscard]] inline QuoteSnapshot load_quotes(const QString& path,
+                                               const QHash<QString, std::uint32_t>& token_of) {
     QuoteSnapshot s;
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
-        s.error = QStringLiteral("no quote snapshot — run altair_kite_quote");
+        s.error = QStringLiteral("no quote snapshot — press Refresh quotes");
         return s;
     }
     QJsonParseError err{};
@@ -1064,32 +1081,34 @@ struct QuoteSnapshot {
         return s;
     }
     const QJsonObject o = doc.object();
+    if (o.value(QStringLiteral("schema_version")).toInt() != 1
+        || o.value(QStringLiteral("broker")).toString() != QStringLiteral("FYERS")) {
+        s.error = QStringLiteral("not a FYERS quote snapshot (schema 1)");
+        return s;
+    }
     s.fetched_at_unix =
         static_cast<qint64>(o.value(QStringLiteral("fetched_at_unix")).toDouble());
-    const QJsonObject qs = o.value(QStringLiteral("quotes")).toObject();
-    for (auto it = qs.begin(); it != qs.end(); ++it) {
-        if (!it.value().isObject()) { continue; }   // null = not quoted
-        const QJsonObject q = it.value().toObject();
-        QuoteRow r;
-        r.present = true;
-        r.last_paise = static_cast<std::int64_t>(
-            q.value(QStringLiteral("last_paise")).toDouble());
-        r.has_touch = q.value(QStringLiteral("has_touch")).toBool();
-        const QJsonArray buy = q.value(QStringLiteral("buy")).toArray();
-        const QJsonArray sell = q.value(QStringLiteral("sell")).toArray();
-        if (!buy.isEmpty()) {
-            r.bid_paise = static_cast<std::int64_t>(
-                buy.at(0).toObject().value(QStringLiteral("price_paise"))
-                    .toDouble());
+    const auto paise = [](const QJsonValue& v) {
+        const double x = v.toDouble();
+        return std::isfinite(x) && x > 0.0 ? static_cast<std::int64_t>(std::llround(x * 100.0)) : std::int64_t{0};
+    };
+    for (const QJsonValue response : o.value(QStringLiteral("responses")).toArray()) {
+        const QJsonValue body = response.toObject().value(QStringLiteral("body"));
+        if (!body.isObject()) { continue; }   // null = that request failed
+        for (const QJsonValue item : body.toObject().value(QStringLiteral("d")).toArray()) {
+            const QJsonObject q = item.toObject();
+            if (q.value(QStringLiteral("s")).toString() != QStringLiteral("ok")) { continue; }
+            const auto token = token_of.value(q.value(QStringLiteral("n")).toString(), 0u);
+            if (token == 0) { continue; }
+            const QJsonObject v = q.value(QStringLiteral("v")).toObject();
+            QuoteRow r;
+            r.present = true;
+            r.last_paise = paise(v.value(QStringLiteral("lp")));
+            r.bid_paise = paise(v.value(QStringLiteral("bid")));
+            r.ask_paise = paise(v.value(QStringLiteral("ask")));
+            r.has_touch = r.bid_paise > 0 && r.ask_paise > 0;
+            s.by_token.insert(token, r);
         }
-        if (!sell.isEmpty()) {
-            r.ask_paise = static_cast<std::int64_t>(
-                sell.at(0).toObject().value(QStringLiteral("price_paise"))
-                    .toDouble());
-        }
-        const auto token = static_cast<std::uint32_t>(
-            q.value(QStringLiteral("token")).toDouble());
-        if (token != 0) { s.by_token.insert(token, r); }
     }
     s.loaded = true;
     return s;
@@ -1138,7 +1157,7 @@ public:
         add_row->addWidget(symbol_, 1);
         add_row->addWidget(add_);
         add_row->addWidget(remove_);
-        // P29-02. Runs altair_kite_quote as a SUBPROCESS. desktop/ does not
+        // P29-02. Runs altair_fyers_quotes as a SUBPROCESS. desktop/ does not
         // link broker/ and this button does not change that -- it launches a
         // read-only fetcher and then re-reads the file it wrote.
         quotes_ = new QPushButton(QStringLiteral("Refresh quotes"), this);
@@ -1149,7 +1168,7 @@ public:
         message_->setWordWrap(true);
         v->addWidget(message_);
 
-        // P11Q-11. The profile columns come from the Kite master; the QUOTE
+        // P11Q-11. The profile columns come from the instrument master; the QUOTE
         // columns cannot, and are here so their absence is visible rather
         // than implied. A watchlist with no bid column looks complete; one
         // with an empty bid column says what is missing.
@@ -1181,7 +1200,7 @@ public:
         // an empty table that looks like a broken panel.
         //
         // The names here are placeholders: `refresh()` prefers the MASTER's
-        // symbol, which is authoritative, so what appears is what Kite calls
+        // symbol, which is authoritative, so what appears is what the master calls
         // the contract and not what this line guessed. The option is included
         // because it is the only one of the four that exercises strike,
         // expiry and CE/PE at once.
@@ -1203,7 +1222,7 @@ public:
         refresh();
     }
 
-    /// The Kite master, loaded ONCE. 108,411 rows and 8.8 MB -- scanning it
+    /// The instrument master, loaded ONCE. 108,411 rows and 8.8 MB -- scanning it
     /// per row is a freeze that arrives at about the tenth instrument, late
     /// enough to read as a different bug.
     MasterIndex master_;
@@ -1213,7 +1232,7 @@ Q_SIGNALS:
     ///
     /// The SYMBOL sent is the master's, not the typed one, for the same
     /// reason the table shows the master's: the typed name is whatever
-    /// somebody entered and the master's is what Kite calls the contract.
+    /// somebody entered and the master's is what the exchange calls the contract.
     void instrumentPicked(unsigned token, const QString& symbol);
     /// P39. The same pick WITH the contract's spec, for the order ticket,
     /// which now refuses any contract whose lot, tick and exchange it has not
@@ -1237,11 +1256,21 @@ private:
     QPushButton* quotes_ = nullptr;
     QLabel* quote_age_ = nullptr;
     QuoteSnapshot quotes_snap_{};
-#ifdef ALTAIR_QUOTE_FILE
-    QString quote_path_ = QStringLiteral(ALTAIR_QUOTE_FILE);
+#ifdef ALTAIR_SOURCE_DIR
+    QString quote_path_ = QStringLiteral(ALTAIR_SOURCE_DIR "/data/fyers_watchlist_quotes.json");
 #else
-    QString quote_path_ = QStringLiteral("data/kite_quotes.json");
+    QString quote_path_ = QStringLiteral("data/fyers_watchlist_quotes.json");
 #endif
+
+    /// FYERS ticker -> watchlist token, for every row on the list now.
+    [[nodiscard]] QHash<QString, std::uint32_t> quote_tokens() const {
+        QHash<QString, std::uint32_t> out;
+        for (const WatchRow& r : list_.rows()) {
+            const QString t = fyers_ticker_for(master_.find(r.token), r.symbol);
+            if (!t.isEmpty()) out.insert(t, r.token);
+        }
+        return out;
+    }
 
 public:
 
@@ -1275,7 +1304,7 @@ private:
             return;
         }
         if (p.found && p.lot_size > 0 && p.tick_paise > 0
-            && !p.kite_exchange.isEmpty()) {
+            && !p.order_exchange.isEmpty()) {
             // CX02-B4d (R-AB-041). NOT resolve(): that word means the
             // point-in-time spec store agreed, and `desktop/` cannot even
             // link it. These numbers are the instrument master's, and the row
@@ -1286,7 +1315,7 @@ private:
                     QColor(0xB9, 0x77, 0x0B));
             }
             Q_EMIT contractPicked(token, p.symbol, p.lot_size, p.tick_paise,
-                                  p.kite_exchange);
+                                  p.order_exchange);
         }
     }
 
@@ -1325,9 +1354,9 @@ private:
     void on_refresh_quotes() {
         QString exe =
 #if defined(_WIN32)
-            QStringLiteral("altair_kite_quote.exe");
+            QStringLiteral("altair_fyers_quotes.exe");
 #else
-            QStringLiteral("altair_kite_quote");
+            QStringLiteral("altair_fyers_quotes");
 #endif
         QStringList tried;
         tried << QCoreApplication::applicationDirPath()
@@ -1348,32 +1377,17 @@ private:
         }
         if (found.isEmpty()) {
             quote_age_->setText(QStringLiteral(
-                "altair_kite_quote was not found. It needs an HTTPS client "
+                "altair_fyers_quotes was not found. It needs an HTTPS client "
                 "and is built by the `net` preset only."));
             return;
         }
         // FETCH WHAT THE WATCHLIST ACTUALLY HOLDS, not a fixed default.
         //
-        // The fetcher's default --keys is the three indices the live grid
-        // carries. A watchlist with a future and an option in it then showed
-        // two populated rows and two blank ones, which reads as "those two
-        // are not quoting" rather than "nobody asked about them".
-        //
-        // The exchange comes from the SEGMENT, not from a guess: cash is NSE,
-        // futures and options are NFO. A future sent to NSE is a 400 from
-        // Kite, and a row that silently asks the wrong venue looks exactly
-        // like a row that does not trade.
-        QStringList keys;
-        for (const WatchRow& r : list_.rows()) {
-            const InstrumentProfile p = master_.find(r.token);
-            const QString sym = p.found ? p.symbol : r.symbol;
-            if (sym.isEmpty()) { continue; }
-            const QString ex =
-                (p.segment == QStringLiteral("FUT")
-                 || p.segment == QStringLiteral("OPT"))
-                    ? QStringLiteral("NFO") : QStringLiteral("NSE");
-            keys << (ex + QLatin1Char(':') + sym);
-        }
+        // The exchange comes from the MASTER's exchange and segment, not from
+        // a guess: a future sent as NSE cash is refused, and a row that
+        // silently asks the wrong venue looks exactly like a row that does
+        // not trade.
+        const QStringList keys = quote_tokens().keys();
         if (keys.isEmpty()) {
             quote_age_->setText(QStringLiteral("nothing on the watchlist to "
                                                "quote"));
@@ -1384,7 +1398,8 @@ private:
                                 .arg(keys.size()));
         QProcess proc;
         proc.setProgram(found);
-        proc.setArguments({QStringLiteral("--keys"), keys.join(QLatin1Char(',')),
+        proc.setArguments({QStringLiteral("--symbols"), keys.join(QLatin1Char(',')),
+                           QStringLiteral("--out"), quote_path_,
                            QStringLiteral("--go")});
         proc.setProcessChannelMode(QProcess::MergedChannels);
 #ifdef ALTAIR_SOURCE_DIR
@@ -1397,8 +1412,8 @@ private:
             return;
         }
         if (proc.exitCode() != 0) {
-            // Kite's own words, not a paraphrase. A daily token that expired
-            // and a symbol Kite does not know are different problems.
+            // FYERS' own words, not a paraphrase. A daily token that expired
+            // and a symbol FYERS does not know are different problems.
             quote_age_->setText(
                 QStringLiteral("fetch failed: %1")
                     .arg(QString::fromUtf8(proc.readAll()).trimmed()
@@ -1409,7 +1424,7 @@ private:
     }
 
     void refresh() {
-        quotes_snap_ = load_quotes(quote_path_);
+        quotes_snap_ = load_quotes(quote_path_, quote_tokens());
         const auto& rows = list_.rows();
         table_->setRowCount(static_cast<int>(rows.size()));
         for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
@@ -1461,7 +1476,7 @@ private:
             // LTP, BID, ASK AND SPREAD, FROM THE QUOTE SNAPSHOT. P29-02.
             //
             // These were empty until now, deliberately -- the master is
-            // reference data and carries no quote. `altair_kite_quote` fetches
+            // reference data and carries no quote. `altair_fyers_quotes` fetches
             // one and this reads the file it writes.
             //
             // THREE STATES, RENDERED DIFFERENTLY, BECAUSE THEY ARE THREE
@@ -1555,7 +1570,7 @@ private:
         // value" is the failure this project keeps finding, so the load says
         // so itself.
         quote_age_->setText(
-            QStringLiteral("Quotes: %1.  altair_kite_quote writes the "
+            QStringLiteral("Quotes: %1.  altair_fyers_quotes writes the "
                            "snapshot; this window reads it and never calls "
                            "the API.").arg(quotes_snap_.age_text()));
 

@@ -101,7 +101,7 @@ ChargeSchedule post_april() {
     return s;
 }
 
-BrokerageRule zerodha_fo() {
+BrokerageRule flat20_fo() {
     BrokerageRule b{};
     b.flat_per_order = Notional{2000};
     b.pct = rate_from(0.0003L);
@@ -119,7 +119,7 @@ TradeRecord booked(const char* id, Side side, std::int64_t px, std::int64_t qty,
     t.qty = Qty{qty};
     t.price = Price{px};
     t.trade_ts = ist_date(2026, 4, 1);
-    const auto c = altair::compute_cost(t, sch, zerodha_fo());
+    const auto c = altair::compute_cost(t, sch, flat20_fo());
     if (!c) { std::printf("  FATAL: cost model refused\n"); std::exit(2); }
 
     TradeRecord r;

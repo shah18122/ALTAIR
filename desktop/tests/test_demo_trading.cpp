@@ -232,7 +232,7 @@ void test_daily_call(const QString& root) {
         return static_cast<const demo_detail::RunStep*>(nullptr);
     };
     auto plan = demo_detail::daily_call_plan(root, false, day);
-    check(find(plan, QStringLiteral("altair_kite_update")) == nullptr,
+    check(find(plan, QStringLiteral("altair_dataset_update")) == nullptr,
           "daily call: no broker session, so dataset/ is not asked to update");
     QStringList order;
     for (const auto& s : plan) if (!s.helper.isEmpty()) order << s.helper + QLatin1Char(' ') + s.args.value(1);
@@ -253,8 +253,8 @@ void test_daily_call(const QString& root) {
 
     write(root + QStringLiteral("/data/fyers_session.json"), "{}");
     plan = demo_detail::daily_call_plan(root, true, day);
-    check(!plan.empty() && plan.front().helper == QStringLiteral("altair_kite_update")
-              && plan.front().args.contains(QStringLiteral("fyers")) && !plan.front().required,
+    check(!plan.empty() && plan.front().helper == QStringLiteral("altair_dataset_update")
+              && plan.front().args.contains(QStringLiteral("--go")) && !plan.front().required,
           "daily call: a FYERS session updates dataset/ from FYERS first");
     check(find(plan, QStringLiteral("altair_trader"))->args.contains(QStringLiteral("--unverified-costs")),
           "daily call: the ticked box reaches altair_trader");

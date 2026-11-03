@@ -1,11 +1,10 @@
-// desktop/combined_account.hpp -- FYERS and Zerodha in one book.
+// desktop/combined_account.hpp -- the FYERS book at a glance.
 //
-// Each broker's read-only snapshot (data/fyers_account.json from
-// altair_fyers_account, data/kite_account.json from altair_kite_account) has
-// its own tab with its own shapes. A trader holding positions at both wants
-// one answer first: what is held, where, and what it is doing. This reads both
-// files, maps each into the same rows and says, per broker, why a section is
-// missing rather than showing it as empty.
+// The read-only snapshot (data/fyers_account.json from altair_fyers_account)
+// has its own tab with every section. The Overview wants one answer first:
+// what is held and what it is doing. This reads the file, maps it into funds
+// and position rows, and says why a section is missing rather than showing it
+// as empty.
 //
 // READ ONLY. Nothing here talks to a broker; it reads what the helpers wrote.
 
@@ -78,7 +77,7 @@ namespace combined_detail {
 
 [[nodiscard]] inline bool section_ok(const QJsonObject& root, const QString& name) {
     // The helpers write <name>_status (HTTP) and <name>_state ("present").
-    // Older Kite files carry only the status.
+    // Older files carry only the status.
     const int status = root.value(name + QStringLiteral("_status")).toInt();
     const QString state = root.value(name + QStringLiteral("_state")).toString();
     return status == 200 && (state.isEmpty() || state == QStringLiteral("present"));
@@ -159,78 +158,20 @@ inline void read_fyers(const QString& path, const QDateTime& now, CombinedAccoun
     }
 }
 
-/// Kite: margins.data.equity; positions.data.net[].
-inline void read_kite(const QString& path, const QDateTime& now, CombinedAccount& out) {
-    CombinedFunds f;
-    f.broker = QStringLiteral("Zerodha");
-    QJsonObject root;
-    QString why;
-    if (!read_json(path, root, why)) {
-        f.why_absent = why;
-        out.funds.push_back(f);
-        out.notes << QStringLiteral("Zerodha: %1").arg(why);
-        return;
-    }
-    f.account = root.value(QStringLiteral("user_id")).toString();
-    if (f.account.isEmpty()) f.account = root.value(QStringLiteral("account_id")).toString();
-    f.age_s = age_of(root, now);
-    if (section_ok(root, QStringLiteral("margins"))) {
-        const QJsonObject eq = root.value(QStringLiteral("margins")).toObject()
-                                   .value(QStringLiteral("data")).toObject()
-                                   .value(QStringLiteral("equity")).toObject();
-        if (!eq.isEmpty()) {
-            const QJsonObject avail = eq.value(QStringLiteral("available")).toObject();
-            const QJsonObject used = eq.value(QStringLiteral("utilised")).toObject();
-            f.available = eq.contains(QStringLiteral("net")) ? num(eq.value(QStringLiteral("net")))
-                                                             : num(avail.value(QStringLiteral("live_balance")));
-            f.used = num(used.value(QStringLiteral("debits")));
-            f.total = f.available + f.used;
-            f.present = true;
-        } else {
-            f.why_absent = QStringLiteral("no equity segment");
-        }
-    } else {
-        f.why_absent = QStringLiteral("margins not fetched");
-    }
-    out.funds.push_back(f);
-
-    if (!section_ok(root, QStringLiteral("positions"))) {
-        out.notes << QStringLiteral("Zerodha: positions not fetched (absent, not flat)");
-        return;
-    }
-    const QJsonArray net = root.value(QStringLiteral("positions")).toObject()
-                               .value(QStringLiteral("data")).toObject()
-                               .value(QStringLiteral("net")).toArray();
-    for (const QJsonValue& v : net) {
-        const QJsonObject r = v.toObject();
-        CombinedPosition p;
-        p.broker = QStringLiteral("Zerodha");
-        p.symbol = r.value(QStringLiteral("tradingsymbol")).toString();
-        p.product = r.value(QStringLiteral("product")).toString();
-        p.qty = static_cast<qint64>(num(r.value(QStringLiteral("quantity"))));
-        p.avg = num(r.value(QStringLiteral("average_price")));
-        p.ltp = num(r.value(QStringLiteral("last_price")));
-        p.pnl = num(r.value(QStringLiteral("pnl")));
-        if (!p.symbol.isEmpty()) out.positions.push_back(p);
-    }
-}
-
 } // namespace combined_detail
 
 [[nodiscard]] inline CombinedAccount read_combined_account(const QString& fyers_path,
-                                                          const QString& kite_path,
                                                           const QDateTime& now_utc) {
     CombinedAccount out;
     combined_detail::read_fyers(fyers_path, now_utc, out);
-    combined_detail::read_kite(kite_path, now_utc, out);
     return out;
 }
 
-/// Both brokers' funds and net positions, one table each.
+/// FYERS funds and net positions, one table each.
 class CombinedAccountView final : public QWidget {
 public:
-    CombinedAccountView(QString fyers_path, QString kite_path, QWidget* parent = nullptr)
-        : QWidget(parent), fyers_path_(std::move(fyers_path)), kite_path_(std::move(kite_path)) {
+    explicit CombinedAccountView(QString fyers_path, QWidget* parent = nullptr)
+        : QWidget(parent), fyers_path_(std::move(fyers_path)) {
         setObjectName(QStringLiteral("combinedAccount"));
         auto* v = new QVBoxLayout(this);
         v->setContentsMargins(0, 0, 0, 0);
@@ -258,7 +199,7 @@ public:
     }
 
     void refresh() {
-        const CombinedAccount a = read_combined_account(fyers_path_, kite_path_,
+        const CombinedAccount a = read_combined_account(fyers_path_,
                                                         QDateTime::currentDateTimeUtc());
         const QLocale loc(QLocale::English, QLocale::India);
         const auto money = [&loc](double x) { return loc.toString(x, 'f', 2); };
@@ -292,7 +233,7 @@ public:
             account_cell(positions_, r, 6, money(p.pnl), true, p.pnl, true);
         }
         positions_->setSortingEnabled(true);
-        head_->setText(QStringLiteral("COMBINED  ·  available %1  ·  %2 position(s)  ·  P&L %3")
+        head_->setText(QStringLiteral("FYERS  ·  available %1  ·  %2 position(s)  ·  P&L %3")
                            .arg(money(a.total_available()))
                            .arg(a.positions.size())
                            .arg(money(a.total_pnl())));
@@ -302,7 +243,6 @@ public:
 
 private:
     QString fyers_path_;
-    QString kite_path_;
     QLabel* head_ = nullptr;
     QTableWidget* funds_ = nullptr;
     QTableWidget* positions_ = nullptr;

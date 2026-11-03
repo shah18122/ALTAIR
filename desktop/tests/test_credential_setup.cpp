@@ -33,8 +33,8 @@ int main(int argc, char** argv) {
     ok &= check(frame.contains(QByteArrayLiteral("dG9wLXNlY3JldA==")),
                 "secret field is not base64 framed");
 
-    ok &= check(credential_control_frame(CredentialBroker::Kite, "STATUS")
-                    == QByteArrayLiteral("ALTAIR-CREDENTIAL/1\nSTATUS\nKITE\n"),
+    ok &= check(credential_control_frame(CredentialBroker::Fyers, "STATUS")
+                    == QByteArrayLiteral("ALTAIR-CREDENTIAL/1\nSTATUS\nFYERS\n"),
                 "status control frame is wrong");
     ok &= check(credential_control_frame(CredentialBroker::Fyers, "DELETE")
                     == QByteArrayLiteral("ALTAIR-CREDENTIAL/1\nDELETE\nFYERS\n"),

@@ -1,11 +1,11 @@
-// app/price_text.hpp -- a price written to dataset/ is the price Kite sent.
+// app/price_text.hpp -- a price written to dataset/ is the price the broker sent.
 //
 // CX02-A1a. Fixes C14-001.
 //
 // WHAT WAS WRONG.
 //
 // Both dataset writers formatted prices at SIX SIGNIFICANT DIGITS:
-// altair_kite_update with `%g`, altair_kite_fetch with an ostream at its
+// the dataset updater with `%g`, the bulk fetcher with an ostream at its
 // default precision. NIFTY at 24,123.45 has seven, so it was written as
 // 24123.5 -- and BANKNIFTY at 51,234.65 as 51234.7. Every bar either tool
 // touched lost its paise, silently, and nothing downstream could tell: the file
@@ -15,7 +15,7 @@
 // WHAT THIS DOES INSTEAD.
 //
 // The SHORTEST FIXED-NOTATION decimal text that parses back to the identical
-// double (`std::to_chars` with `chars_format::fixed` and no precision). Kite's
+// double (`std::to_chars` with `chars_format::fixed` and no precision). The broker's
 // JSON carries a price such as 24123.45; the parser turns that into the
 // nearest double; this turns the double back into "24123.45". Nothing is
 // assumed about how many decimals the instrument uses -- a two-decimal index
@@ -65,7 +65,7 @@ enum class PriceTextError : std::uint8_t {
     // MIDDLE of it, shifting BufferTooSmall's ordinal (R-AB-034).
     /// At or above `kPriceTextCeiling`.
     OutOfRange,
-    /// Zero. A traded price is never zero: Kite returns 0 for a halted or
+    /// Zero. A traded price is never zero: a broker returns 0 for a halted or
     /// malformed candle, and writing `,0,0,0,0,` asserts a market that traded
     /// at nothing (R-AB-026). The fetcher already refuses an all-zero VOLUME
     /// on exactly this argument.

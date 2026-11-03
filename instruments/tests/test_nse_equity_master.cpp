@@ -97,7 +97,7 @@ void the_underlying_of_cash_is_its_trading_symbol()
     check(std::strcmp(s->symbol, "RELIANCE") == 0, "symbol RELIANCE");
     check(std::strcmp(s->underlying, "RELIANCE") == 0,
           "and underlying RELIANCE too -- the trading symbol, NOT \"Reliance "
-          "Industries Limited\". Kite's cash row carries tradingsymbol "
+          "Industries Limited\". the master's cash row carries tradingsymbol "
           "RELIANCE and name \"RELIANCE INDUSTRIES\"; only the symbol agrees, "
           "so keying on the company name would join nothing");
     check(s->segment == Segment::Cash, "segment Cash");
@@ -121,16 +121,16 @@ void cash_expiry_is_epoch()
           "a cash contract's expiry is Timestamp::epoch() -- the SAME "
           "convention P1-04 uses");
 
-    // The consequence: it joins with Kite's cash row for the same scrip.
+    // The consequence: it joins with the master's cash row for the same scrip.
     g_rec.clear();
     check(g_rec.add(*s).has_value(), "the NSE row is added");
 
-    const char* kite =
+    const char* master =
         "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,"
         "strike,tick_size,lot_size,instrument_type,segment,exchange\n"
         "424961,1660,20MICRONS,\"20 MICRONS\",0,,0,0.05,1,EQ,NSE,NSE\n";
-    check(load_kite_dump(kite, std::strlen(kite), g_rec, kSnap).has_value(),
-          "and Kite's row for the same scrip loads beside it");
+    check(load_instrument_master(master, std::strlen(master), g_rec, kSnap).has_value(),
+          "and the master's row for the same scrip loads beside it");
 
     const ReconcileReport r = g_rec.reconcile();
     check(r.contracts == 1,
@@ -141,7 +141,7 @@ void cash_expiry_is_epoch()
     const ContractVerdict* v = *g_rec.verdict_at(0);
     check(v->merged.lot_size == LotSize{1}, "merged lot 1");
     check(v->merged.tick_size == Price{5},
-          "and the tick comes from Kite, because the exchange master has none");
+          "and the tick comes from the master, because the exchange master has none");
 }
 
 // ── 4 ────────────────────────────────────────────────────────────────────

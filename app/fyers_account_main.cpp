@@ -244,7 +244,7 @@ int main(int argc, char** argv) {
 
     for (auto& item : fetched) {
         const auto response = altair::https_get_auth(
-            "api-t1.fyers.in", item.path, *authorization, "",
+            "api-t1.fyers.in", item.path, *authorization,
             std::chrono::seconds{20});
         if (!response) {
             std::printf("    %-10s TRANSPORT FAILED\n", item.name);
@@ -256,7 +256,7 @@ int main(int argc, char** argv) {
                     item.name, item.status, item.body.size());
     }
     if (const auto response = altair::https_get_auth(
-            "api-t1.fyers.in", tradebook.path, *authorization, "",
+            "api-t1.fyers.in", tradebook.path, *authorization,
             std::chrono::seconds{20})) {
         tradebook.status = response->status;
         tradebook.body = response->body;

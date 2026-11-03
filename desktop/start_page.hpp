@@ -173,7 +173,7 @@ public:
         };
         tile(QStringLiteral("\u25B2  Terminal"), QStringLiteral("Market watch, option chain, depth, F1/F2 orders"),
              QStringLiteral("market.terminal"));
-        tile(QStringLiteral("\u21C4  Brokers"), QStringLiteral("Log in to FYERS or Zerodha; the live feed follows"),
+        tile(QStringLiteral("\u21C4  Brokers"), QStringLiteral("Log in to FYERS; the live feed follows"),
              QStringLiteral("accounts.brokers"));
         tile(QStringLiteral("\u25C6  Models \u00B7 Desk trader"), QStringLiteral("Terminal \u2192 Models: the live models and the paper Desk trader (Ctrl+M)"),
              QStringLiteral("terminal.models"));

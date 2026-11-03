@@ -240,11 +240,10 @@ int run_config_check(const char* path)
         {"feed.staleness_ms", 1, 60'000},
         {"feed.failback_stable_s", 1, 3'600},
         {"feed.fyers.max_subscriptions", 1, 5'000},
-        {"feed.kite.max_subscriptions", 1, 3'000},
         {"risk.max_open_positions", 1, 1'000},
     };
     static constexpr const char* kBools[] = {
-        "feed.failover_enabled", "feed.fyers.enabled", "feed.kite.enabled",
+        "feed.failover_enabled", "feed.fyers.enabled",
     };
     int bad = 0;
     for (const IntRule& r : kInts) {

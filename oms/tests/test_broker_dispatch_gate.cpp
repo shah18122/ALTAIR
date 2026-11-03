@@ -17,7 +17,7 @@ void check(bool ok, const char* message) {
 
 BrokerEvidence evidence() {
     BrokerEvidence result;
-    result.session = {BrokerId::ZerodhaKite, 17, 4};
+    result.session = {BrokerId::Fyers, 17, 4};
     result.auth = AuthStatus::Authenticated;
     result.authentication = fresh_window;
     result.account_session = result.session;
@@ -27,7 +27,7 @@ BrokerEvidence evidence() {
 
 Routes routes() {
     Routes result;
-    result.order_primary = BrokerId::ZerodhaKite;
+    result.order_primary = BrokerId::Fyers;
     result.mode = TradingMode::LiveArmed;
     result.revision = 8;
     return result;
@@ -44,7 +44,7 @@ void permit_is_bound_to_current_evidence() {
     auto g = gate(e.session);
     const auto permit = authorize_broker_dispatch(r, e, g, now);
     check(permit.has_value(), "ready evidence creates permit");
-    check(permit->broker() == BrokerId::ZerodhaKite
+    check(permit->broker() == BrokerId::Fyers
               && permit->session() == e.session
               && permit->route_revision() == 8
               && permit->evaluated_at() == now,

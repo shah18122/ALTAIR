@@ -109,7 +109,7 @@ int main()
         // passed" over an empty run -- that is how an absent dataset becomes
         // a green build.
         std::printf("\n  NIFTY DAILY HISTORY UNAVAILABLE -- nothing was "
-                    "measured.\n  Fetch it with altair_kite_update --go.\n");
+                    "measured.\n  Fetch it with altair_dataset_update --go.\n");
         return 1;
     }
 

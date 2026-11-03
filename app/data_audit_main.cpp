@@ -7,7 +7,7 @@
 // Reads DIR/<segment>/<instrument>/<tf>/*.csv (tf = 1m 5m 15m 60m 1d) and any
 // DIR/<segment>/<instrument>/_superseded_*/ folders (other sources). A broker
 // directory has the same layout (ops/broker_audit.ps1 fills
-// data/broker_audit/fyers and data/broker_audit/kite).
+// data/broker_audit/fyers).
 //
 // Writes, under --out (default data/verified):
 //   data_audit.xlsx          Summary sheet + one sheet per instrument
@@ -360,7 +360,7 @@ void usage(const char* exe) {
         "    --dataset DIR      default dataset\n"
         "    --out DIR          default data/verified (report + merged/ CSVs)\n"
         "    --broker NAME=DIR  broker candles laid out like dataset/, e.g.\n"
-        "                       --broker FYERS=data/broker_audit/fyers --broker Kite=data/broker_audit/kite\n"
+        "                       --broker FYERS=data/broker_audit/fyers\n"
         "    --max-issues N     issue rows per instrument sheet (default 20000)\n"
         "    --no-merged        skip writing merged/ CSVs\n", exe);
 }

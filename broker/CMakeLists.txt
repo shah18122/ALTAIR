@@ -76,32 +76,6 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_fyers_webhook_test tests/test_fyers_webhook.cpp)
     target_link_libraries(altair_fyers_webhook_test PRIVATE altair_broker altair_flags)
     add_test(NAME fyers_webhook COMMAND altair_fyers_webhook_test)
-    add_executable(altair_kite_auth_test tests/test_kite_auth.cpp)
-    target_link_libraries(altair_kite_auth_test PRIVATE altair_broker altair_flags)
-    add_test(NAME kite_auth COMMAND altair_kite_auth_test)
-
-    # Links altair_instruments as well: the round-trip test proves this
-    # header's paise->rupees formatter is the exact inverse of P1-04's parser.
-    add_executable(altair_kite_api_test tests/test_kite_api.cpp)
-    target_link_libraries(altair_kite_api_test
-        PRIVATE altair_broker altair_instruments altair_flags)
-    add_test(NAME kite_api COMMAND altair_kite_api_test)
-
-    # P2-12. Historical candles: URI, chunking and the response parser. Links
-    # altair_broker (the non-net half) only -- there is no transport and no
-    # credential in it, so it builds and runs in EVERY preset rather than only
-    # where OpenSSL is present.
-    # P32-07. The ticker's WIRE: the URL, the two control messages and the
-    # redaction. Needs altair_broker_net because kite_ticker.hpp includes
-    # https_client.hpp for the platform-root loader, so it exists only where
-    # OpenSSL does -- guarded below rather than here.
-    if(ALTAIR_HAVE_NET)
-        add_executable(altair_kite_ticker_test tests/test_kite_ticker.cpp)
-        target_link_libraries(altair_kite_ticker_test
-            PRIVATE altair_broker_net altair_flags)
-        add_test(NAME kite_ticker COMMAND altair_kite_ticker_test)
-    endif()
-
     # The ticker's read loop, against a local WebSocket server over plain TCP:
     # idle, heartbeat-only, stop and close all end it promptly. Header-only
     # Beast; no TLS, no credential, no network beyond loopback.
@@ -117,25 +91,15 @@ if(ALTAIR_BUILD_TESTS)
         set_tests_properties(ws_pump PROPERTIES LABELS concurrency)
     endif()
 
-    add_executable(altair_kite_historical_test tests/test_kite_historical.cpp)
-    target_link_libraries(altair_kite_historical_test
-        PRIVATE altair_broker altair_flags)
-    add_test(NAME kite_historical COMMAND altair_kite_historical_test)
+    # broker/candles.hpp: IST dates and the coverage check every history fetch runs.
+    add_executable(altair_candles_test tests/test_candles.cpp)
+    target_link_libraries(altair_candles_test PRIVATE altair_broker altair_flags)
+    add_test(NAME candles COMMAND altair_candles_test)
 
     add_executable(altair_fyers_historical_test tests/test_fyers_historical.cpp)
     target_link_libraries(altair_fyers_historical_test PRIVATE
         altair_broker altair_flags)
     add_test(NAME fyers_historical COMMAND altair_fyers_historical_test)
-
-    # P20-03. The /quote parser. Links altair_broker (the non-net half) only,
-    # for the same reason kite_historical does: it is a PARSER, with no
-    # transport and no credential in it, so it builds and runs in every preset
-    # rather than only where OpenSSL is present. Fetching a quote needs a
-    # session; parsing one does not, and the parser is where the bugs are.
-    add_executable(altair_kite_quote_test tests/test_kite_quote.cpp)
-    target_link_libraries(altair_kite_quote_test
-        PRIVATE altair_broker altair_flags)
-    add_test(NAME kite_quote COMMAND altair_kite_quote_test)
 
     add_executable(altair_fyers_auth_test tests/test_fyers_auth.cpp)
     target_link_libraries(altair_fyers_auth_test PRIVATE altair_broker altair_flags)

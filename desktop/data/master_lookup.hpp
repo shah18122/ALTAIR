@@ -1,5 +1,5 @@
 // desktop/data/master_lookup.hpp -- token -> instrument profile, from the
-// Kite master.
+// instrument master (data/instruments.csv, built from the FYERS masters).
 //
 // P11Q-11.
 //
@@ -17,7 +17,7 @@
 //
 // AND IT RESOLVES THROUGH THE REAL PARSER.
 //
-// `instruments/kite_dump.hpp`, sink-templated, so the strike, lot size, tick
+// `instruments/master_csv.hpp`, sink-templated, so the strike, lot size, tick
 // size and expiry arrive as a `ContractSpec` from the same code the engine
 // loads specs with. Rule 1: none of them is a literal, and ROADMAP §6 says why
 // -- NSE has revised lot sizes mid-series.
@@ -32,7 +32,7 @@
 
 #pragma once
 
-#include <instruments/kite_dump.hpp>
+#include <instruments/master_csv.hpp>
 
 #include <QHash>
 #include <QString>
@@ -56,11 +56,11 @@ struct InstrumentProfile {
     std::int64_t expiry_ns = 0;      ///< 0 when the contract has no expiry
     /// The exchange an order for this contract is sent to: NSE, NFO, BSE, BFO,
     /// CDS, BCD or MCX. Derived from the spec's exchange AND segment -- never
-    /// from the symbol's spelling. See kite_exchange_name().
-    QString kite_exchange;
+    /// from the symbol's spelling. See order_exchange_name().
+    QString order_exchange;
 };
 
-/// The Kite exchange code for a contract.
+/// The exchange-segment code for a contract (NSE, NFO, BSE, BFO, CDS, BCD, MCX).
 ///
 /// THIS REPLACES A GUESS THAT WAS WRONG FOR EVERY OPTION. order_ticket.hpp
 /// decided the exchange with `symbol.endsWith("FUT") ? "NFO" : "NSE"`, so an
@@ -71,7 +71,7 @@ struct InstrumentProfile {
 ///
 /// Exchange and segment both come from the master, so this is a lookup and
 /// not an inference.
-[[nodiscard]] inline QString kite_exchange_name(Exchange ex, Segment seg) {
+[[nodiscard]] inline QString order_exchange_name(Exchange ex, Segment seg) {
     const bool bse = ex == Exchange::BSE;
     switch (seg) {
     case Segment::Cash:      return bse ? QStringLiteral("BSE") : QStringLiteral("NSE");
@@ -134,36 +134,34 @@ public:
             p.lot_size = s.lot_size.raw();
             p.tick_paise = s.tick_size.raw();
             p.expiry_ns = s.expiry.ns_since_epoch();
-            p.kite_exchange = kite_exchange_name(s.exchange, s.segment);
+            p.order_exchange = order_exchange_name(s.exchange, s.segment);
             // ---- QUALIFY THE ENUM. THERE ARE TWO OF THEM. ---------------
             //
-            // `altair::FeedSource` (instruments/contract_spec.hpp) is
-            // {Kite = 0, Xts = 1} and sizes `token[kFeedSourceCount]`, which
-            // is two elements. `altair::ui::FeedSource`
-            // (desktop/feed_status.hpp) is {Unspecified, Replay, Kite, Xts}
-            // and its Kite is 2.
+            // `altair::FeedSource` (feed/tick.hpp) is {Wire = 0, Xts, Fyers}
+            // and sizes `token[kFeedSourceCount]`. `altair::ui::FeedSource`
+            // (desktop/feed_status.hpp) is {Unspecified, Replay, Fyers, Xts}:
+            // the same names, different numbers.
             //
             // This file is in namespace altair::ui, so an UNQUALIFIED
-            // FeedSource::Kite picks the UI one and indexes token[2] -- one
-            // past the end of a two-element array. It compiled, it did not
-            // crash, and it silently indexed 3 contracts out of 108,411
-            // because it was reading whatever followed the array.
+            // FeedSource picks the UI one and indexes the wrong slot. It once
+            // compiled, did not crash, and silently indexed 3 contracts out of
+            // 108,411 because it was reading whatever followed the array.
             //
             // The static_assert below is the part that matters: it fails the
             // BUILD if the qualified value ever moves out of range, so this
             // cannot come back as another quiet wrong number.
-            static_assert(static_cast<std::size_t>(altair::FeedSource::Kite)
+            static_assert(static_cast<std::size_t>(altair::FeedSource::Wire)
                               < kFeedSourceCount,
-                          "the Kite token slot must be inside token[]");
+                          "the wire token slot must be inside token[]");
             by_token_.insert(
-                s.token[static_cast<std::size_t>(altair::FeedSource::Kite)], p);
-            // GETS screens look contracts up by name: FYERS and Kite spell
-            // derivative trading symbols the same way, and the exchange code
+                s.token[static_cast<std::size_t>(altair::FeedSource::Wire)], p);
+            // GETS screens look contracts up by name: FYERS and the master
+            // spell derivative trading symbols the same way, and the exchange code
             // keeps an NSE cash line apart from its BSE twin.
-            by_symbol_.insert(p.kite_exchange + QLatin1Char(':') + p.symbol, p);
+            by_symbol_.insert(p.order_exchange + QLatin1Char(':') + p.symbol, p);
             return true;
         };
-        const auto rep = detail::load_kite_dump_into(csv.data(), csv.size(),
+        const auto rep = detail::load_instrument_master_into(csv.data(), csv.size(),
                                                      sink, Timestamp{0});
         if (!rep) {
             error_ = QStringLiteral("the master did not parse");
@@ -177,11 +175,11 @@ public:
         return it == by_token_.end() ? InstrumentProfile{} : *it;
     }
 
-    /// By Kite exchange code and trading symbol, e.g. ("NFO",
+    /// By exchange-segment code and trading symbol, e.g. ("NFO",
     /// "NIFTY26SEP25000CE") or ("NSE", "SBIN").
-    [[nodiscard]] InstrumentProfile find_symbol(const QString& kite_exchange,
+    [[nodiscard]] InstrumentProfile find_symbol(const QString& order_exchange,
                                                 const QString& symbol) const {
-        const auto it = by_symbol_.find(kite_exchange + QLatin1Char(':') + symbol);
+        const auto it = by_symbol_.find(order_exchange + QLatin1Char(':') + symbol);
         return it == by_symbol_.end() ? InstrumentProfile{} : *it;
     }
 

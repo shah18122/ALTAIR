@@ -9,7 +9,7 @@
 //      compared: a 60m bar is rebuilt from 1m only when all 60 minutes (15 for
 //      the 15:15 bar) are present, so a gap in 1m is reported as a gap, not as
 //      a wrong 60m bar.
-//   2. Does it agree with the broker? Candles fetched from FYERS and/or Kite
+//   2. Does it agree with the broker? Candles fetched from FYERS
 //      into a directory laid out like dataset/ are compared bar by bar.
 //
 // Each series is also checked on its own: unparseable rows, duplicate and
@@ -19,7 +19,7 @@
 //
 // TOLERANCE. A price is EXACT when it differs by at most half a paisa, a
 // ROUNDING difference when within 1 basis point (the 1 bp rule of
-// app/kite_update_main.cpp: dataset/ keeps two decimals, some sources one),
+// app/dataset_update_main.cpp: dataset/ keeps two decimals, some sources one),
 // and a MISMATCH beyond that. Volume is compared only when both sides carry it.
 //
 // KNOWN, EXPECTED DIFFERENCE. NSE's official daily close for an index is not

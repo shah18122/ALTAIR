@@ -10,7 +10,7 @@
 namespace altair::broker_view {
 
 inline constexpr std::uint32_t kSchemaVersion = 2;
-enum class BrokerId : std::uint8_t { None, Fyers, ZerodhaKite };
+enum class BrokerId : std::uint8_t { None, Fyers };
 enum class AuthStatus : std::uint8_t {
     NotConfigured, CredentialsPresent, LinkRequired, SessionSaved, Unverified,
     Authenticated, Expired, Rejected, Malformed, NoTransport
@@ -69,8 +69,8 @@ struct BrokerEvidence {
 
 struct Routes {
     BrokerId data_primary{BrokerId::Fyers};
-    BrokerId data_fallback{BrokerId::ZerodhaKite};
-    BrokerId order_primary{BrokerId::ZerodhaKite};
+    BrokerId data_fallback{BrokerId::None};   // FYERS is the only broker: no fallback
+    BrokerId order_primary{BrokerId::Fyers};
     TradingMode mode{TradingMode::Paper};
     // Increment for every route/mode change. Zero is not yet configured.
     std::uint64_t revision{};
@@ -87,7 +87,7 @@ struct OrderGate {
 
 /// Dimensionless provider validation; unknown enum values refuse.
 [[nodiscard]] constexpr bool valid(BrokerId broker) noexcept {
-    return broker == BrokerId::Fyers || broker == BrokerId::ZerodhaKite;
+    return broker == BrokerId::Fyers;
 }
 
 /// Dimensionless identity validation; zero slot/generation is unbound.

@@ -33,7 +33,7 @@ void evidence_publication() {
     check(store.read(out).value_or(0) == 2 && out.auth == AuthStatus::Authenticated,
           "new reader sees replacement snapshot");
 
-    first.session.broker = BrokerId::ZerodhaKite;
+    first.session.broker = BrokerId::None;
     check(!store.publish(first)
               && store.publish(first).error() == StateStoreError::ProviderMismatch,
           "wrong provider evidence refused");
@@ -53,7 +53,7 @@ void positions_and_logs() {
     check(store.read(read_positions).value_or(0) == 1
               && read_positions.account_session == positions.account_session,
           "positions round-trip");
-    positions.account_session.broker = BrokerId::ZerodhaKite;
+    positions.account_session.broker = BrokerId::None;
     check(!store.publish(positions), "cross-provider positions refused");
 
     BrokerLogEvent event;
@@ -67,7 +67,7 @@ void positions_and_logs() {
     check(store.read(read_event).value_or(0) == 1
               && read_event.message.view() == "feed heartbeat accepted",
           "log event round-trips");
-    event.broker = BrokerId::ZerodhaKite;
+    event.broker = BrokerId::None;
     check(!store.publish(event), "cross-provider log refused");
 
     AccountSnapshot account;
@@ -78,7 +78,7 @@ void positions_and_logs() {
     check(store.read(read_account).value_or(0) == 1
               && read_account.account_session == account.account_session,
           "typed account snapshot round-trips immutably");
-    account.account_session.broker = BrokerId::ZerodhaKite;
+    account.account_session.broker = BrokerId::None;
     check(!store.publish(account), "cross-provider account snapshot refused");
 
     StateStore invalid{BrokerId::None};

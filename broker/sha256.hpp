@@ -1,4 +1,4 @@
-// broker/sha256.hpp — SHA-256, because the Kite session checksum needs one.
+// broker/sha256.hpp — SHA-256, because the FYERS appIdHash needs one.
 //
 // P2-10a. Written out rather than pulled in: the only consumer is a 96-byte
 // hash computed once per trading day, vcpkg is still blocked (LEDGER blocker
@@ -173,7 +173,7 @@ private:
 }
 
 /// Lowercase hex, NUL-terminated. `out` must hold kSha256HexChars + 1 bytes.
-/// Lowercase because that is what `fmt.Sprintf("%x", ...)` produces, and Kite
+/// Lowercase because that is what `fmt.Sprintf("%x", ...)` produces, and FYERS
 /// compares the string.
 inline void sha256_hex(const Sha256Digest& d, char* out) noexcept {
     static constexpr char kHex[] = "0123456789abcdef";

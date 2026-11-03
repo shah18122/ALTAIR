@@ -262,7 +262,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> topics;
     std::vector<std::string> registered;   // SpecStore id i is registered[i]
     for (const auto& [symbol, fytoken] : tokens->valid) {
-        // Same stated limitation as altair_kite_ticker: the scale (100 per
+        // A stated limitation: the scale (100 per
         // rupee) is right for NSE/BSE equity, F&O and indices; lot and tick
         // are placeholders nothing downstream of this binary sizes with.
         std::uint32_t cookie = hsm::kNoCookie;

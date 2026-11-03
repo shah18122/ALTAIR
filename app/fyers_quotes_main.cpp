@@ -274,7 +274,7 @@ int main(int argc, char** argv) {
         if (i > 0) std::this_thread::sleep_for(std::chrono::milliseconds{150});   // FYERS: 10 req/s
         QuoteResponse r{};
         if (const auto response = altair::https_get_auth(
-                "api-t1.fyers.in", targets[i], *authorization, "", std::chrono::seconds{20})) {
+                "api-t1.fyers.in", targets[i], *authorization, std::chrono::seconds{20})) {
             r.status = response->status;
             r.body = response->body;
         }

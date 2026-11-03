@@ -3,7 +3,7 @@
 // Four stages, each one card:
 //
 //   P1-08a  the download-failure policy      may we use yesterday's file?
-//   P1-04   the Kite dump parser             text -> ContractSpec, no floats
+//   P1-04   the instrument master parser    text -> ContractSpec, no floats
 //   P1-06   the three-way reconciler         who is right when they disagree?
 //   P1-01   the point-in-time spec store     resolve a token, honour a block
 //
@@ -12,7 +12,7 @@
 
 #include "instruments_demo.hpp"
 
-#include <instruments/kite_dump.hpp>
+#include <instruments/master_csv.hpp>
 #include <instruments/udiff_master.hpp>
 #include <instruments/reconcile.hpp>
 #include <instruments/snapshot.hpp>
@@ -103,7 +103,8 @@ void print_paise(std::int64_t p, char* out, std::size_t cap)
 }
 
 // ── a small built-in dump, so the demo runs with no files present ────────
-// Real Kite schema, taken from gokiteconnect/market.go. Note tick_size 0.05:
+// The data/instruments.csv schema (live/instrument_master.hpp builds it from
+// the FYERS masters). Note tick_size 0.05:
 // through a double that becomes 4 paise, not 5, and every rounded order price
 // in the system is then wrong by a tick. That single value is why P1-04 exists.
 constexpr const char* kBuiltinDump =
@@ -233,11 +234,11 @@ void stage_snapshot_policy(Timestamp today)
 // ── stage 2 ──────────────────────────────────────────────────────────────
 bool stage_parse(const char* csv, std::size_t len, Timestamp snap, const char* origin)
 {
-    rule("[2/4]  P1-04  Kite dump -> ContractSpec");
+    rule("[2/4]  P1-04  instrument master -> ContractSpec");
     std::printf("  source: %s (%zu bytes)\n\n", origin, len);
 
     g_rec.clear();
-    const auto rep = load_kite_dump(csv, len, g_rec, snap);
+    const auto rep = load_instrument_master(csv, len, g_rec, snap);
     if (!rep.has_value()) {
         std::printf("  parse failed: error %u\n",
                     static_cast<unsigned>(rep.error()));
@@ -331,7 +332,7 @@ void stage_reconcile(Timestamp snap)
 {
     rule("[3/4]  P1-06  three-way reconciliation");
     std::printf(
-        "  Kite is a CROSS-CHECK, never the authority. Here the exchange\n"
+        "  The broker master is a CROSS-CHECK, never the authority. Here the exchange\n"
         "  master arrives and agrees about everything except one contract.\n\n");
 
     const Timestamp exp = ist_date(2026, 9, 24);
@@ -345,7 +346,7 @@ void stage_reconcile(Timestamp snap)
                             OptionType::PE, Segment::Opt, exp, snap));
     (void)g_rec.add(nse_row("NIFTY", "NIFTY26SEPFUT", 75, 5, 0,
                             OptionType::None, Segment::Fut, exp, snap));
-    // DISAGREES: the exchange says 30, Kite says 35. One of the two files is
+    // DISAGREES: the exchange says 30, the broker master says 35. One of the two files is
     // stale and nothing here can tell which, so the symbol blocks.
     (void)g_rec.add(nse_row("BANKNIFTY", "BANKNIFTY26SEPFUT", 30, 5, 0,
                             OptionType::None, Segment::Fut, exp, snap));
@@ -378,10 +379,10 @@ void stage_reconcile(Timestamp snap)
                     verdict_name(cv->verdict),
                     static_cast<long long>(cv->merged.lot_size.raw()), note);
         if (cv->verdict == ReconcileVerdict::ValueConflict) {
-            std::printf("  %-26s   Kite said %lld, the exchange said %lld -- "
+            std::printf("  %-26s   broker said %lld, the exchange said %lld -- "
                         "neither is guessed at\n", "",
                         static_cast<long long>(
-                            cv->values[static_cast<std::size_t>(SpecSource::KiteDump)]),
+                            cv->values[static_cast<std::size_t>(SpecSource::InstrumentMaster)]),
                         static_cast<long long>(
                             cv->values[static_cast<std::size_t>(SpecSource::NseMaster)]));
         }
@@ -406,10 +407,10 @@ void stage_store()
                 "  a tick for it must resolve to Blocked (loud), not NotFound\n"
                 "  (which looks like an unknown instrument and gets lost).\n\n");
 
-    std::printf("  %-26s %-12s %s\n", "resolve by Kite token", "token", "result");
+    std::printf("  %-26s %-12s %s\n", "resolve by wire token", "token", "result");
     const std::uint32_t probe[] = {11223344u, 12334455u, 99999999u};
     for (std::uint32_t t : probe) {
-        const auto id = g_store.id_of(FeedSource::Kite, t);
+        const auto id = g_store.id_of(FeedSource::Wire, t);
         if (!id) {
             std::printf("  %-26s %-12u NotFound (no such token)\n", "", t);
             continue;
@@ -451,7 +452,7 @@ int run_instruments(const char* path, const char* master_path)
         // Both real files must be filtered to the SAME universe, or the store
         // fills from whichever is loaded first and the second is refused
         // entirely -- which is exactly what happened the first time this ran
-        // against 106'150 Kite rows and 30'488 exchange rows.
+        // against 106'150 broker-master rows and 30'488 exchange rows.
         if (master_path != nullptr) {
                 }
         csv = owned;
@@ -460,7 +461,7 @@ int run_instruments(const char* path, const char* master_path)
     }
 
     // P1-09: install the universe BEFORE anything is parsed. With real files
-    // this is not optional -- 106'150 Kite rows and 30'488 exchange rows
+    // this is not optional -- 106'150 broker-master rows and 30'488 exchange rows
     // against a store of 8'192 means the first file loaded fills it and the
     // second is refused entirely.
     if (master_path != nullptr) {
@@ -491,9 +492,9 @@ int run_instruments(const char* path, const char* master_path)
     std::free(owned);
 
     std::printf("\nThat is every Phase 1 card, end to end.\n"
-                "Give it a real Kite dump AND a real UDiFF bhavcopy and it\n"
+                "Give it data/instruments.csv AND a real UDiFF bhavcopy and it\n"
                 "reconciles them: two file formats, one contract, one lot size.\n"
-                "  altair --instruments <kite.csv> <BhavCopy_NSE_FO_*.csv>\n\n");
+                "  altair --instruments data/instruments.csv <BhavCopy_NSE_FO_*.csv>\n\n");
     return ok ? 0 : 1;
 }
 

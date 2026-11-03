@@ -42,7 +42,7 @@ FailoverWatchdog::Config cfg()
     c.staleness_ms = 250;
     c.failback_stable_s = 60;
     c.enabled = true;
-    c.preferred = FeedSource::Kite;
+    c.preferred = FeedSource::Fyers;
     return c;
 }
 
@@ -62,16 +62,16 @@ void unheard_is_not_healthy()
     fresh();
 
     const auto d = g_wd.poll(kT0);
-    check(d.kite == FeedHealth::Unknown && d.xts == FeedHealth::Unknown,
+    check(d.fyers == FeedHealth::Unknown && d.xts == FeedHealth::Unknown,
           "a source never heard from is Unknown -- not Live and not Stale");
     check(d.action == FailoverAction::NoneHealthy,
           "so at session start NEITHER is usable, which is the truth");
-    check(g_wd.active() == FeedSource::Kite, "and the primary has not moved");
+    check(g_wd.active() == FeedSource::Fyers, "and the primary has not moved");
 
-    // Kite speaks; XTS has still never delivered a byte.
-    g_wd.on_data(FeedSource::Kite, at_ms(10));
+    // FYERS speaks; XTS has still never delivered a byte.
+    g_wd.on_data(FeedSource::Fyers, at_ms(10));
     const auto e = g_wd.poll(at_ms(20));
-    check(e.kite == FeedHealth::Live, "Kite is Live once it has spoken");
+    check(e.fyers == FeedHealth::Live, "FYERS is Live once it has spoken");
     check(e.xts == FeedHealth::Unknown,
           "XTS stays Unknown -- treating silence-so-far as healthy would let "
           "the watchdog fail over to a feed that has never sent anything");
@@ -85,22 +85,22 @@ void staleness_is_measured_on_recv_ts()
     std::printf("\n2 staleness_is_measured_on_recv_ts\n");
     fresh();
 
-    g_wd.on_data(FeedSource::Kite, at_ms(0));
+    g_wd.on_data(FeedSource::Fyers, at_ms(0));
     g_wd.on_data(FeedSource::Xts, at_ms(0));
 
-    check(g_wd.poll(at_ms(249)).kite == FeedHealth::Live,
+    check(g_wd.poll(at_ms(249)).fyers == FeedHealth::Live,
           "249 ms of silence is still Live at a 250 ms threshold");
-    check(g_wd.poll(at_ms(250)).kite == FeedHealth::Live,
+    check(g_wd.poll(at_ms(250)).fyers == FeedHealth::Live,
           "250 ms exactly is the boundary and still Live");
-    check(g_wd.poll(at_ms(251)).kite == FeedHealth::Stale,
+    check(g_wd.poll(at_ms(251)).fyers == FeedHealth::Stale,
           "251 ms is Stale");
 
     // The point: a 250 ms threshold against a ONE-SECOND clock would fire on
-    // a perfectly healthy feed. recv_ts has nanosecond resolution; Kite's
+    // a perfectly healthy feed. recv_ts has nanosecond resolution; FYERS's
     // exchange_ts does not (P2-02).
     check(at_ms(251).ns_since_epoch() % 1'000'000'000LL != 0,
           "recv_ts carries sub-second resolution, which a 250 ms threshold "
-          "needs and which Kite's one-second exchange_ts cannot provide");
+          "needs and which FYERS's one-second exchange_ts cannot provide");
 }
 
 // ── 3 ────────────────────────────────────────────────────────────────────
@@ -109,16 +109,16 @@ void switches_away_from_a_stale_primary()
     std::printf("\n3 switches_away_from_a_stale_primary\n");
     fresh();
 
-    g_wd.on_data(FeedSource::Kite, at_ms(0));
+    g_wd.on_data(FeedSource::Fyers, at_ms(0));
     g_wd.on_data(FeedSource::Xts, at_ms(0));
     check(g_wd.poll(at_ms(10)).action == FailoverAction::None,
           "both healthy: nothing to do");
 
-    // Kite goes quiet; XTS keeps talking.
+    // FYERS goes quiet; XTS keeps talking.
     g_wd.on_data(FeedSource::Xts, at_ms(300));
     const auto d = g_wd.poll(at_ms(310));
-    check(d.kite == FeedHealth::Stale && d.xts == FeedHealth::Live,
-          "Kite is stale, XTS is live");
+    check(d.fyers == FeedHealth::Stale && d.xts == FeedHealth::Live,
+          "FYERS is stale, XTS is live");
     check(d.action == FailoverAction::SwitchTo && d.active == FeedSource::Xts,
           "so the primary switches to XTS");
     check(g_wd.active() == FeedSource::Xts, "and the watchdog holds it");
@@ -138,17 +138,17 @@ void failback_waits_for_stability()
     std::printf("\n4 failback_waits_for_stability\n");
     fresh();
 
-    g_wd.on_data(FeedSource::Kite, at_ms(0));
+    g_wd.on_data(FeedSource::Fyers, at_ms(0));
     g_wd.on_data(FeedSource::Xts, at_ms(0));
     g_wd.on_data(FeedSource::Xts, at_ms(300));
     (void)g_wd.poll(at_ms(310));
-    check(g_wd.active() == FeedSource::Xts, "we are on XTS after Kite stalled");
+    check(g_wd.active() == FeedSource::Xts, "we are on XTS after FYERS stalled");
 
-    // Kite comes back. It must NOT immediately reclaim the primary.
-    g_wd.on_data(FeedSource::Kite, at_ms(400));
+    // FYERS comes back. It must NOT immediately reclaim the primary.
+    g_wd.on_data(FeedSource::Fyers, at_ms(400));
     g_wd.on_data(FeedSource::Xts, at_ms(400));
     const auto soon = g_wd.poll(at_ms(410));
-    check(soon.kite == FeedHealth::Live, "Kite is healthy again");
+    check(soon.fyers == FeedHealth::Live, "FYERS is healthy again");
     check(soon.action == FailoverAction::None,
           "but the primary does NOT move back yet -- a feed flapping either "
           "side of the threshold would otherwise drag the primary with it, "
@@ -156,12 +156,12 @@ void failback_waits_for_stability()
 
     // Keep both alive past the 60 s stability window.
     for (std::int64_t t = 500; t <= 61'000; t += 100) {
-        g_wd.on_data(FeedSource::Kite, at_ms(t));
+        g_wd.on_data(FeedSource::Fyers, at_ms(t));
         g_wd.on_data(FeedSource::Xts, at_ms(t));
     }
     const auto back = g_wd.poll(at_ms(61'050));
     check(back.action == FailoverAction::SwitchTo
-              && back.active == FeedSource::Kite,
+              && back.active == FeedSource::Fyers,
           "after 60 s of continuous health it fails BACK to the preferred "
           "source");
     check(g_wd.stats().failbacks == 1, "counted as a failback");
@@ -174,15 +174,15 @@ void both_stale_is_reported_not_papered_over()
     std::printf("\n5 both_stale_is_reported_not_papered_over\n");
     fresh();
 
-    g_wd.on_data(FeedSource::Kite, at_ms(0));
+    g_wd.on_data(FeedSource::Fyers, at_ms(0));
     g_wd.on_data(FeedSource::Xts, at_ms(0));
 
     const auto d = g_wd.poll(at_ms(1000));
-    check(d.kite == FeedHealth::Stale && d.xts == FeedHealth::Stale,
+    check(d.fyers == FeedHealth::Stale && d.xts == FeedHealth::Stale,
           "both sources have gone quiet");
     check(d.action == FailoverAction::NoneHealthy,
           "which is reported as NoneHealthy");
-    check(g_wd.active() == FeedSource::Kite,
+    check(g_wd.active() == FeedSource::Fyers,
           "and the primary does NOT move -- switching to an equally dead feed "
           "would look like a fix and change nothing");
     check(g_wd.stats().none_healthy >= 1, "counted, so it can be alarmed on");
@@ -197,15 +197,15 @@ void disabled_still_reports()
     c.enabled = false;
     fresh(c);
 
-    g_wd.on_data(FeedSource::Kite, at_ms(0));
+    g_wd.on_data(FeedSource::Fyers, at_ms(0));
     g_wd.on_data(FeedSource::Xts, at_ms(0));
     g_wd.on_data(FeedSource::Xts, at_ms(300));
 
     const auto d = g_wd.poll(at_ms(310));
-    check(d.kite == FeedHealth::Stale && d.xts == FeedHealth::Live,
+    check(d.fyers == FeedHealth::Stale && d.xts == FeedHealth::Live,
           "health is still computed with failover disabled");
     check(d.action == FailoverAction::None, "but no switch is issued");
-    check(g_wd.active() == FeedSource::Kite, "the primary stays put");
+    check(g_wd.active() == FeedSource::Fyers, "the primary stays put");
     check(g_wd.stats().suppressed == 1,
           "and the suppression is COUNTED, so an operator can see what the "
           "watchdog would have done");
@@ -217,13 +217,13 @@ void out_of_order_arrival_does_not_age_a_source()
     std::printf("\n7 out_of_order_arrival_does_not_age_a_source\n");
     fresh();
 
-    g_wd.on_data(FeedSource::Kite, at_ms(500));
+    g_wd.on_data(FeedSource::Fyers, at_ms(500));
     g_wd.on_data(FeedSource::Xts, at_ms(500));
     // A late straggler carrying an older recv_ts.
-    g_wd.on_data(FeedSource::Kite, at_ms(100));
+    g_wd.on_data(FeedSource::Fyers, at_ms(100));
 
     const auto d = g_wd.poll(at_ms(600));
-    check(d.kite == FeedHealth::Live,
+    check(d.fyers == FeedHealth::Live,
           "a single out-of-order arrival does not lower the high-water mark, "
           "so the source does not suddenly look stale");
     check(d.action == FailoverAction::None, "and no spurious switch happens");
@@ -235,7 +235,7 @@ Normaliser g_norm{[] {
     Normaliser::Config c{};
     c.gate.floor = Timestamp{1787000000000000000LL};
     c.gate.max_future_skew = duration::seconds(2);
-    c.active = FeedSource::Kite;
+    c.active = FeedSource::Fyers;
     return c;
 }()};
 
@@ -256,12 +256,12 @@ void applying_a_switch_keeps_the_sequence()
 
     std::uint32_t seen[4]{};
     for (int i = 0; i < 2; ++i) {
-        Tick t = tick(FeedSource::Kite);
+        Tick t = tick(FeedSource::Fyers);
         (void)g_norm.submit(t, kT0);
         seen[i] = t.seq;
     }
 
-    g_wd.on_data(FeedSource::Kite, at_ms(0));
+    g_wd.on_data(FeedSource::Fyers, at_ms(0));
     g_wd.on_data(FeedSource::Xts, at_ms(0));
     g_wd.on_data(FeedSource::Xts, at_ms(300));
     const auto d = g_wd.poll(at_ms(310));

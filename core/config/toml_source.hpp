@@ -49,8 +49,8 @@ struct TomlLoadReport {
 
 /// Flatten a TOML document into a ConfigSnapshot.
 ///
-/// Nested tables flatten with '.', so `[feed.kite] ws_mode = 1` becomes
-/// `feed.kite.ws_mode`. Arrays of scalars flatten with a numeric suffix, so
+/// Nested tables flatten with '.', so `[feed.fyers] ws_mode = 1` becomes
+/// `feed.fyers.ws_mode`. Arrays of scalars flatten with a numeric suffix, so
 /// `events = [1501, 1502]` becomes `feed.xts.events.0` and `.1` — the array is
 /// genuinely needed by the XTS subscriber, and dropping it silently would be
 /// worse than a slightly odd key.

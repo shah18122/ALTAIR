@@ -1,10 +1,9 @@
 // analytics/greeks.hpp — Black-76 price and first-order greeks.
 //
-// P3-01. Kite exposes no greeks, no IV and no vol -- verified against the whole
-// gokiteconnect v4.4.2 surface, where the richest payload is price, quantity,
-// OI, OHLC and five levels of depth. So they are computed here.
+// P3-01. The broker feed carries no greeks, no IV and no vol -- the richest
+// payload is price, quantity, OI, OHLC and depth. So they are computed here.
 //
-// They would be computed here even if Kite offered them:
+// They would be computed here even if the broker offered them:
 //
 //   * Rule 6 -- backtest and live share ONE code path. Fetched greeks live and
 //     computed greeks in backtest would diverge, and the backtest would be a

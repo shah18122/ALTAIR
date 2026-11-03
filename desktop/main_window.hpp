@@ -52,14 +52,12 @@
 #include "depth_ladder.hpp"
 #include "obi_page.hpp"
 #include "chain_panel.hpp"
-#include "kite_link.hpp"
 #include "kill_switch.hpp"
 #include "order_ticket.hpp"
 #include "data/bar_csv.hpp"
 #include "data/real_tape.hpp"
 #include "broker_status.hpp"
 #include <QDir>
-#include "kite_panel.hpp"
 #include "live_forecast.hpp"
 #include "stream_forecast_page.hpp"
 #include "terminal.hpp"
@@ -498,7 +496,7 @@ public:
     /// one line, for the caller to show where the user is already looking.
     ///
     /// P34-01. The tape was read once, in main(), before the window existed.
-    /// So altair_kite_update could bring every series current and the grid
+    /// So altair_dataset_update could bring every series current and the grid
     /// would go on replaying the bars it loaded at startup -- the status line
     /// would even keep reporting the OLD last-bar date, which is worse than
     /// showing nothing because it is a specific wrong answer.
@@ -1162,7 +1160,7 @@ private:
 
     /// Rebuild the chart's source list from what is ON DISK.
     ///
-    /// P34-01. It was built once, in the constructor. altair_kite_update can
+    /// P34-01. It was built once, in the constructor. altair_dataset_update can
     /// create a partition that did not exist when the window opened -- and
     /// the list only offers directories it can see, deliberately, because an
     /// entry that selects to an empty chart reads as a broken chart rather
@@ -1267,13 +1265,10 @@ private:
             pages_->addWidget(page);
         }
 
-        // P20-02. The wiring table is still here, at the bottom of the
-        // Kite panel's API-surface tab -- a number is only worth as much as
-        // the pipe it came through -- but the page now leads with the
-        // account, which is an operator's question rather than a developer's.
-        pages_->addWidget(new KitePanel(
-            QStringLiteral(ALTAIR_ACCOUNT_FILE),
-            QStringLiteral(ALTAIR_SESSION_FILE)));
+        // Slot 5, the retired second-broker account route. It redirects to
+        // Brokers (navigation_registry.hpp: nav_destination), so the slot
+        // holds a placeholder only to keep every later page index stable.
+        pages_->addWidget(new QWidget);
         pages_->addWidget(new CostPanel);
         pages_->addWidget(new AnalyticsPanel);
 
@@ -1613,14 +1608,9 @@ private:
         // partition that did not exist when this window opened -- the list is
         // built from what is ON DISK, so a series that arrives mid-session is
         // invisible until it is rebuilt.
-        pages_->addWidget(new KiteLinkPanel(role_, [this] {
-            refresh_broker_pill();
-            if (broker_page_ != nullptr) broker_page_->refresh();
-            rebuild_sources();
-            // LAST, because it is the only one that can fail, and it reports
-            // in the panel's own log rather than a box over it.
-            return reload_tape();
-        }));
+        // Slot 28, the retired second-broker login route: redirected to
+        // Brokers like slot 5.
+        pages_->addWidget(new QWidget);
 
         auto* neural_page = new ComputePage(
             QStringLiteral("NEURAL TIER — P8-16"),
@@ -1701,23 +1691,20 @@ private:
         //
         // It takes a callback that opens a nav page, so a row can be
         // double-clicked to run the thing it describes. The panel does not
-        // know this window exists -- same contract as KiteLinkPanel.
+        // know this window exists -- same contract as FyersLinkPanel.
         auto* atlas = new AtlasPanel([this](const QString& id) { (void)open_model(id); });
         pages_->addWidget(atlas);
         nav_->open_atlas_model = [this](const QString& model) { (void)open_model(model); };
 
-        // FYERS is the configured primary broker. Keep this page separate
-        // from Kite's legacy account/link panels so the operator can see the
-        // actual route priority immediately after launch.
+        // FYERS login: the pill repaints the instant a session is written.
         pages_->addWidget(new FyersLinkPanel(role_, [this] {
             refresh_broker_pill();
             if (broker_page_ != nullptr) broker_page_->refresh();
         }));
 
-        // One operator-facing broker page.  The legacy Kite Account, Link
-        // Kite and FYERS Primary routes remain stable for scripts and saved
-        // workspaces; this page is the consolidated entry point that shows
-        // both providers and selects the linked data source transparently.
+        // One operator-facing broker page. The older account, link and FYERS
+        // Primary routes stay stable for scripts and saved workspaces and
+        // redirect here.
         broker_page_ = new BrokerPage(role_, [this] {
             refresh_broker_pill();
             if (broker_page_ != nullptr) broker_page_->refresh();
@@ -1881,7 +1868,7 @@ private:
         }
     }
 
-    /// Re-read broker metadata and repaint the FYERS-primary/Kite-secondary pills.
+    /// Re-read broker metadata and repaint the FYERS pill.
     ///
     /// `verified` is 0 here and stays 0 until something actually calls the
     /// API, so this build can reach `Unverified` and never `Authenticated`.
@@ -1905,36 +1892,14 @@ private:
         const QColor fyers_dot = fyers_service
             ? broker_colour(fyers_service->authentication) : fyers_colour(fyers.link);
 
-#ifdef ALTAIR_SESSION_FILE
-        const QString path = QStringLiteral(ALTAIR_SESSION_FILE);
-#else
-        const QString path = QStringLiteral("data/kite_session.json");
-#endif
-        const BrokerState b = probe_broker(path, true);
-#ifdef ALTAIR_ACCOUNT_FILE
-        const auto kite_service = probe_service_snapshot(
-            QStringLiteral(ALTAIR_ACCOUNT_FILE), broker_view::BrokerId::ZerodhaKite,
-            service_now);
-#else
-        const auto kite_service = probe_service_snapshot(
-            QStringLiteral("data/kite_account.json"), broker_view::BrokerId::ZerodhaKite,
-            service_now);
-#endif
-        QString kite_text = kite_service ? service_broker_label(*kite_service) : broker_label(b.link);
-        if (!b.user_id.isEmpty()) kite_text += QStringLiteral(" · %1").arg(b.user_id);
-        const QColor kite_dot = broker_colour(kite_service ? kite_service->authentication : b.link);
         broker_status_->setText(QStringLiteral(
             "<a href='brokers' style='color:#AFC0C9;text-decoration:none'>"
-            "<span style='color:%1'>●</span> %2 &nbsp; "
-            "<span style='color:%3'>●</span> %4</a>")
-            .arg(fyers_dot.name(), fyers_text.toHtmlEscaped(),
-                 kite_dot.name(), kite_text.toHtmlEscaped()));
+            "<span style='color:%1'>●</span> %2</a>")
+            .arg(fyers_dot.name(), fyers_text.toHtmlEscaped()));
         // The label is the state; the tooltip is what to DO about it.
-        broker_status_->setToolTip(QStringLiteral("FYERS: %1\nKite: %2\n\nClick to open Brokers.")
+        broker_status_->setToolTip(QStringLiteral("FYERS: %1\n\nClick to open Brokers.")
             .arg(fyers_service ? QStringLiteral("fresh service evidence from a verified read-only call.")
-                               : fyers.detail,
-                 kite_service ? QStringLiteral("fresh service evidence from a verified read-only call.")
-                              : b.detail));
+                               : fyers.detail));
     }
 
     void refresh_status() {

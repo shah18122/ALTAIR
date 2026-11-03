@@ -30,16 +30,11 @@
 //
 // AND THE WIRING TABLE SAYS WHAT IS ACTUALLY BUILT.
 //
-// Smit asked for a toggle between Kite and XTS "showing what all is wired up".
-// The honest version of that is not a toggle with two equal options; it is a
-// table of what exists, because the two are nowhere near equal:
-//
-//   Kite   spec parser, decoder, order TRANSLATION -- but no transport, no
-//          session, and P1-07 blocked on credentials
-//   XTS    P1-05, P2-03 and P4-06 all deferred; nothing is built
-//
-// `wiring()` returns that table so the panel renders facts rather than two
-// radio buttons implying a choice the tree cannot honour.
+// Smit asked for a view "showing what all is wired up". The honest version is
+// a table of what exists, broker by broker: FYERS (the only broker), XTS
+// (withdrawn) and the replay. `wiring()` returns that table so the panel
+// renders facts rather than radio buttons implying a choice the tree cannot
+// honour.
 
 #pragma once
 
@@ -66,14 +61,14 @@ enum class FeedSource : std::uint8_t {
     Unspecified = 0,
     /// Replaying a recorded or synthetic session.
     Replay,
-    Kite,
+    Fyers,
     Xts
 };
 
 [[nodiscard]] inline QString feed_name(FeedSource s) {
     switch (s) {
     case FeedSource::Replay: return QStringLiteral("Replay");
-    case FeedSource::Kite:   return QStringLiteral("Kite");
+    case FeedSource::Fyers:  return QStringLiteral("FYERS");
     case FeedSource::Xts:    return QStringLiteral("XTS");
     case FeedSource::Unspecified:
     default:                 return QStringLiteral("—");
@@ -124,7 +119,7 @@ enum class Liveness : std::uint8_t {
 [[nodiscard]] inline QString pill_text(Liveness l, FeedSource s) {
     if (l == Liveness::Live) {
         switch (s) {
-        case FeedSource::Kite:
+        case FeedSource::Fyers:
         case FeedSource::Xts:    return QStringLiteral("LIVE · ") + feed_name(s);
         case FeedSource::Replay: return QStringLiteral("REPLAYING");
         case FeedSource::Unspecified:
@@ -135,7 +130,7 @@ enum class Liveness : std::uint8_t {
 }
 
 [[nodiscard]] inline QColor pill_colour(Liveness l, FeedSource s) {
-    if (l == Liveness::Live && s != FeedSource::Kite && s != FeedSource::Xts) {
+    if (l == Liveness::Live && s != FeedSource::Fyers && s != FeedSource::Xts) {
         return s == FeedSource::Replay ? QColor(0x7A, 0x5C, 0x12)   // gold
                                        : liveness_colour(Liveness::Stale);
     }
@@ -252,130 +247,59 @@ struct WiringRow {
 /// a different question -- "does this link" rather than "can this trade" --
 /// and the second is what the panel is for. When a row changes, the card that
 /// changed it changes this line, and the diff shows it.
-/// Is there a Kite session file on disk?
+/// Is there a FYERS session file on disk?
 ///
-/// PRESENCE ONLY. It deliberately does not read the token, does not check the
-/// expiry and does not call Kite. An access token is valid until the next
-/// morning, so a file that exists may well be dead -- and the panel says
-/// exactly that rather than implying a live connection it has not tested.
-/// Claiming "connected" from a file's existence is how a dashboard tells you
-/// the feed is up while nothing is arriving.
+/// PRESENCE ONLY. It deliberately does not read the token and does not check
+/// the expiry. An access token is valid for one day, so a file that exists may
+/// well be dead -- and the panel says exactly that rather than implying a live
+/// connection it has not tested.
 [[nodiscard]] inline bool session_present() {
-#ifdef ALTAIR_SESSION_FILE
-    return QFileInfo::exists(QStringLiteral(ALTAIR_SESSION_FILE));
+#ifdef ALTAIR_FYERS_SESSION_FILE
+    return QFileInfo::exists(QStringLiteral(ALTAIR_FYERS_SESSION_FILE));
 #else
-    return QFileInfo::exists(QStringLiteral("data/kite_session.json"));
+    return QFileInfo::exists(QStringLiteral("data/fyers_session.json"));
 #endif
-}
-
-/// The wiring row's state, DERIVED. Only a session that is present, well
-/// formed and issued today can reach `Built`; anything else is amber or red,
-/// which is the point -- the row is read to decide whether to trust the rest
-/// of the window.
-[[nodiscard]] inline WiringState broker_wiring_state() {
-#ifdef ALTAIR_SESSION_FILE
-    const BrokerState b = probe_broker(QStringLiteral(ALTAIR_SESSION_FILE),
-                                       true);
-#else
-    const BrokerState b = probe_broker(QStringLiteral("data/kite_session.json"),
-                                       true);
-#endif
-    switch (b.link) {
-    case BrokerLink::Authenticated: return WiringState::Built;
-    case BrokerLink::Malformed:
-    case BrokerLink::Rejected:      return WiringState::NotBuilt;
-    default:                        return WiringState::BlockedOnInput;
-    }
-}
-
-[[nodiscard]] inline QString broker_wiring_note() {
-#ifdef ALTAIR_SESSION_FILE
-    const BrokerState b = probe_broker(QStringLiteral(ALTAIR_SESSION_FILE),
-                                       true);
-#else
-    const BrokerState b = probe_broker(QStringLiteral("data/kite_session.json"),
-                                       true);
-#endif
-    return broker_label(b.link) + QStringLiteral(" \u2014 ") + b.detail;
 }
 
 [[nodiscard]] inline std::vector<WiringRow> wiring() {
     return {
-        {QStringLiteral("FYERS"), QStringLiteral("Primary route (config/altair.toml)"),
+        {QStringLiteral("FYERS"), QStringLiteral("Broker (config/altair.toml)"),
          WiringState::Built,
-         QStringLiteral("configured as the PRIMARY broker; Kite remains the explicit secondary")},
+         QStringLiteral("the only broker: market data, account and (when live) orders")},
         {QStringLiteral("FYERS"), QStringLiteral("Authentication"),
          WiringState::BlockedOnInput,
-         fyers_label(probe_fyers().link) + QStringLiteral(" — ") + probe_fyers().detail},
-        {QStringLiteral("FYERS"), QStringLiteral("Live market-data transport"),
-         WiringState::NotBuilt,
-         QStringLiteral("read-only auth vocabulary is present; FYERS socket/HTTP transport is not wired into the desktop")},
-        {QStringLiteral("FYERS"), QStringLiteral("Historical 1m OHLCV (P2-12)"),
-         WiringState::BlockedOnInput,
-         QStringLiteral("requires an authenticated FYERS history export; no token or provider data is present locally")},
-        {QStringLiteral("Kite"), QStringLiteral("Instrument master (P1-04)"),
+         fyers_label(probe_fyers().link) + QStringLiteral(" — ") + probe_fyers().detail
+             + QStringLiteral(" The 08:30 auto-login (broker/tools/fyers_auto_login.py) renews it daily.")},
+        {QStringLiteral("FYERS"), QStringLiteral("Instrument master"),
          WiringState::Built,
-         QStringLiteral("CSV parser + three-way reconciliation, tested")},
-        {QStringLiteral("Kite"), QStringLiteral("Tick decoder (P2-02)"),
-         WiringState::Built,
-         QStringLiteral("binary quote/full mode, tested against vectors")},
-        {QStringLiteral("Kite"), QStringLiteral("Order translation (P4-05)"),
-         WiringState::Built,
-         QStringLiteral("builds the POST body; deliberately does NOT send it")},
-        // ---- THESE THREE ARE DETECTED, NOT ASSERTED ---------------------
-        //
-        // They were hard-coded "NotBuilt" and "no session", and both became
-        // FALSE the moment the net preset built and Smit logged in -- so the
-        // panel spent a morning stating the opposite of the truth. That is
-        // the same stale-literal failure P11Q-07b fixed on the Markov row and
-        // P11Q-08 fixed on a card reference, and a wiring panel is a worse
-        // place for it than either: it is the screen you check BEFORE
-        // believing anything else on the window.
-        //
-        // ALTAIR_HAVE_NET is a compile-time fact and the session file is a
-        // runtime one, so each is read where it lives rather than typed here.
-        {QStringLiteral("Kite"), QStringLiteral("HTTPS transport (P2-10c)"),
+         QStringLiteral("data/instruments.csv built from the FYERS public masters "
+                        "(altair_instrument_master); CSV parser + three-way reconciliation, tested")},
+        // ALTAIR_HAVE_NET is a compile-time fact, so it is read where it
+        // lives rather than typed here.
+        {QStringLiteral("FYERS"), QStringLiteral("Live market data (HSM socket)"),
 #if ALTAIR_HAVE_NET
          WiringState::Built,
-         QStringLiteral("boost-beast + OpenSSL, verified peer + hostname; "
-                        "GET and form POST")},
+         QStringLiteral("altair_price_service --live: ticks, quotes, 5- and 50-level depth")},
 #else
          WiringState::NotBuilt,
-         QStringLiteral("this build has no `net` feature; configure with "
-                        "--preset net")},
+         QStringLiteral("this build has no `net` feature; configure with --preset net")},
 #endif
-        // ---- PRESENCE WAS NEVER THE QUESTION ----------------------------
-        //
-        // This row used to say "present / not present" and explain in prose
-        // that presence is not validity. That is an honest caption on a
-        // misleading state: a reader scanning a column of green sees green.
-        //
-        // `probe_broker` (P11Q-12) answers the question the row is actually
-        // asking, from the file's METADATA and never its token -- and on this
-        // machine it turns the row AMBER, because the session parses, says
-        // `success`, and was issued on an earlier IST day. Kite tokens are
-        // daily. The old check called that "Built".
-        {QStringLiteral("Kite"), QStringLiteral("Session / access token"),
-         broker_wiring_state(), broker_wiring_note()},
-        {QStringLiteral("Kite"), QStringLiteral("Historical candles (P2-12)"),
+        {QStringLiteral("FYERS"), QStringLiteral("Historical candles"),
 #if ALTAIR_HAVE_NET
          WiringState::Built,
-         QStringLiteral("chunked, coverage-checked, dry-run by default; "
-                        "filled dataset/ with 2.7M bars")},
+         QStringLiteral("altair_dataset_update / altair_fyers_history: chunked, "
+                        "coverage-checked, dry-run by default")},
 #else
          WiringState::NotBuilt,
          QStringLiteral("parser and chunker are built and tested; the fetch "
                         "needs the `net` feature")},
 #endif
-        {QStringLiteral("Kite"), QStringLiteral("Margin fetch (P1-07)"),
-         WiringState::BlockedOnInput,
-         QStringLiteral("blocked on credentials")},
         // XTS IS WITHDRAWN, NOT PENDING, AND THE DIFFERENCE MATTERS ON A
         // WIRING PAGE.
         //
         // "Deferred" reads as work still queued, and a reader planning around
         // this table would leave room for a second venue. Smit removed XTS
-        // from the plan on 2026-09-04: Kite is the only venue.
+        // from the plan on 2026-09-04: FYERS is the only venue.
         //
         // The rows stay rather than vanishing, because the ENUMERATORS stay --
         // `kFeedSourceCount` sizes arrays in feed/failover.hpp, in
@@ -384,14 +308,14 @@ struct WiringRow {
         // page that showed no XTS at all would leave that unexplained.
         {QStringLiteral("XTS"), QStringLiteral("Instrument master (P1-05)"),
          WiringState::Withdrawn,
-         QStringLiteral("withdrawn 2026-09-04 — Kite is the only venue")},
+         QStringLiteral("withdrawn 2026-09-04 — FYERS is the only venue")},
         {QStringLiteral("XTS"), QStringLiteral("Socket.IO decoder (P2-03)"),
          WiringState::Withdrawn,
          QStringLiteral("withdrawn 2026-09-04")},
         {QStringLiteral("XTS"), QStringLiteral("Execution adapter (P4-06)"),
          WiringState::Withdrawn,
          QStringLiteral("withdrawn 2026-09-04. `oms/throttle.hpp` REFUSES "
-                        "Venue::Xts rather than falling back to Kite, so "
+                        "Venue::Xts rather than falling back elsewhere, so "
                         "nothing routes there by accident — that is the "
                         "property that mattered and it is unchanged")},
         {QStringLiteral("Replay"), QStringLiteral("Session replayer (P0-09)"),

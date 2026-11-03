@@ -31,9 +31,6 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_TBT_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/fyers_tbt.txt")
     add_test(NAME fyers_tbt COMMAND altair_fyers_tbt_test)
 
-    add_executable(altair_kite_decoder_test tests/test_kite_decoder.cpp)
-    target_link_libraries(altair_kite_decoder_test PRIVATE altair_feed altair_flags)
-    add_test(NAME kite_decoder COMMAND altair_kite_decoder_test)
 
     add_executable(altair_failover_test tests/test_failover.cpp)
     target_link_libraries(altair_failover_test PRIVATE altair_feed altair_flags)

@@ -47,7 +47,7 @@ DepthUpdate mk(std::uint32_t id, std::uint32_t seq,
     d.seq = seq;
     d.exchange_ts = kTs;
     d.recv_ts = kTs;
-    d.source = FeedSource::Kite;
+    d.source = FeedSource::Fyers;
     for (std::size_t k = 0; k < n_bid; ++k) {
         d.bid[k] = DepthLevel{Price{bid_px - static_cast<std::int64_t>(k) * 5},
                               Qty{100 + static_cast<std::int64_t>(k)},
@@ -81,7 +81,7 @@ void never_updated_is_not_empty()
     empty.id = static_cast<InstrumentId>(7);
     empty.seq = 1;
     empty.exchange_ts = kTs;
-    empty.source = FeedSource::Kite;
+    empty.source = FeedSource::Fyers;
     check(g_book.apply(empty).has_value(), "an empty-sided update applies");
 
     const auto seen = g_book.at(static_cast<InstrumentId>(7));

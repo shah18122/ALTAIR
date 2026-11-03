@@ -31,7 +31,7 @@ namespace altair {
 /// that looks like file corruption rather than like a version skew.
 inline constexpr std::uint16_t kTickWireVersion = 1;
 
-/// Kite's "full" mode publishes five levels per side. Fixed, so the struct is
+/// The 5-level broker books (FYERS HSM, XTS 1502) publish five levels per side. Fixed, so the struct is
 /// trivially copyable and allocates nothing.
 inline constexpr std::size_t kDepthLevels = 5;
 
@@ -43,7 +43,7 @@ enum class TickFlag : std::uint16_t {
     ClosingAuct = 1u << 3,   // inside the closing auction window
 
     /// The packet carried NO exchange timestamp, so `exchange_ts` was filled
-    /// from `recv_ts` to keep ordering usable. Added by P2-02 (D5): Kite's LTP
+    /// from `recv_ts` to keep ordering usable. Added by P2-02 (D5): some LTP
     /// and quote modes carry no timestamp at all. Anything computing exchange
     /// latency MUST exclude these — the number would be zero by construction.
     NoExchangeTs = 1u << 4
@@ -64,7 +64,7 @@ enum class TickFlag : std::uint16_t {
 struct Tick {
     /// D1: CANONICAL IDENTITY. Never a broker token.
     ///
-    /// Kite's instrument_token and XTS's ExchangeInstrumentID are different
+    /// FYERS' symbol token and XTS's ExchangeInstrumentID are different
     /// number spaces for the same contract. P2-05 switches the primary feed
     /// mid-session: with a broker token here, every instrument would appear to
     /// vanish and a stranger appear in its place, and the book, the ledger and
@@ -114,7 +114,7 @@ struct DepthLevel {
 // ─────────────────────────────────────────────────────────────────────────
 // DepthUpdate — one book image.
 //
-// D3: separate from Tick, because Kite delivers price and depth in one packet
+// D3: separate from Tick, because one feed may deliver price and depth in one packet
 // while XTS delivers touchline (1501) and depth (1502) separately. One struct
 // would mean SYNTHESISING depth on a touchline-only update, and a synthesised
 // book level is a fabricated measurement.

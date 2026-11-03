@@ -64,7 +64,7 @@ static void test_a_bar_is_not_a_tick()
     // Real NIFTY 1-minute bars.
     //
     // WAS `1m/2026-08-27.csv`, one of four per-day files that are now
-    // superseded. P2-12 fetched the series from Kite properly: 185,909 bars
+    // superseded. P2-12 fetched the series from the broker properly: 185,909 bars
     // over 498 sessions, and the old per-day files held 362 bars a day
     // against the 375 a full NSE session has -- they were missing 15:16 to
     // 15:27, which is the P7-00 carried debt and is exactly the window the
@@ -198,7 +198,7 @@ static void test_zero_volume_is_not_zero()
     // THREE STATES, NOT TWO. P26-02b.
     //
     // These two checks read `== zero_volume_rows` and `== 0` until the daily
-    // series was extended from Kite, which reports NO volume for an index and
+    // series was extended from broker history, which reports NO volume for an index and
     // writes the field EMPTY. That is a third statement -- "nothing was
     // reported" -- and it is distinct from both a number and a literal zero.
     //

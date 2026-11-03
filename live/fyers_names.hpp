@@ -1,15 +1,15 @@
 // live/fyers_names.hpp -- FYERS's own name for every NSE and BSE cash scrip.
 //
-// WHY THIS EXISTS. The Kite master names a scrip by its trading symbol; FYERS
-// streams it under "<EX>:<symbol>-<series or group>", and the suffix is not in
-// the Kite master. Building it ("NSE:<SYM>-EQ", "BSE:<SYM>-A") was right for
+// WHY THIS EXISTS. data/instruments.csv names a scrip by its trading symbol
+// (live/instrument_master.hpp drops "-EQ" and the BSE group); FYERS streams it
+// under "<EX>:<symbol>-<series or group>". Building it ("NSE:<SYM>-EQ", "BSE:<SYM>-A") was right for
 // about 3,300 of the 21,800 cash scrips in the 2026-10 masters: an NSE scrip
 // outside the EQ series (BE, SM, ST, SG, GS, N0..) and a BSE scrip outside
 // group A (B, T, X, XT, Z, M ...) got a name FYERS does not know, so the
 // symbol-token call refused it and it never streamed -- the row stayed empty.
 //
-// THE FIX. Both masters carry the exchange's own token (Kite: exchange_token;
-// FYERS: column 12, exToken; for BSE it is the scrip code), so the name is
+// THE FIX. Both carry the exchange's own token (data/instruments.csv:
+// exchange_token; FYERS: column 12, exToken; for BSE it is the scrip code), so the name is
 // looked up, not built. FYERS publishes the cash masters with no login at
 // https://public.fyers.in/sym_details/NSE_CM.csv and BSE_CM.csv (the 21-column
 // layout of instruments/fyers_master.hpp: col 9 symTicker, col 10 exchange
@@ -25,7 +25,7 @@
 // MCX AND CURRENCY. The same lookup names MCX commodities (MCX_COM.csv:
 // exchange 11, segment 20) and currency (NSE_CD.csv / BSE_CD.csv: segment
 // 12) by exchange token; without the masters they are guessed as
-// "<EX>:<Kite trading symbol>", which is FYERS's pattern for futures.
+// "<EX>:<trading symbol>", which is FYERS's pattern for futures.
 
 #pragma once
 
@@ -114,7 +114,7 @@ private:
     return "NSE:" + symbol + "-EQ";
 }
 
-/// FYERS's name for a Kite cash row: looked up by exchange token, else guessed.
+/// FYERS's name for a master cash row: looked up by exchange token, else guessed.
 [[nodiscard]] inline std::string fyers_cash_name(bool bse, const std::string& symbol, std::uint32_t exchange_token,
                                                  const FyersCashNames* names) {
     if (names != nullptr && exchange_token != 0)

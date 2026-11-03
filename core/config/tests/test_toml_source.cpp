@@ -58,15 +58,15 @@ void nested_tables_flatten_with_dots()
         "top = 1\n"
         "[feed]\n"
         "staleness_ms = 250\n"
-        "[feed.kite]\n"
+        "[feed.fyers]\n"
         "max_subscriptions = 3000\n");
 
     check(r.has_value(), "the document parses");
     check(int_at("top") == 1, "a top-level scalar keeps its bare key");
     check(int_at("feed.staleness_ms") == 250,
           "a table member becomes feed.staleness_ms");
-    check(int_at("feed.kite.max_subscriptions") == 3000,
-          "and a nested table becomes feed.kite.max_subscriptions");
+    check(int_at("feed.fyers.max_subscriptions") == 3000,
+          "and a nested table becomes feed.fyers.max_subscriptions");
     check(r.has_value() && r->loaded == 3, "three scalars loaded");
     check(!g_snap.find("staleness_ms").has_value(),
           "the unqualified name does NOT resolve -- flattening must not "
@@ -81,19 +81,19 @@ void strings_are_skipped_and_counted()
     std::printf("\n2 strings_are_skipped_and_counted\n");
 
     const auto r = load(
-        "[feed.kite]\n"
-        "api_key_env = \"ALTAIR_KITE_API_KEY\"\n"
+        "[feed.fyers]\n"
+        "api_key_env = \"ALTAIR_FYERS_CLIENT_ID\"\n"
         "max_subscriptions = 3000\n");
 
     check(r.has_value(), "a document with strings still loads");
     check(r.has_value() && r->skipped_string == 1,
           "the string is COUNTED, not silently dropped and not an error");
     check(r.has_value() && r->loaded == 1, "and the integer beside it loads");
-    check(int_at("feed.kite.max_subscriptions") == 3000, "with the right value");
-    check(!g_snap.find("feed.kite.api_key_env").has_value(),
+    check(int_at("feed.fyers.max_subscriptions") == 3000, "with the right value");
+    check(!g_snap.find("feed.fyers.api_key_env").has_value(),
           "the string key is absent from the snapshot");
     check(r.has_value()
-              && std::strcmp(r->first_skipped, "feed.kite.api_key_env") == 0,
+              && std::strcmp(r->first_skipped, "feed.fyers.api_key_env") == 0,
           "and the report NAMES the first one, so a message can say which");
 }
 

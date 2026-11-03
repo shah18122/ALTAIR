@@ -85,7 +85,7 @@ namespace detail {
 ///
 /// NOT the symbol and NOT a token. Broker tokens are different number spaces
 /// for the same contract (P0-09b), so they cannot join anything. Symbols are
-/// per-source formatting — Kite writes NIFTY25SEP25000CE where an exchange
+/// per-source formatting — a broker writes NIFTY25SEP25000CE where an exchange
 /// master writes the components apart. This tuple is what the contract IS.
 struct ContractKey {
     Timestamp  expiry;
@@ -126,7 +126,7 @@ struct ContractKey {
         case SpecSource::Manual:    return 4;
         case SpecSource::NseMaster: return ex == Exchange::NSE ? 3u : 0u;
         case SpecSource::BseMaster: return ex == Exchange::BSE ? 3u : 0u;
-        case SpecSource::KiteDump:  return 2;
+        case SpecSource::InstrumentMaster:  return 2;
         case SpecSource::XtsMaster: return 1;
     }
     return 0;
@@ -150,7 +150,7 @@ struct Entry {
     std::int64_t scale[kSpecSourceCount];
     std::uint64_t src_hash[kSpecSourceCount];
     Timestamp    src_snapshot[kSpecSourceCount];
-    std::uint32_t kite_token;
+    std::uint32_t wire_token;
     std::uint32_t xts_token;
     std::uint32_t fyers_token;
     std::uint8_t present_mask;
@@ -259,8 +259,8 @@ public:
         e.src_stale_mask = static_cast<std::uint8_t>(
             spec.stale ? (e.src_stale_mask | bit)
                        : (e.src_stale_mask & static_cast<std::uint8_t>(~bit)));
-        if (spec.source == SpecSource::KiteDump) {
-            e.kite_token = spec.token[static_cast<std::size_t>(FeedSource::Kite)];
+        if (spec.source == SpecSource::InstrumentMaster) {
+            e.wire_token = spec.token[static_cast<std::size_t>(FeedSource::Wire)];
         }
         if (spec.source == SpecSource::XtsMaster) {
             e.xts_token = spec.token[static_cast<std::size_t>(FeedSource::Xts)];
@@ -410,7 +410,7 @@ private:
             // then failed to apply it to the three compared fields. Real data
             // made the gap obvious: the NSE UDiFF bhavcopy has no tick-size
             // column at all, so it reports 0, and comparing that against
-            // Kite's 5 made every single NSE contract a ValueConflict -- the
+            // the master's 5 made every single NSE contract a ValueConflict -- the
             // reconciler blocking the entire universe because its most
             // authoritative source declined to answer one question.
             //
@@ -450,7 +450,7 @@ private:
         }
 
         const bool has_broker =
-            (e.present_mask & (1u << static_cast<std::size_t>(SpecSource::KiteDump))) != 0
+            (e.present_mask & (1u << static_cast<std::size_t>(SpecSource::InstrumentMaster))) != 0
             || (e.present_mask & (1u << static_cast<std::size_t>(SpecSource::XtsMaster))) != 0;
         if (!has_broker) {
             v.verdict = ReconcileVerdict::NoBroker;
@@ -497,7 +497,7 @@ private:
         m.lot_size = LotSize{lot};
         m.tick_size = Price{tick};
         m.price_scale = scale;
-        m.token[static_cast<std::size_t>(FeedSource::Kite)] = e.kite_token;
+        m.token[static_cast<std::size_t>(FeedSource::Wire)] = e.wire_token;
         m.token[static_cast<std::size_t>(FeedSource::Xts)]  = e.xts_token;
         m.token[static_cast<std::size_t>(FeedSource::Fyers)] = e.fyers_token;
 

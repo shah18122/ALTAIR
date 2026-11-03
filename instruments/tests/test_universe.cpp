@@ -86,7 +86,7 @@ ContractSpec mk(const char* underlying, Segment seg, Timestamp expiry,
     s.exchange = ex;
     s.segment = seg;
     s.opt_type = (seg == Segment::Opt) ? OptionType::CE : OptionType::None;
-    s.source = SpecSource::KiteDump;
+    s.source = SpecSource::InstrumentMaster;
     s.source_hash = static_cast<std::uint64_t>(strike) + 1u;
     std::snprintf(s.symbol, sizeof(s.symbol), "%s-%lld", underlying,
                   static_cast<long long>(strike));
@@ -134,7 +134,7 @@ void strike_band_is_what_makes_options_fit()
               == UniverseReject::StrikeBand, "a paisa beyond the band is out");
     check(f.judge(mk("NIFTY", Segment::Opt, exp, 5'000'000), kToday)
               == UniverseReject::StrikeBand,
-          "and a far-out-of-the-money 50'000 strike is out -- the real Kite "
+          "and a far-out-of-the-money 50'000 strike is out -- the real the master "
           "dump carries 40'913 calls and 40'891 puts, and all but a few "
           "hundred are strikes nobody will trade today");
 
@@ -307,7 +307,7 @@ void a_realistic_universe_fits()
     check(s.admitted > 0, "some contracts were admitted");
     check(s.admitted < kMaxInstruments,
           "and the admitted set FITS the 8'192-contract store -- which the raw "
-          "files do not: 106'150 Kite rows and 30'488 exchange rows would have "
+          "files do not: 106'150 master rows and 30'488 exchange rows would have "
           "filled it from whichever loaded first, and WHICH 8'192 survived "
           "would have depended on CSV row order");
     check(g_rec.size() == s.admitted,

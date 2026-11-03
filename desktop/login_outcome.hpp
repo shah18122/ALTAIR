@@ -1,7 +1,7 @@
 // desktop/login_outcome.hpp -- what a broker login button just did, said
 // right under the button.
 //
-// The Kite login button reported everything into a log box at the bottom of
+// The broker login button reported everything into a log box at the bottom of
 // the tab. When the helper refused ("app credentials are incomplete") the
 // only visible effect of a click was a line nobody was looking at, so the
 // button looked dead: "nothing opens". This widget puts the outcome where the

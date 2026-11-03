@@ -102,7 +102,6 @@ qt_add_executable(altair_desktop
     audit_panel.hpp
     quant_pages.hpp
     model_job.hpp
-    kite_panel.hpp
     account_widgets.hpp
     depth_ladder.hpp
     kill_switch.hpp
@@ -124,7 +123,6 @@ qt_add_executable(altair_desktop
     live_feed.hpp
     live_forecast.hpp
     stream_forecast_page.hpp
-    kite_link.hpp
     login_outcome.hpp
     combined_account.hpp
     paper_oms.hpp
@@ -227,13 +225,10 @@ target_compile_definitions(altair_desktop PRIVATE
 # "no session" from one shortcut and "session" from another, with nothing on
 # screen explaining the difference.
 target_compile_definitions(altair_desktop PRIVATE
-    ALTAIR_QUOTE_FILE="${CMAKE_SOURCE_DIR}/data/kite_quotes.json"
-    ALTAIR_TICKS_FILE="${CMAKE_SOURCE_DIR}/data/kite_ticks.json"
+    ALTAIR_TICKS_FILE="${CMAKE_SOURCE_DIR}/data/fyers_ticks.json"
     ALTAIR_INTENT_FILE="${CMAKE_SOURCE_DIR}/data/order_intents.jsonl"
-    ALTAIR_SESSION_FILE="${CMAKE_SOURCE_DIR}/data/kite_session.json"
     ALTAIR_FYERS_SESSION_FILE="${CMAKE_SOURCE_DIR}/data/fyers_session.json"
     ALTAIR_FYERS_ACCOUNT_FILE="${CMAKE_SOURCE_DIR}/data/fyers_account.json"
-    ALTAIR_ACCOUNT_FILE="${CMAKE_SOURCE_DIR}/data/kite_account.json"
     ALTAIR_BROKER_ACTIVITY_FILE="${CMAKE_SOURCE_DIR}/data/broker_activity.json"
     ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     ALTAIR_KILL_REQUEST_FILE="${CMAKE_SOURCE_DIR}/data/kill_request.json")
@@ -326,7 +321,7 @@ set(_altair_ui_permitted
     #
     # What is NOT bought, and is still enforced here: the UI holds no
     # credential, links no broker/ and no oms/, has no TLS client and no API
-    # key, and connects to 127.0.0.1 only. It cannot reach Kite. The thing
+    # key, and connects to 127.0.0.1 only. It cannot reach a broker. The thing
     # gate 3 exists to prevent -- the UI placing an order -- is unchanged.
     #
     # This paragraph exists for the same reason the in-process decision's does
@@ -453,10 +448,7 @@ if(ALTAIR_BUILD_TESTS)
     target_compile_definitions(altair_navigation_shell_test PRIVATE
         ALTAIR_SOURCE_DIR="."
         ALTAIR_DATASET_DIR="dataset"
-        ALTAIR_QUOTE_FILE="data/kite_quotes.json"
-        ALTAIR_TICKS_FILE="data/kite_ticks.json"
-        ALTAIR_ACCOUNT_FILE="data/kite_account.json"
-        ALTAIR_SESSION_FILE="data/kite_session.json"
+        ALTAIR_TICKS_FILE="data/fyers_ticks.json"
         ALTAIR_INTENT_FILE="data/order_intents.jsonl"
         ALTAIR_KILL_REQUEST_FILE="data/kill_request.json")
     set_target_properties(altair_navigation_shell_test PROPERTIES WIN32_EXECUTABLE OFF)
@@ -552,9 +544,9 @@ if(ALTAIR_BUILD_TESTS)
     # Runs against the REAL series in dataset/, not a fixture. dataset/ is
     # gitignored and regenerable, so the test skips loudly rather than failing
     # if it is absent -- see the guard in the test's own output.
-    # P11Q-12. The Kite connection pill. The card is that presence is not
-    # validity: the session file on this machine parses, reports success, and
-    # is a day old, and Kite access tokens are daily.
+    # P11Q-12. The broker connection pill. The card is that presence is not
+    # validity: a session file can parse, report success, and be a day old,
+    # and FYERS access tokens are daily.
     qt_add_executable(altair_broker_status_test
         tests/test_broker_status.cpp
         broker_status.hpp)
@@ -594,19 +586,6 @@ if(ALTAIR_BUILD_TESTS)
         set_tests_properties(desktop_broker_activity PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
-
-    # P20-02. The Kite account panel. Exercised against a SYNTHETIC snapshot
-    # because the live account is expired -- a renderer that has never
-    # rendered is the one that crashes when a real snapshot finally arrives.
-    qt_add_executable(altair_kite_panel_test
-        tests/test_kite_panel.cpp
-        kite_panel.hpp)
-    target_link_libraries(altair_kite_panel_test PRIVATE
-        altair_types altair_time altair_feed Qt6::Core Qt6::Gui Qt6::Widgets)
-    target_include_directories(altair_kite_panel_test
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    set_target_properties(altair_kite_panel_test PROPERTIES WIN32_EXECUTABLE OFF)
-    add_test(NAME desktop_kite_panel COMMAND altair_kite_panel_test)
 
     # P22-04. The Overnight Gap page has its OWN reader, and a reader is where
     # a page can start answering a different question without saying so. This
@@ -762,7 +741,7 @@ if(ALTAIR_BUILD_TESTS)
     # P32-01. The terminal's WIRE. The merge itself is layout; the wire is the
     # part that was broken by construction -- the ticket's instrument list was
     # three tokens typed into a header and the watchlist held every instrument
-    # in the Kite master, so anything but those three could not be requested at
+    # in the instrument master, so anything but those three could not be requested at
     # all. A layout change could silently fail to fix that and look right.
     #
     # Counts emissions with a lambda rather than QSignalSpy: Qt6::Test is
@@ -1174,39 +1153,13 @@ if(ALTAIR_BUILD_TESTS)
         ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
         ALTAIR_INTENT_FILE="${CMAKE_SOURCE_DIR}/data/order_intents.jsonl"
         ALTAIR_KILL_REQUEST_FILE="${CMAKE_SOURCE_DIR}/data/kill_request.json"
-        ALTAIR_QUOTE_FILE="${CMAKE_SOURCE_DIR}/data/kite_quotes.json"
-        ALTAIR_TICKS_FILE="${CMAKE_SOURCE_DIR}/data/kite_ticks.json"
+        ALTAIR_TICKS_FILE="${CMAKE_SOURCE_DIR}/data/fyers_ticks.json"
         ALTAIR_DEV_CREDENTIALS)
     set_target_properties(altair_terminal_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_terminal COMMAND altair_terminal_test)
     # Check [5] prices the option chain from the instrument master and
     # dataset/ (neither in git): CI runs `ctest -LE dataset`.
     set_tests_properties(desktop_terminal PROPERTIES LABELS dataset)
-
-    # P26-01. The Link Kite panel's two pure functions: token redaction and
-    # pulling the login URL out of the subprocess's usage text. The QProcess
-    # half is not tested here -- it launches a binary only the `net` preset
-    # builds, and a test that skipped itself in the default preset would pass
-    # by not running.
-    qt_add_executable(altair_kite_link_test
-        tests/test_kite_link.cpp
-        kite_link.hpp
-        login_outcome.hpp
-        combined_account.hpp)
-    target_link_libraries(altair_kite_link_test PRIVATE
-        altair_types altair_time Qt6::Core Qt6::Gui Qt6::Widgets)
-    target_include_directories(altair_kite_link_test
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    target_compile_definitions(altair_kite_link_test PRIVATE
-        ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    set_target_properties(altair_kite_link_test PROPERTIES WIN32_EXECUTABLE OFF)
-    add_test(NAME desktop_kite_link COMMAND altair_kite_link_test)
-    set_tests_properties(desktop_kite_link PROPERTIES TIMEOUT 60 ENVIRONMENT
-        "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_tests_properties(desktop_kite_link PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
     # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.

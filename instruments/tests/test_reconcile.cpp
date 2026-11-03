@@ -64,8 +64,8 @@ ContractSpec make(SpecSource src, const char* underlying, std::int64_t lot,
     std::snprintf(s.symbol, sizeof(s.symbol), "%s25SEP25000CE_%u", underlying,
                   static_cast<unsigned>(src));
     std::snprintf(s.underlying, sizeof(s.underlying), "%s", underlying);
-    if (src == SpecSource::KiteDump) {
-        s.token[static_cast<std::size_t>(FeedSource::Kite)] = token;
+    if (src == SpecSource::InstrumentMaster) {
+        s.token[static_cast<std::size_t>(FeedSource::Wire)] = token;
     } else if (src == SpecSource::XtsMaster) {
         s.token[static_cast<std::size_t>(FeedSource::Xts)] = token;
     }
@@ -89,8 +89,8 @@ void three_sources_agree()
     g_rec.clear();
     check(g_rec.add(make(SpecSource::NseMaster, "NIFTY", 75, 5, 0)).has_value(),
           "NSE master added");
-    check(g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111)).has_value(),
-          "Kite added");
+    check(g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111)).has_value(),
+          "master added");
     check(g_rec.add(make(SpecSource::XtsMaster, "NIFTY", 75, 5, 22222)).has_value(),
           "XTS added");
 
@@ -106,8 +106,8 @@ void three_sources_agree()
               == ((1u << 0) | (1u << 2) | (1u << 3)), "three presence bits");
     check(v != nullptr && !verdict_blocks(v->verdict), "does not block");
     check(v != nullptr
-              && v->merged.token[static_cast<std::size_t>(FeedSource::Kite)] == 11111,
-          "merged carries the Kite token");
+              && v->merged.token[static_cast<std::size_t>(FeedSource::Wire)] == 11111,
+          "merged carries the wire token");
     check(v != nullptr
               && v->merged.token[static_cast<std::size_t>(FeedSource::Xts)] == 22222,
           "merged carries the XTS token — this IS the token map");
@@ -122,7 +122,7 @@ void lot_size_conflict_blocks()
     std::printf("\n2 lot_size_conflict_blocks\n");
     g_rec.clear();
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 50, 5, 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111));
 
     const ReconcileReport r = g_rec.reconcile();
     check(r.conflicts == 1, "one conflict");
@@ -137,11 +137,11 @@ void lot_size_conflict_blocks()
               && v->values[static_cast<std::size_t>(SpecSource::NseMaster)] == 50,
           "NSE said 50");
     check(v != nullptr
-              && v->values[static_cast<std::size_t>(SpecSource::KiteDump)] == 75,
-          "Kite said 75");
+              && v->values[static_cast<std::size_t>(SpecSource::InstrumentMaster)] == 75,
+          "the master said 75");
     check(v != nullptr
               && v->conflict_mask
-                     == (1u << static_cast<std::size_t>(SpecSource::KiteDump)),
+                     == (1u << static_cast<std::size_t>(SpecSource::InstrumentMaster)),
           "the broker is flagged as differing from the winning exchange value");
 }
 
@@ -152,7 +152,7 @@ void tick_and_scale_conflicts()
 
     g_rec.clear();
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 75, 5, 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 10, 11111));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 10, 11111));
     (void)g_rec.reconcile();
     const ContractVerdict* v = only(g_rec);
     check(v != nullptr && v->field == ConflictField::TickSize,
@@ -161,7 +161,7 @@ void tick_and_scale_conflicts()
 
     g_rec.clear();
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 75, 5, 0, 100));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111, 10'000'000));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111, 10'000'000));
     (void)g_rec.reconcile();
     v = only(g_rec);
     check(v != nullptr && v->field == ConflictField::PriceScale,
@@ -172,7 +172,7 @@ void tick_and_scale_conflicts()
     // Both lot AND tick differ. Requirement 5 fixes the order: lot is reported.
     g_rec.clear();
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 50, 5, 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 10, 11111));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 10, 11111));
     (void)g_rec.reconcile();
     v = only(g_rec);
     check(v != nullptr && v->field == ConflictField::LotSize,
@@ -180,7 +180,7 @@ void tick_and_scale_conflicts()
 }
 
 // ── 4 ────────────────────────────────────────────────────────────────────
-// D7, and the subtlest rule in the card. With only the Kite parser built,
+// D7, and the subtlest rule in the card. With only the master parser built,
 // EVERY contract lacks a primary; blocking the universe for that is correct
 // and useless.
 void missing_primary_only_when_a_primary_was_loaded()
@@ -188,19 +188,19 @@ void missing_primary_only_when_a_primary_was_loaded()
     std::printf("\n4 missing_primary_only_when_a_primary_was_loaded\n");
 
     g_rec.clear();
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111));
-    (void)g_rec.add(make(SpecSource::KiteDump, "BANKNIFTY", 15, 5, 22222));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "BANKNIFTY", 15, 5, 22222));
     ReconcileReport r = g_rec.reconcile();
     check(!r.primary_source_seen, "no primary was loaded anywhere in the run");
     check(r.missing_primary == 0, "so NOTHING is blocked for missing one");
     check(r.single_source == 2, "both are SingleSource — accepted, uncorroborated");
-    check(r.blocked == 0, "today's Kite-only world still starts");
+    check(r.blocked == 0, "today's single-master world still starts");
 
     // Now a run where a primary DOES exist — for one contract but not the other.
     g_rec.clear();
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 75, 5, 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111));
-    (void)g_rec.add(make(SpecSource::KiteDump, "BANKNIFTY", 15, 5, 22222));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "BANKNIFTY", 15, 5, 22222));
     r = g_rec.reconcile();
     check(r.primary_source_seen, "a primary WAS loaded this run");
     check(r.missing_primary == 1, "so the contract lacking one is now an anomaly");
@@ -222,7 +222,7 @@ void no_broker_blocks()
     std::printf("\n5 no_broker_blocks\n");
     g_rec.clear();
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 75, 5, 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111));
     (void)g_rec.add(make(SpecSource::NseMaster, "FINNIFTY", 65, 5, 0));
 
     const ReconcileReport r = g_rec.reconcile();
@@ -247,7 +247,7 @@ void order_independence()
     std::printf("\n6 order_independence\n");
     const ContractSpec a = make(SpecSource::NseMaster, "NIFTY", 75, 5, 0, 100,
                                 false, kSnap, 0x1111);
-    const ContractSpec b = make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111, 100,
+    const ContractSpec b = make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111, 100,
                                 false, kSnap, 0x2222);
     const ContractSpec c = make(SpecSource::XtsMaster, "NIFTY", 75, 5, 22222, 100,
                                 false, kSnap, 0x3333);
@@ -291,7 +291,7 @@ void merge_provenance()
     g_rec.clear();
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 75, 5, 0, 100,
                          /*stale=*/false, kSnap));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111, 100,
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111, 100,
                          /*stale=*/true, kOlder));
     (void)g_rec.reconcile();
     const ContractVerdict* v = only(g_rec);
@@ -308,7 +308,7 @@ void merge_provenance()
     // Re-adding the same (key, source) must be idempotent, not a phantom
     // conflict against itself.
     const std::uint64_t before = v->merged.source_hash;
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111, 100,
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111, 100,
                          true, kOlder));
     const ReconcileReport r2 = g_rec.reconcile();
     check(r2.contracts == 1, "re-adding a source does not create a second contract");
@@ -330,10 +330,10 @@ void apply_to_store_blocks()
     g_rec.clear();
     // agreed
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 75, 5, 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111));
     // conflicting
     (void)g_rec.add(make(SpecSource::NseMaster, "BANKNIFTY", 15, 5, 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "BANKNIFTY", 30, 5, 33333));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "BANKNIFTY", 30, 5, 33333));
 
     const ReconcileReport r = g_rec.reconcile();
     check(r.agreed == 1 && r.conflicts == 1, "one agreed, one conflicting");
@@ -346,12 +346,12 @@ void apply_to_store_blocks()
           "BOTH are in the store — a blocked contract is added, never dropped");
     check(g_store.blocked_count() == 1, "one of them is blocked");
 
-    const auto good = g_store.id_of(FeedSource::Kite, 11111);
-    check(good.has_value(), "the agreed contract resolves by Kite token");
+    const auto good = g_store.id_of(FeedSource::Wire, 11111);
+    check(good.has_value(), "the agreed contract resolves by wire token");
     check(good.has_value() && g_store.current(*good).has_value(),
           "and its spec is readable");
 
-    const auto bad = g_store.id_of(FeedSource::Kite, 33333);
+    const auto bad = g_store.id_of(FeedSource::Wire, 33333);
     check(bad.has_value(),
           "the BLOCKED contract still resolves — the tick is not an unknown token");
     const auto spec = g_store.current(*bad);
@@ -369,7 +369,7 @@ void unreconciled_never_reads_as_agreed()
     std::printf("\n9 unreconciled_never_reads_as_agreed\n");
     g_rec.clear();
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 50, 5, 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 11111));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 11111));
 
     check(!g_rec.reconciled(), "after add(), the reconciler reports itself dirty");
     const auto early = g_rec.verdict_at(0);
@@ -393,7 +393,7 @@ void unreconciled_never_reads_as_agreed()
     // apply_to_store removes the failure mode instead of reporting it.
     g_rec.clear();
     (void)g_rec.add(make(SpecSource::NseMaster, "NIFTY", 75, 5, 0));
-    (void)g_rec.add(make(SpecSource::KiteDump, "NIFTY", 75, 5, 44444));
+    (void)g_rec.add(make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 44444));
     check(!g_rec.reconciled(), "deliberately NOT reconciled before applying");
     const auto n = apply_to_store(g_rec, g_store2);
     check(n.has_value() && *n == 0, "apply_to_store reconciles for itself");
@@ -405,13 +405,13 @@ void error_paths()
 {
     std::printf("\nerror paths\n");
     g_rec.clear();
-    ContractSpec s = make(SpecSource::KiteDump, "NIFTY", 75, 5, 1);
+    ContractSpec s = make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 1);
     s.underlying[0] = '\0';
     const auto e1 = g_rec.add(s);
     check(!e1.has_value() && e1.error() == ReconcileError::BadSymbol,
           "an empty underlying is BadSymbol");
 
-    s = make(SpecSource::KiteDump, "NIFTY", 75, 5, 1);
+    s = make(SpecSource::InstrumentMaster, "NIFTY", 75, 5, 1);
     s.source = static_cast<SpecSource>(9);
     const auto e2 = g_rec.add(s);
     check(!e2.has_value() && e2.error() == ReconcileError::BadSource,

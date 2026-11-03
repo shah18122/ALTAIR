@@ -49,7 +49,7 @@ Tick mk_tick(std::uint32_t seq)
     t.last_qty = Qty{75};
     t.volume = Qty{1000 + static_cast<std::int64_t>(seq)};
     t.oi = 4242 + static_cast<std::int64_t>(seq);
-    t.source = (seq % 2 == 0) ? FeedSource::Kite : FeedSource::Xts;
+    t.source = (seq % 2 == 0) ? FeedSource::Fyers : FeedSource::Xts;
     t.flags = set_flag(0, TickFlag::Snapshot);
     return t;
 }
@@ -62,7 +62,7 @@ DepthUpdate mk_depth(std::uint32_t seq)
     d.exchange_ts = Timestamp{kSession.ns_since_epoch()
                               + static_cast<std::int64_t>(seq) * 1'000'000LL};
     d.recv_ts = Timestamp{d.exchange_ts.ns_since_epoch() + 4242};
-    d.source = FeedSource::Kite;
+    d.source = FeedSource::Fyers;
     for (std::size_t k = 0; k < kDepthLevels; ++k) {
         d.bid[k] = DepthLevel{Price{2'500'000 - static_cast<std::int64_t>(k) * 5},
                               Qty{100 + static_cast<std::int64_t>(k)},

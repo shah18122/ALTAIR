@@ -1,67 +1,36 @@
-// app/kite_update_main.cpp -- bring dataset/ up to date, in one call.
+// app/dataset_update_main.cpp -- bring dataset/ up to date from FYERS, in one call.
 //
-// P34-01. Smit asked that linking a Kite token update the whole tree: NIFTY
-// and BANKNIFTY at every timeframe, current, and the Live Grid pointed at it.
+// P34-01. Linking a broker session should update the whole tree: NIFTY,
+// BANKNIFTY and India VIX at every timeframe, current, and the Live Grid
+// pointed at it. FYERS (api-t1.fyers.in /data/history) is the only source.
 //
-// WHY THIS IS NOT altair_kite_fetch IN A LOOP.
-//
-// The fetcher writes WHOLE MONTH FILES and refuses to overwrite one that
-// exists, because overwriting good data on a whim is worse than not having
-// new data. That is right for a bulk backfill and exactly wrong for a daily
-// top-up: the month you are appending to is always the month already on disk,
-// so every incremental fetch would skip the only file it needed to touch.
-//
-// So this MERGES. It reads what is there, unions the fetched candles in by
+// IT MERGES. A bulk fetch writes whole month files and refuses to overwrite
+// one that exists. A daily top-up always appends to the month already on
+// disk, so this reads what is there, unions the fetched candles in by
 // timestamp, and rewrites the month. Nothing already stored is lost.
 //
-// A STORED BAR IS ONLY REPLACED WHEN THE DIFFERENCE IS MATERIAL.
+// A STORED BAR IS ONLY REPLACED WHEN THE DIFFERENCE IS MATERIAL (1 bp).
+// Below it is decimal places and the stored value stays. Above it is a bar
+// captured mid-session and frozen, and the fresh value wins. Both are counted
+// and printed.
 //
-// dataset/ carries two decimals and Kite's index dailies carry one, so a bar
-// re-fetched a week later routinely differs by 0.05 points -- 0.02 bps on a
-// 23,000 index. Replacing on ANY difference would overwrite the finer value
-// with the coarser one and report it as a correction.
+// TODAY'S BAR IS NOT WRITTEN UNTIL IT HAS CLOSED. A daily bar is stamped
+// 00:00 and settles at 15:30 IST; an unfinished bar is dropped and counted.
 //
-// One basis point separates the two cases. Below it is decimal places and the
-// stored value stays. Above it is a bar that was captured mid-session and
-// frozen -- India VIX's 2026-09-04 close sat in dataset/ as 10.80 against a
-// settled 10.68, which is 110 bps -- and the fresh value wins. Both are
-// counted and both are printed.
+// THE COVERAGE CHECK (C14-006). A short answer is not an error on the wire,
+// so a window the broker did not answer in full is refused, not merged.
 //
-// AND TODAY'S BAR IS NOT WRITTEN UNTIL IT HAS CLOSED.
+// The merge rules live in app/dataset_merge.hpp, where they are tested.
 //
-// The same rule the Live Forecast page keeps. While the session is open,
-// today's daily candle exists and its close is wherever the price happens to
-// be. Writing it produces exactly the frozen partial bar the paragraph above
-// exists to repair, so an unfinished bar is dropped and counted.
-//
-// A daily bar is stamped 00:00 and settles at 15:30 IST, so "start + one day"
-// would call today's partial bar finished for the whole afternoon -- which is
-// precisely when somebody links a token and presses this.
-//
-// IT IS READ-ONLY AGAINST THE BROKER. /instruments/historical is a GET. This
-// program has no order vocabulary and could not place one if asked.
-//
-// CX02-A2. THE MERGE NOW LIVES IN app/dataset_merge.hpp, WHERE IT IS TESTED.
-//
-// It used to live in this main(), untested, and the audit found it could lose
-// a stored month five different ways (C14-005), merged windows Kite had
-// truncated without the coverage check the fetcher applies (C14-006), and
-// wrote prices at six significant digits (C14-001). The rules above -- merge,
-// 1 bp, unfinished bars dropped -- are unchanged. What changed is how a file
-// is replaced, which files are replaced, and what is refused.
-//
-// --provider fyers. Smit links FYERS, not Kite, most days, and the desktop's
-// "Refresh daily call" needs dataset/ current before the models rerun. Only
-// the fetch differs (api-t1.fyers.in /data/history, the session from
-// data/fyers_session.json or app/fyers_env_session.hpp); the coverage check,
-// merge and write-back below are the same code for both providers.
+// IT IS READ-ONLY AGAINST THE BROKER. /data/history is a GET. This program
+// has no order vocabulary and could not place one if asked.
 
 #include <app/dataset_merge.hpp>
 #include <app/fyers_env_session.hpp>
 #include <broker/fyers_api.hpp>
 #include <broker/fyers_historical.hpp>
 #include <broker/https_client.hpp>
-#include <broker/kite_historical.hpp>
+#include <broker/candles.hpp>
 
 #include <chrono>
 #include <cstdio>
@@ -88,42 +57,6 @@ namespace {
         if (std::strcmp(argv[i], flag) == 0) { return true; }
     }
     return false;
-}
-
-[[nodiscard]] std::string env_or_empty(const char* name) {
-#if defined(_WIN32)
-    char* buf = nullptr;
-    std::size_t len = 0;
-    if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) { return {}; }
-    std::string v(buf);
-    std::free(buf);
-    return v;
-#else
-    const char* v = std::getenv(name);
-    return v == nullptr ? std::string{} : std::string{v};
-#endif
-}
-
-/// Read `access_token` out of data/kite_session.json.
-///
-/// Its own reader rather than a JSON library, for the reason every other
-/// binary here gives: the file holds a LIVE TRADING CREDENTIAL and the
-/// smallest amount of code that can see it is the right amount. Never
-/// printed, never logged, never put in an error message.
-[[nodiscard]] bool read_access_token(const char* path, std::string& out) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) { return false; }
-    const std::string all((std::istreambuf_iterator<char>(f)),
-                          std::istreambuf_iterator<char>());
-    const std::string key = "\"access_token\"";
-    const auto k = all.find(key);
-    if (k == std::string::npos) { return false; }
-    const auto q1 = all.find('"', all.find(':', k) + 1);
-    if (q1 == std::string::npos) { return false; }
-    const auto q2 = all.find('"', q1 + 1);
-    if (q2 == std::string::npos) { return false; }
-    out = all.substr(q1 + 1, q2 - q1 - 1);
-    return !out.empty();
 }
 
 /// One string field of a small JSON file, the same way. Never printed.
@@ -167,9 +100,7 @@ namespace {
 
 struct SeriesPlan {
     const char* sym;        // dataset directory
-    std::int64_t token;     // Kite instrument_token
     const char* dir;        // interval directory
-    const char* interval;   // Kite interval name
     std::int64_t ns;        // bar width in nanoseconds
     const char* fyers_symbol;
     const char* fyers_res;  // FYERS resolution
@@ -177,12 +108,11 @@ struct SeriesPlan {
 
 void usage(const char* exe) {
     std::printf(
-        "  Bring dataset/ up to date from Kite, merging into what is there.\n\n"
-        "    %s [--provider kite|fyers] [--out DIR] [--symbols nifty,banknifty]\n"
+        "  Bring dataset/ up to date from FYERS, merging into what is there.\n\n"
+        "    %s [--out DIR] [--symbols nifty,banknifty]\n"
         "       [--intervals 1d,5m] [--days N] --go\n\n"
-        "    --provider  kite (default; data/kite_session.json and\n"
-        "                ALTAIR_KITE_API_KEY) or fyers (data/fyers_session.json\n"
-        "                or ALTAIR_FYERS_CLIENT_ID / ALTAIR_FYERS_ACCESS_TOKEN)\n"
+        "    session     data/fyers_session.json, else ALTAIR_FYERS_CLIENT_ID /\n"
+        "                ALTAIR_FYERS_ACCESS_TOKEN\n"
         "    --out       dataset root (default dataset)\n"
         "    --intervals default 1m,5m,15m,60m,1d\n"
         "    --symbols   default nifty,banknifty,indiavix\n"
@@ -190,7 +120,7 @@ void usage(const char* exe) {
         "                (default 400; an existing series is topped up from\n"
         "                 its own last bar and ignores this)\n"
         "    --go        ACTUALLY CALL THE API.\n\n"
-        "  Read-only: both history endpoints are GETs and this program has\n"
+        "  Read-only: the history endpoint is a GET and this program has\n"
         "  no order vocabulary.\n", exe);
 }
 
@@ -206,14 +136,13 @@ int main(int argc, char** argv)
     const char* syms_s = arg_value(argc, argv, "--symbols");
     const char* days_s = arg_value(argc, argv, "--days");
     const char* ivs_s = arg_value(argc, argv, "--intervals");
-    const char* provider_s = arg_value(argc, argv, "--provider");
     const bool go = has_flag(argc, argv, "--go");
-    const std::string provider = provider_s != nullptr ? provider_s : "kite";
-    if (provider != "kite" && provider != "fyers") {
-        std::printf("  --provider must be kite or fyers\n");
+    if (const char* p = arg_value(argc, argv, "--provider");
+        p != nullptr && std::strcmp(p, "fyers") != 0) {
+        // Kept so an old `--provider fyers` command line still works.
+        std::printf("  --provider: FYERS is the only data source\n");
         return 2;
     }
-    const bool fyers = provider == "fyers";
     const std::string root = out_s != nullptr ? out_s : "dataset";
     int back = 400;
     if (days_s != nullptr) {
@@ -226,10 +155,10 @@ int main(int argc, char** argv)
         back = *d;
     }
 
-    struct Sym { const char* name; std::int64_t token; const char* fyers; };
-    const Sym kAll[] = {{"nifty", 256265, "NSE:NIFTY50-INDEX"},
-                        {"banknifty", 260105, "NSE:NIFTYBANK-INDEX"},
-                        {"indiavix", 264969, "NSE:INDIAVIX-INDEX"}};
+    struct Sym { const char* name; const char* fyers; };
+    const Sym kAll[] = {{"nifty", "NSE:NIFTY50-INDEX"},
+                        {"banknifty", "NSE:NIFTYBANK-INDEX"},
+                        {"indiavix", "NSE:INDIAVIX-INDEX"}};
     std::vector<Sym> syms;
     {
         // EXACT names. A substring match made `--symbols banknifty` update
@@ -250,12 +179,12 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    struct Iv { const char* dir; const char* name; std::int64_t ns; const char* fyers; };
-    const Iv kIvs[] = {{"1m", "minute", 60'000'000'000LL, "1"},
-                       {"5m", "5minute", 300'000'000'000LL, "5"},
-                       {"15m", "15minute", 900'000'000'000LL, "15"},
-                       {"60m", "60minute", 3'600'000'000'000LL, "60"},
-                       {"1d", "day", 86'400'000'000'000LL, "D"}};
+    struct Iv { const char* dir; std::int64_t ns; const char* fyers; };
+    const Iv kIvs[] = {{"1m", 60'000'000'000LL, "1"},
+                       {"5m", 300'000'000'000LL, "5"},
+                       {"15m", 900'000'000'000LL, "15"},
+                       {"60m", 3'600'000'000'000LL, "60"},
+                       {"1d", 86'400'000'000'000LL, "D"}};
     std::vector<Iv> ivs;
     {
         std::vector<std::string_view> names;
@@ -272,7 +201,7 @@ int main(int argc, char** argv)
     std::vector<SeriesPlan> plan;
     for (const Sym& s : syms) {
         for (const Iv& iv : ivs) {
-            plan.push_back({s.name, s.token, iv.dir, iv.name, iv.ns, s.fyers, iv.fyers});
+            plan.push_back({s.name, iv.dir, iv.ns, s.fyers, iv.fyers});
         }
     }
 
@@ -283,8 +212,8 @@ int main(int argc, char** argv)
     const std::int64_t today =
         (now_ns + altair::detail::kIstOffsetNs) / 86'400'000'000'000LL;
 
-    std::printf("\n  Updating %zu series under %s/ from %s\n", plan.size(),
-                root.c_str(), fyers ? "FYERS" : "Kite");
+    std::printf("\n  Updating %zu series under %s/ from FYERS\n", plan.size(),
+                root.c_str());
 
     if (!go) {
         for (const SeriesPlan& s : plan) {
@@ -295,27 +224,11 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    std::string auth;
-    if (fyers) {
-        auth = fyers_authorization();
-        if (auth.empty()) {
-            std::printf("\n  no usable FYERS session -- link FYERS in the desktop "
-                        "(altair_fyers_login). FYERS tokens are DAILY.\n");
-            return 3;
-        }
-    } else {
-        const std::string api_key = env_or_empty("ALTAIR_KITE_API_KEY");
-        if (api_key.empty()) {
-            std::printf("\n  ALTAIR_KITE_API_KEY is not set.\n");
-            return 3;
-        }
-        std::string access;
-        if (!read_access_token("data/kite_session.json", access)) {
-            std::printf("\n  no usable data/kite_session.json -- run "
-                        "altair_kite_login. Kite tokens are DAILY.\n");
-            return 3;
-        }
-        auth = std::string("token ") + api_key + ":" + access;
+    const std::string auth = fyers_authorization();
+    if (auth.empty()) {
+        std::printf("\n  no usable FYERS session -- run the FYERS login "
+                    "(broker/tools/fyers_auto_login.py or altair_fyers_login).\n");
+        return 3;
     }
 
     std::size_t series_done = 0, added_total = 0, replaced_total = 0;
@@ -337,7 +250,7 @@ int main(int argc, char** argv)
         // the other process's newly merged bars.
         ds::UpdateStateLock series_lock;
         if (!series_lock.acquire(
-                std::filesystem::path(dir) / ".kite_update_series.lock")) {
+                std::filesystem::path(dir) / ".dataset_update_series.lock")) {
             std::printf("    spot/%-10s %-4s  SERIES UPDATE LOCK FAILED; "
                         "another updater may be active; nothing merged\n",
                         s.sym, s.dir);
@@ -408,11 +321,8 @@ int main(int argc, char** argv)
         const std::string from_s = altair::date_string(from_day);
         const std::string to_s = altair::date_string(today);
 
-        const auto chunks = fyers
-            ? altair::fyers_history::chunk_requests(s.fyers_res, from_s, to_s)
-                  .transform_error([](auto) { return 0; })
-            : altair::chunk_requests(from_s, to_s, s.interval)
-                  .transform_error([](auto) { return 0; });
+        const auto chunks =
+            altair::fyers_history::chunk_requests(s.fyers_res, from_s, to_s);
         if (!chunks) {
             std::printf("    spot/%-10s %-4s  could not plan a request\n",
                         s.sym, s.dir);
@@ -425,23 +335,13 @@ int main(int argc, char** argv)
         bool ok = true;
         for (std::size_t i = 0; i < chunks->size(); ++i) {
             const auto part = [&]() -> std::optional<std::vector<altair::RawCandle>> {
-                if (fyers) {
-                    const auto uri = altair::fyers_history::uri(
-                        s.fyers_symbol, s.fyers_res, (*chunks)[i].from, (*chunks)[i].to);
-                    if (!uri) { return std::nullopt; }
-                    const auto r = altair::https_get_auth("api-t1.fyers.in", *uri, auth, "",
-                                                          std::chrono::seconds{30});
-                    if (!r || r->status != 200) { return std::nullopt; }
-                    auto p = altair::fyers_history::parse(r->body);
-                    if (!p) { return std::nullopt; }
-                    return std::move(*p);
-                }
-                const auto uri = altair::historical_uri(s.token, s.interval,
-                                                        (*chunks)[i], false, false);
+                const auto uri = altair::fyers_history::uri(
+                    s.fyers_symbol, s.fyers_res, (*chunks)[i].from, (*chunks)[i].to);
                 if (!uri) { return std::nullopt; }
-                const auto r = altair::https_get_auth("api.kite.trade", *uri, auth);
+                const auto r = altair::https_get_auth("api-t1.fyers.in", *uri, auth,
+                                                      std::chrono::seconds{30});
                 if (!r || r->status != 200) { return std::nullopt; }
-                auto p = altair::parse_candles(r->body);
+                auto p = altair::fyers_history::parse(r->body);
                 if (!p) { return std::nullopt; }
                 return std::move(*p);
             }();
@@ -457,11 +357,10 @@ int main(int argc, char** argv)
             continue;
         }
 
-        // ---- did Kite answer the whole window? (C14-006) ------------------
+        // ---- did FYERS answer the whole window? (C14-006) -----------------
         //
-        // Kite truncates an over-long request instead of refusing it, so a
-        // short answer is not an error on the wire. The fetcher has always
-        // refused one; this merged it, and the hole became permanent.
+        // A short answer is not an error on the wire. Merging one would make
+        // the hole permanent, so it is refused.
         const ds::Coverage cov = ds::judge_coverage(got, from_s, to_s, 5);
         const ds::EmptyAnswerEvent empty_event = !got.empty()
             ? ds::EmptyAnswerEvent::NonemptyResponse
@@ -469,7 +368,7 @@ int main(int argc, char** argv)
                 ? ds::EmptyAnswerEvent::TradingWindowEmpty
                 : ds::EmptyAnswerEvent::NoTradingSession;
         const auto empty_streak = ds::update_empty_answer_streak(
-            std::filesystem::path(dir) / ".kite_update_empty_answers",
+            std::filesystem::path(dir) / ".dataset_update_empty_answers",
             empty_event);
         if (!empty_streak) {
             std::printf("    spot/%-10s %-4s  EMPTY-RESPONSE STATE FAILED: %s; "

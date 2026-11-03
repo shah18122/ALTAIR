@@ -24,11 +24,13 @@ research notes in [docs/research/](docs/research), and the original plan
 
 | Broker | Role | What works |
 |---|---|---|
-| **FYERS** | Primary market data, read-only account | OAuth login, profile/funds/positions/holdings/orders, historical candles, **live data socket** (quotes, 5-level depth, indices) |
-| **Zerodha Kite** | Fallback market data, read-only account | Login, account, quotes, historical candles, live ticker |
+| **FYERS** | The only broker: market data, read-only account | OAuth login, profile/funds/positions/holdings/orders, historical candles, **live data socket** (quotes, 5-level depth, indices) |
 
 Credentials never live in source. Helpers read them from the OS vault or
-`data/*_session.json`, and every network helper is a dry run unless you pass `--go`.
+`data/fyers_session.json`, and every network helper is a dry run unless you pass `--go`.
+The daily FYERS token is fetched by `broker/tools/fyers_auto_login.py` (TOTP
+auto-login); its PIN and TOTP key come from the environment, the OS keyring or a
+git-ignored local file, never from the repository.
 
 ## Layout
 
@@ -37,7 +39,7 @@ One component, one directory:
 ```
 core/         strong units (integer paise, lots, time), clocks, memory, lock-free queues
 instruments/  point-in-time contract spec store; NSE/BSE/FYERS masters
-feed/         Kite + FYERS decoders, normaliser, failover, tick store, source router
+feed/         FYERS decoders, normaliser, failover, tick store, source router
 book/         L2 book, microstructure, order flow
 features/ analytics/ models/ strategies/ risk/ backtest/ flagging/
 oms/          order state, exit ladder, broker adapters (behind the permit)
@@ -128,9 +130,10 @@ In the desktop, press **Alt+F6** in the Terminal for the net position window. It
 - trade history, RMS, top movers and index information.
 
 Prices come live from the stream. The account is fetched by itself
-(`altair_fyers_account`, read-only) every minute while the window is open. Put
-the Kite instrument master at `data/instruments.csv` so that monthly expiries
-and lot sizes resolve.
+(`altair_fyers_account`, read-only) every minute while the window is open. Build
+the instrument master at `data/instruments.csv` from the FYERS masters
+(`altair_instrument_master --go`; the price service also rebuilds it when it is
+stale) so that monthly expiries and lot sizes resolve.
 
 **Headless hosts** (a cloud session, a scheduled job) have no browser for the
 login. `altair_fyers_history` and `altair_fyers_ticker` also accept the day's
@@ -143,7 +146,7 @@ A FYERS token lasts one trading day, so the variable has to be refreshed with
 it. The host's network must also allow `api-t1.fyers.in`, `public.fyers.in`
 and `socket.fyers.in`. These CLIs contain no order endpoint.
 
-For ticks, open **Live Feed**, choose **FYERS (primary)** and press **Listen**.
+For ticks, open **Live Feed** and press **Listen** (FYERS).
 The live socket implements FYERS' HSM protocol natively in C++.
 `feed/tests/test_fyers_hsm.cpp` checks it byte for byte against vectors
 produced by FYERS' official SDK.
@@ -152,7 +155,7 @@ produced by FYERS' official SDK.
 
 `altair_data_audit` checks `dataset/` across timeframes (every coarser bar
 rebuilt from every finer one), against its other sources, and against FYERS
-and Kite candles, and writes `data/verified/data_audit.xlsx` (one sheet per
+candles, and writes `data/verified/data_audit.xlsx` (one sheet per
 instrument) plus one merged CSV per instrument per timeframe. On Windows:
 
 ```powershell
@@ -201,7 +204,7 @@ the results.
 **Terminal** is a GETS-style market watch fed by `altair_price_service`, and it
 starts the live feed by itself.
 
-- **Sources:** live from FYERS, else Kite (`--live --go`). When the market is
+- **Sources:** live from FYERS (`--live --go`). When the market is
   shut, use `--sim`, optionally for a chosen past day (`--date`), when the
   indices follow that day's real minute closes. SIM is always marked SIM.
 - **Views:** Market Watch or Option Chain. **Insert** adds any NSE equity or NSE

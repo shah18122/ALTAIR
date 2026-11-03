@@ -39,10 +39,11 @@ constexpr SessionKey fyers(std::uint64_t slot = 1,
     return {BrokerId::Fyers, slot, generation};
 }
 
-constexpr SessionKey kite(std::uint64_t slot = 1,
-                          std::uint64_t generation = 1)
+/// A second FYERS account: same broker, a different account slot.
+constexpr SessionKey second(std::uint64_t slot = 2,
+                            std::uint64_t generation = 1)
 {
-    return {BrokerId::ZerodhaKite, slot, generation};
+    return {BrokerId::Fyers, slot, generation};
 }
 
 Position make_position(std::uint32_t instrument, PositionProduct product,
@@ -109,7 +110,7 @@ static void test_apply_refuses_mismatch_and_unusable()
 {
     PositionTableModel model(resolver());
     const AccountView a = account(fyers());
-    const auto mismatch = snapshot(kite(), {
+    const auto mismatch = snapshot(second(), {
         make_position(7, PositionProduct::Intraday, 50)});
     const auto bad = model.apply(a, mismatch, kNow);
     check(!bad && bad.error() == ApplyError::SessionMismatch,
@@ -151,7 +152,7 @@ static void test_no_netting_across_accounts_or_products()
     PositionTableModel accounts(resolver());
     (void)accounts.apply(account(fyers(), "FYERS"), snapshot(fyers(), {
         make_position(7, PositionProduct::Intraday, 50)}), kNow);
-    (void)accounts.apply(account(kite(), "Kite"), snapshot(kite(), {
+    (void)accounts.apply(account(second(), "FYERS 2"), snapshot(second(), {
         make_position(7, PositionProduct::Intraday, 50)}), kNow);
     check(accounts.rowCount() == 2, "same instrument in two accounts is two rows");
     for (int row = 0; row < accounts.rowCount(); ++row) {

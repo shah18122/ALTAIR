@@ -16,9 +16,9 @@
 //
 //   FinInstrmTp    IDF | IDO | STF | STO   -- index/stock, future/option.
 //                  NOT the legacy FUTIDX/OPTIDX vocabulary.
-//   TckrSymb       NIFTY            -- joins to Kite's `name`
-//   FinInstrmNm    NIFTY26OCTFUT    -- the same shape as Kite's tradingsymbol
-//   XpryDt         2026-10-27       -- ISO, same as Kite's expiry
+//   TckrSymb       NIFTY            -- joins to the instrument master's `name`
+//   FinInstrmNm    NIFTY26OCTFUT    -- the same shape as the master's tradingsymbol
+//   XpryDt         2026-10-27       -- ISO, same as the master's expiry
 //   StrkPric       410.00           -- decimal rupees; EMPTY for futures
 //   OptnTp         CE | PE          -- EMPTY for futures
 //   NewBrdLotQty   3100             -- integer. The lot size, and the reason
@@ -30,7 +30,7 @@
 #pragma once
 
 #include <instruments/contract_spec.hpp>
-#include <instruments/kite_dump.hpp>
+#include <instruments/master_csv.hpp>
 #include <instruments/reconcile.hpp>
 
 #include <cstddef>
@@ -73,16 +73,16 @@ struct UdiffLoadReport {
 
 namespace detail {
 
-/// KiteParseError -> UdiffError. The two files share their date and decimal
+/// MasterParseError -> UdiffError. The two files share their date and decimal
 /// grammar exactly, so this parser REUSES P1-04's converters rather than
 /// growing a second pair that could drift. One implementation, one set of
 /// tests, one place for the 0.05-becomes-4-paise bug not to live.
-[[nodiscard]] constexpr UdiffError from_kite_err(KiteParseError e) noexcept {
+[[nodiscard]] constexpr UdiffError from_master_err(MasterParseError e) noexcept {
     switch (e) {
-        case KiteParseError::BadNumber:  return UdiffError::BadNumber;
-        case KiteParseError::BadDecimal: return UdiffError::BadDecimal;
-        case KiteParseError::BadDate:    return UdiffError::BadDate;
-        case KiteParseError::Overflow:   return UdiffError::Overflow;
+        case MasterParseError::BadNumber:  return UdiffError::BadNumber;
+        case MasterParseError::BadDecimal: return UdiffError::BadDecimal;
+        case MasterParseError::BadDate:    return UdiffError::BadDate;
+        case MasterParseError::Overflow:   return UdiffError::Overflow;
         default:                         return UdiffError::BadNumber;
     }
 }
@@ -90,7 +90,7 @@ namespace detail {
 /// Trim ASCII spaces from both ends. UDiFF itself is unpadded, but the NSE
 /// family of files is not consistent about it and a stray space in a symbol
 /// silently breaks P1-06's key match.
-[[nodiscard]] inline KiteField udiff_trim(KiteField f) noexcept {
+[[nodiscard]] inline MasterField udiff_trim(MasterField f) noexcept {
     while (f.n > 0 && f.p[0] == ' ') { ++f.p; --f.n; }
     while (f.n > 0 && f.p[f.n - 1] == ' ') { --f.n; }
     return f;
@@ -105,23 +105,23 @@ parse_udiff_header(const char* header, std::size_t len) noexcept {
     if (header == nullptr || len == 0) {
         return std::unexpected(UdiffError::BadHeader);
     }
-    detail::KiteField f[64];
-    const std::size_t n = detail::kite_split(header, len, f, 64);
+    detail::MasterField f[64];
+    const std::size_t n = detail::master_split(header, len, f, 64);
     if (n < 2 || n > 64) {
         return std::unexpected(UdiffError::BadHeader);
     }
 
     UdiffColumns c{};
     for (std::size_t i = 0; i < n; ++i) {
-        const detail::KiteField t = detail::udiff_trim(f[i]);
+        const detail::MasterField t = detail::udiff_trim(f[i]);
         const int idx = static_cast<int>(i);
-        if (detail::kite_field_is(t, "FinInstrmTp"))       { c.fin_instrm_tp = idx; }
-        else if (detail::kite_field_is(t, "TckrSymb"))     { c.tckr_symb = idx; }
-        else if (detail::kite_field_is(t, "FinInstrmNm"))  { c.fin_instrm_nm = idx; }
-        else if (detail::kite_field_is(t, "XpryDt"))       { c.xpry_dt = idx; }
-        else if (detail::kite_field_is(t, "StrkPric"))     { c.strk_pric = idx; }
-        else if (detail::kite_field_is(t, "OptnTp"))       { c.optn_tp = idx; }
-        else if (detail::kite_field_is(t, "NewBrdLotQty")) { c.lot_qty = idx; }
+        if (detail::master_field_is(t, "FinInstrmTp"))       { c.fin_instrm_tp = idx; }
+        else if (detail::master_field_is(t, "TckrSymb"))     { c.tckr_symb = idx; }
+        else if (detail::master_field_is(t, "FinInstrmNm"))  { c.fin_instrm_nm = idx; }
+        else if (detail::master_field_is(t, "XpryDt"))       { c.xpry_dt = idx; }
+        else if (detail::master_field_is(t, "StrkPric"))     { c.strk_pric = idx; }
+        else if (detail::master_field_is(t, "OptnTp"))       { c.optn_tp = idx; }
+        else if (detail::master_field_is(t, "NewBrdLotQty")) { c.lot_qty = idx; }
     }
     // Every one of these is load-bearing. NewBrdLotQty especially: without it
     // this file is not the primary authority for anything.
@@ -144,20 +144,20 @@ parse_udiff_row(const char* row, std::size_t len, const UdiffColumns& cols,
     if (row == nullptr || len == 0) {
         return std::unexpected(UdiffError::TooFewFields);
     }
-    detail::KiteField f[64];
-    const std::size_t n = detail::kite_split(row, len, f, 64);
+    detail::MasterField f[64];
+    const std::size_t n = detail::master_split(row, len, f, 64);
     const int need = cols.lot_qty;
     if (n <= static_cast<std::size_t>(need)) {
         return std::unexpected(UdiffError::TooFewFields);
     }
 
-    const detail::KiteField tp   = detail::udiff_trim(f[cols.fin_instrm_tp]);
-    const detail::KiteField sym  = detail::udiff_trim(f[cols.tckr_symb]);
-    const detail::KiteField nm   = detail::udiff_trim(f[cols.fin_instrm_nm]);
-    const detail::KiteField xp   = detail::udiff_trim(f[cols.xpry_dt]);
-    const detail::KiteField sk   = detail::udiff_trim(f[cols.strk_pric]);
-    const detail::KiteField ot   = detail::udiff_trim(f[cols.optn_tp]);
-    const detail::KiteField lot  = detail::udiff_trim(f[cols.lot_qty]);
+    const detail::MasterField tp   = detail::udiff_trim(f[cols.fin_instrm_tp]);
+    const detail::MasterField sym  = detail::udiff_trim(f[cols.tckr_symb]);
+    const detail::MasterField nm   = detail::udiff_trim(f[cols.fin_instrm_nm]);
+    const detail::MasterField xp   = detail::udiff_trim(f[cols.xpry_dt]);
+    const detail::MasterField sk   = detail::udiff_trim(f[cols.strk_pric]);
+    const detail::MasterField ot   = detail::udiff_trim(f[cols.optn_tp]);
+    const detail::MasterField lot  = detail::udiff_trim(f[cols.lot_qty]);
 
     ContractSpec s{};
     s.id = InstrumentId::Invalid;
@@ -175,11 +175,11 @@ parse_udiff_row(const char* row, std::size_t len, const UdiffColumns& cols,
     // FinInstrmTp. An unrecognised value BLOCKS rather than defaulting: every
     // unknown row would otherwise become a tradable future at some guessed
     // segment (rule 9).
-    if (detail::kite_field_is(tp, "IDF") || detail::kite_field_is(tp, "STF")) {
+    if (detail::master_field_is(tp, "IDF") || detail::master_field_is(tp, "STF")) {
         s.segment = Segment::Fut;
         s.opt_type = OptionType::None;
-    } else if (detail::kite_field_is(tp, "IDO")
-               || detail::kite_field_is(tp, "STO")) {
+    } else if (detail::master_field_is(tp, "IDO")
+               || detail::master_field_is(tp, "STO")) {
         s.segment = Segment::Opt;
     } else {
         return std::unexpected(UdiffError::UnknownInstrumentType);
@@ -196,10 +196,10 @@ parse_udiff_row(const char* row, std::size_t len, const UdiffColumns& cols,
     std::memcpy(s.symbol, nm.p, nm.n);
     s.symbol[nm.n] = '\0';
 
-    // Expiry. Same ISO grammar as Kite, so the same proven converter.
-    const auto xpry = parse_kite_expiry(xp.p, xp.n);
+    // Expiry. Same ISO grammar as the instrument master, so the same proven converter.
+    const auto xpry = parse_master_expiry(xp.p, xp.n);
     if (!xpry) {
-        return std::unexpected(detail::from_kite_err(xpry.error()));
+        return std::unexpected(detail::from_master_err(xpry.error()));
     }
     s.expiry = *xpry;
 
@@ -212,9 +212,9 @@ parse_udiff_row(const char* row, std::size_t len, const UdiffColumns& cols,
         }
         s.strike = Price{0};
     } else {
-        if (detail::kite_field_is(ot, "CE")) {
+        if (detail::master_field_is(ot, "CE")) {
             s.opt_type = OptionType::CE;
-        } else if (detail::kite_field_is(ot, "PE")) {
+        } else if (detail::master_field_is(ot, "PE")) {
             s.opt_type = OptionType::PE;
         } else {
             return std::unexpected(UdiffError::UnknownInstrumentType);
@@ -223,7 +223,7 @@ parse_udiff_row(const char* row, std::size_t len, const UdiffColumns& cols,
         // a strike of 0.05 read through one truncates to 4 paise.
         const auto strike = parse_rupees_to_paise(sk.p, sk.n);
         if (!strike) {
-            return std::unexpected(detail::from_kite_err(strike.error()));
+            return std::unexpected(detail::from_master_err(strike.error()));
         }
         s.strike = *strike;
     }
@@ -231,7 +231,7 @@ parse_udiff_row(const char* row, std::size_t len, const UdiffColumns& cols,
     // The lot size. Rule 1's headline number, and the whole reason this file
     // is primary.
     std::uint64_t lotv = 0;
-    if (!detail::kite_parse_u64(lot.p, lot.n, 0x7FFF'FFFFull, lotv)
+    if (!detail::master_parse_u64(lot.p, lot.n, 0x7FFF'FFFFull, lotv)
         || lotv == 0) {
         return std::unexpected(UdiffError::BadNumber);
     }
@@ -241,7 +241,7 @@ parse_udiff_row(const char* row, std::size_t len, const UdiffColumns& cols,
     // rather than defaulted to 5 paise, which would be a literal and a guess.
     s.tick_size = Price{0};
 
-    s.source_hash = detail::kite_fnv1a(row, len);
+    s.source_hash = detail::master_fnv1a(row, len);
     return s;
 }
 

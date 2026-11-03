@@ -350,8 +350,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    // LIVE BY DEFAULT: the Terminal starts the live feed itself (FYERS, else
-    // Kite) when nothing is streaming a few seconds after it opens. A capture
+    // LIVE BY DEFAULT: the Terminal starts the live feed itself (FYERS)
+    // when nothing is streaming a few seconds after it opens. A capture
     // or check run (--page, --stream, --terminal-view, --compute, --train)
     // and --no-live-feed leave it alone.
     const bool scripted = args.contains(QStringLiteral("--page")) || args.contains(QStringLiteral("--stream"))
@@ -370,8 +370,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    // --reload-tape exercises the path the Link Kite button takes after the
-    // dataset updater runs, WITHOUT spending a daily Kite token.
+    // --reload-tape exercises the path the Link Broker button takes after the
+    // dataset updater runs, WITHOUT spending a daily FYERS token.
     //
     // P34-01. reload_tape() swaps the grid off main()'s borrowed tape and on
     // to storage the window owns, then restarts the replayer against it. A
@@ -384,7 +384,7 @@ int main(int argc, char** argv) {
         // one case where a BROKEN reload and a working one produce
         // identical output, because the bar count cannot have changed.
         // Eight seconds is long enough to alter a file underneath a
-        // running window, which is what the Link Kite path does for
+        // running window, which is what the Link Broker path does for
         // real: the updater is a subprocess and it writes while this
         // window is up.
         QTimer::singleShot(8000, &window, [&window] {

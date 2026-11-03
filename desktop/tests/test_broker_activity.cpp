@@ -23,10 +23,10 @@ QString fixture(qint64 observed = 1000, qint64 expires = 1100) {
  "schema_version":1,
  "observed_at_unix":%1,
  "expires_at_unix":%2,
- "routes":{"data_primary":"FYERS","data_fallback":"KITE","order_primary":"KITE","mode":"PAPER","revision":7},
+ "routes":{"data_primary":"FYERS","data_fallback":"NONE","order_primary":"FYERS","mode":"PAPER","revision":7},
  "brokers":[
-  {"broker":"FYERS","omitted_events":2,"events":[{"event_id":"1:1","occurred_at_unix":1002,"source":"account","kind":"auth","message":"session verified","correlation_id":"9:1"}]},
-  {"broker":"KITE","omitted_events":1,"events":[{"event_id":"2:1","occurred_at_unix":1001,"source":"feed","kind":"error","message":"helper unavailable"}]}
+  {"broker":"FYERS","omitted_events":3,"events":[{"event_id":"1:1","occurred_at_unix":1002,"source":"account","kind":"auth","message":"session verified","correlation_id":"9:1"},
+                                                {"event_id":"2:1","occurred_at_unix":1001,"source":"feed","kind":"error","message":"helper unavailable"}]}
  ]
 })json").arg(observed).arg(expires);
 }
@@ -54,8 +54,8 @@ int main(int argc, char** argv) {
     const auto loaded = altair::ui::read_activity_projection(path, now);
     check(loaded.has_value(), "valid projection is accepted");
     if (loaded) {
-        check(loaded->events.size() == 2, "both broker event streams are retained");
-        check(loaded->events[0].broker == QStringLiteral("KITE"),
+        check(loaded->events.size() == 2, "every event is retained");
+        check(loaded->events[0].event_id == QStringLiteral("2:1"),
               "events are ordered by occurrence time");
         check(loaded->omitted_events == 3, "bounded retention overflow is visible");
         check(loaded->events[1].correlation_id == QStringLiteral("9:1"),
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
 
     altair::ui::BrokerActivityPanel panel(live_path);
     check(panel.projection_valid(), "activity panel accepts valid projection");
-    check(panel.visible_event_count() == 2, "activity panel renders both providers");
+    check(panel.visible_event_count() == 2, "activity panel renders every event");
     auto* filter = panel.findChild<QLineEdit*>(QStringLiteral("activityFilter"));
     check(filter != nullptr, "activity filter is discoverable");
     if (filter != nullptr) {

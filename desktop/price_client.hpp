@@ -1,11 +1,11 @@
 // desktop/price_client.hpp -- the window subscribes, it does not fetch.
 //
 // P37-04. The other half of app/price_service_main.cpp. The service owns the
-// Kite connection; this connects to its loopback port and reads frames.
+// FYERS connection; this connects to its loopback port and reads frames.
 //
 // WHAT THIS REPLACES, AND WHY IT IS BETTER THAN WHAT IT REPLACES.
 //
-// desktop/live_feed.hpp runs altair_kite_ticker for N seconds, waits for it to
+// desktop/live_feed.hpp runs altair_fyers_ticker for N seconds, waits for it to
 // exit, and reads the JSON file it left behind. It is a SAMPLE, and it says so
 // honestly -- but the depth ladder has been passed a null book since the day it
 // was written (main_window.hpp: `ladder_->show_book(nullptr)`), because a

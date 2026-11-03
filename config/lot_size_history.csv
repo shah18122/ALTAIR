@@ -20,8 +20,8 @@
 #
 # ── WHAT IS VERIFIED ────────────────────────────────────────────────────────
 #
-# Read from data/instruments.csv, the Kite instrument master downloaded
-# 2026-09-04, through instruments/kite_dump.hpp -- the same parser the engine
+# Read from data/instruments.csv, the broker instrument master downloaded
+# 2026-09-04, through instruments/master_csv.hpp -- the same parser the engine
 # loads specs with. Futures and options agree on both symbols, which is the
 # cross-check: they are separate rows in the master.
 #
@@ -56,7 +56,7 @@
 # needed because nothing has been snapshotting the master. From today that is
 # one command:
 #
-#     altair_kite_fetch --dump-instruments data/masters/YYYY-MM-DD.csv
+#     altair_instrument_master --go --out data/masters/YYYY-MM-DD.csv
 #
 # run daily. A year of those and the history builds itself, verifiably, and
 # this file becomes the record of what happened BEFORE anyone was looking
@@ -73,9 +73,9 @@
 #
 symbol,effective_from,effective_to,lot_size,tick_paise,source,verified
 NIFTY,UNKNOWN,2026-09-29,,,NSE F&O lot-size circulars — NOT YET TRANSCRIBED,NO
-NIFTY,2026-09-29,OPEN,65,10,data/instruments.csv via instruments/kite_dump.hpp,2026-09-04
+NIFTY,2026-09-29,OPEN,65,10,data/instruments.csv via instruments/master_csv.hpp,2026-09-04
 BANKNIFTY,UNKNOWN,2026-09-29,,,NSE F&O lot-size circulars — NOT YET TRANSCRIBED,NO
-BANKNIFTY,2026-09-29,OPEN,30,20,data/instruments.csv via instruments/kite_dump.hpp,2026-09-04
+BANKNIFTY,2026-09-29,OPEN,30,20,data/instruments.csv via instruments/master_csv.hpp,2026-09-04
 #
 # The two UNKNOWN rows are deliberately unusable: no lot size, no tick, and
 # verified=NO. Anything that reads this file and finds an UNKNOWN row covering

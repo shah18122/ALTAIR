@@ -42,19 +42,18 @@ skip_first_minutes  = 5
 # DATA FEEDS
 # ───────────────────────────────────────────────────────────────────────────
 [feed]
-primary            = "fyers"       # fyers | kite
-secondary          = "kite"
+primary            = "fyers"       # FYERS is the only broker
+secondary          = "xts"         # feed/failover.hpp: FYERS, then XTS
 failover_enabled   = true
 staleness_ms       = 250           # no tick for this long -> switch primary
 failback_stable_s  = 60            # primary must be healthy this long to return
 record_all_ticks   = true
 
 [broker]
-# FYERS is the configured primary account. Kite is the explicitly selected
-# secondary. An uncertain order is reconciled at the
-# submitting broker; it is never retried blindly at the other broker.
+# FYERS is the only broker account. An uncertain order is reconciled at
+# FYERS; it is never retried blindly anywhere else.
 primary            = "fyers"
-secondary          = "kite"
+secondary          = "none"
 execution_failover = "reconcile_only"
 
 [feed.fyers]
@@ -70,20 +69,6 @@ redirect_url_env = "ALTAIR_FYERS_REDIRECT_URI"
 data_mode      = "quote_depth"
 max_subscriptions = 200
 
-[feed.kite]
-enabled     = true
-# Credentials come from environment variables, never from this file.
-api_key_env    = "ALTAIR_KITE_API_KEY"
-api_secret_env = "ALTAIR_KITE_API_SECRET"
-# Not secrets: the redirect is public (it appears in the login URL the browser
-# follows) and the postback is an endpoint Zerodha calls. Both are registered
-# on the Kite app and must match it byte for byte or login fails with a
-# checksum error that does not say why.
-redirect_url   = "https://altair.thesmitshah.com/zerodha/callback"
-postback_url   = "https://altair.thesmitshah.com/zerodha/postback"
-ws_mode        = "full"            # ltp | quote | full  (full = 5-level depth)
-max_subscriptions = 3000
-
 [feed.xts]
 enabled     = true
 md_key_env      = "ALTAIR_XTS_MD_KEY"
@@ -98,7 +83,7 @@ max_subscriptions = 3000
 # ───────────────────────────────────────────────────────────────────────────
 [instruments]
 refresh_time         = "08:15"     # IST, pre-open
-sources              = ["nse", "bse", "fyers", "kite"]
+sources              = ["nse", "bse", "fyers"]
 require_agreement_on = ["lot_size", "tick_size", "expiry", "strike"]
 on_disagreement      = "block_symbol"   # block_symbol | block_all | warn_only
 snapshot_dir         = "data/instruments"

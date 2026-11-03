@@ -677,7 +677,7 @@ struct LiveIv { double iv = std::numeric_limits<double>::quiet_NaN(), delta = st
     return p->last_paise;
 }
 
-/// The cash index each index's options are written on (Kite tokens).
+/// The cash index each index's options are written on (ALTAIR tokens).
 [[nodiscard]] inline quint32 index_spot_token(const QString& under) {
     if (under == QLatin1String("NIFTY")) return 256265u;
     if (under == QLatin1String("BANKNIFTY")) return 260105u;
@@ -1492,7 +1492,7 @@ public:
         write_chain_request(chain_->requested());
     }
 
-    /// Add a scrip to the active watchlist by Kite token. It is written to
+    /// Add a scrip to the active watchlist by ALTAIR token. It is written to
     /// data/live/watchlist.csv, which the price service streams (added to the
     /// running socket, no reconnect). False when the master does not know it.
     bool add_scrip(quint32 token) {
@@ -1796,7 +1796,7 @@ private:
         r.token = m.token;
         r.symbol = m.symbol;
         // FYERS names until the feed's universe.csv brings the real ones (live/fyers_names.hpp):
-        // NSE equity "-EQ" unless the symbol carries a two-letter series, BSE group A, F&O as Kite names them.
+        // NSE equity "-EQ" unless the symbol carries a two-letter series, BSE group A, F&O as the master names them.
         r.fyers = m.exchange == QLatin1String("NSE")
                       ? (m.symbol.size() > 3 && m.symbol.lastIndexOf(QLatin1Char('-')) == m.symbol.size() - 3
                              ? QStringLiteral("NSE:%1").arg(m.symbol)
@@ -1835,8 +1835,8 @@ private:
         master_loaded_ = true;
         install_master(load_master_scrips(root_ + QStringLiteral("/data/instruments.csv")));
         if (master_.empty()) {
-            note_ = QStringLiteral("No instrument master at data/instruments.csv: run altair_kite_update (or the "
-                                   "fetch scripts) to get it, then scrips can be added and any chain opened.");
+            note_ = QStringLiteral("No instrument master at data/instruments.csv: run altair_instrument_master --go "
+                                   "to build it, then scrips can be added and any chain opened.");
             refresh_status();
         }
     }

@@ -40,7 +40,7 @@ enum class ActivityProjectionError : std::uint8_t {
 }
 
 [[nodiscard]] inline std::string projection_broker_name(broker_view::BrokerId broker) {
-    return broker == broker_view::BrokerId::Fyers ? "FYERS" : "KITE";
+    return broker == broker_view::BrokerId::Fyers ? "FYERS" : "NONE";
 }
 
 [[nodiscard]] inline std::string projection_kind(broker_view::BrokerLogKind kind) {
@@ -99,19 +99,19 @@ template <class Service>
     return static_cast<bool>(out);
 }
 
-/// Publish both providers' bounded logs and the explicit route choice.
+/// Publish the FYERS service's bounded log and the explicit route choice.
 /// `now` and `ttl_seconds` are supplied by the supervisor, making expiry
 /// deterministic in tests and preventing a stale file from looking live.
-template <class FyersService, class KiteService>
+template <class FyersService>
 [[nodiscard]] inline std::expected<void, ActivityProjectionError>
 publish_activity_projection(const std::filesystem::path& destination,
                              const broker_view::Routes& routes,
                              const FyersService& fyers,
-                             const KiteService& kite,
                              Timestamp now,
                              std::int64_t ttl_seconds = 10) {
     if (!broker_view::valid(routes.data_primary)
-        || !broker_view::valid(routes.data_fallback)
+        || (routes.data_fallback != broker_view::BrokerId::None
+            && !broker_view::valid(routes.data_fallback))
         || !broker_view::valid(routes.order_primary)
         || routes.revision == 0 || ttl_seconds <= 0 || now <= Timestamp::epoch())
         return std::unexpected(ActivityProjectionError::InvalidRoutes);
@@ -138,8 +138,6 @@ publish_activity_projection(const std::filesystem::path& destination,
                                                                                               : "LIVE_ARMED")
             << ",\"revision\":" << routes.revision << "},\"brokers\":[";
         if (!projection_events(fyers, out)) return std::unexpected(ActivityProjectionError::InvalidEvent);
-        out << ',';
-        if (!projection_events(kite, out)) return std::unexpected(ActivityProjectionError::InvalidEvent);
         out << "]}\n";
         if (!out) return std::unexpected(ActivityProjectionError::Write);
     }
@@ -154,16 +152,16 @@ publish_activity_projection(const std::filesystem::path& destination,
 }
 
 /// One bounded supervisor step. The application loop calls this at its chosen
-/// cadence (typically once per poll interval); both services are pumped before
-/// one atomic projection is replaced, so the desktop never combines files from
-/// different service observations.
-template <class FyersService, class KiteService>
+/// cadence (typically once per poll interval); the service is pumped before
+/// one atomic projection is replaced, so the desktop never reads a file from
+/// an older observation.
+template <class FyersService>
 class BrokerActivitySupervisor {
 public:
-    BrokerActivitySupervisor(FyersService& fyers, KiteService& kite,
+    BrokerActivitySupervisor(FyersService& fyers,
                              std::filesystem::path destination,
                              broker_view::Routes routes) noexcept
-        : fyers_(fyers), kite_(kite), destination_(std::move(destination)),
+        : fyers_(fyers), destination_(std::move(destination)),
           routes_(routes) {}
 
     /// Run one service cycle at explicit UTC nanoseconds. No wall-clock read is
@@ -171,8 +169,7 @@ public:
     [[nodiscard]] std::expected<void, ActivityProjectionError>
     step(Timestamp now, std::int64_t ttl_seconds = 10) {
         (void)fyers_.pump(now);
-        (void)kite_.pump(now);
-        return publish_activity_projection(destination_, routes_, fyers_, kite_,
+        return publish_activity_projection(destination_, routes_, fyers_,
                                            now, ttl_seconds);
     }
 
@@ -180,7 +177,6 @@ public:
 
 private:
     FyersService& fyers_;
-    KiteService& kite_;
     std::filesystem::path destination_;
     broker_view::Routes routes_{};
 };

@@ -1,14 +1,14 @@
 // desktop/live_feed.hpp -- the live tick feed, in the window.
 //
-// P32-07. `app/kite_ticker_main.cpp` opens the WebSocket, decodes with
-// `feed/kite_decoder.hpp` and writes a status file. This runs it and reads
-// that file.
+// P32-07. `app/fyers_ticker_main.cpp` opens the FYERS HSM data socket,
+// decodes with `feed/fyers_hsm.hpp` and writes a status file. This runs it
+// and reads that file.
 //
 // SAME BOUNDARY AS EVERY OTHER LIVE THING IN THIS UI.
 //
 // `desktop/` may not link `broker/` -- the gate-3 allow-list refuses it at
 // configure time -- so this launches a subprocess and reads what it wrote,
-// exactly as Link Kite (P26-01), the quote refresh (P29-02) and the account
+// exactly as the FYERS login, the quote refresh (P29-02) and the account
 // fetch (P32-02) do. No credential enters this address space.
 //
 // IT IS A BOUNDED RUN, AND THE PANEL SAYS SO RATHER THAN IMPLYING A STREAM.
@@ -68,8 +68,8 @@ public:
             QStringLiteral(
                 "<b>LIVE TICKS — the WebSocket feed.</b><br>"
                 "Runs the broker's ticker as a subprocess: "
-                "<code>altair_fyers_ticker</code> (FYERS, primary — the official "
-                "HSM data socket) or <code>altair_kite_ticker</code> (Kite). It "
+                "<code>altair_fyers_ticker</code> (FYERS — the official "
+                "HSM data socket). It "
                 "decodes with the same decoder the replayer uses and writes a "
                 "status file this panel reads. This window has no network and "
                 "no credential.<br><br>"
@@ -83,8 +83,6 @@ public:
         v->addWidget(head);
 
         auto* row = new QHBoxLayout;
-        broker_ = new QComboBox(this);
-        broker_->addItems({QStringLiteral("FYERS (primary)"), QStringLiteral("Kite")});
         secs_ = new QSpinBox(this);
         secs_->setRange(5, 300);
         secs_->setValue(15);
@@ -93,7 +91,6 @@ public:
         listen_->setStyleSheet(action_button_css(true));
         status_ = new QLabel(this);
         set_role(status_, QStringLiteral("note"));
-        row->addWidget(broker_);
         row->addWidget(new QLabel(QStringLiteral("Listen for"), this));
         row->addWidget(secs_);
         row->addWidget(listen_);
@@ -113,14 +110,12 @@ public:
         v->addWidget(note_);
 
         connect(listen_, &QPushButton::clicked, this, &LiveFeedPanel::listen);
-        connect(broker_, &QComboBox::currentIndexChanged, this, [this] { reload(); });
         reload();
     }
 
 public Q_SLOTS:
     void listen() {
-        QString exe = fyers() ? QStringLiteral("altair_fyers_ticker")
-                              : QStringLiteral("altair_kite_ticker");
+        QString exe = QStringLiteral("altair_fyers_ticker");
 #if defined(_WIN32)
         exe += QStringLiteral(".exe");
 #endif
@@ -157,8 +152,8 @@ public Q_SLOTS:
         proc.setProgram(found);
         QStringList args{QStringLiteral("--seconds"),
                          QString::number(secs_->value()),
-                         QStringLiteral("--go")};
-        if (fyers()) args << QStringLiteral("--depth");
+                         QStringLiteral("--go"),
+                         QStringLiteral("--depth")};
         proc.setArguments(args);
         proc.setProcessChannelMode(QProcess::MergedChannels);
 #ifdef ALTAIR_SOURCE_DIR
@@ -220,19 +215,17 @@ public Q_SLOTS:
             : age < 172800 ? QStringLiteral("%1 h ago").arg(age / 3600)
                            : QStringLiteral("%1 DAYS ago").arg(age / 86400);
 
-        // The two status files differ in names, not meaning: FYERS counts
-        // updates and socket frames where Kite counts data frames and
-        // heartbeats, and names instruments by symbol rather than token.
-        const bool fy = fyers();
+        // FYERS counts updates and socket frames, and names instruments by
+        // symbol rather than token.
         const auto num = [&o](const char* key) {
             return o.value(QString::fromLatin1(key)).toInt();
         };
-        const int frames = num(fy ? "updates" : "binary_frames");
-        const int beats = num(fy ? "frames" : "heartbeats");
+        const int frames = num("updates");
+        const int beats = num("frames");
         const int ticks = num("ticks");
         const int depth = num("depth_updates");
-        const int bad = num(fy ? "decode_errors" : "undecodable");
-        const int unk = num(fy ? "unknown_topic" : "unknown_token");
+        const int bad = num("decode_errors");
+        const int unk = num("unknown_topic");
 
         cards_->add_wide(new StatCard(
             QStringLiteral("sample taken"), age_s, 2,
@@ -242,15 +235,15 @@ public Q_SLOTS:
         cards_->add(new StatCard(QStringLiteral("ticks decoded"),
                                  QString::number(ticks),
                                  ticks > 0 ? 1 : 0));
-        cards_->add(new StatCard(fy ? QStringLiteral("updates") : QStringLiteral("data frames"),
+        cards_->add(new StatCard(QStringLiteral("updates"),
                                  QString::number(frames)));
-        cards_->add(new StatCard(fy ? QStringLiteral("socket frames") : QStringLiteral("heartbeats"),
+        cards_->add(new StatCard(QStringLiteral("socket frames"),
                                  QString::number(beats)));
         cards_->add(new StatCard(QStringLiteral("depth updates"),
                                  QString::number(depth)));
         cards_->add(new StatCard(QStringLiteral("undecodable"),
                                  QString::number(bad), bad > 0 ? -1 : 0));
-        cards_->add(new StatCard(fy ? QStringLiteral("unknown topic") : QStringLiteral("unknown token"),
+        cards_->add(new StatCard(QStringLiteral("unknown topic"),
                                  QString::number(unk), unk > 0 ? -1 : 0));
 
         const QJsonArray lasts = o.value(QStringLiteral("last")).toArray();
@@ -275,10 +268,7 @@ public Q_SLOTS:
         for (const auto& v : lasts) {
             const QJsonObject e = v.toObject();
             last_->insertRow(r);
-            account_cell(last_, r, 0,
-                         fy ? e.value(QStringLiteral("symbol")).toString()
-                            : QString::number(
-                                  e.value(QStringLiteral("token")).toInteger()));
+            account_cell(last_, r, 0, e.value(QStringLiteral("symbol")).toString());
             account_cell(
                 last_, r, 1,
                 QString::number(
@@ -304,19 +294,11 @@ public Q_SLOTS:
                 "subscription was accepted, and only heartbeats arrived. That "
                 "is what a closed market looks like — it is not a failure and "
                 "it is not a healthy feed either."));
-        } else if (depth == 0 && fy) {
+        } else if (depth == 0) {
             note_->setText(QStringLiteral(
                 "<b>%1 ticks, and no depth.</b> Indices have no order book; "
                 "depth arrives only for tradeable symbols subscribed with "
                 "<code>--depth</code>, and only while the market is open.").arg(ticks));
-        } else if (depth == 0) {
-            note_->setText(QStringLiteral(
-                "<b>%1 ticks, and no depth.</b> That is correct for the "
-                "default subscription: NIFTY 50, NIFTY BANK and INDIA VIX are "
-                "INDICES, and an index has no order book to publish. Kite "
-                "sends them as 32-byte index packets with no depth section, "
-                "in <i>full</i> mode or any other. Depth needs a tradeable "
-                "instrument — a future or an option.").arg(ticks));
         } else {
             note_->setText(QStringLiteral(
                 "<b>%1 ticks and %2 depth updates</b>, %3 undecodable. Every "
@@ -327,15 +309,11 @@ public Q_SLOTS:
     }
 
 private:
-    [[nodiscard]] bool fyers() const { return broker_ && broker_->currentIndex() == 0; }
-    /// FYERS writes data/fyers_ticks.json beside Kite's data/kite_ticks.json.
-    [[nodiscard]] QString ticks_file() const {
-        QString path = QStringLiteral(ALTAIR_TICKS_FILE);
-        if (fyers()) path.replace(QStringLiteral("kite_ticks.json"), QStringLiteral("fyers_ticks.json"));
-        return path;
+    /// altair_fyers_ticker writes data/fyers_ticks.json.
+    [[nodiscard]] static QString ticks_file() {
+        return QStringLiteral(ALTAIR_TICKS_FILE);
     }
 
-    QComboBox* broker_ = nullptr;
     QSpinBox* secs_ = nullptr;
     QPushButton* listen_ = nullptr;
     QLabel* status_ = nullptr;

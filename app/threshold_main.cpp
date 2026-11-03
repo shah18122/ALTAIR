@@ -139,7 +139,7 @@ Daily load_daily(const fs::path& dir) {
     return d;
 }
 
-/// The nearest index future's lot in the Kite master; `fallback` without it.
+/// The nearest index future's lot in data/instruments.csv; `fallback` without it.
 long long lot_from_master(const fs::path& master, const std::string& name, long long fallback) {
     std::ifstream in(master);
     std::string line, best_exp;

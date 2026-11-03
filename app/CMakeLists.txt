@@ -47,22 +47,18 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME app_paper_session COMMAND altair_paper_session_test)
 endif()
 
-# ── the Kite login, P2-10c ────────────────────────────────────────────────
+# ── the broker helpers ────────────────────────────────────────────────────
 #
-# A SEPARATE BINARY, not a mode of `altair`. It is run by hand a few times a
-# day, it is the only thing in the tree that reaches the public internet with
-# a credential, and it links OpenSSL. Folding it into the engine binary would
-# put a TLS stack and a secret-reading code path inside the process that
-# places orders, for no benefit.
+# SEPARATE BINARIES, not modes of `altair`. They reach the public internet
+# with a credential and link OpenSSL. Folding them into the engine binary
+# would put a TLS stack and a secret-reading code path inside the process
+# that places orders, for no benefit.
 #
 # Built only when the vcpkg `net` feature is present, so `--preset default`
 # keeps working with no vcpkg at all.
 if(ALTAIR_HAVE_NET)
     add_executable(altair_fyers_webhook fyers_webhook_main.cpp)
     target_link_libraries(altair_fyers_webhook PRIVATE altair_broker_net altair_flags)
-    add_executable(altair_kite_login kite_login_main.cpp)
-    target_link_libraries(altair_kite_login PRIVATE
-        altair_broker_net altair_credential_store altair_flags)
 
     # FYERS v3 OAuth helper. Kept as a separate credential-boundary process:
     # desktop/ opens the browser and never loads the app secret or token.
@@ -83,8 +79,8 @@ if(ALTAIR_HAVE_NET)
 
     # The live FYERS data feed: the official HSM socket protocol
     # (feed/fyers_hsm.hpp) over broker/fyers_data_socket.hpp into the existing
-    # FyersDataAdapter. Read-only; a separate process for the same reason as
-    # altair_kite_ticker.
+    # FyersDataAdapter. Read-only; a separate process so the credential stays
+    # out of the window and the engine.
     add_executable(altair_fyers_ticker fyers_ticker_main.cpp)
     target_link_libraries(altair_fyers_ticker PRIVATE
         altair_broker_net altair_feed altair_instruments altair_flags)
@@ -115,53 +111,20 @@ if(ALTAIR_HAVE_NET)
     target_compile_definitions(altair_fyers_chain PRIVATE
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-    # P2-12c. Fills dataset/ from the historical candle API. Separate binary
-    # from `altair` for the same reason altair_kite_login is: a tool that reads
-    # a live trading credential should not be inside the process that places
-    # orders, and it runs once by hand rather than in the engine's lifetime.
-    add_executable(altair_kite_fetch kite_fetch_main.cpp)
-    target_link_libraries(altair_kite_fetch PRIVATE
+    # P34-01. Brings dataset/ up to date from FYERS in one call, MERGING into
+    # the month files rather than replacing them (app/dataset_merge.hpp).
+    add_executable(altair_dataset_update dataset_update_main.cpp)
+    target_link_libraries(altair_dataset_update PRIVATE
         altair_broker_net altair_flags)
 
-    # P20-01. Snapshots the READ-ONLY account state for the UI to render.
-    # Separate binary for the same reason as the other two: desktop/ may not
-    # link broker/, so the network half lives out here and the window reads a
-    # file. Every endpoint it calls is read-only; place/modify/cancel are
-    # deliberately absent and belong to oms/.
-    add_executable(altair_kite_account kite_account_main.cpp)
-    target_link_libraries(altair_kite_account PRIVATE
-        altair_broker_net altair_flags)
+    # data/instruments.csv from the FYERS public symbol masters
+    # (live/instrument_master.hpp). Public files, no credential.
+    add_executable(altair_instrument_master instrument_master_main.cpp)
+    target_link_libraries(altair_instrument_master PRIVATE
+        altair_broker_net altair_live altair_flags)
+    target_include_directories(altair_instrument_master PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-    # P34-01. Brings dataset/ up to date in one call, MERGING into the month
-    # files rather than replacing them -- altair_kite_fetch refuses to
-    # overwrite an existing month, which is right for a bulk backfill and
-    # exactly wrong for a daily top-up, where the month being appended to is
-    # always the one already on disk.
-    add_executable(altair_kite_update kite_update_main.cpp)
-    target_link_libraries(altair_kite_update PRIVATE
-        altair_broker_net altair_flags)
-
-    # P32-07. THE LIVE TICK FEED. feed/kite_decoder.hpp has turned Kite's
-    # binary frames into Ticks since P2-02 and nothing had ever handed it a
-    # frame off a socket -- every "live" number in this tree has come from a
-    # replay file. Separate binary for the same reason as the other four: a
-    # program that reads a live trading credential does not belong inside the
-    # process holding positions, and desktop/ may not link broker/ at all.
-    add_executable(altair_kite_ticker kite_ticker_main.cpp)
-    target_link_libraries(altair_kite_ticker PRIVATE
-        altair_broker_net altair_feed altair_instruments altair_flags)
-
-    # P29-01. Snapshots /quote for the watchlist. broker/kite_quote.hpp has
-    # PARSED a quote since P20-03 with twenty-two green checks and nothing had
-    # ever FETCHED one, so the watchlist showed a replay price and no bid, no
-    # ask, no depth and no spread. The parser was written first deliberately --
-    # fetching is a socket and a header, parsing is where the bugs are -- and
-    # this is the other half. /quote is a GET; it has no order vocabulary.
-    add_executable(altair_kite_quote kite_quote_main.cpp)
-    target_link_libraries(altair_kite_quote PRIVATE
-        altair_broker_net altair_flags)
-
-    # P37-03. THE PRICE SERVICE. One process owns the Kite connection and
+    # P37-03. THE PRICE SERVICE. One process owns the FYERS connection and
     # republishes every tick on a loopback port as protocol frames, so the
     # window, the chain and the trainers stop each spawning their own fetcher.
     #
@@ -192,10 +155,9 @@ if(ALTAIR_HAVE_NET)
         set(_altair_helper_destination "bin")
     endif()
     install(TARGETS
-        altair_kite_login altair_fyers_login altair_kite_fetch
-        altair_kite_account altair_fyers_account altair_kite_update altair_kite_ticker
-        altair_kite_quote altair_fyers_history altair_fyers_chain altair_fyers_webhook altair_fyers_ticker
-        altair_fyers_quotes
+        altair_fyers_login altair_fyers_account altair_dataset_update
+        altair_instrument_master altair_fyers_history altair_fyers_chain
+        altair_fyers_webhook altair_fyers_ticker altair_fyers_quotes
         RUNTIME DESTINATION "${_altair_helper_destination}")
     if(TARGET altair_price_service)
         install(TARGETS altair_price_service
@@ -210,7 +172,7 @@ if(ALTAIR_HAVE_NET)
         add_test(NAME fyers_quotes_dry_run COMMAND altair_fyers_quotes
             --symbols-file ${CMAKE_SOURCE_DIR}/config/market_watch.txt
             --symbols NSE:NIFTY26SEP25000CE)
-        add_test(NAME kite_account_dry_run COMMAND altair_kite_account)
+        add_test(NAME dataset_update_dry_run COMMAND altair_dataset_update)
         add_test(NAME fyers_history_dry_run COMMAND altair_fyers_history
             --symbol NSE:SBIN-EQ --from 2026-09-01 --to 2026-09-02
             --out-1m fyers-1m.csv --out-5m fyers-5m.csv)
@@ -263,7 +225,7 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME note_reconcile COMMAND altair_note_reconcile_test)
 endif()
 
-# CX02-A1a / CX02-A2. What altair_kite_update and altair_kite_fetch write into
+# CX02-A1a / CX02-A2. What altair_dataset_update writes into
 # dataset/: exact price text (C14-001), and a merge and file replacement that
 # cannot lose a stored bar (C14-005/006/007). Header-only and offline -- the
 # fetch half needs a credential and is not exercised here. Links altair_broker
@@ -601,12 +563,6 @@ if(ALTAIR_BUILD_TESTS)
     target_include_directories(altair_fyers_price_frames_test
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME fyers_price_frames COMMAND altair_fyers_price_frames_test)
-    add_executable(altair_kite_price_frames_test tests/test_kite_price_frames.cpp)
-    target_link_libraries(altair_kite_price_frames_test PRIVATE
-        altair_server altair_feed altair_instruments altair_flags)
-    target_include_directories(altair_kite_price_frames_test
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    add_test(NAME kite_price_frames COMMAND altair_kite_price_frames_test)
 
     # The price service's bus: an owner thread, a ring from the sources, and
     # snapshots for late joiners only. Runs threads: label `concurrency`.

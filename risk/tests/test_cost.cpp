@@ -99,8 +99,9 @@ ChargeSchedule post_april()
     return s;
 }
 
-// Zerodha: Rs 20 or 0.03%, whichever is LOWER, for intraday and F&O.
-BrokerageRule zerodha_fo()
+// The common discount slab (FYERS publishes it too): Rs 20 or 0.03%,
+// whichever is LOWER, for intraday and F&O.
+BrokerageRule flat20_fo()
 {
     BrokerageRule b{};
     b.flat_per_order = Notional{2000};           // Rs 20 in paise
@@ -109,7 +110,7 @@ BrokerageRule zerodha_fo()
     return b;
 }
 
-BrokerageRule zerodha_delivery()
+BrokerageRule flat20_delivery()
 {
     return BrokerageRule{};                      // free
 }
@@ -141,7 +142,7 @@ void option_turnover_is_premium_not_notional()
     t.price = Price{5'000};                       // Rs 50 PREMIUM, in paise
     t.trade_ts = ist_date(2026, 9, 1);
 
-    const auto c = compute_cost(t, s, zerodha_fo());
+    const auto c = compute_cost(t, s, flat20_fo());
     check(c.has_value(), "the option trade prices");
     if (!c) { return; }
 
@@ -181,7 +182,7 @@ void side_decides_stt_and_stamp()
 {
     std::printf("\n2 side_decides_stt_and_stamp\n");
     const ChargeSchedule s = post_april();
-    const BrokerageRule b = zerodha_fo();
+    const BrokerageRule b = flat20_fo();
 
     const auto buy  = compute_cost(fut_trade(Side::Buy,  2'408'000, 65), s, b);
     const auto sell = compute_cost(fut_trade(Side::Sell, 2'408'000, 65), s, b);
@@ -204,9 +205,9 @@ void side_decides_stt_and_stamp()
     d.price = Price{150'000};
     d.trade_ts = ist_date(2026, 9, 1);
     d.side = Side::Buy;
-    const auto db = compute_cost(d, s, zerodha_delivery());
+    const auto db = compute_cost(d, s, flat20_delivery());
     d.side = Side::Sell;
-    const auto ds = compute_cost(d, s, zerodha_delivery());
+    const auto ds = compute_cost(d, s, flat20_delivery());
     check(db.has_value() && ds.has_value(), "delivery prices both ways");
     check(db->stt.raw() > 0 && ds->stt.raw() > 0,
           "DELIVERY charges STT on BOTH sides -- a calculator that assumed "
@@ -229,7 +230,7 @@ void the_schedule_follows_the_trade_date()
     check(m != nullptr && a != nullptr, "both dates find a schedule");
     check(m != a, "and they are different schedules");
 
-    const BrokerageRule b = zerodha_fo();
+    const BrokerageRule b = flat20_fo();
     const Trade t = fut_trade(Side::Sell, 2'408'000, 65);
     const auto cm = compute_cost(t, *m, b);
     const auto ca = compute_cost(t, *a, b);
@@ -262,7 +263,7 @@ void gst_excludes_stt_and_stamp()
     std::printf("\n4 gst_excludes_stt_and_stamp\n");
     const ChargeSchedule s = post_april();
     const auto c = compute_cost(fut_trade(Side::Sell, 2'408'000, 65), s,
-                                zerodha_fo());
+                                flat20_fo());
     check(c.has_value(), "the trade prices");
     if (!c) { return; }
 
@@ -326,7 +327,7 @@ void brokerage_takes_the_lower()
 {
     std::printf("\n6 brokerage_takes_the_lower\n");
     const ChargeSchedule s = post_april();
-    const BrokerageRule b = zerodha_fo();          // Rs 20 or 0.03%, lower
+    const BrokerageRule b = flat20_fo();          // Rs 20 or 0.03%, lower
 
     // Small trade: 0.03% is under Rs 20.
     const auto small = compute_cost(fut_trade(Side::Buy, 100'000, 1), s, b);
@@ -340,7 +341,7 @@ void brokerage_takes_the_lower()
           "applies -- 'whichever is lower' is a min, not a sum");
 
     const auto free = compute_cost(fut_trade(Side::Buy, 2'408'000, 65), s,
-                                   zerodha_delivery());
+                                   flat20_delivery());
     check(free.has_value() && free->brokerage == Notional{0},
           "and a zero rule charges nothing");
 }
@@ -351,7 +352,7 @@ void round_trip_is_what_a_signal_must_beat()
 {
     std::printf("\n7 round_trip_is_what_a_signal_must_beat\n");
     const ChargeSchedule s = post_april();
-    const BrokerageRule b = zerodha_fo();
+    const BrokerageRule b = flat20_fo();
 
     const Trade t = fut_trade(Side::Buy, 2'408'000, 65);
     const auto rt = round_trip_cost(t, s, b);
@@ -382,7 +383,7 @@ void refusals_and_provenance()
 {
     std::printf("\n8 refusals_and_provenance\n");
     const ChargeSchedule s = post_april();
-    const BrokerageRule b = zerodha_fo();
+    const BrokerageRule b = flat20_fo();
 
     const auto zero = compute_cost(fut_trade(Side::Buy, 2'408'000, 0), s, b);
     check(!zero.has_value() && zero.error() == CostError::BadQuantity,

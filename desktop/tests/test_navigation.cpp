@@ -24,11 +24,11 @@ void routes(QMenu* menu, QList<QAction*>& out) {
 using namespace altair::ui;
 void registry_contract() {
     const QStringList expected{
-        "Live Grid", "Chart", "Terminal", "Models", "Data Flow", "Kite Account",
+        "Live Grid", "Chart", "Terminal", "Models", "Data Flow", "Broker Account",
         "Cost", "Analytics", "Pair Trading", "Value — DCF", "Aggregator", "Audit Trail",
         "Execution", "Volatility", "Risk — VaR", "Portfolio", "ML — Trees", "Regimes",
         "Forecast", "Strategies", "Overnight Gap", "Options", "Basis", "Flagging",
-        "Microstructure", "Sizing & Limits", "Cointegration", "Memory", "Link Kite",
+        "Microstructure", "Sizing & Limits", "Cointegration", "Memory", "Link Broker",
         "Neural", "Features", "Arbitrage", "Model Atlas", "FYERS Primary", "Brokers",
         "Demo Trading", "Threshold", "About", "Start here", "Backtests", "Daily findings", "Work log", "Order Book Imbalance"};
     check(nav_page_names() == expected,
@@ -206,7 +206,7 @@ void search_keyboard() {
     auto* query = search.findChild<QLineEdit*>();
     auto* results = search.findChild<QListWidget*>();
     check(results->count() == 38, "search exposes every canonical destination, model pages included");
-    for (const auto& alias : {QStringLiteral("Kite"), QStringLiteral("FYERS"), QStringLiteral("Link Kite")}) {
+    for (const auto& alias : {QStringLiteral("Broker Account"), QStringLiteral("FYERS"), QStringLiteral("Link Broker")}) {
         query->setText(alias);
         check(results->count() == 1 && results->item(0)->data(Qt::UserRole).toInt() == 34,
               "old broker labels search to the single Brokers destination");
@@ -301,8 +301,8 @@ void legacy_route_migration() {
     for (const int old_page : {0, 1, 5, 28, 33}) {
         NavigationState state;
         state.page = old_page;
-        state.favourites = {"market.grid", "market.chart", "accounts.kite", "accounts.connections", "accounts.fyers"};
-        state.recent = {nav_page_id(old_page), "market.grid", "accounts.kite", "accounts.fyers"};
+        state.favourites = {"market.grid", "market.chart", "accounts.account", "accounts.connections", "accounts.fyers"};
+        state.recent = {nav_page_id(old_page), "market.grid", "accounts.account", "accounts.fyers"};
         state.expanded_width = 320;
         write_navigation_state(settings, state);
         WorkspaceNavigation nav;

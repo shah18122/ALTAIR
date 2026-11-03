@@ -41,11 +41,11 @@ Normaliser::Config base_cfg()
     c.gate.max_future_skew = duration::seconds(2);
     c.gate.require_monotonic = false;
     c.gate.enforce_session = false;
-    c.active = FeedSource::Kite;
+    c.active = FeedSource::Fyers;
     return c;
 }
 
-Tick mk(std::uint32_t id, Timestamp ts, FeedSource src = FeedSource::Kite)
+Tick mk(std::uint32_t id, Timestamp ts, FeedSource src = FeedSource::Fyers)
 {
     Tick t{};
     t.id = static_cast<InstrumentId>(id);
@@ -144,7 +144,7 @@ void floor_breach_flags_but_publishes()
 }
 
 // ── 4 ────────────────────────────────────────────────────────────────────
-// The direct consequence of P2-02's finding: Kite's exchange_ts is
+// The direct consequence of P2-02's finding: FYERS's exchange_ts is
 // one-second resolution, so many ticks legitimately share a second.
 void equal_timestamps_are_normal()
 {
@@ -207,7 +207,7 @@ void inactive_source_is_not_published()
 
     // It must not have disturbed per-instrument history either, or the standby
     // feed running ahead would make every active tick look regressed.
-    Tick active = mk(1, kNow + duration::seconds(10), FeedSource::Kite);
+    Tick active = mk(1, kNow + duration::seconds(10), FeedSource::Fyers);
     check(g_n.submit(active, kNow + duration::seconds(21)) == Verdictum::Publish,
           "an active tick EARLIER than the standby one still publishes");
     check(g_n.stats().out_of_order == 0,
@@ -223,7 +223,7 @@ void seq_survives_a_failover()
 
     std::uint32_t seen[6]{};
     for (int i = 0; i < 3; ++i) {
-        Tick t = mk(1, kNow + duration::seconds(i), FeedSource::Kite);
+        Tick t = mk(1, kNow + duration::seconds(i), FeedSource::Fyers);
         (void)g_n.submit(t, kNow + duration::seconds(10));
         seen[i] = t.seq;
     }
@@ -263,7 +263,7 @@ void depth_shares_the_path()
     d.id = static_cast<InstrumentId>(1);
     d.exchange_ts = kNow;
     d.recv_ts = kNow;
-    d.source = FeedSource::Kite;
+    d.source = FeedSource::Fyers;
     d.bid[0] = DepthLevel{Price{2'500'000}, Qty{100}, 3, 0};
     d.ask[0] = DepthLevel{Price{2'500'500}, Qty{150}, 4, 0};
     d.bid_levels = 1;

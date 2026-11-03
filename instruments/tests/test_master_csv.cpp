@@ -1,7 +1,7 @@
-// P1-04 acceptance tests for instruments/kite_dump.hpp.
+// P1-04 acceptance tests for instruments/master_csv.hpp.
 // Plain main() (Catch2 blocked on vcpkg — see LEDGER blocker #7).
 
-#include <instruments/kite_dump.hpp>
+#include <instruments/master_csv.hpp>
 
 #include <chrono>
 #include <cstdio>
@@ -32,32 +32,32 @@ namespace {
 
 constexpr Timestamp kSnap{1787888700000000000LL};   // 2026-08-28 09:15 IST
 
-std::expected<Price, KiteParseError> rp(const char* s)
+std::expected<Price, MasterParseError> rp(const char* s)
 {
     return parse_rupees_to_paise(s, std::strlen(s));
 }
 
-std::expected<Timestamp, KiteParseError> ex(const char* s)
+std::expected<Timestamp, MasterParseError> ex(const char* s)
 {
-    return parse_kite_expiry(s, std::strlen(s));
+    return parse_master_expiry(s, std::strlen(s));
 }
 
 constexpr const char* kHeader =
     "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,"
     "strike,tick_size,lot_size,instrument_type,segment,exchange";
 
-std::expected<ContractSpec, KiteParseError> row(const char* r)
+std::expected<ContractSpec, MasterParseError> row(const char* r)
 {
-    const auto c = parse_kite_header(kHeader, std::strlen(kHeader));
+    const auto c = parse_master_header(kHeader, std::strlen(kHeader));
     if (!c.has_value()) {
         return std::unexpected(c.error());
     }
-    return parse_kite_row(r, std::strlen(r), c.value(), kSnap);
+    return parse_master_row(r, std::strlen(r), c.value(), kSnap);
 }
 
 } // namespace
 
-void test_kite_rupees_to_paise()
+void test_master_rupees_to_paise()
 {
     check(rp("0.05").value() == Price{5},
           "\"0.05\" -> 5 paise — the value a double truncates to 4");
@@ -86,23 +86,23 @@ void test_kite_rupees_to_paise()
     check(all_exact, "every hundredth 0.01..1.00 round-trips EXACTLY");
 }
 
-void test_kite_rupees_rejects_bad_input()
+void test_master_rupees_rejects_bad_input()
 {
-    check(rp("").error() == KiteParseError::BadNumber, "empty is NOT zero");
-    check(rp("-").error() == KiteParseError::BadNumber, "lone minus rejected");
-    check(rp(".").error() == KiteParseError::BadNumber, "lone dot rejected");
-    check(rp("abc").error() == KiteParseError::BadNumber, "letters rejected");
-    check(rp("1.2.3").error() == KiteParseError::BadNumber, "two dots rejected");
-    check(rp("1e5").error() == KiteParseError::BadNumber, "no exponent form");
-    check(rp("1 2").error() == KiteParseError::BadNumber, "embedded space rejected");
-    check(rp("0.001").error() == KiteParseError::BadDecimal,
+    check(rp("").error() == MasterParseError::BadNumber, "empty is NOT zero");
+    check(rp("-").error() == MasterParseError::BadNumber, "lone minus rejected");
+    check(rp(".").error() == MasterParseError::BadNumber, "lone dot rejected");
+    check(rp("abc").error() == MasterParseError::BadNumber, "letters rejected");
+    check(rp("1.2.3").error() == MasterParseError::BadNumber, "two dots rejected");
+    check(rp("1e5").error() == MasterParseError::BadNumber, "no exponent form");
+    check(rp("1 2").error() == MasterParseError::BadNumber, "embedded space rejected");
+    check(rp("0.001").error() == MasterParseError::BadDecimal,
           "three decimals is finer than a paisa");
-    check(rp("1.234").error() == KiteParseError::BadDecimal, "and so is this");
-    check(rp("99999999999999999999").error() == KiteParseError::Overflow,
+    check(rp("1.234").error() == MasterParseError::BadDecimal, "and so is this");
+    check(rp("99999999999999999999").error() == MasterParseError::Overflow,
           "past int64 paise is Overflow");
 }
 
-void test_kite_expiry_is_ist()
+void test_master_expiry_is_ist()
 {
     // 2026-08-28 UTC midnight is 1787875200 s. IST midnight is 5h30m EARLIER
     // in UTC terms — 18:30 the previous day.
@@ -117,28 +117,28 @@ void test_kite_expiry_is_ist()
     check(ex("").value() == Timestamp::epoch(),
           "an empty expiry is cash, NOT an error");
 
-    check(ex("2026-8-28").error() == KiteParseError::BadDate, "no zero padding");
-    check(ex("2026/08/28").error() == KiteParseError::BadDate, "wrong separator");
-    check(ex("28-08-2026").error() == KiteParseError::BadDate, "wrong order");
-    check(ex("2026-13-01").error() == KiteParseError::BadDate, "month 13");
-    check(ex("2026-08-32").error() == KiteParseError::BadDate, "day 32");
-    check(ex("2026-02-30").error() == KiteParseError::BadDate, "30 February");
-    check(ex("garbage").error() == KiteParseError::BadDate, "garbage");
+    check(ex("2026-8-28").error() == MasterParseError::BadDate, "no zero padding");
+    check(ex("2026/08/28").error() == MasterParseError::BadDate, "wrong separator");
+    check(ex("28-08-2026").error() == MasterParseError::BadDate, "wrong order");
+    check(ex("2026-13-01").error() == MasterParseError::BadDate, "month 13");
+    check(ex("2026-08-32").error() == MasterParseError::BadDate, "day 32");
+    check(ex("2026-02-30").error() == MasterParseError::BadDate, "30 February");
+    check(ex("garbage").error() == MasterParseError::BadDate, "garbage");
 }
 
-void test_kite_header_column_order_independent()
+void test_master_header_column_order_independent()
 {
-    const auto a = parse_kite_header(kHeader, std::strlen(kHeader));
+    const auto a = parse_master_header(kHeader, std::strlen(kHeader));
     check(a.has_value(), "the documented header parses");
     check(a.value().instrument_token == 0, "instrument_token is column 0");
     check(a.value().exchange == 11, "exchange is column 11");
 
-    // The same columns, reversed. Order must not matter — Kite has reordered
+    // The same columns, reversed. Order must not matter — brokers have reordered
     // this file before.
     constexpr const char* rev =
         "exchange,segment,instrument_type,lot_size,tick_size,strike,expiry,"
         "last_price,name,tradingsymbol,exchange_token,instrument_token";
-    const auto b = parse_kite_header(rev, std::strlen(rev));
+    const auto b = parse_master_header(rev, std::strlen(rev));
     check(b.has_value(), "the reversed header parses too");
     check(b.value().instrument_token == 11, "instrument_token is now column 11");
     check(b.value().exchange == 0, "exchange is now column 0");
@@ -146,22 +146,22 @@ void test_kite_header_column_order_independent()
     constexpr const char* missing =
         "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,"
         "strike,tick_size,instrument_type,segment,exchange";   // no lot_size
-    check(parse_kite_header(missing, std::strlen(missing)).error()
-              == KiteParseError::BadHeader,
+    check(parse_master_header(missing, std::strlen(missing)).error()
+              == MasterParseError::BadHeader,
           "a missing required column is BadHeader");
-    check(parse_kite_header("", 0).error() == KiteParseError::BadHeader,
+    check(parse_master_header("", 0).error() == MasterParseError::BadHeader,
           "an empty header is BadHeader");
 }
 
-void test_kite_row_to_spec()
+void test_master_row_to_spec()
 {
     constexpr const char* opt =
         "12345,678,NIFTY26SEP25000CE,NIFTY,0,2026-09-24,25000,0.05,75,CE,NFO-OPT,NFO";
     const auto s = row(opt);
     check(s.has_value(), "a NIFTY option row parses");
     if (s.has_value()) {
-        check(s->token[static_cast<std::size_t>(FeedSource::Kite)] == 12345,
-              "Kite token set");
+        check(s->token[static_cast<std::size_t>(FeedSource::Wire)] == 12345,
+              "wire token set");
         check(s->token[static_cast<std::size_t>(FeedSource::Xts)] == 0,
               "XTS token is 0 — this source knows nothing about XTS");
         check(std::strcmp(s->symbol, "NIFTY26SEP25000CE") == 0, "symbol");
@@ -173,7 +173,7 @@ void test_kite_row_to_spec()
         check(s->exchange == Exchange::NSE, "NFO -> NSE");
         check(s->segment == Segment::Opt, "NFO + CE -> Opt");
         check(s->price_scale == 100, "price scale 100");
-        check(s->source == SpecSource::KiteDump, "source is KiteDump");
+        check(s->source == SpecSource::InstrumentMaster, "source is InstrumentMaster");
         check(!s->stale, "not stale");
         check(s->valid_from == kSnap, "valid_from is the snapshot");
         check(s->valid_to == Timestamp::max(), "valid_to is open");
@@ -203,19 +203,19 @@ void test_kite_row_to_spec()
           "one edited byte moves source_hash");
 }
 
-void test_kite_row_rejects_bad_input()
+void test_master_row_rejects_bad_input()
 {
-    check(row("1,2,3").error() == KiteParseError::TooFewFields, "short row");
+    check(row("1,2,3").error() == MasterParseError::TooFewFields, "short row");
     check(row("1,2,SYM,N,0,2026-09-24,0,0.05,abc,FUT,NFO-FUT,NFO").error()
-              == KiteParseError::BadNumber, "lot_size \"abc\"");
+              == MasterParseError::BadNumber, "lot_size \"abc\"");
     check(row("1,2,SYM,N,0,2026-09-24,0,0.001,75,FUT,NFO-FUT,NFO").error()
-              == KiteParseError::BadDecimal, "tick_size 0.001");
+              == MasterParseError::BadDecimal, "tick_size 0.001");
     check(row("1,2,SYM,N,0,2026-13-01,0,0.05,75,FUT,NFO-FUT,NFO").error()
-              == KiteParseError::BadDate, "expiry month 13");
+              == MasterParseError::BadDate, "expiry month 13");
     check(row("1,2,SYM,N,0,2026-09-24,0,0.05,75,FUT,MCX-FUT,MCX").error()
-              == KiteParseError::UnknownExchange, "exchange MCX");
+              == MasterParseError::UnknownExchange, "exchange MCX");
     check(row("1,2,,N,0,2026-09-24,0,0.05,75,FUT,NFO-FUT,NFO").error()
-              == KiteParseError::BadSymbol, "empty symbol");
+              == MasterParseError::BadSymbol, "empty symbol");
 
     char long_sym[64];
     std::memset(long_sym, 'S', 32);
@@ -223,7 +223,7 @@ void test_kite_row_rejects_bad_input()
     char r32[256];
     std::snprintf(r32, sizeof(r32),
                   "1,2,%s,N,0,2026-09-24,0,0.05,75,FUT,NFO-FUT,NFO", long_sym);
-    check(row(r32).error() == KiteParseError::BadSymbol, "32-char symbol rejected");
+    check(row(r32).error() == MasterParseError::BadSymbol, "32-char symbol rejected");
 
     long_sym[31] = '\0';
     char r31[256];
@@ -232,7 +232,7 @@ void test_kite_row_rejects_bad_input()
     check(row(r31).has_value(), "31-char symbol accepted");
 }
 
-void test_kite_load_dump_skips_bad_rows()
+void test_master_load_dump_skips_bad_rows()
 {
     static SpecStore st;
     // Rows 2 and 4 are malformed: a bad number and a bad date.
@@ -245,17 +245,17 @@ void test_kite_load_dump_skips_bad_rows()
         "4,14,SYMD,NIFTY,0,2026-13-99,0,0.05,75,FUT,NFO-FUT,NFO\n"
         "5,15,SYME,NIFTY,0,2026-09-24,0,0.05,75,FUT,NFO-FUT,NFO\n";
 
-    const auto r = load_kite_dump_unreconciled(dump, sizeof(dump) - 1, st, kSnap);
+    const auto r = load_instrument_master_unreconciled(dump, sizeof(dump) - 1, st, kSnap);
     check(r.has_value(), "a dump with bad rows still loads");
     if (r.has_value()) {
         check(r->added == 3, "three good rows added");
         check(r->unparseable == 2, "two bad rows counted");
         check(r->first_error_row == 2, "the first bad row is row 2");
-        check(r->first_error == KiteParseError::BadNumber, "and its error is recorded");
+        check(r->first_error == MasterParseError::BadNumber, "and its error is recorded");
     }
-    check(st.id_of(FeedSource::Kite, 1).has_value(), "row 1 is in the store");
-    check(st.id_of(FeedSource::Kite, 5).has_value(), "row 5 survived the bad rows");
-    check(st.id_of(FeedSource::Kite, 2).error() == SpecError::NotFound,
+    check(st.id_of(FeedSource::Wire, 1).has_value(), "row 1 is in the store");
+    check(st.id_of(FeedSource::Wire, 5).has_value(), "row 5 survived the bad rows");
+    check(st.id_of(FeedSource::Wire, 2).error() == SpecError::NotFound,
           "the bad row is absent");
 
     // Every row bad still yields a report, not an error.
@@ -265,21 +265,21 @@ void test_kite_load_dump_skips_bad_rows()
         "strike,tick_size,lot_size,instrument_type,segment,exchange\n"
         "1,11,SYMA,NIFTY,0,2026-09-24,0,0.05,abc,FUT,NFO-FUT,NFO\n"
         "2,12,SYMB,NIFTY,0,2026-09-24,0,0.05,abc,FUT,NFO-FUT,NFO\n";
-    const auto r2 = load_kite_dump_unreconciled(allbad, sizeof(allbad) - 1, st2, kSnap);
+    const auto r2 = load_instrument_master_unreconciled(allbad, sizeof(allbad) - 1, st2, kSnap);
     check(r2.has_value() && r2->added == 0 && r2->unparseable == 2,
           "an all-bad dump reports rather than errors");
 
-    check(load_kite_dump_unreconciled("", 0, st2, kSnap).error() == KiteParseError::EmptyInput,
+    check(load_instrument_master_unreconciled("", 0, st2, kSnap).error() == MasterParseError::EmptyInput,
           "an empty buffer is EmptyInput");
     static const char hdr_only[] =
         "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,"
         "strike,tick_size,lot_size,instrument_type,segment,exchange\n";
-    check(load_kite_dump_unreconciled(hdr_only, sizeof(hdr_only) - 1, st2, kSnap).error()
-              == KiteParseError::EmptyInput,
+    check(load_instrument_master_unreconciled(hdr_only, sizeof(hdr_only) - 1, st2, kSnap).error()
+              == MasterParseError::EmptyInput,
           "a header-only buffer is EmptyInput");
 }
 
-void test_kite_load_dump_into_store()
+void test_master_load_dump_into_store()
 {
     static SpecStore st;
     static const char dump[] =
@@ -288,19 +288,19 @@ void test_kite_load_dump_into_store()
         "12345,678,NIFTY26SEPFUT,NIFTY,0,2026-09-24,0,0.05,75,FUT,NFO-FUT,NFO\n"
         "12346,679,BANKNIFTY26SEPFUT,BANKNIFTY,0,2026-09-24,0,0.05,30,FUT,NFO-FUT,NFO\n";
 
-    const auto r = load_kite_dump_unreconciled(dump, sizeof(dump) - 1, st, kSnap);
+    const auto r = load_instrument_master_unreconciled(dump, sizeof(dump) - 1, st, kSnap);
     check(r.has_value() && r->added == 2, "two rows loaded");
     check(st.size() == 2, "store size matches the report");
 
-    const auto id = st.id_of(FeedSource::Kite, 12345);
-    check(id.has_value(), "resolves by Kite token");
+    const auto id = st.id_of(FeedSource::Wire, 12345);
+    check(id.has_value(), "resolves by wire token");
     check(st.current(id.value()).value()->lot_size == LotSize{75}, "lot size 75");
     check(st.token_of(id.value(), FeedSource::Xts).error() == SpecError::NotFound,
           "no XTS token yet — P1-05 supplies it");
 
     // A second load of the SAME dump: every row is a duplicate token. The
     // store's guard is what makes a re-load idempotent.
-    const auto r2 = load_kite_dump_unreconciled(dump, sizeof(dump) - 1, st, kSnap);
+    const auto r2 = load_instrument_master_unreconciled(dump, sizeof(dump) - 1, st, kSnap);
     check(r2.has_value(), "a re-load returns a report");
     check(r2->added == 0, "nothing added the second time");
     check(r2->rejected_by_sink == 2, "both rows rejected as duplicates");
@@ -326,7 +326,7 @@ void report_throughput()
 
     static SpecStore st;
     const auto t0 = std::chrono::steady_clock::now();
-    const auto r = load_kite_dump_unreconciled(buf, n, st, kSnap);
+    const auto r = load_instrument_master_unreconciled(buf, n, st, kSnap);
     const auto t1 = std::chrono::steady_clock::now();
     const double sec = std::chrono::duration<double>(t1 - t0).count();
 
@@ -344,13 +344,13 @@ void report_throughput()
 
 namespace {
 
-// The Reconciler overload added when P1-06 landed. Kite is a CROSS-CHECK, not
+// The Reconciler overload added when P1-06 landed. the master is a CROSS-CHECK, not
 // an authority: loading it into the reconciler is what subjects it to the
 // three-way check. The unreconciled overload cannot do this, which is why it
 // is now named for what it skips.
 Reconciler g_rec;
 
-// Found by running the real 106'150-row dump: Kite quotes the `name` column.
+// Found by running the real 106'150-row dump: the master quotes the `name` column.
 // Left in place, the underlying becomes "NIFTY" WITH the quote characters, and
 // P1-06's D1 key can never match an exchange master that writes NIFTY bare --
 // so every contract reconciles as SingleSource and the three-way check
@@ -368,10 +368,10 @@ void quoted_name_is_unquoted()
     // 1 MB. A local here segfaults -- which it duly did, in a hazard this
     // repo had already documented in P1-06 and then walked into anyway.
     static SpecStore local;
-    const auto r = load_kite_dump_unreconciled(dump, std::strlen(dump), local, kSnap);
+    const auto r = load_instrument_master_unreconciled(dump, std::strlen(dump), local, kSnap);
     check(r.has_value() && r->added == 1, "the real quoted form parses");
 
-    const auto id = local.id_of(FeedSource::Kite, 77777);
+    const auto id = local.id_of(FeedSource::Wire, 77777);
     check(id.has_value(), "and resolves");
     const auto sp = local.current(*id);
     check(sp.has_value() && std::strcmp((*sp)->underlying, "NIFTY") == 0,
@@ -394,14 +394,14 @@ void loads_into_the_reconciler()
         "strike,tick_size,lot_size,instrument_type,segment,exchange\n"
         "11111,43,NIFTY26SEP25000CE,NIFTY,0,2026-09-24,25000,0.05,75,CE,NFO-OPT,NFO\n";
 
-    const auto r = load_kite_dump(dump, std::strlen(dump), g_rec, kSnap);
+    const auto r = load_instrument_master(dump, std::strlen(dump), g_rec, kSnap);
     check(r.has_value(), "a dump loads into a Reconciler");
     check(r.has_value() && r->added == 1, "one contract added");
 
-    // Alone, Kite is uncorroborated -- and says so.
+    // Alone, the master is uncorroborated -- and says so.
     ReconcileReport rep = g_rec.reconcile();
     check(rep.single_source == 1,
-          "Kite alone is SingleSource, not silently authoritative");
+          "The master alone is SingleSource, not silently authoritative");
     check(!rep.primary_source_seen, "and no primary was seen");
 
     // Now an exchange master that DISAGREES about the lot size. Through the
@@ -413,7 +413,7 @@ void loads_into_the_reconciler()
     nse.tick_size = Price{5};
     nse.strike = Price{2500000};
     nse.price_scale = 100;
-    nse.expiry = *parse_kite_expiry("2026-09-24", 10);
+    nse.expiry = *parse_master_expiry("2026-09-24", 10);
     nse.valid_from = kSnap;
     nse.valid_to = Timestamp::max();
     nse.source_hash = 0x9911;
@@ -428,15 +428,15 @@ void loads_into_the_reconciler()
 
     rep = g_rec.reconcile();
     check(rep.contracts == 1,
-          "the Kite row and the NSE row are ONE contract -- the tuple joined "
+          "the master row and the NSE row are ONE contract -- the tuple joined "
           "them across two number spaces");
     check(rep.conflicts == 1, "and they disagree on lot size");
     check(rep.blocked == 1, "so the symbol is BLOCKED, not quietly resolved");
 
     const ContractVerdict* v = *g_rec.verdict_at(0);
     check(v->field == ConflictField::LotSize, "the conflict is the lot size");
-    check(v->values[static_cast<std::size_t>(SpecSource::KiteDump)] == 75,
-          "Kite said 75");
+    check(v->values[static_cast<std::size_t>(SpecSource::InstrumentMaster)] == 75,
+          "the master said 75");
     check(v->values[static_cast<std::size_t>(SpecSource::NseMaster)] == 50,
           "the exchange said 50 -- and neither is guessed at");
 }
@@ -446,7 +446,7 @@ void loads_into_the_reconciler()
 
 // P33-05, RULE 11. A TRUNCATED UNDERLYING IS COUNTED, NOT SWALLOWED.
 //
-// `underlying` is kMaxUnderlyingLen characters. On a real 108,411-row Kite
+// `underlying` is kMaxUnderlyingLen characters. On a real 108,411-row
 // dump 2,121 names are longer, and -- the part that matters -- 137 distinct
 // 23-character prefixes map to more than one company. "PROCTER & GAMBLE
 // HEALTH L" and "PROCTER & GAMBLE HEALTH LIMITE" become the same key, so
@@ -474,7 +474,7 @@ void a_truncated_underlying_is_counted()
     // SpecStore is 1.63 MB; app/instruments_demo.cpp measured it and this
     // file already keeps its stores at static scope for the same reason.
     static SpecStore store;
-    const auto r = load_kite_dump_unreconciled(csv.c_str(), csv.size(), store,
+    const auto r = load_instrument_master_unreconciled(csv.c_str(), csv.size(), store,
                                                kSnap);
     check(r.has_value(), "the dump loads");
     if (!r) { return; }
@@ -487,8 +487,8 @@ void a_truncated_underlying_is_counted()
           "difference between a known truncation and a silent one");
 
     // And the collision is real: both truncate to the same key.
-    const auto ia = store.id_of(FeedSource::Kite, 111u);
-    const auto ib = store.id_of(FeedSource::Kite, 222u);
+    const auto ia = store.id_of(FeedSource::Wire, 111u);
+    const auto ib = store.id_of(FeedSource::Wire, 222u);
     check(ia.has_value() && ib.has_value(), "both rows are in the store");
     if (ia && ib) {
         const auto a = store.current(*ia);
@@ -508,15 +508,15 @@ void a_truncated_underlying_is_counted()
 
 int main()
 {
-    std::printf("altair instruments kite_dump tests\n");
-    test_kite_rupees_to_paise();
-    test_kite_rupees_rejects_bad_input();
-    test_kite_expiry_is_ist();
-    test_kite_header_column_order_independent();
-    test_kite_row_to_spec();
-    test_kite_row_rejects_bad_input();
-    test_kite_load_dump_skips_bad_rows();
-    test_kite_load_dump_into_store();
+    std::printf("altair instruments master_csv tests\n");
+    test_master_rupees_to_paise();
+    test_master_rupees_rejects_bad_input();
+    test_master_expiry_is_ist();
+    test_master_header_column_order_independent();
+    test_master_row_to_spec();
+    test_master_row_rejects_bad_input();
+    test_master_load_dump_skips_bad_rows();
+    test_master_load_dump_into_store();
     quoted_name_is_unquoted();
     loads_into_the_reconciler();
 

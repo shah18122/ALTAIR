@@ -81,7 +81,6 @@ struct ActivityProjection {
 [[nodiscard]] inline QString activity_broker_name(broker_view::BrokerId broker) {
     switch (broker) {
     case broker_view::BrokerId::Fyers: return QStringLiteral("FYERS");
-    case broker_view::BrokerId::ZerodhaKite: return QStringLiteral("KITE");
     case broker_view::BrokerId::None: break;
     }
     return QStringLiteral("UNKNOWN");
@@ -161,20 +160,18 @@ read_activity_projection(const QString& path,
     result.mode = routes.value(QStringLiteral("mode")).toString();
     result.route_revision = routes.value(QStringLiteral("revision")).toVariant().toULongLong();
     if (result.route_revision == 0 || result.mode.isEmpty()
-        || (result.data_primary != QStringLiteral("FYERS")
-            && result.data_primary != QStringLiteral("KITE"))
+        || result.data_primary != QStringLiteral("FYERS")
         || (result.data_fallback != QStringLiteral("FYERS")
-            && result.data_fallback != QStringLiteral("KITE"))
-        || (result.order_primary != QStringLiteral("FYERS")
-            && result.order_primary != QStringLiteral("KITE")))
+            && result.data_fallback != QStringLiteral("NONE"))
+        || result.order_primary != QStringLiteral("FYERS"))
         return std::unexpected(ActivityError::Malformed);
 
     const QJsonArray brokers = root.value(QStringLiteral("brokers")).toArray();
-    if (brokers.size() != 2) return std::unexpected(ActivityError::Malformed);
+    if (brokers.size() != 1) return std::unexpected(ActivityError::Malformed);
     for (const QJsonValue& broker_value : brokers) {
         const QJsonObject broker = broker_value.toObject();
         const QString provider = broker.value(QStringLiteral("broker")).toString();
-        if (provider != QStringLiteral("FYERS") && provider != QStringLiteral("KITE"))
+        if (provider != QStringLiteral("FYERS"))
             return std::unexpected(ActivityError::Malformed);
         result.omitted_events += broker.value(QStringLiteral("omitted_events"))
                                       .toVariant().toULongLong();
@@ -216,8 +213,7 @@ read_activity_projection(const QString& path,
               [](const ActivityEvent& a, const ActivityEvent& b) {
                   return a.occurred_at < b.occurred_at;
               });
-    if (!result.has_broker(QStringLiteral("FYERS"))
-        || !result.has_broker(QStringLiteral("KITE")))
+    if (!result.events.empty() && !result.has_broker(QStringLiteral("FYERS")))
         return std::unexpected(ActivityError::Malformed);
     return result;
 }
@@ -253,11 +249,11 @@ public:
         auto* routes = new QHBoxLayout;
         routes->addWidget(new QLabel(QStringLiteral("Data"), this));
         data_ = new QComboBox(this);
-        data_->addItems({QStringLiteral("FYERS"), QStringLiteral("KITE")});
+        data_->addItems({QStringLiteral("FYERS")});
         routes->addWidget(data_);
         routes->addWidget(new QLabel(QStringLiteral("Orders"), this));
         orders_ = new QComboBox(this);
-        orders_->addItems({QStringLiteral("KITE"), QStringLiteral("FYERS")});
+        orders_->addItems({QStringLiteral("FYERS")});
         routes->addWidget(orders_);
         route_note_ = new QLabel(this);
         set_role(route_note_, QStringLiteral("note"));
@@ -321,7 +317,7 @@ public:
         orders_->setCurrentText(projection_.order_primary);
         route_note_->setText(QStringLiteral("Service route revision %1; local controls do not enable live orders.")
                                  .arg(projection_.route_revision));
-        status_->setText(QStringLiteral("%1 events shown from both brokers · %2 omitted by bounded service retention · "
+        status_->setText(QStringLiteral("%1 events shown from FYERS · %2 omitted by bounded service retention · "
                                         "projection expires %3")
                          .arg(projection_.events.size()).arg(projection_.omitted_events)
                          .arg(projection_.expires_at.toString(Qt::ISODate)));

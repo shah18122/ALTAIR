@@ -1,5 +1,5 @@
 // Tests for live/universe.hpp: which contracts the live feed streams, and
-// the Kite-token to FYERS-ticker pairing the whole terminal depends on.
+// the ALTAIR-token to FYERS-ticker pairing the whole terminal depends on.
 //
 // No check description here may contain the substring "F" "AIL" joined.
 
@@ -59,8 +59,8 @@ int main() {
         f << "519937,2031,M&M,\"MAHINDRA & MAHINDRA\",0,,0,0.1,1,EQ,NSE,NSE\n";
     }
     std::string err;
-    const auto rows = read_kite_master(master, err);
-    check(err.empty() && rows.size() == 23, "reads the Kite master, quoted names and all");
+    const auto rows = read_instrument_master(master, err);
+    check(err.empty() && rows.size() == 23, "reads the instrument master, quoted names and all");
 
     LiveUniverseOptions o;
     o.today = parse_day("2026-10-01");
@@ -109,7 +109,7 @@ int main() {
               "on expiry day the expiring weekly and the next expiry are both streamed");
     }
     {
-        // FYERS's F&O master adds the weeklies a stale Kite master lacks.
+        // FYERS's F&O master adds the weeklies a day-old instrument master lacks.
         const long long exp = 20'739LL * 86'400 + 36'000;   // 2026-10-13 15:30 IST
         std::ostringstream fo;
         for (const char* side : {"CE", "PE"})
@@ -125,19 +125,19 @@ int main() {
         const auto& w = rows2.back();
         check(w.symbol == "NIFTY26O1324000PE" && w.token == 41002u * 256 + 2 && w.segment == "NFO-OPT" && w.type == "PE"
                   && w.expiry_day == parse_day("2026-10-13") && w.strike == 24000.0 && w.lot == 65,
-              "an added weekly is a Kite row: Kite's token formula, the IST expiry date");
+              "an added weekly is a master row: ALTAIR's token formula, the IST expiry date");
         LiveUniverseOptions o4 = o;
         o4.today = parse_day("2026-10-07");
         const auto u4 = build_universe(rows2, stocks, o4);
         check(find(u4, "NIFTY26O1324000CE") != nullptr && find(u4, "NIFTY26O1324000CE")->fyers == "NSE:NIFTY26O1324000CE",
-              "after the Kite master's last weekly, the chain is the FYERS-listed weekly");
+              "after the master's last weekly, the chain is the FYERS-listed weekly");
     }
     {
         // The OBI trader's stocks (config/obi_underlyings.csv): stock, two near
         // futures with a book, and the nearest chain around the spot.
         auto rows5 = rows;
         const auto row = [&rows5](std::uint32_t tok, const char* sym, const char* type, const char* seg, const char* exp, double k) {
-            LiveKiteRow r;
+            LiveMasterRow r;
             r.token = tok; r.symbol = sym; r.name = std::string(type) == "EQ" ? sym : "NYKAA"; r.type = type;
             r.segment = seg; r.exchange = std::string(seg) == "NSE" ? "NSE" : "NFO";
             r.expiry_day = exp[0] != 0 ? parse_day(exp) : 0; r.strike = k; r.tick = 0.05;
@@ -246,14 +246,14 @@ int main() {
     // The market watch's scrip search: master rows into streamable instruments.
     {
         using namespace altair::live;
-        LiveKiteRow eq;
+        LiveMasterRow eq;
         eq.token = 779521; eq.symbol = "SBIN"; eq.name = "STATE BANK OF INDIA"; eq.type = "EQ";
         eq.segment = "NSE"; eq.exchange = "NSE"; eq.tick = 0.05; eq.lot = 1;
-        LiveKiteRow opt;
+        LiveMasterRow opt;
         opt.token = 12345678; opt.symbol = "SBIN26OCT800CE"; opt.name = "SBIN"; opt.type = "CE";
         opt.segment = "NFO-OPT"; opt.exchange = "NFO"; opt.strike = 800; opt.lot = 750; opt.tick = 0.05;
         opt.expiry_day = parse_day("2026-10-27");
-        LiveKiteRow mcx;
+        LiveMasterRow mcx;
         mcx.token = 99; mcx.symbol = "GOLD"; mcx.segment = "MCX-FUT"; mcx.exchange = "MCX";
         const auto e = instrument_from_master(eq);
         const auto o = instrument_from_master(opt);
@@ -264,9 +264,9 @@ int main() {
               "an NFO option keeps its symbol, underlying, strike and lot");
         check(!instrument_from_master(mcx), "an MCX contract with no known lot is refused, not guessed");
 
-        // MCX and the INR currency pairs (live/contract_units.hpp). The Kite
-        // master says lot 1 for both; the paper book needs the units.
-        LiveKiteRow crude;
+        // MCX and the INR currency pairs (live/contract_units.hpp). The
+        // instrument master says lot 1 for both; the paper book needs the units.
+        LiveMasterRow crude;
         crude.token = 146796039; crude.exchange_token = 573422; crude.symbol = "CRUDEOIL26NOVFUT"; crude.name = "CRUDEOIL";
         crude.type = "FUT"; crude.segment = "MCX-FUT"; crude.exchange = "MCX"; crude.lot = 1; crude.tick = 1;
         crude.expiry_day = parse_day("2026-11-19");
@@ -274,7 +274,7 @@ int main() {
         check(cr && cr->kind == LiveKind::Future && cr->fyers == "MCX:CRUDEOIL26NOVFUT" && cr->lot == 100
                   && cr->group == "Commodity" && quote_per(*cr) == 1,
               "an MCX future streams as MCX:<symbol>, a lot of 100 barrels, in the Commodity group");
-        LiveKiteRow usd;
+        LiveMasterRow usd;
         usd.token = 823299; usd.exchange_token = 3216; usd.symbol = "USDINR2690496.625CE"; usd.name = "USDINR";
         usd.type = "CE"; usd.segment = "CDS-OPT"; usd.exchange = "CDS"; usd.lot = 1; usd.tick = 0.0025; usd.strike = 96.625;
         usd.expiry_day = parse_day("2026-09-04");
@@ -283,9 +283,9 @@ int main() {
                   && ux->lot == 10 && std::fabs(ux->strike - 9662.5) < 1e-9 && std::fabs(ux->tick - 0.25) < 1e-12
                   && quote_per(*ux) == 100,
               "a USDINR option is quoted per 100 USD: strike 9,662.50, tick 0.25, a lot of 10 (1,000 USD)");
-        LiveKiteRow cross = usd;
+        LiveMasterRow cross = usd;
         cross.name = "EURUSD"; cross.symbol = "EURUSD26SEPFUT"; cross.segment = "CDS-FUT"; cross.type = "FUT";
-        LiveKiteRow bond = usd;
+        LiveMasterRow bond = usd;
         bond.name = "633GS2035"; bond.symbol = "633GS203526OCTFUT"; bond.segment = "CDS-FUT"; bond.type = "FUT";
         check(!instrument_from_master(cross) && !instrument_from_master(bond),
               "a cross pair and an interest-rate future (same segment) are not streamed");
@@ -300,7 +300,7 @@ int main() {
         const auto crn = instrument_from_master(crude, &dn);
         const auto uxn = instrument_from_master(usd, &dn);
         check(crn && crn->fyers == "MCX:CRUDEOIL26NOVFUT" && uxn && uxn->fyers == "NSE:USDINR26S0496.625CE",
-              "and name MCX and currency contracts by exchange token, not by the Kite symbol");
+              "and name MCX and currency contracts by exchange token, not by the master symbol");
         const std::vector<LiveInstrument> mixed{*e, *cr, *ux};
         check(session_end_minute(mixed, [](const LiveInstrument& i) -> std::string_view { return i.group; }, 15 * 60 + 45)
                   == kCommodityCloseMinute,
@@ -319,13 +319,13 @@ int main() {
         FyersCashNames names;
         check(names.add_csv(nse_cm) == 3 && names.add_csv(bse_cm) == 2 && names.size() == 5,
               "the FYERS cash masters load by exchange token; a line that does not parse is skipped");
-        LiveKiteRow t_grp;   // a BSE group-T scrip: "-A" was a name FYERS does not know
+        LiveMasterRow t_grp;   // a BSE group-T scrip: "-A" was a name FYERS does not know
         t_grp.token = 136352772; t_grp.exchange_token = 532628; t_grp.symbol = "3IINFOLTD"; t_grp.type = "EQ";
         t_grp.segment = "BSE"; t_grp.exchange = "BSE";
-        LiveKiteRow be;      // an NSE BE-series scrip Kite still names by its old symbol
+        LiveMasterRow be;      // an NSE BE-series scrip the master names by an old symbol
         be.token = 2824449; be.exchange_token = 11033; be.symbol = "SANGINITA-BE"; be.type = "EQ";
         be.segment = "NSE"; be.exchange = "NSE";
-        LiveKiteRow dash;    // a dash that is part of the symbol, not a series
+        LiveMasterRow dash;    // a dash that is part of the symbol, not a series
         dash.token = 4267265; dash.exchange_token = 16669; dash.symbol = "BAJAJ-AUTO"; dash.type = "EQ";
         dash.segment = "NSE"; dash.exchange = "NSE";
         const auto tg = instrument_from_master(t_grp, &names);

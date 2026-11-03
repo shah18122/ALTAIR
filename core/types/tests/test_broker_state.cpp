@@ -114,16 +114,22 @@ void authentication_evidence() {
 void feed_routing() {
     Routes r; r.revision = 1;
     auto a = verified(BrokerId::Fyers);
-    auto b = verified(BrokerId::ZerodhaKite);
-    check(select_data(r, a, b, now) == BrokerId::Fyers, "preferred fresh provider");
+    const BrokerEvidence none{};
+    check(r.data_fallback == BrokerId::None, "FYERS is the only data broker: no fallback by default");
+    check(select_data(r, a, none, now) == BrokerId::Fyers, "preferred fresh provider");
     a.origin = DataOrigin::Replay;
-    check(select_data(r, a, b, now) == BrokerId::ZerodhaKite, "replay cannot win live route");
-    b.market_data.expires_at = now;
-    check(select_data(r, a, b, now) == BrokerId::None, "stale fallback refused");
-    a = verified(BrokerId::Fyers); b = verified(BrokerId::ZerodhaKite);
-    check(select_data(r, b, a, now) == BrokerId::None, "wrong provider slots refused");
-    a.schema_version = kSchemaVersion + 1; b.feed = FeedStatus::Disconnected;
-    check(select_data(r, a, b, now) == BrokerId::None, "unknown schema and disconnected feed");
+    check(select_data(r, a, none, now) == BrokerId::None, "replay cannot win live route");
+    r.data_fallback = BrokerId::Fyers;
+    check(select_data(r, a, a, now) == BrokerId::None, "a fallback equal to the primary is never used");
+    r.data_fallback = BrokerId::None;
+    a = verified(BrokerId::Fyers);
+    check(select_data(r, none, a, now) == BrokerId::None, "wrong provider slots refused");
+    a.market_data.expires_at = now;
+    check(select_data(r, a, none, now) == BrokerId::None, "stale feed refused");
+    a = verified(BrokerId::Fyers); a.schema_version = kSchemaVersion + 1;
+    check(select_data(r, a, none, now) == BrokerId::None, "unknown schema refused");
+    a = verified(BrokerId::Fyers); a.feed = FeedStatus::Disconnected;
+    check(select_data(r, a, none, now) == BrokerId::None, "disconnected feed refused");
     a = verified(BrokerId::Fyers); a.feed = static_cast<FeedStatus>(255);
     check(!live_data(a, now), "unknown feed state refused");
     a = verified(BrokerId::Fyers); ++a.session.generation;
@@ -132,7 +138,7 @@ void feed_routing() {
 
 void order_gates() {
     Routes r; r.revision = 7; r.mode = TradingMode::LiveArmed;
-    const auto e = verified(BrokerId::ZerodhaKite);
+    const auto e = verified(BrokerId::Fyers);
     const OrderGate g{e.session, 7, window, true, true, false};
     check(order_readiness(r, e, g, now) == OrderReadiness::Ready, "all prerequisites ready");
     auto bad = g; bad.kill_switch_active = true;
@@ -157,7 +163,7 @@ void order_gates() {
 
 void session_and_route_changes() {
     Routes r; r.revision = 7; r.mode = TradingMode::LiveArmed;
-    auto e = verified(BrokerId::ZerodhaKite);
+    auto e = verified(BrokerId::Fyers);
     OrderGate g{e.session, 7, window, true, true, false};
     ++r.revision;
     check(order_readiness(r, e, g, now) == OrderReadiness::Disabled, "route change invalidates gate");
@@ -170,8 +176,8 @@ void session_and_route_changes() {
     check(order_readiness(r, e, g, now) == OrderReadiness::Ready, "new matching evidence accepted");
     ++e.account_session.account_slot;
     check(order_readiness(r, e, g, now) == OrderReadiness::Disabled, "other account refused");
-    e = verified(BrokerId::Fyers); g.session = e.session;
-    check(order_readiness(r, e, g, now) == OrderReadiness::Disabled, "no order provider fallback");
+    r.order_primary = BrokerId::None;
+    check(order_readiness(r, e, g, now) == OrderReadiness::Disabled, "no order provider, no orders");
 }
 } // namespace
 

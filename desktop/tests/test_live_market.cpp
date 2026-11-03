@@ -114,7 +114,7 @@ int main(int argc, char** argv) {
     PricePayload book;
     book.token = 12468226;
     book.flags = kPriceHasBook | kPriceSimulated;
-    book.depth_levels = 5;   // the HSM and Kite books; the FYERS 50-level book is below
+    book.depth_levels = 5;   // the HSM 5-level book; the FYERS 50-level book is below
     PriceLevel bids[kMaxDepthLevels]{}, asks[kMaxDepthLevels]{};
     for (std::size_t i = 0; i < kMaxDepthLevels; ++i) {
         bids[i] = PriceLevel{2401230 - 10 * static_cast<std::int64_t>(i), 650 * static_cast<std::int64_t>(i + 1), static_cast<std::uint32_t>(i + 1), 0};
