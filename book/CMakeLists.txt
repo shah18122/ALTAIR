@@ -17,6 +17,9 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_queue_position_test tests/test_queue_position.cpp)
     target_link_libraries(altair_queue_position_test PRIVATE altair_book altair_flags)
     add_test(NAME queue_position COMMAND altair_queue_position_test)
+    add_executable(altair_queue_fill_test tests/test_queue_fill.cpp)
+    target_link_libraries(altair_queue_fill_test PRIVATE altair_book altair_flags)
+    add_test(NAME queue_fill COMMAND altair_queue_fill_test)
     add_executable(altair_l2_book_test tests/test_l2_book.cpp)
     target_link_libraries(altair_l2_book_test PRIVATE altair_book altair_flags)
     add_test(NAME l2_book COMMAND altair_l2_book_test)
@@ -39,6 +42,11 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_flow_test tests/test_flow.cpp)
     target_link_libraries(altair_flow_test PRIVATE altair_book altair_flags)
     add_test(NAME flow COMMAND altair_flow_test)
+
+    # Information diffusion between contracts (book/diffusion.hpp).
+    add_executable(altair_diffusion_test tests/test_diffusion.cpp)
+    target_link_libraries(altair_diffusion_test PRIVATE altair_book altair_flags)
+    add_test(NAME diffusion COMMAND altair_diffusion_test)
 endif()
 
 # The OBI hot path, timed, with a behaviour checksum. An EXECUTABLE, not a test:

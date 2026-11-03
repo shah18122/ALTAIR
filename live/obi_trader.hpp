@@ -36,6 +36,9 @@
 //     from the money, nearest expiry; not while that option's own book leans
 //     against the sale (its OBI5 >= +obi_entry) or its spread is wider than
 //     `max_spread_ticks`. A short option is bought back only to close it.
+//     The sale rests at the ask (`passive_options`, Smit 2026-11-02: options
+//     sold passively, futures stay at the touch) and fills through the queue
+//     model; unfilled after the entry timeout, it is cancelled.
 //
 // EXITS (whichever comes first): the target; the stop in points (futures) or
 // premium percent (options); a loss of `max_loss_trade` rupees after
@@ -260,6 +263,11 @@ struct ObiTraderRules {
     int first_entry_minute = 9 * 60 + 16;  ///< no entries in the opening minute
     int last_entry_minute = 15 * 60;       ///< none after 15:00
     std::int64_t lots = 1;
+    /// Option mode: the sale RESTS at the option's ask (a passive limit order,
+    /// filled through the queue model of book/queue_fill.hpp) instead of
+    /// hitting the bid. It saves the spread, and is filled more often when the
+    /// premium is rising against the sale: altair_tune measures which wins.
+    bool passive_options = true;
 };
 
 class LiveObiTraderModel final : public LiveModel {
@@ -413,7 +421,11 @@ private:
             return;
         }
         std::string why;
-        if (!e.book().open(name(), in, side, r_.lots, ns, reason, false, &why)) {
+        const bool option = in.kind == LiveKind::Call || in.kind == LiveKind::Put;
+        const bool passive = option && r_.passive_options;
+        const bool ok = passive ? e.book().open_passive(name(), in, side, r_.lots, ns, reason + "; resting at the ask", &why)
+                                : e.book().open(name(), in, side, r_.lots, ns, reason, false, &why);
+        if (!ok) {
             log_blocked(e, ns, "entry refused: " + why);
             return;
         }

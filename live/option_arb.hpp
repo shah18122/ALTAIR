@@ -303,6 +303,17 @@ private:
         std::sort(order_.begin(), order_.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
         const std::string reason = l.label + (d > 0 ? l.plus_name : l.minus_name) + ": locks " + live_fmt::num(l.last.edge)
                                  + " per unit against " + live_fmt::num(need) + " of costs and margin";
+        // Options are sold only (the engine's risk gate): a lock that needs a
+        // long option is not started at all, so no other leg is entered and
+        // then unwound for it.
+        if (e.limits().options_sell_only)
+            for (const auto& leg : l.legs)
+                if (leg.side * d > 0 && (leg.in->kind == LiveKind::Call || leg.in->kind == LiveKind::Put)) {
+                    const std::string skip = l.label + (d > 0 ? l.plus_name : l.minus_name) + " would BUY " + leg.in->symbol
+                                           + ": options are sold only, so it is not traded";
+                    if (skip != note_) { note_ = skip; e.note_decision(name(), note_); }
+                    return;
+                }
         for (const auto& [urgency, i] : order_) {
             std::string why;
             if (!e.book().open(name(), *l.legs[i].in, l.legs[i].side * d, r_.lots, ns, reason, true, &why)) {

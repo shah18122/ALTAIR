@@ -56,8 +56,10 @@ struct Run {
     int entry_minute = -1;
 };
 
+/// `restarted`: as an engine restarted mid-morning whose journal shows this
+/// model sold earlier today and is already flat (its legs bought back).
 Run session(double sigma_day, const LiveStraddleRules& rules = {}, std::vector<double> closes = {}, int near = 2,
-            bool next_week = false) {
+            bool next_week = false, bool restarted = false) {
     const std::int64_t today = parse_day("2026-10-01");
     const auto u = universe(today, near, next_week);
     LiveEngine e(u, [](const LiveInstrument&, bool, double qty, double px, std::int64_t) { return 0.0005 * qty * px; });
@@ -69,6 +71,7 @@ Run session(double sigma_day, const LiveStraddleRules& rules = {}, std::vector<d
     auto owned = std::make_unique<LiveStraddleModel>(in);
     LiveStraddleModel* model = owned.get();
     e.add_model(std::move(owned));
+    if (restarted) e.book().note_opened(model->name(), (today * 86400 + 9 * 3600 + 16 * 60 - 19800) * 1'000'000'000LL);
     LiveSimSeeds seeds;
     seeds.nifty = 24000; seeds.banknifty = 54000; seeds.vix = 13;
     const std::int64_t open_ns = (today * 86400 + 9 * 3600 + 15 * 60 - 19800) * 1'000'000'000LL;
@@ -245,6 +248,18 @@ int main() {
         const Run lone = session(0.004, {}, {}, 0, false);
         check(lone.sold_calls == 0 && lone.all_findings.find("beyond an expiry that ends today") != std::string::npos,
               "rule Roll with no later expiry streamed: nothing sold, and it says so");
+    }
+    {
+        LiveStraddleRules R;
+        R.leg_stop_pct = 0.02;
+        const Run s = session(0.004, R);
+        std::printf("    leg stop: exit %02d:%02d, %s\n", s.exit_minute / 60, s.exit_minute % 60, s.why_out.c_str());
+        check(s.trips == 2 && s.why_out.find("bracket") != std::string::npos && s.exit_minute < 15 * 60 + 20 && s.legs_open == 0,
+              "a 2 % leg stop: one leg's ask 2 % over its sale buys BOTH legs back before the square-off");
+        check(session(0.004).why_out.find("bracket") == std::string::npos, "without the rule there is no stop (the plain straddle)");
+        const Run again = session(0.004, R, {}, 2, false, true);
+        check(again.sold_calls == 0 && again.sold_puts == 0 && again.all_findings.find("no second sale") != std::string::npos,
+              "restarted after its legs were bought back today: it says so and never sells a second time");
     }
     std::printf("%s\n", failures ? "SOME CHECKS DID NOT PASS" : "all checks passed");
     return failures ? 1 : 0;

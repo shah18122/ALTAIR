@@ -73,7 +73,9 @@
 #include <live/desk_trader.hpp>
 #include <live/straddle.hpp>
 #include <live/models.hpp>
+#include <live/obi_quoter.hpp>
 #include <live/obi_trader.hpp>
+#include <live/diffusion.hpp>
 #include <live/obi_underlyings.hpp>
 #include <live/option_arb.hpp>
 #include <live/threshold.hpp>
@@ -329,6 +331,8 @@ void usage(const char* exe) {
         "    --straddle-max-risk RS  the books straddle sells only when a 3-sd move would lose at most RS a lot\n"
         "    --straddle-max-gap-loss RS  every straddle seller sells only when a 4 % gap would lose at most RS a lot\n"
         "                         (logged on every reading either way; off by default)\n"
+        "    --straddle-leg-stop PCT the books straddle and the strangle buy back BOTH legs once either leg's ask is\n"
+        "                        PCT %% above its sale price (default 50; 0 = off; the plain straddle never stops)\n"
         "    --gate-z Z           a direction call trades only when its value clears zero by Z\n"
         "                         standard errors (default 1; 0 is the point estimate)\n"
         "    --no-record          do not write the session tape. By default every byte off the bus\n"
@@ -364,6 +368,7 @@ int main(int argc, char** argv) {
     double straddle_max_gap_loss = 0.0;   // every straddle seller's stress cap (a 4 % gap); 0 = off
     fs::path history_asked;
     double monthly_halt = 0.0, straddle_max_risk = 0.0;   // the books straddle's monthly halt and per-trade risk cap; 0 = off
+    double straddle_leg_stop = 0.50;                       // the books straddle's and strangle's per-leg stop; 0 = off
     // The tape is on by default: tuning needs FYERS's own ticks, and FYERS
     // history is only 1-minute bars. --no-record turns it off.
     bool record = true, record_asked = false, force_replay = false;
@@ -392,6 +397,7 @@ int main(int argc, char** argv) {
         if (a == "--straddle-max-risk" && has) { straddle_max_risk = std::max(0.0, std::atof(argv[++i])); continue; }
         if (a == "--straddle-max-gap-loss" && has) { straddle_max_gap_loss = std::max(0.0, std::atof(argv[++i])); continue; }
         if (a == "--history" && has) { history_asked = argv[++i]; continue; }
+        if (a == "--straddle-leg-stop" && has) { straddle_leg_stop = std::max(0.0, std::atof(argv[++i]) / 100.0); continue; }
         if (a == "--record") { record = record_asked = true; continue; }
         if (a == "--no-record") { record = false; continue; }
         if (a == "--keep-tapes" && has) { keep_tapes = std::max(1, std::atoi(argv[++i])); continue; }
@@ -420,6 +426,7 @@ int main(int argc, char** argv) {
         }
         const std::string* args = lv::tape_section(start, "args");
         if (args == nullptr) { std::printf("the tape's start record has no options\n"); return 2; }
+        straddle_leg_stop = 0.0;   // a tape from before the leg stop existed ran without one
         std::istringstream in(*args);
         for (std::string line; std::getline(in, line);) {
             const auto eq = line.find('=');
@@ -436,6 +443,7 @@ int main(int argc, char** argv) {
             else if (k == "max_daily_loss") limits.max_daily_loss = std::strtod(v.c_str(), nullptr);
             else if (k == "max_margin") limits.max_margin = std::strtod(v.c_str(), nullptr);
             else if (k == "gate_z") gate_z = std::strtod(v.c_str(), nullptr);
+            else if (k == "straddle_leg_stop") straddle_leg_stop = std::strtod(v.c_str(), nullptr);
             else if (k == "unverified_costs") unverified_costs = v == "1";
             else if (k.rfind("tuned.", 0) == 0) {
                 auto& p = tuned_on_tape[k.substr(6)];
@@ -645,6 +653,7 @@ int main(int argc, char** argv) {
         zero.closes = closes;
         zero.rules.tag = "0DTE";
         zero.rules.expiry_day = lv::ExpiryDayRule::Sell;
+        books.rules.leg_stop_pct = strangle.rules.leg_stop_pct = straddle_leg_stop;   // the 0DTE control, like the plain straddle, never stops
         for (auto* x : {&books, &strangle, &zero}) {
             x->rules.month_closed_pnl = month_pnl(lv::LiveStraddleModel(*x).name());
             book_rules.push_back(*x);
@@ -746,25 +755,95 @@ int main(int argc, char** argv) {
     auto obi_hub = std::make_unique<lv::ObiHub>(hub_cfg);
     const lv::ObiHub* hub = obi_hub.get();
     engine.add_model(std::move(obi_hub));
+    // Each trader's settings: altair_tune's (config/model_params/obi_*.toml)
+    // where it found better ones on recorded FYERS days, else today's rules;
+    // a replay uses the ones on its tape. Option sales rest at the ask unless
+    // a tuned file says hitting the bid did better.
+    std::string tuned_text;
     for (const auto& u : obi_unders)
-        for (const lv::ObiType type : {lv::ObiType::A, lv::ObiType::B, lv::ObiType::C, lv::ObiType::D})
+        for (const lv::ObiType type : lv::kObiTypes)
             for (const lv::ObiMode mode : {lv::ObiMode::Futures, lv::ObiMode::SellOptions}) {
-                lv::ObiTraderRules r;
-                r.under = u.symbol;
-                r.type = type;
-                r.mode = mode;
-                r.target_pts = u.target_pts;
-                r.stop_pts = u.stop_pts;
-                r.safety_pts = u.safety_pts;
+                lv::ObiTraderRules r = altair::tune::obi_base_rules(u, type, mode);
+                const std::string key = altair::tune::obi_key(u.symbol, type, mode);
+                altair::tune::Params p;
+                if (replaying) {
+                    if (const auto it = tuned_on_tape.find(key); it != tuned_on_tape.end()) p = it->second;
+                } else {
+                    p = altair::tune::read_params(root / "config/model_params" / (key + ".toml"));
+                }
+                altair::tune::apply_obi_params(r, p);
+                if (!p.empty()) {
+                    std::printf("  %s: %s (tuned)\n", key.c_str(), altair::tune::params_text(p).c_str());
+                    tuned_text += "tuned." + key + "=";
+                    for (const auto& [k, v] : p) {
+                        char b[64];
+                        std::snprintf(b, sizeof b, "%s:%.17g;", k.c_str(), v);
+                        tuned_text += b;
+                    }
+                    tuned_text += "\n";
+                }
                 engine.add_model(std::make_unique<lv::LiveObiTraderModel>(r, hub));
             }
+    // Information diffusion (book/diffusion.hpp, live/diffusion.hpp): who moves
+    // first between each underlying's future, its index (or stock), the bank
+    // stocks and the options near the money, and by how long. The hub measures
+    // every pair on every tick and writes the day's report to
+    // <live dir>/diffusion/diffusion_<day>.csv; a --replay of a recorded tape
+    // writes the same report under the replay's directory, which makes the
+    // replay the study of recorded sessions. Then, per underlying, a sold-option
+    // trader (the stale put after a rise, the stale call after a fall) and a
+    // futures trader (the future behind its stocks), only on pairs that pass
+    // the gate (the leader leads by more than the jitter floor). Paper only;
+    // every entry and exit goes to <live dir>/diffusion/trades.csv with its reason.
+    lv::DiffusionHub::Config diff_cfg;
+    diff_cfg.unders = hub_cfg.unders;
+    diff_cfg.report_dir = (live_dir / "diffusion").string();
+    auto diff_hub = std::make_unique<lv::DiffusionHub>(diff_cfg);
+    const lv::DiffusionHub* dhub = diff_hub.get();
+    engine.add_model(std::move(diff_hub));
+    for (const auto& u : obi_unders)
+        for (const lv::DiffMode mode : {lv::DiffMode::SellOptions, lv::DiffMode::Futures}) {
+            lv::DiffusionRules r;
+            r.under = u.symbol;
+            r.mode = mode;
+            r.stop_pts = u.stop_pts;
+            r.safety_pts = u.safety_pts;
+            if (u.symbol != "BANKNIFTY") r.option_safety = u.safety_pts;   // a stock's premiums are rupees a share
+            r.log_file = (live_dir / "diffusion" / "trades.csv").string();
+            engine.add_model(std::make_unique<lv::LiveDiffusionTraderModel>(r, dhub, hub));
+        }
+    // The OBI-skewed option quoter (live/obi_quoter.hpp): a sale resting on
+    // the put and the call two strikes out, the threatened leg pulled. Paper.
+    // Its settings come the same way (config/model_params/obiq_<under>.toml).
+    for (const auto& u : obi_unders) {
+        lv::ObiQuoterRules q;
+        q.under = u.symbol;
+        const std::string key = altair::tune::quoter_key(u.symbol);
+        altair::tune::Params p;
+        if (replaying) {
+            if (const auto it = tuned_on_tape.find(key); it != tuned_on_tape.end()) p = it->second;
+        } else {
+            p = altair::tune::read_params(root / "config/model_params" / (key + ".toml"));
+        }
+        altair::tune::apply_quoter_params(q, p);
+        if (!p.empty()) {
+            std::printf("  %s: %s (tuned)\n", key.c_str(), altair::tune::params_text(p).c_str());
+            tuned_text += "tuned." + key + "=";
+            for (const auto& [k, v] : p) {
+                char b[64];
+                std::snprintf(b, sizeof b, "%s:%.17g;", k.c_str(), v);
+                tuned_text += b;
+            }
+            tuned_text += "\n";
+        }
+        engine.add_model(std::make_unique<lv::LiveObiQuoterModel>(q, hub));
+    }
     // The event-driven strategies, each with its settings: altair_tune's
     // (config/model_params/<key>.toml) where it found better ones on recorded
     // FYERS days, else the defaults; a replay uses the ones on its tape.
     //   NSE against BSE, on every quote; OHL on every near future at 09:15
     //   (live/threshold.hpp); option arbitrage, parity and box locks timed by
     //   the book's imbalance (live/option_arb.hpp).
-    std::string tuned_text;
     for (const auto& g : altair::tune::all_grids()) {
         altair::tune::Params p = g.points[g.defaults];
         if (replaying) {
@@ -812,8 +891,9 @@ int main(int argc, char** argv) {
     std::vector<std::string> orphans;
     const fs::path journal = paper_dir / "journal.csv";
     std::size_t journal_rows = 0;
+    std::map<std::string, std::int64_t> last_open;   // what each model opened last, closed since or not
     const bool have_journal = fs::exists(journal);
-    const auto resumed = have_journal ? lv::live_replay_journal(journal.string(), universe, orphans, &journal_rows)
+    const auto resumed = have_journal ? lv::live_replay_journal(journal.string(), universe, orphans, &journal_rows, &last_open)
                                       : lv::live_read_positions((paper_dir / "open_positions.csv").string(), universe, orphans);
     std::printf("resuming from %s: %zu position(s)%s\n", have_journal ? "paper/journal.csv" : "paper/open_positions.csv",
                 resumed.size(), have_journal ? (" (" + std::to_string(journal_rows) + " fills)").c_str() : "");
@@ -822,6 +902,7 @@ int main(int argc, char** argv) {
         if (!p.carry && d != today) { orphans.push_back(p.model + " " + p.inst.symbol + " (intraday, " + lv::day_text(d) + ")"); continue; }
         engine.book().restore(p);
     }
+    for (const auto& [model, ns] : last_open) engine.book().note_opened(model, ns);
     for (const auto& o : orphans) note += "Not resumed: " + o + ". ";
     note += cost_note;
 
@@ -841,6 +922,8 @@ int main(int argc, char** argv) {
                       static_cast<long long>(policy.entry_timeout_ns), limits.max_positions, limits.max_per_model,
                       limits.max_gross_notional, limits.max_daily_loss, limits.max_margin, gate_z, unverified_costs ? 1 : 0);
         args_text = text;
+        std::snprintf(text, sizeof text, "straddle_leg_stop=%.17g\n", straddle_leg_stop);
+        args_text += text;
         args_text += tuned_text;
     }
     const auto vol_json = [](const lv::LiveVolInputs& v) {
