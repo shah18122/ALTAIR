@@ -6,13 +6,12 @@
 #include <sstream>
 #include <thread>
 
-#if defined(__linux__)
 #include <pthread.h>
 #include <sched.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-#endif
 
 namespace altair::latency {
 
@@ -42,12 +41,25 @@ Plan load_plan(const std::string& path, std::string& note) {
 std::string apply_process(const Plan& p) {
     if (!p.enabled) return "latency: off (config/latency.toml)";
     if (!p.high_priority) return "latency: process priority left as it is";
-#if defined(__linux__)
-    const bool raised = setpriority(PRIO_PROCESS, 0, -5) == 0;
-    return raised ? "process: nice -5" : "process: priority unchanged (raising it needs privileges)";
+    std::string out = setpriority(PRIO_PROCESS, 0, -5) == 0 ? "process: nice -5"
+                                                            : "process: priority unchanged (raising it needs privileges)";
+    out += "; " + lock_memory(p);
+    return out;
+}
+
+std::string lock_memory(const Plan& p) {
+    if (!p.enabled || !p.lock_memory) return "memory not locked (lock_memory = false)";
+    rlimit lim{};
+    if (getrlimit(RLIMIT_MEMLOCK, &lim) != 0) return "memory not locked (RLIMIT_MEMLOCK unreadable)";
+    if (lim.rlim_cur != RLIM_INFINITY)
+        return "memory not locked (RLIMIT_MEMLOCK " + std::to_string(lim.rlim_cur / 1024)
+             + " KiB, not unlimited: run sudo ops/tune_host.sh --go)";
+#if defined(MCL_ONFAULT)
+    const int flags = MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT;
 #else
-    return "process: priority not set on this OS";
+    const int flags = MCL_CURRENT | MCL_FUTURE;
 #endif
+    return mlockall(flags) == 0 ? "memory locked (mlockall)" : "memory not locked (mlockall refused)";
 }
 
 std::string apply_thread(const Plan& p, std::string_view role) {
@@ -57,22 +69,31 @@ std::string apply_thread(const Plan& p, std::string_view role) {
     if (it == p.roles.end()) return name + ": no such role";
     const RolePlan& r = it->second;
     std::string out = name + ":";
-#if defined(__linux__)
+    bool pinned = false;
     if (r.core >= 0) {
         cpu_set_t allowed;
         CPU_ZERO(&allowed);
         const bool known = sched_getaffinity(0, sizeof allowed, &allowed) == 0;
-        if (known && r.core < CPU_SETSIZE && CPU_ISSET(r.core, &allowed)) {
+        if (known && r.core < CPU_SETSIZE && CPU_ISSET(static_cast<std::size_t>(r.core), &allowed)) {
             cpu_set_t one;
             CPU_ZERO(&one);
-            CPU_SET(r.core, &one);
-            out += pthread_setaffinity_np(pthread_self(), sizeof one, &one) == 0 ? " core " + std::to_string(r.core)
-                                                                                 : " core " + std::to_string(r.core) + " refused";
+            CPU_SET(static_cast<std::size_t>(r.core), &one);
+            pinned = pthread_setaffinity_np(pthread_self(), sizeof one, &one) == 0;
+            out += " core " + std::to_string(r.core) + (pinned ? "" : " refused");
         } else {
             out += " core " + std::to_string(r.core) + " not available to this process";
         }
     } else {
         out += " not pinned";
+    }
+    if (p.realtime && pinned && (r.prio == Prio::Highest || r.prio == Prio::TimeCritical)) {
+        sched_param sp{};
+        sp.sched_priority = r.prio == Prio::TimeCritical ? 40 : 20;
+        if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0) {
+            out += std::string(", SCHED_FIFO ") + std::to_string(sp.sched_priority);
+            return out;
+        }
+        out += ", SCHED_FIFO refused (RLIMIT_RTPRIO: run sudo ops/tune_host.sh --go)";
     }
     if (r.prio != Prio::Normal) {
         const int nice = r.prio == Prio::AboveNormal ? -2 : r.prio == Prio::Highest ? -5 : -10;
@@ -80,10 +101,6 @@ std::string apply_thread(const Plan& p, std::string_view role) {
         out += setpriority(PRIO_PROCESS, tid, nice) == 0 ? std::string(", ") + prio_text(r.prio)
                                                          : std::string(", priority unchanged (needs privileges)");
     }
-#else
-    (void)r;
-    out += " pinning and priorities not supported on this OS";
-#endif
     return out;
 }
 

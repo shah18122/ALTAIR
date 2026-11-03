@@ -839,7 +839,7 @@ private:
         candidates << QCoreApplication::applicationDirPath() + QStringLiteral("/../Helpers/") + exe;
         candidates << QCoreApplication::applicationDirPath() + QStringLiteral("/../../net/app/") + exe;
 #ifdef ALTAIR_SOURCE_DIR
-        candidates << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+        candidates << QStringLiteral(ALTAIR_SOURCE_DIR "/build/linux/app/") + exe;
 #endif
         for (const QString& c : candidates)
             if (QFileInfo(c).isFile()) return QFileInfo(c).canonicalFilePath();

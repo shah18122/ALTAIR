@@ -7,6 +7,21 @@ Linux in CI (GCC 13, Clang 18 + libc++, ASan+UBSan, TSan). The tuning itself
 project. Read it as a design with named numbers, and expect the first
 afternoon of real contact to change several of them.
 
+**2026-11-03: built.** The tuning below is now a script and a probe, both
+Linux-only and in this repo:
+
+- `sudo ops/tune_host.sh` (dry run) / `--go`: isolcpus + nohz_full + rcu_nocbs
+  on cores 2.. (8+ cores), THP madvise, hugepages, busy polling 50 us,
+  swappiness 1, IRQs off the isolated cores, memlock unlimited and rtprio 50.
+  `--undo --go` removes it. `sudo ops/setup.sh --tune` runs it.
+- `config/latency.toml`: `lock_memory` (mlockall, on) and `realtime`
+  (SCHED_FIFO for pinned threads, off until measured).
+- `build/linux/app/altair_latency_probe`: the tuning in effect, the FYERS TCP
+  round trip, timer wake-up jitter on the feed core, mlock and hugepage checks.
+
+The numbers on the EC2 box decide whether stage 6 (kernel bypass) is worth
+building. The sections below are the original design notes.
+
 ---
 
 ## 0. Read this before the rest of the document

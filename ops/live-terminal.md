@@ -755,8 +755,15 @@ restarted mid-way, both sessions replayed twice.
 
 The price service, the engine and the order router read `config/latency.toml`
 at start and print what they did (`bus: core 2, highest`).
-- **Process:** nice -5 when the service is allowed to raise its priority
-  (the systemd units can grant it); otherwise it says so and runs on.
+- **Process:** nice -5 when the service is allowed to raise its priority;
+  otherwise it says so and runs on.
+- **Memory (`lock_memory`, on):** `mlockall`, so nothing the service touched is
+  ever paged out. Only when the memlock limit is unlimited
+  (`sudo ops/tune_host.sh --go`, then log in again); under a finite limit it
+  says "memory not locked" rather than risk an allocation failing later.
+- **Realtime (`realtime`, off):** pinned threads at highest / time_critical run
+  `SCHED_FIFO` 20 / 40 instead of a nice value. Needs the rtprio limit from
+  `tune_host.sh`, and is best with the roles on isolated cores.
 - **Threads:** each latency-critical thread is pinned to a core and raised:
   - the price bus's owner;
   - the FYERS socket and decoder;
@@ -765,6 +772,11 @@ at start and print what they did (`bus: core 2, highest`).
   - the router.
 - **"auto":** leaves cores 0 and 1 to the system and the DCV desktop and hands out
   the rest, most critical first. Nothing is pinned with fewer than four cores.
+- **The host:** `sudo ops/tune_host.sh` (a dry run; `--go` applies) isolates
+  cores 2.. from the scheduler, the timer tick and device interrupts, reserves
+  hugepages, turns on busy polling and raises the limits above.
+  `altair_latency_probe` reports what is in effect and measures the FYERS round
+  trip and the timer wake-up jitter (`data/verified/latency/probe-<day>.txt`).
 - **Refusals:** a refused call is reported and the service runs on. A typo in
   the file is an error naming its line, and the defaults are used.
 

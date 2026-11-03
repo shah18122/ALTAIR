@@ -64,7 +64,7 @@ namespace altair::ui {
     tried << app + QStringLiteral("/../Helpers/") + exe;
     tried << app + QStringLiteral("/../../net/app/") + exe;
 #ifdef ALTAIR_SOURCE_DIR
-    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + exe;
+    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/linux/app/") + exe;
 #endif
     for (const QString& path : tried) {
         const QFileInfo file(path);
@@ -171,8 +171,8 @@ public:
         if (exe_.isEmpty()) {
             outcome_->show_state(LoginOutcomeKind::Problem, QStringLiteral(
                 "<b>altair_fyers_login is not in this build.</b> It needs the "
-                "<code>net</code> preset: run <code>ops/build.sh</code> in "
-                "PowerShell, then start the desktop from <code>build\\net\\desktop</code>."));
+                "network libraries (Boost, OpenSSL): run <code>sudo ops/setup.sh</code> (or <code>ops/build.sh</code>), then start "
+                "the desktop from <code>build/linux/desktop</code>."));
             return;
         }
         outcome_->show_state(LoginOutcomeKind::Working,

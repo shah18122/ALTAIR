@@ -132,7 +132,7 @@ struct FetchResult {
     tried << app + QStringLiteral("/../Helpers/") + executable;
     tried << app + QStringLiteral("/../../net/app/") + executable;
 #ifdef ALTAIR_SOURCE_DIR
-    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/") + executable;
+    tried << QStringLiteral(ALTAIR_SOURCE_DIR "/build/linux/app/") + executable;
 #endif
     for (const QString& candidate : tried) {
         const QFileInfo info(candidate);

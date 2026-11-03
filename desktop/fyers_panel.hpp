@@ -230,7 +230,7 @@ private:
         candidates << QCoreApplication::applicationDirPath()
                           + QStringLiteral("/../../net/app/") + executable;
 #ifdef ALTAIR_SOURCE_DIR
-        candidates << QStringLiteral(ALTAIR_SOURCE_DIR "/build/net/app/")
+        candidates << QStringLiteral(ALTAIR_SOURCE_DIR "/build/linux/app/")
                           + executable;
 #endif
         QString found;

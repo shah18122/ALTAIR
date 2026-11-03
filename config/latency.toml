@@ -7,14 +7,22 @@
 
 enabled = true
 
-# The services' process: HIGH_PRIORITY_CLASS, a 1 ms system timer and power
-# throttling off (Windows), so a background service is never parked on an
-# efficiency core. On Linux raising a priority needs privileges.
+# The services' process: nice -5 (raising a priority needs RLIMIT_NICE or
+# privileges; sudo ops/tune_host.sh --go grants both limits below).
 high_priority = true
-timer_ms = 1
 
-# Cores left to Windows and the desktop (the Terminal paints there) when a
-# role below says "auto". With fewer than four cores nothing is pinned.
+# mlockall: no page the service touched is ever paged out. Applied only when
+# RLIMIT_MEMLOCK is unlimited (tune_host.sh), never under a finite limit.
+lock_memory = true
+
+# SCHED_FIFO for PINNED threads at highest (20) / time_critical (40). Needs
+# RLIMIT_RTPRIO (tune_host.sh). Best with the roles on isolated cores
+# (tune_host.sh --isolate); off until the probe shows it helps.
+realtime = false
+
+# Cores left to the system and the DCV desktop (the Terminal paints there)
+# when a role below says "auto". With fewer than four cores nothing is pinned.
+# With tune_host.sh --isolate 2-7, keep this at 2 so "auto" lands on 2-7.
 reserve = 2
 
 [cores]          # "auto", a core number (0 is the first), or "off"
