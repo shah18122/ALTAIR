@@ -16,7 +16,7 @@
 //     exit (Rs 20 or 0.03 % brokerage, the lower), REFUSED while
 //     config/charges.toml is unverified unless --unverified-costs.
 //
-// Stock data is broker data in data/pairs/ (git-ignored): ops/fetch_universe.ps1.
+// Stock data is broker data in data/pairs/ (git-ignored): ops/linux/fetch.py universe.
 // Writes <out>/resid_reversion/{trades,daily}_<variant>.csv, summary.csv, meta.csv.
 
 #include <app/demo_costs.hpp>
@@ -154,7 +154,7 @@ int main(int argc, char** argv) {
     if (!missing.empty()) {
         std::printf("  missing: ");
         for (std::size_t k = 0; k < missing.size(); ++k) { std::printf("%s%s", k ? ", " : "", missing[k].c_str()); }
-        std::printf("\n  fetch with: powershell -ExecutionPolicy Bypass -File ops\\fetch_universe.ps1 -Go\n");
+        std::printf("\n  fetch with: ops/linux/fetch.py universe --go\n");
     }
     if (have.size() < 10) { std::printf("  fewer than 10 stocks: not run\n"); return 1; }
 

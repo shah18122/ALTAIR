@@ -140,12 +140,12 @@ public:
             return int(Qt::AlignRight | Qt::AlignVCenter);
         if (role == SortRole) {
             switch (idx.column()) {
-            case SizeA: return r.size_a;
-            case SizeB: return r.size_b;
-            case QuoteAge: return r.quote_age_ns;
-            case Gross: return r.gross_paise;
-            case Cost: return r.cost_paise;
-            case Net: return r.net_paise;
+            case SizeA: return static_cast<qlonglong>(r.size_a);
+            case SizeB: return static_cast<qlonglong>(r.size_b);
+            case QuoteAge: return static_cast<qlonglong>(r.quote_age_ns);
+            case Gross: return static_cast<qlonglong>(r.gross_paise);
+            case Cost: return static_cast<qlonglong>(r.cost_paise);
+            case Net: return static_cast<qlonglong>(r.net_paise);
             default: return data(idx, Qt::DisplayRole);
             }
         }

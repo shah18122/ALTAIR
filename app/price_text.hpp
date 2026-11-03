@@ -45,11 +45,7 @@
 
 #if defined(_LIBCPP_VERSION)
 #  include <clocale>
-#  if defined(__APPLE__)
-#    include <xlocale.h>
-#  else
 #    include <locale.h>
-#  endif
 #endif
 
 namespace altair::dataset {

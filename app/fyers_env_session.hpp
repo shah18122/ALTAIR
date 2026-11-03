@@ -25,17 +25,8 @@ struct EnvSession { std::string client, access; };
 
 namespace detail {
 inline std::string env(const char* name) {
-#if defined(_MSC_VER)
-    char* buf = nullptr;
-    std::size_t len = 0;
-    if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) return {};
-    std::string out{buf};
-    std::free(buf);
-    return out;
-#else
     const char* v = std::getenv(name);
     return v == nullptr ? std::string{} : std::string{v};
-#endif
 }
 } // namespace detail
 

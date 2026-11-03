@@ -57,23 +57,6 @@
 // reasons broker/https_client.hpp sets out at length: WinSock2 before
 // windows.h, NOMINMAX before anything that includes core/types, and the
 // wincrypt macros undefined before OpenSSL's types of the same names appear.
-#if defined(_WIN32)
-#  ifndef WIN32_LEAN_AND_MEAN
-#    define WIN32_LEAN_AND_MEAN
-#  endif
-#  ifndef NOMINMAX
-#    define NOMINMAX
-#  endif
-#  include <winsock2.h>
-#  include <windows.h>
-#  include <wincrypt.h>
-#  undef X509_NAME
-#  undef X509_EXTENSIONS
-#  undef PKCS7_ISSUER_AND_SERIAL
-#  undef PKCS7_SIGNER_INFO
-#  undef OCSP_REQUEST
-#  undef OCSP_RESPONSE
-#endif
 
 #include <broker/https_client.hpp>   // detail::load_platform_roots
 #include <broker/ws_pump.hpp>

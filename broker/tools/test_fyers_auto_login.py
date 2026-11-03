@@ -187,5 +187,24 @@ class AutoLoginTests(unittest.TestCase):
         self.assertIn("4-digit PIN (ALTAIR_FYERS_PIN)", fal.mask("4-digit PIN (ALTAIR_FYERS_PIN)"))
 
 
+
+class FileVaultTests(unittest.TestCase):
+    def test_round_trip_owner_only(self):
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t) / "vault"
+            with mock.patch.dict(os.environ, {"ALTAIR_CREDENTIAL_DIR": str(d)}):
+                self.assertIsNone(fal.vault_read("pin"))
+                self.assertTrue(fal.vault_write("pin", "1234"))
+                self.assertEqual(fal.vault_read("pin"), "1234")
+                f = d / "altair.fyers__pin"
+                self.assertEqual(f.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(d.stat().st_mode & 0o777, 0o700)
+                self.assertTrue(fal.vault_write("pin", "5678"))
+                self.assertEqual(fal.vault_read("pin"), "5678")
+                os.chmod(f, 0o644)   # readable by others: refused
+                self.assertIsNone(fal.vault_read("pin"))
+                self.assertFalse(fal.vault_write("../x", "1"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

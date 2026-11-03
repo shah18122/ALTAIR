@@ -31,12 +31,7 @@ install(TARGETS altair RUNTIME DESTINATION bin)
 add_executable(altair_credential_helper credential_helper_main.cpp)
 target_link_libraries(altair_credential_helper PRIVATE
     altair_credential_store altair_flags)
-if(APPLE)
-    install(TARGETS altair_credential_helper
-        RUNTIME DESTINATION "Altair.app/Contents/Helpers")
-else()
-    install(TARGETS altair_credential_helper RUNTIME DESTINATION bin)
-endif()
+install(TARGETS altair_credential_helper RUNTIME DESTINATION bin)
 
 if(ALTAIR_BUILD_TESTS)
     add_test(NAME app_selftest COMMAND altair --selftest)
@@ -179,18 +174,11 @@ if(ALTAIR_HAVE_NET)
         target_compile_definitions(altair_price_service PRIVATE
             ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
             ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-        if(WIN32)
-            target_link_libraries(altair_price_service PRIVATE ws2_32 mswsock)
-        endif()
     else()
         message(STATUS "altair: price service skipped (no Boost)")
     endif()
 
-    if(APPLE)
-        set(_altair_helper_destination "Altair.app/Contents/Helpers")
-    else()
-        set(_altair_helper_destination "bin")
-    endif()
+    set(_altair_helper_destination "bin")
     install(TARGETS
         altair_kite_login altair_fyers_login altair_kite_fetch
         altair_kite_account altair_fyers_account altair_kite_update altair_kite_ticker
@@ -286,7 +274,7 @@ if(ALTAIR_BUILD_TESTS)
 endif()
 
 # Data audit: dataset/ checked across timeframes, against its other sources
-# (_superseded_*) and against broker candles (ops/broker_audit.ps1). Offline:
+# (_superseded_*) and against broker candles (ops/linux/fetch.py audit). Offline:
 # it reads files and writes data/verified/ (data_audit.xlsx + merged CSVs).
 # The training store: tapes decoded, dataset/ and FYERS merged into one
 # snapshot at one cutoff (app/training_store.hpp). Offline, no credential.
@@ -375,9 +363,6 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
             target_compile_definitions(altair_live_engine PRIVATE ALTAIR_GIT_REV="${altair_git_rev}")
         endif()
     endif()
-    if(WIN32)
-        target_link_libraries(altair_live_engine PRIVATE ws2_32 mswsock)
-    endif()
     # The event-driven strategies tuned on the recorded session tapes.
     add_executable(altair_tune tune_main.cpp)
     target_link_libraries(altair_tune PRIVATE altair_live altair_charges_toml altair_flags)
@@ -394,9 +379,6 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
     target_link_libraries(altair_feed_recorder PRIVATE altair_live altair_flags Boost::headers Threads::Threads)
     target_include_directories(altair_feed_recorder PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_compile_definitions(altair_feed_recorder PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    if(WIN32)
-        target_link_libraries(altair_feed_recorder PRIVATE ws2_32 mswsock)
-    endif()
     # Each minute's ATM implied vol from the recorded FYERS chain.
     add_executable(altair_iv_record iv_record_main.cpp)
     target_link_libraries(altair_iv_record PRIVATE altair_live altair_flags)
@@ -421,7 +403,7 @@ if(TARGET altair_charges_toml AND Boost_FOUND)
         add_test(NAME obi_select COMMAND altair_obi_select_test)
         # A simulated morning recorded, then replayed: the same journal and
         # decisions byte for byte (needs dataset/ and a shell).
-        if(NOT WIN32 AND TARGET altair_price_service)
+        if(TARGET altair_price_service)
             add_test(NAME live_replay
                      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/live_replay.sh $<TARGET_FILE:altair_price_service>
                              $<TARGET_FILE:altair_live_engine> ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/live_replay_work
@@ -616,9 +598,6 @@ if(ALTAIR_BUILD_TESTS)
         target_link_libraries(altair_shared_bus_test PRIVATE
             altair_server altair_live altair_lockfree altair_flags Boost::headers Threads::Threads)
         target_include_directories(altair_shared_bus_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        if(WIN32)
-            target_link_libraries(altair_shared_bus_test PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME shared_bus COMMAND altair_shared_bus_test)
         set_tests_properties(shared_bus PROPERTIES LABELS concurrency)
 
@@ -628,9 +607,6 @@ if(ALTAIR_BUILD_TESTS)
         target_link_libraries(altair_feed_reader_test PRIVATE
             altair_server altair_live altair_lockfree altair_flags Boost::headers Threads::Threads)
         target_include_directories(altair_feed_reader_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-        if(WIN32)
-            target_link_libraries(altair_feed_reader_test PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME feed_reader COMMAND altair_feed_reader_test)
         # A throughput check: run alone, never beside the CPU-heavy model
         # tests that `ctest -j` would otherwise schedule next to it.

@@ -100,11 +100,7 @@ namespace altair::ui {
 /// panel says which preset supplies it rather than reporting a failure.
 [[nodiscard]] inline QString find_kite_login() {
     const QString exe =
-#if defined(_WIN32)
-        QStringLiteral("altair_kite_login.exe");
-#else
         QStringLiteral("altair_kite_login");
-#endif
     QStringList tried;
     tried << QCoreApplication::applicationDirPath() + QStringLiteral("/") + exe;
     // Altair.app/Contents/MacOS -> Contents/Helpers (packaged macOS)
@@ -159,7 +155,7 @@ public:
             where->setText(QStringLiteral(
                 "<b>altair_kite_login was not found.</b> It needs an HTTPS "
                 "client and is built by the <code>net</code> preset only. "
-                "Run <code>.\\build.bat net</code>. This is not a broken install; "
+                "Run <code>ops/build.sh</code>. This is not a broken install; "
                 "a default build simply has no transport to Kite."));
             set_role(where, QStringLiteral("error"));
         } else {
@@ -304,7 +300,7 @@ private:
         if (exe_.isEmpty()) {
             outcome_->show_state(LoginOutcomeKind::Problem, QStringLiteral(
                 "<b>altair_kite_login is not in this build.</b> It needs the "
-                "<code>net</code> preset: run <code>.\\build.bat net</code> in "
+                "<code>net</code> preset: run <code>ops/build.sh</code> in "
                 "PowerShell, then start the desktop from <code>build\\net\\desktop</code>."));
             say(QStringLiteral("\n· altair_kite_login was not found"));
             return;
@@ -393,7 +389,7 @@ private:
                 say(QStringLiteral(
                     "· note: this build has no HTTP client, so the pill will "
                     "stay NO TRANSPORT. The session file is valid and the "
-                    "network helpers can use it. Run `build.bat net` for a "
+                    "network helpers can use it. Run `ops/build.sh` for a "
                     "window that can."));
 #endif
             } else {
@@ -426,11 +422,7 @@ private:
     /// doing it on every link is safe rather than merely convenient.
     void update_dataset() {
         QString exe =
-#if defined(_WIN32)
-            QStringLiteral("altair_kite_update.exe");
-#else
             QStringLiteral("altair_kite_update");
-#endif
         QStringList tried;
         tried << QCoreApplication::applicationDirPath()
                      + QStringLiteral("/../app/") + exe;

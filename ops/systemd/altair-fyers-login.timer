@@ -1,0 +1,10 @@
+[Unit]
+Description=ALTAIR: log in to FYERS before the recorder starts
+
+[Timer]
+OnCalendar=Mon..Fri 08:30 Asia/Kolkata
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

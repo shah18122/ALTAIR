@@ -221,11 +221,7 @@ private:
 
     void fetch() {
         const QString executable =
-#if defined(_WIN32)
-            QStringLiteral("altair_fyers_account.exe");
-#else
             QStringLiteral("altair_fyers_account");
-#endif
         QStringList candidates;
         candidates << QCoreApplication::applicationDirPath()
                           + QStringLiteral("/../app/") + executable;

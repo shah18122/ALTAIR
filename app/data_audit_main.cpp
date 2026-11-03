@@ -6,7 +6,7 @@
 //
 // Reads DIR/<segment>/<instrument>/<tf>/*.csv (tf = 1m 5m 15m 60m 1d) and any
 // DIR/<segment>/<instrument>/_superseded_*/ folders (other sources). A broker
-// directory has the same layout (ops/broker_audit.ps1 fills
+// directory has the same layout (ops/linux/fetch.py audit fills
 // data/broker_audit/fyers and data/broker_audit/kite).
 //
 // Writes, under --out (default data/verified):

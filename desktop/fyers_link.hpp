@@ -56,11 +56,7 @@ namespace altair::ui {
 }
 
 [[nodiscard]] inline QString find_fyers_login() {
-#if defined(_WIN32)
-    const QString exe = QStringLiteral("altair_fyers_login.exe");
-#else
     const QString exe = QStringLiteral("altair_fyers_login");
-#endif
     QStringList tried;
     const QString app = QCoreApplication::applicationDirPath();
     tried << app + QStringLiteral("/") + exe;
@@ -175,7 +171,7 @@ public:
         if (exe_.isEmpty()) {
             outcome_->show_state(LoginOutcomeKind::Problem, QStringLiteral(
                 "<b>altair_fyers_login is not in this build.</b> It needs the "
-                "<code>net</code> preset: run <code>.\\build.bat net</code> in "
+                "<code>net</code> preset: run <code>ops/build.sh</code> in "
                 "PowerShell, then start the desktop from <code>build\\net\\desktop</code>."));
             return;
         }

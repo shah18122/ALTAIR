@@ -14,7 +14,7 @@ Kite ticker ──┘    (or --sim [--date D])                          └► a
 Terminal (LIVE on) ──► data/order_intents.jsonl ──► altair_order_router ──► FYERS orders API ──► data/live_orders/
 ```
 
-## Running it (Windows, market hours)
+## Running it (market hours)
 
 1. **Log in for the day** on **Brokers**, to either broker:
    - **Log in to FYERS**, or
@@ -762,16 +762,15 @@ restarted mid-way, both sessions replayed twice.
 
 The price service, the engine and the order router read `config/latency.toml`
 at start and print what they did (`bus: core 2, highest`).
-- **Process (Windows):** HIGH_PRIORITY_CLASS, a 1 ms system timer, and power
-  throttling off, so a background service is never parked on an efficiency
-  core.
+- **Process:** nice -5 when the service is allowed to raise its priority
+  (the systemd units can grant it); otherwise it says so and runs on.
 - **Threads:** each latency-critical thread is pinned to a core and raised:
   - the price bus's owner;
   - the FYERS socket and decoder;
   - the 50-level book;
   - the engine;
   - the router.
-- **"auto":** leaves cores 0 and 1 to Windows and the desktop and hands out
+- **"auto":** leaves cores 0 and 1 to the system and the DCV desktop and hands out
   the rest, most critical first. Nothing is pinned with fewer than four cores.
 - **Refusals:** a refused call is reported and the service runs on. A typo in
   the file is an error naming its line, and the defaults are used.
@@ -832,7 +831,7 @@ at start and print what they did (`bus: core 2, highest`).
 ## Limits, stated
 
 - **Stat-arb needs daily closes in `data/pairs/<symbol>/1d`.** Run
-  `ops/fetch_universe.ps1 -Go`. Until then it abstains and says why.
+  `ops/linux/fetch.py universe --go`. Until then it abstains and says why.
 - **History through yesterday matters.** The vol band, strangles, pairs and
   direction models read `dataset/` for HAR, the spread and the walk-forward. Keep
   it current (`altair_kite_update` or `altair_fyers_history`).

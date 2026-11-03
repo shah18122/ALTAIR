@@ -91,14 +91,13 @@ def exchange(req_tok: str) -> tuple[bool, str]:
     appear on a command line where they would land in a process listing.
     """
     exe = None
-    for candidate in (os.path.join("build", "net", "app", "altair_kite_login.exe"),
-                      os.path.join("build", "net", "app", "altair_kite_login")):
+    for candidate in (os.path.join("build", "linux", "app", "altair_kite_login"),):
         if os.path.exists(candidate):
             exe = candidate
             break
     if exe is None:
         return False, ("altair_kite_login is not built. Configure and build "
-                       "the `net` preset:  .\\build.bat net")
+                       "the `net` preset:  ops/build.sh")
 
     try:
         proc = subprocess.run([exe, req_tok], capture_output=True, text=True,

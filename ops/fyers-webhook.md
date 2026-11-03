@@ -20,10 +20,10 @@ that FYERS will observe, not a private LAN address.
 
 ## Local receiver
 
-```powershell
-$env:ALTAIR_FYERS_WEBHOOK_SECRET = '<generate-a-long-random-secret>'
-New-Item -ItemType Directory -Force data | Out-Null
-& .\build\net\app\altair_fyers_webhook.exe 8787
+```bash
+export ALTAIR_FYERS_WEBHOOK_SECRET="$(openssl rand -hex 32)"   # never commit it
+mkdir -p data
+build/linux/app/altair_fyers_webhook 8787
 ```
 
 Keep this process running under a service manager on the public host. Starting
@@ -70,12 +70,11 @@ the FYERS dashboard entry. No order placement is implemented by this receiver.
 
 ## Local smoke test
 
-```powershell
-Invoke-WebRequest http://127.0.0.1:8787/fyers/callback `
-  -Method Post `
-  -Headers @{ 'X-Fyers-Webhook-Secret' = $env:ALTAIR_FYERS_WEBHOOK_SECRET } `
-  -ContentType 'application/json' `
-  -Body '{"status":"Traded","order_id":"local-test"}'
+```bash
+curl -sS http://127.0.0.1:8787/fyers/callback \
+  -H "X-Fyers-Webhook-Secret: $ALTAIR_FYERS_WEBHOOK_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"Traded","order_id":"local-test"}'
 ```
 
 Expected response: HTTP 200 and `ok`. This proves only the local receiver; it

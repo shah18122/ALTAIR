@@ -20,10 +20,8 @@
 #include <string>
 #include <vector>
 
-#if !defined(_WIN32)
 #include <csignal>
 #include <sys/resource.h>
-#endif
 
 namespace {
 
@@ -118,7 +116,6 @@ int main() {
         check(log.flush() && read(dir / "c.csv") == "h\ngood\nnext\n", "the torn half-row is cut; the retry follows the last good row");
     }
 
-#if !defined(_WIN32)
     // ---- a write that fails part-way (the file-size limit: EFBIG, like a full disk) ----
     {
         LiveCsvLog log(dir / "d.csv", "time,what");
@@ -140,7 +137,6 @@ int main() {
         check(log.flush() && lines(dir / "d.csv") == 22 && read(dir / "d.csv").rfind(before, 0) == 0,
               "space returns: all twenty land, once each, after the first");
     }
-#endif
 
     // ---- the ledger with the engine: halt on a write that fails, resume when it lands --
     {

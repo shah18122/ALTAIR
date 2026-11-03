@@ -94,17 +94,8 @@ namespace {
 /// with _CRT_SECURE_NO_WARNINGS -- which would silence every other instance of
 /// the check too.
 [[nodiscard]] std::string env_or_empty(const char* name) {
-#if defined(_MSC_VER)
-    char* buf = nullptr;
-    std::size_t len = 0;
-    if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) { return {}; }
-    std::string out{buf};
-    std::free(buf);
-    return out;
-#else
     const char* v = std::getenv(name);
     return v != nullptr ? std::string{v} : std::string{};
-#endif
 }
 
 [[nodiscard]] const char* arg_value(int argc, char** argv, const char* name) {

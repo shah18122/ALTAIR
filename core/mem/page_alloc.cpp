@@ -8,16 +8,7 @@
 
 #include <cstddef>
 
-#if defined(_WIN32)
-#  ifndef WIN32_LEAN_AND_MEAN
-#    define WIN32_LEAN_AND_MEAN
-#  endif
-#  ifndef NOMINMAX
-#    define NOMINMAX
-#  endif
-#  include <windows.h>
-#  define ALTAIR_PAGES 1
-#elif defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__)
 #  include <sys/mman.h>
 #  include <unistd.h>
 #  define ALTAIR_PAGES 1
@@ -32,12 +23,7 @@ constexpr std::size_t kFallbackPageSize = 4096;
 
 std::size_t query_page_size() noexcept
 {
-#if defined(_WIN32)
-    SYSTEM_INFO si{};
-    ::GetSystemInfo(&si);
-    return si.dwPageSize != 0 ? static_cast<std::size_t>(si.dwPageSize)
-                              : kFallbackPageSize;
-#elif defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__)
     const long v = ::sysconf(_SC_PAGESIZE);
     return v > 0 ? static_cast<std::size_t>(v) : kFallbackPageSize;
 #else
@@ -47,9 +33,7 @@ std::size_t query_page_size() noexcept
 
 std::size_t query_huge_page_size() noexcept
 {
-#if defined(_WIN32)
-    return static_cast<std::size_t>(::GetLargePageMinimum());
-#elif defined(__linux__)
+#if defined(__linux__)
     // The near-universal default on x86-64. Reading /proc/meminfo would be more
     // precise but would put file I/O in a startup path for no practical gain.
     return static_cast<std::size_t>(2) * 1024 * 1024;
@@ -81,14 +65,7 @@ constexpr std::size_t round_up(std::size_t n, std::size_t to) noexcept
 /// failure means, because a refused huge mapping is not an error.
 std::byte* os_map(std::size_t bytes, bool huge) noexcept
 {
-#if defined(_WIN32)
-    DWORD flags = MEM_RESERVE | MEM_COMMIT;
-    if (huge) {
-        flags |= MEM_LARGE_PAGES;
-    }
-    void* p = ::VirtualAlloc(nullptr, bytes, flags, PAGE_READWRITE);
-    return static_cast<std::byte*>(p);
-#elif defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__)
     int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 #  if defined(__linux__) && defined(MAP_HUGETLB)
     if (huge) {
@@ -108,10 +85,7 @@ std::byte* os_map(std::size_t bytes, bool huge) noexcept
 
 void os_unmap(std::byte* p, std::size_t bytes) noexcept
 {
-#if defined(_WIN32)
-    (void)bytes;   // MEM_RELEASE requires a size of 0
-    ::VirtualFree(p, 0, MEM_RELEASE);
-#elif defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__)
     ::munmap(p, bytes);
 #else
     (void)p;

@@ -22,22 +22,22 @@ to 15:40 (the dataset's futures bars and FYERS' symbol master both run there).
 
 ## Run it
 
-On your PC, after `build.bat net` and linking FYERS and Kite:
+On your PC, after `ops/build.sh net` and linking FYERS and Kite:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File ops\broker_audit.ps1
+```bash
+python3 ops/linux/fetch.py audit
 ```
 
 That fetches both brokers year by year (resumable; missing years are logged to
-`data\broker_audit\fetch_log.txt` and skipped), runs the audit and opens the
+`data/broker_audit/fetch_log.txt` and skipped), runs the audit and opens the
 workbook. Options: `-From 2020-01-01`, `-SkipKite`, `-SkipFyers`,
 `-AuditOnly` (compare what is already fetched), `-Force` (re-fetch),
 `-NoOpen`.
 
 Without brokers (cross-timeframe only):
 
-```powershell
-build\net\app\altair_data_audit.exe --dataset dataset --out data\verified
+```bash
+build/linux/app/altair_data_audit --dataset dataset --out data/verified
 ```
 
 ## Output (`data/verified/`, git-ignored)

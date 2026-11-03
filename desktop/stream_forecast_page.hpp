@@ -1,7 +1,7 @@
 // Forecast training runs off the GUI thread; admitted trade updates use a cached model.
 //
 // DATA: FYERS ONLY. Bars come from data/store/fyers/spot/<inst>/<tf>/ (the
-// FYERS candles ops\fetch_fyers_history.ps1 and the nightly keep) and, on
+// FYERS candles ops/linux/fetch.py history and the nightly keep) and, on
 // "Fetch recent + train", from FYERS alone; dataset/ (TradingView exports)
 // and Kite are never read here. Five-level depth comes from ALTAIR's own
 // recorder (data/store/depth_bars/fut/<inst>/1m/, written by altair_store
@@ -155,7 +155,7 @@ inline ForecastTrainingResult train_forecast_page(const QString& root, const QSt
     QStringList files = directory.exists("all.csv") ? QStringList{"all.csv"}
         : directory.entryList({"*.csv"}, QDir::Files, QDir::Name);
     if (files.isEmpty() && !fetch) {
-        result.error = QStringLiteral("No FYERS candles in %1. Run ops\\fetch_fyers_history.ps1 -Go once (needs today's FYERS "
+        result.error = QStringLiteral("No FYERS candles in %1. Run python3 ops/linux/fetch.py history --go once (needs today's FYERS "
                                       "login); the nightly then adds each day. dataset/ is not used: FYERS data only.")
                            .arg(result.bars_dir);
         return result;

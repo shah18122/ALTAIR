@@ -24,10 +24,9 @@ CREDENTIALS. Each value is looked up in this order, the first found wins:
   4-digit PIN    ALTAIR_FYERS_PIN              pin
   TOTP secret    ALTAIR_FYERS_TOTP_KEY         totp-key      (base32 key shown when TOTP was enabled)
 
-The Windows vault entries are the same ones altair_fyers_login and the desktop
-Brokers page use (Credential Manager target "Altair/altair.fyers/<account>"),
-so the app id/secret saved there already are reused. On Linux the vault is the
-`keyring` package when installed; otherwise use the environment or the file.
+The vault is ALTAIR's owner-only file vault, the one the C++ credential store
+uses: ~/.config/altair/credentials/altair.fyers__<account> (0700 folder, 0600
+files; $ALTAIR_CREDENTIAL_DIR or $XDG_CONFIG_HOME move it).
 
 NOTHING SECRET IS EVER PRINTED OR LOGGED: not the PIN, TOTP, secret, auth code
 or token. Only lengths and "set/missing" appear. Never commit the local file.
@@ -114,7 +113,7 @@ _SECRET_RE = re.compile(
 
 
 def mask(text: str) -> str:
-    """The same masking rule as ops/altair_log.ps1, plus a catch-all for long token-like runs."""
+    """The same masking rule as app/activity_log.hpp, plus a catch-all for long token-like runs."""
     text = re.sub(r"[\r\n]+", " ", text)
     text = _BEARER_RE.sub(r"\1\2<redacted>", text)
     text = _SECRET_RE.sub(r"\1\2<redacted>", text)
@@ -143,85 +142,69 @@ def log(root: Path, level: str, message: str) -> None:
 # Credential sources
 # --------------------------------------------------------------------------
 
-def _win_target(account: str) -> str:
-    return f"Altair/{SERVICE}/{account}"
+def vault_dir() -> Path | None:
+    """The owner-only file vault broker/credential_store.cpp uses."""
+    d = os.environ.get("ALTAIR_CREDENTIAL_DIR", "")
+    if d.startswith("/"):
+        return Path(d)
+    x = os.environ.get("XDG_CONFIG_HOME", "")
+    if x.startswith("/"):
+        return Path(x) / "altair" / "credentials"
+    h = os.environ.get("HOME", "")
+    return Path(h) / ".config" / "altair" / "credentials" if h.startswith("/") else None
 
 
-def _win_vault_read(account: str) -> str | None:
-    import ctypes
-    from ctypes import wintypes
-
-    class CREDENTIAL(ctypes.Structure):
-        _fields_ = [("Flags", wintypes.DWORD), ("Type", wintypes.DWORD),
-                    ("TargetName", wintypes.LPWSTR), ("Comment", wintypes.LPWSTR),
-                    ("LastWritten", wintypes.FILETIME), ("CredentialBlobSize", wintypes.DWORD),
-                    ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)), ("Persist", wintypes.DWORD),
-                    ("AttributeCount", wintypes.DWORD), ("Attributes", ctypes.c_void_p),
-                    ("TargetAlias", wintypes.LPWSTR), ("UserName", wintypes.LPWSTR)]
-
-    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
-    advapi.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-                                 ctypes.POINTER(ctypes.POINTER(CREDENTIAL))]
-    advapi.CredReadW.restype = wintypes.BOOL
-    advapi.CredFree.argtypes = [ctypes.c_void_p]
-    raw = ctypes.POINTER(CREDENTIAL)()
-    if not advapi.CredReadW(_win_target(account), 1, 0, ctypes.byref(raw)):  # 1 = CRED_TYPE_GENERIC
+def _vault_file(account: str) -> Path | None:
+    d = vault_dir()
+    if d is None or not re.fullmatch(r"[A-Za-z0-9._-]+", account):
         return None
-    try:
-        blob = ctypes.string_at(raw.contents.CredentialBlob, raw.contents.CredentialBlobSize)
-        return blob.decode("utf-8") if blob else None
-    finally:
-        ctypes.memset(raw.contents.CredentialBlob, 0, raw.contents.CredentialBlobSize)
-        advapi.CredFree(raw)
-
-
-def _win_vault_write(account: str, value: str) -> bool:
-    import ctypes
-    from ctypes import wintypes
-
-    class CREDENTIAL(ctypes.Structure):
-        _fields_ = [("Flags", wintypes.DWORD), ("Type", wintypes.DWORD),
-                    ("TargetName", wintypes.LPWSTR), ("Comment", wintypes.LPWSTR),
-                    ("LastWritten", wintypes.FILETIME), ("CredentialBlobSize", wintypes.DWORD),
-                    ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)), ("Persist", wintypes.DWORD),
-                    ("AttributeCount", wintypes.DWORD), ("Attributes", ctypes.c_void_p),
-                    ("TargetAlias", wintypes.LPWSTR), ("UserName", wintypes.LPWSTR)]
-
-    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
-    advapi.CredWriteW.argtypes = [ctypes.POINTER(CREDENTIAL), wintypes.DWORD]
-    advapi.CredWriteW.restype = wintypes.BOOL
-    data = value.encode("utf-8")
-    buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
-    cred = CREDENTIAL()
-    cred.Type = 1                 # CRED_TYPE_GENERIC, as broker/credential_store.cpp
-    cred.TargetName = _win_target(account)
-    cred.CredentialBlobSize = len(data)
-    cred.CredentialBlob = ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte))
-    cred.Persist = 2              # CRED_PERSIST_LOCAL_MACHINE
-    cred.UserName = "Altair"
-    ok = bool(advapi.CredWriteW(ctypes.byref(cred), 0))
-    ctypes.memset(buf, 0, len(data))
-    return ok
+    return d / f"{SERVICE}__{account}"
 
 
 def vault_read(account: str) -> str | None:
+    """None when absent, or when the file or folder is not owner-only."""
+    f = _vault_file(account)
+    if f is None:
+        return None
     try:
-        if os.name == "nt":
-            return _win_vault_read(account)
-        import keyring  # optional on Linux/macOS
-        return keyring.get_password(SERVICE, account)
-    except Exception:
+        st = os.stat(f.parent)
+        if st.st_uid != os.geteuid() or st.st_mode & 0o077:
+            return None
+        fd = os.open(f, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            st = os.fstat(fd)
+            if st.st_uid != os.geteuid() or st.st_mode & 0o077:
+                return None
+            data = b""
+            while chunk := os.read(fd, 4096):
+                data += chunk
+        finally:
+            os.close(fd)
+        return data.decode("utf-8") or None
+    except OSError:
         return None
 
 
 def vault_write(account: str, value: str) -> bool:
+    """Write a 0600 temp file, fsync it and rename it over the old one."""
+    f = _vault_file(account)
+    if f is None:
+        return False
+    tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
     try:
-        if os.name == "nt":
-            return _win_vault_write(account, value)
-        import keyring
-        keyring.set_password(SERVICE, account, value)
+        f.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(f.parent, 0o700)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            os.write(fd, value.encode("utf-8"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp, f)
         return True
-    except Exception:
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
         return False
 
 

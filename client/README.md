@@ -70,7 +70,7 @@ None of these exist in C++, and carrying them forward would be cargo cult:
 
 ## Running it, if you ever want to
 
-```powershell
+```bash
 cd client
 npm install
 npm run check      # tsc --noEmit + node --test  →  79/79

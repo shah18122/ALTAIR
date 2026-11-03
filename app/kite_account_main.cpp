@@ -58,17 +58,8 @@ namespace {
 /// silence every other instance of the check too. Copied rather than
 /// reinvented so all three Kite tools agree on how a credential is read.
 [[nodiscard]] std::string env_or_empty(const char* name) {
-#if defined(_MSC_VER)
-    char* buf = nullptr;
-    std::size_t len = 0;
-    if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) { return {}; }
-    std::string out{buf};
-    std::free(buf);
-    return out;
-#else
     const char* v = std::getenv(name);
     return v != nullptr ? std::string{v} : std::string{};
-#endif
 }
 
 /// Read `access_token` out of data/kite_session.json.

@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
         const auto lot_a = futures_lot("data/instruments.csv", s.a);
         const auto lot_b = futures_lot("data/instruments.csv", s.b);
         if (a.empty() || b.empty()) {
-            const std::string why = "no data: run ops\\fetch_pairs.ps1 -Go (" + (a.empty() ? s.a_dir : s.b_dir) + ")";
+            const std::string why = "no data: run ops/linux/fetch.py pairs --go (" + (a.empty() ? s.a_dir : s.b_dir) + ")";
             summary << s.pair << ",\"" << why << "\",,,,,,,,,,,,,,,,," << cost_tag << '\n';
             std::printf("  %-22s %s\n", s.pair.c_str(), why.c_str());
             continue;

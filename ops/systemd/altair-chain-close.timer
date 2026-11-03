@@ -1,0 +1,11 @@
+[Unit]
+Description=ALTAIR: chain snapshot at the close
+
+[Timer]
+OnCalendar=Mon..Fri 15:27 Asia/Kolkata
+Persistent=true
+AccuracySec=1s
+Unit=altair-chain@close.service
+
+[Install]
+WantedBy=timers.target

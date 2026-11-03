@@ -4,7 +4,7 @@
 // serves a live contract's bars from its first traded day but refuses every
 // expired option and future (HTTP 422), so the only chain history ALTAIR will
 // have is the one it saves before each contract expires. altair_fyers_chain
-// (app/fyers_chain_main.cpp; ops/fyers_chain.ps1 runs it daily at 15:45 IST)
+// (app/fyers_chain_main.cpp; ops/linux/fyers_chain.py runs it daily at 15:45 IST)
 // saves it; this header picks the contracts, turns a day's one-minute bars
 // into a close, and reads the saved days back.
 //
@@ -20,7 +20,7 @@
 // trade has no row at all -- never a model price.
 //
 // FALLBACK. A day with no saved bars but a REST snapshot from
-// ops/chain_snapshot.ps1 (data/store/chain_snap/<day>/1527.csv) is read from
+// ops/linux/chain_snapshot.py (data/store/chain_snap/<day>/1527.csv) is read from
 // the snapshot's last traded prices, counted apart in the report: FYERS data,
 // but a 15:27 LTP, not a bar close.
 //
@@ -255,7 +255,7 @@ inline void read_closes(const fs::path& file, std::vector<Row>& rows, LoadReport
     }
 }
 
-/// ops/chain_snapshot.ps1's 1527.csv: snap_time,fyers,underlying,kind,expiry,strike,ltp,...
+/// ops/linux/chain_snapshot.py's 1527.csv: snap_time,fyers,underlying,kind,expiry,strike,ltp,...
 inline void read_snapshot(const fs::path& file, const std::string& symbol, std::vector<Row>& rows, LoadReport& rep) {
     std::ifstream in(file);
     std::string line;

@@ -833,11 +833,7 @@ private:
     }
 
     [[nodiscard]] static QString find_helper(const QString& name) {
-#if defined(_WIN32)
-        const QString exe = name + QStringLiteral(".exe");
-#else
         const QString exe = name;
-#endif
         QStringList candidates;
         candidates << QCoreApplication::applicationDirPath() + QStringLiteral("/../app/") + exe;
         candidates << QCoreApplication::applicationDirPath() + QStringLiteral("/../Helpers/") + exe;
@@ -864,7 +860,7 @@ private:
     }
 
     void report_missing(const QString& helper) {
-        status_->setText(QStringLiteral("%1 is not in this build; build the net preset (build.bat net)").arg(helper));
+        status_->setText(QStringLiteral("%1 is not in this build; build the net preset (ops/build.sh)").arg(helper));
     }
 
     void set_busy(bool, const QString& text) { status_->setText(text); }

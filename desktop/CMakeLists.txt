@@ -26,7 +26,7 @@ find_package(Qt6 6.8 QUIET COMPONENTS Core Gui Network Svg Widgets)
 #
 #     combine(const Signal* public, std::size_t n, ...)
 #
-# and the error MSVC prints is "missing ')' before 'public'" in a file that has
+# and the error the compiler prints is "missing ')' before 'public'" in a file that has
 # no Qt in it and no `public` on that line. Nothing had included both until the
 # Aggregator page pulled models/aggregator.hpp, and it in turn score.hpp, into
 # a window.
@@ -45,7 +45,7 @@ add_compile_definitions(QT_NO_KEYWORDS)
 if(NOT Qt6_FOUND)
     message(STATUS "desktop/: Qt6 not found — UI target skipped. "
                    "Set ALTAIR_QT_ROOT or CMAKE_PREFIX_PATH to a Qt 6.8+ "
-                   "msvc2022_64 install.")
+                   "gcc_64 install (sudo ops/setup.sh puts one in /opt/altair/qt).")
     return()
 endif()
 
@@ -417,10 +417,6 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_fyers_panel COMMAND altair_fyers_panel_test)
     set_tests_properties(desktop_fyers_panel PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_tests_properties(desktop_fyers_panel PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     # P2-02a. Broker helpers must never wait on the UI thread.  The test
     # launches a tiny no-Qt child so it covers real start, output, exit, busy
@@ -470,24 +466,12 @@ if(ALTAIR_BUILD_TESTS)
     set_property(TEST desktop_navigation_shell_200 APPEND PROPERTY ENVIRONMENT "QT_SCALE_FACTOR=2")
     set_tests_properties(desktop_navigation_shell PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms;QT_SCALE_FACTOR=1")
-    if(WIN32)
-        set_property(TEST desktop_navigation_shell desktop_navigation_shell_125 desktop_navigation_shell_200
-            APPEND PROPERTY ENVIRONMENT
-            "QT_QPA_FONTDIR=$ENV{WINDIR}/Fonts")
-        set_tests_properties(desktop_navigation_shell desktop_navigation_shell_125 desktop_navigation_shell_200
-            PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     qt_add_executable(test_bar_consistency tests/test_bar_consistency.cpp)
     target_link_libraries(test_bar_consistency PRIVATE altair_flags Qt6::Core)
     add_dependencies(test_bar_consistency altair_bar_consistency)
     set_target_properties(test_bar_consistency PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_bar_consistency COMMAND test_bar_consistency)
-    if(WIN32)
-        set_tests_properties(desktop_bar_consistency PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     # CX06: presentation-only registry, menus, persistence and keyboard tests.
     qt_add_executable(altair_navigation_test tests/test_navigation.cpp)
@@ -497,12 +481,6 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_navigation COMMAND altair_navigation_test)
     set_tests_properties(desktop_navigation PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_property(TEST desktop_navigation APPEND PROPERTY ENVIRONMENT
-            "QT_QPA_FONTDIR=$ENV{WINDIR}/Fonts")
-        set_tests_properties(desktop_navigation PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     # The Q_OBJECT headers must be listed HERE too. AUTOMOC only processes
     # files in the target's own source list, so leaving them out links against
@@ -590,10 +568,6 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_broker_activity COMMAND altair_broker_activity_test)
     set_tests_properties(desktop_broker_activity PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_tests_properties(desktop_broker_activity PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     # P20-02. The Kite account panel. Exercised against a SYNTHETIC snapshot
     # because the live account is expired -- a renderer that has never
@@ -721,10 +695,6 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_compute_page COMMAND altair_compute_page_test)
     set_tests_properties(desktop_compute_page PROPERTIES TIMEOUT 30 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_tests_properties(desktop_compute_page PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     # P25-04. The order ticket's WRITER, checked against the same vectors
     # oms/ parses. It deliberately does NOT link altair_oms: the whole point
@@ -766,9 +736,8 @@ if(ALTAIR_BUILD_TESTS)
     # all. A layout change could silently fail to fix that and look right.
     #
     # Counts emissions with a lambda rather than QSignalSpy: Qt6::Test is
-    # not among the DLLs windeployqt puts beside these binaries, and linking a
-    # component nobody deploys fails at RUN time with 0xC0000135 and no
-    # message naming it. Needs a real QApplication rather than a
+    # not among the Qt libraries the deploy step ships, and linking a
+    # component nobody deploys fails at RUN time. Needs a real QApplication rather than a
     # QCoreApplication, because QTableWidget is a widget.
     # P36-01. The Model Atlas page. The CMake audit checks every path in the
     # table; this checks the PAGE -- that the tree shows every row, that the
@@ -791,10 +760,6 @@ if(ALTAIR_BUILD_TESTS)
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
         set_target_properties(altair_price_client_test
             PROPERTIES WIN32_EXECUTABLE OFF)
-        if(WIN32)
-            target_link_libraries(altair_price_client_test
-                PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME desktop_price_client COMMAND altair_price_client_test)
 
         # Start here: ALTAIR in plain words -- the state from its files, the verdicts.
@@ -804,9 +769,6 @@ if(ALTAIR_BUILD_TESTS)
         target_compile_definitions(altair_start_page_test PRIVATE ALTAIR_KILL_REQUEST_FILE="data/kill_request.json")
         target_include_directories(altair_start_page_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
         set_target_properties(altair_start_page_test PROPERTIES WIN32_EXECUTABLE OFF)
-        if(WIN32)
-            target_link_libraries(altair_start_page_test PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME desktop_start_page COMMAND altair_start_page_test)
         set_tests_properties(desktop_start_page PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
@@ -825,10 +787,6 @@ if(ALTAIR_BUILD_TESTS)
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
         set_target_properties(altair_live_market_test
             PROPERTIES WIN32_EXECUTABLE OFF)
-        if(WIN32)
-            target_link_libraries(altair_live_market_test
-                PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME desktop_live_market COMMAND altair_live_market_test)
 
         # The paper order book behind + / − and its windows, and the market
@@ -847,17 +805,9 @@ if(ALTAIR_BUILD_TESTS)
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
         set_target_properties(altair_paper_oms_test
             PROPERTIES WIN32_EXECUTABLE OFF)
-        if(WIN32)
-            target_link_libraries(altair_paper_oms_test
-                PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME desktop_paper_oms COMMAND altair_paper_oms_test)
         set_tests_properties(desktop_paper_oms PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-        if(WIN32)
-            set_tests_properties(desktop_paper_oms PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-        endif()
 
         # The live models panel: engine state and paper trades from files,
         # positions marked tick by tick from the real bus and client.
@@ -874,10 +824,6 @@ if(ALTAIR_BUILD_TESTS)
             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
         set_target_properties(altair_live_models_test
             PROPERTIES WIN32_EXECUTABLE OFF)
-        if(WIN32)
-            target_link_libraries(altair_live_models_test
-                PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME desktop_live_models COMMAND altair_live_models_test)
         # The Order Book Imbalance page: every book and print of one instrument, from the
         # real bus and client, through book/flow.hpp.
@@ -897,17 +843,9 @@ if(ALTAIR_BUILD_TESTS)
             PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
         set_target_properties(altair_obi_page_test
             PROPERTIES WIN32_EXECUTABLE OFF)
-        if(WIN32)
-            target_link_libraries(altair_obi_page_test
-                PRIVATE ws2_32 mswsock)
-        endif()
         add_test(NAME desktop_obi_page COMMAND altair_obi_page_test)
         set_tests_properties(desktop_obi_page PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-        if(WIN32)
-            set_tests_properties(desktop_obi_page PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-        endif()
         # Trade statistics, the expense heads of a fill and the strategy record panel.
         qt_add_executable(altair_trade_stats_test
             tests/test_trade_stats.cpp
@@ -925,10 +863,6 @@ if(ALTAIR_BUILD_TESTS)
         add_test(NAME desktop_trade_stats COMMAND altair_trade_stats_test)
         set_tests_properties(desktop_trade_stats PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-        if(WIN32)
-            set_tests_properties(desktop_trade_stats PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-        endif()
         # The Terminal's message bar: DEMO fills and RMS refusals tailed from the engine's files.
         qt_add_executable(altair_message_bar_test tests/test_message_bar.cpp message_bar.hpp)
         target_link_libraries(altair_message_bar_test PRIVATE altair_flags Qt6::Core Qt6::Gui Qt6::Widgets)
@@ -937,22 +871,10 @@ if(ALTAIR_BUILD_TESTS)
         add_test(NAME desktop_message_bar COMMAND altair_message_bar_test)
         set_tests_properties(desktop_message_bar PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-        if(WIN32)
-            set_tests_properties(desktop_message_bar PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-        endif()
         set_tests_properties(desktop_live_models PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-        if(WIN32)
-            set_tests_properties(desktop_live_models PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-        endif()
         set_tests_properties(desktop_live_market PROPERTIES TIMEOUT 60 ENVIRONMENT
             "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-        if(WIN32)
-            set_tests_properties(desktop_live_market PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-        endif()
     endif()
 
     qt_add_executable(altair_atlas_test
@@ -986,10 +908,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(altair_format_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_format COMMAND altair_format_test)
-    if(WIN32)
-        set_tests_properties(desktop_format PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     qt_add_executable(altair_position_table_test
         tests/test_position_table.cpp
@@ -1000,10 +918,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(altair_position_table_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_position_table COMMAND altair_position_table_test)
-    if(WIN32)
-        set_tests_properties(desktop_position_table PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     qt_add_executable(altair_funds_summary_test
         tests/test_funds_summary.cpp
@@ -1014,10 +928,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(altair_funds_summary_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_funds_summary COMMAND altair_funds_summary_test)
-    if(WIN32)
-        set_tests_properties(desktop_funds_summary PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     # GETS-style Terminal: FYERS account/quote decoding, the Greek book, every
     # tab's rows and the typed snapshot the position table accepts. Fixtures
@@ -1036,10 +946,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(altair_gets_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_gets COMMAND altair_gets_test)
-    if(WIN32)
-        set_tests_properties(desktop_gets PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     # The Demo Trading page reads the band-fade and pairs CSVs: fixtures only,
     # no CLI is run.
@@ -1058,10 +964,6 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_demo_trading COMMAND altair_demo_trading_test)
     set_tests_properties(desktop_demo_trading PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_tests_properties(desktop_demo_trading PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     qt_add_executable(altair_backtests_test
         tests/test_backtests.cpp
@@ -1076,10 +978,6 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_backtests COMMAND altair_backtests_test)
     set_tests_properties(desktop_backtests PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_tests_properties(desktop_backtests PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     # The strategy pages' trade tabs: study round trips add up to the study's
     # evaluation, the reasoning a trade opens with, the filtered saved runs.
@@ -1104,10 +1002,6 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_trade_logs COMMAND altair_trade_logs_test)
     set_tests_properties(desktop_trade_logs PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_tests_properties(desktop_trade_logs PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     # Daily findings, the Work log, the palette's matching and saved layouts.
     qt_add_executable(altair_workstation_test
@@ -1127,10 +1021,6 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_workstation COMMAND altair_workstation_test)
     set_tests_properties(desktop_workstation PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_tests_properties(desktop_workstation PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     qt_add_executable(altair_arbitrage_workspace_test
         tests/test_arbitrage_workspace.cpp
@@ -1141,10 +1031,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(altair_arbitrage_workspace_test PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME desktop_arbitrage_workspace COMMAND altair_arbitrage_workspace_test)
-    if(WIN32)
-        set_tests_properties(desktop_arbitrage_workspace PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     qt_add_executable(altair_terminal_test
         tests/test_terminal.cpp
@@ -1203,10 +1089,6 @@ if(ALTAIR_BUILD_TESTS)
     add_test(NAME desktop_kite_link COMMAND altair_kite_link_test)
     set_tests_properties(desktop_kite_link PROPERTIES TIMEOUT 60 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${Qt6_DIR}/../../../plugins/platforms")
-    if(WIN32)
-        set_tests_properties(desktop_kite_link PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
-    endif()
 
     qt_add_executable(altair_bar_csv_test tests/test_bar_csv.cpp)
     # Qt6::Gui because market_clock.hpp uses QColor for the phase indicator.
@@ -1242,64 +1124,17 @@ if(ALTAIR_BUILD_TESTS)
     # cmake -- which REPLACED the live PATH ctest was given rather than adding
     # to it.
     #
-    # Under the asan preset that was fatal and invisible. build.bat runs
-    # vcvars, which puts the compiler's directory on PATH, and that directory
-    # is where clang_rt.asan_dynamic-x86_64.dll lives. Every other test
-    # inherited it and passed; these three threw it away with their frozen
-    # PATH and could not load. Windows then raised a hard-error dialog owned by
-    # csrss.exe -- not by the test, so it had no window to find -- and the
-    # process sat blocked on an invisible box until ctest killed it at 600 s.
-    #
-    # That is why the asan run reported exactly these three as "failures", and
-    # why a direct run from a shell passed them in under twelve seconds. It
-    # was never a memory bug.
+    # A frozen PATH once hid the sanitizer runtime from exactly these three
+    # tests, which then failed under the asan preset while a direct run passed.
     #
     # ENVIRONMENT_MODIFICATION (CMake 3.22) edits the PATH ctest actually
     # hands the test, so the live PATH survives.
-    if(WIN32)
-        set_tests_properties(desktop_fits desktop_bar_csv desktop_filter
-            PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${ALTAIR_QT_ROOT}/bin")
-    endif()
 endif()
 
-# macOS: the bundle is Altair.app, because app/ installs every helper into
-# Altair.app/Contents/Helpers and the desktop finds them at ../Helpers from
-# Contents/MacOS. Named after the target it came out as altair_desktop.app and
-# the helpers landed in a second, empty bundle (P1-04, first macOS CI run).
-if(APPLE)
-    set_target_properties(altair_desktop PROPERTIES OUTPUT_NAME "Altair")
-endif()
-
-set_target_properties(altair_desktop PROPERTIES
-    WIN32_EXECUTABLE ON      # no console window behind the UI
-    MACOSX_BUNDLE ON
-    MACOSX_BUNDLE_BUNDLE_NAME "Altair"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "com.thesmitshah.altair"
-    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-)
-
-install(TARGETS altair_desktop
-    BUNDLE DESTINATION .
-    RUNTIME DESTINATION bin)
+install(TARGETS altair_desktop RUNTIME DESTINATION bin)
 
 qt_generate_deploy_app_script(
     TARGET altair_desktop
     OUTPUT_SCRIPT altair_deploy_script
     NO_UNSUPPORTED_PLATFORM_ERROR)
 install(SCRIPT "${altair_deploy_script}")
-
-# Copy the Qt DLLs next to the exe so it runs from the build tree without a
-# PATH dance. Debug and release Qt DLLs differ; windeployqt picks the right set.
-if(WIN32)
-    find_program(ALTAIR_WINDEPLOYQT windeployqt HINTS ${Qt6_DIR}/../../../bin)
-    if(ALTAIR_WINDEPLOYQT)
-        add_custom_command(TARGET altair_desktop POST_BUILD
-            COMMAND "${ALTAIR_WINDEPLOYQT}"
-                    --no-translations --no-system-d3d-compiler --no-opengl-sw
-                    "$<TARGET_FILE:altair_desktop>"
-            COMMENT "windeployqt: staging Qt runtime next to altair_desktop"
-            VERBATIM)
-    endif()
-endif()

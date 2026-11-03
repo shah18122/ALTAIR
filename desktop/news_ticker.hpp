@@ -60,7 +60,7 @@ public:
         connect(&refresh_, &QTimer::timeout, this, [this] { fetch(); });
         load_cache();
         if (items_.empty())
-            set_message(helper_.isEmpty() ? QStringLiteral("News: altair_news is not built (build.bat net)")
+            set_message(helper_.isEmpty() ? QStringLiteral("News: altair_news is not built (ops/build.sh)")
                                           : QStringLiteral("News: fetching headlines…"));
     }
 
