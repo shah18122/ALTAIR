@@ -1,0 +1,10 @@
+[Unit]
+Description=ALTAIR: save the day's chains from FYERS
+
+[Timer]
+OnCalendar=Mon..Fri 15:45 Asia/Kolkata
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=ALTAIR: the nightly store, retrain and push
+
+[Timer]
+OnCalendar=Mon..Fri 20:00 Asia/Kolkata
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

@@ -148,6 +148,14 @@ jobs:
           python3 -m aqt install-qt linux desktop "$QT_VERSION" linux_gcc_64 -O "$HOME/Qt"
           echo "ALTAIR_QT_ROOT=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
+      - name: Ops jobs (Python), install script and timers
+        run: |
+          python3 -m unittest discover -s ops/linux/tests -v
+          bash -n ops/build.sh ops/install.sh
+          for t in ops/systemd/*.timer; do
+            systemd-analyze calendar "$(sed -n 's/^OnCalendar=//p' "$t")" > /dev/null
+          done
+
       - name: Configure (linux preset)
         run: cmake --preset linux
 

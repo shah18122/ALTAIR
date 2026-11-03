@@ -1,0 +1,18 @@
+[Unit]
+Description=ALTAIR: record the FYERS session (ticks, quotes, books) to data/store/tapes
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=@USER@
+Group=@USER@
+WorkingDirectory=@ROOT@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/altair/altair.env
+ExecStart=/usr/bin/python3 @ROOT@/ops/linux/record_session.py --go
+TimeoutStopSec=60
+RuntimeMaxSec=8h
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
