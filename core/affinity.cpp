@@ -71,17 +71,20 @@ std::string apply_thread(const Plan& p, std::string_view role) {
     std::string out = name + ":";
     bool pinned = false;
     if (r.core >= 0) {
-        cpu_set_t allowed;
-        CPU_ZERO(&allowed);
-        const bool known = sched_getaffinity(0, sizeof allowed, &allowed) == 0;
-        if (known && r.core < CPU_SETSIZE && CPU_ISSET(static_cast<std::size_t>(r.core), &allowed)) {
+        // Not checked against sched_getaffinity(): isolcpus takes the isolated
+        // cores out of every process's default mask, so that check refused
+        // exactly the cores tune_host.sh sets aside. Asking for the core
+        // directly works on an isolated core; a cgroup cpuset that forbids
+        // it makes the call fail, which is reported as refused.
+        const long cores = sysconf(_SC_NPROCESSORS_CONF);
+        if (r.core < CPU_SETSIZE && (cores <= 0 || r.core < cores)) {
             cpu_set_t one;
             CPU_ZERO(&one);
             CPU_SET(static_cast<std::size_t>(r.core), &one);
             pinned = pthread_setaffinity_np(pthread_self(), sizeof one, &one) == 0;
             out += " core " + std::to_string(r.core) + (pinned ? "" : " refused");
         } else {
-            out += " core " + std::to_string(r.core) + " not available to this process";
+            out += " core " + std::to_string(r.core) + " does not exist on this host";
         }
     } else {
         out += " not pinned";
