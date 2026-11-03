@@ -182,6 +182,7 @@ public:
 
     /// Re-read only the broker/session metadata and repaint the overview.
     void refresh() {
+        const FyersState fyers = probe_fyers();
         const QDateTime service_now = QDateTime::currentDateTimeUtc();
         const auto fyers_service = probe_service_snapshot(
             fyers_account_path(), broker_view::BrokerId::Fyers, service_now);
