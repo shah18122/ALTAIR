@@ -30,8 +30,9 @@ void usage(const char* exe) {
         "    %s decode --day YYYY-MM-DD [--tapes DIR] [--root DIR] [--ticks]\n"
         "        the day's tapes (default <root>/data/store/tapes/<day>) into\n"
         "        <root>/data/store/ticks/<day>/ (bars_1m.csv, vol_1m.csv, chain_iv_1m.csv,\n"
-        "        _decode.json; with --ticks\n"
-        "        also trades, quotes and books) and <root>/data/store/tape_bars/.\n\n"
+        "        depth_1m.csv, _decode.json; with --ticks\n"
+        "        also trades, quotes and books), <root>/data/store/tape_bars/ and the near\n"
+        "        futures' five-level depth in <root>/data/store/depth_bars/.\n\n"
         "    %s snapshot --cutoff YYYY-MM-DD --source NAME=DIR [--source ...] [--fill NAME=DIR ...]\n"
         "        [--out DIR] [--bhavcopy DIR] [--iv DIR] [--root DIR]\n"
         "        one tree cut at the end of the cutoff day (IST), every source merged:\n"
@@ -74,7 +75,9 @@ int decode(const fs::path& root, const std::string& day, fs::path tapes, bool ti
         act::write(root, "store", "ERROR", "decode " + day + ": a tick file write failed under " + out.string());
         return 3;
     }
-    if (!st::write_file(out / "bars_1m.csv", dec.bars_csv()) || !st::write_file(out / "_decode.json", dec.stats_json(day))) {
+    dec.finish_depth();
+    if (!st::write_file(out / "bars_1m.csv", dec.bars_csv()) || !st::write_file(out / "depth_1m.csv", dec.depth_csv())
+        || !st::write_file(out / "_decode.json", dec.stats_json(day))) {
         act::write(root, "store", "ERROR", "decode " + day + ": cannot write " + out.string());
         return 3;
     }
@@ -92,11 +95,18 @@ int decode(const fs::path& root, const std::string& day, fs::path tapes, bool ti
         }
         ++series;
     }
+    for (const auto& [key, csv] : dec.depth_series_csv()) {
+        // The Forecast page's five-level depth input (desktop/stream_forecast_page.hpp).
+        if (!st::write_file(root / "data" / "store" / "depth_bars" / key / "1m" / (day + ".csv"), csv)) {
+            act::write(root, "store", "ERROR", "decode " + day + ": cannot write depth bars for " + key);
+            return 3;
+        }
+    }
     const auto& s = dec.stats();
     const std::string summary = "decode " + day + ": " + std::to_string(s.tapes) + " tape(s), " + std::to_string(s.trades)
         + " trades, " + std::to_string(s.quotes) + " quotes, " + std::to_string(s.books) + " books ("
         + std::to_string(s.deep_books) + " over 5 levels), " + std::to_string(dec.bars().size()) + " instruments, "
-        + std::to_string(series) + " dataset series, " + std::to_string(vol.vol_rows) + " vol rows, "
+        + std::to_string(series) + " dataset series, " + std::to_string(s.depth_minutes) + " depth minutes, " + std::to_string(vol.vol_rows) + " vol rows, "
         + std::to_string(vol.chain_rows) + " option IVs; missed by sequence: " + std::to_string(s.missed[altair::kTopicTrades])
         + " trades, " + std::to_string(s.missed[altair::kTopicBook]) + " books; SIM/replay dropped "
         + std::to_string(s.simulated + s.replayed);

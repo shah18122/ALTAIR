@@ -14,7 +14,11 @@
 //                                           expiry and 30-day), realised vol 15m/60m/session
 //      data/store/ticks/<day>/chain_iv_1m.csv  each minute, every option priced: mid or last,
 //                                           IV, delta, vega, OI
+//      data/store/ticks/<day>/depth_1m.csv  each minute, every instrument with a book: the
+//                                           five-level depth sums (models/depth_features.hpp)
 //      data/store/ticks/<day>/_decode.json  what was read, dropped and missed
+//      data/store/depth_bars/fut/<inst>/1m/<day>.csv  the near future's depth_1m rows: the
+//                                           Forecast page's five-level depth input
 //      data/store/tape_bars/<seg>/<inst>/1m/<day>.csv   the indices and the
 //                                           near futures, laid out like dataset/
 //
@@ -65,6 +69,7 @@
 #include <app/data_audit.hpp>
 #include <app/price_text.hpp>
 #include <live/tape.hpp>
+#include <models/depth_features.hpp>
 #include <live/universe.hpp>
 #include <server/price_payload.hpp>
 #include <server/protocol.hpp>
@@ -210,6 +215,7 @@ struct DecodeStats {
     std::size_t snapshots = 0, heartbeats = 0, bad_frames = 0, framing_resets = 0;
     std::size_t simulated = 0, replayed = 0, unknown_token = 0, no_exch_ts = 0;
     std::size_t connects = 0, disconnects = 0, cut_bytes = 0;
+    std::size_t depth_minutes = 0, depth_out_of_order = 0;   ///< five-level depth minutes kept / books refused
     std::uint64_t missed[kTopicQuote + 1]{};   ///< frames the sequence says never arrived, by topic
     std::int64_t first_ns = 0, last_ns = 0;    ///< exchange time covered (UTC ns)
     std::vector<std::string> notes;
@@ -240,13 +246,15 @@ public:
             case lv::TapeKind::Start:   // a second session in one file: its own universe
                 if (lv::tape_unpack(rec.text(), start)) set_universe(start, tape);
                 buf.clear();
+                break_depth();
                 break;
             case lv::TapeKind::Connected:
                 ++st_.connects;
                 buf.clear();
                 for (auto& s : seq_) s = {};
+                break_depth();
                 break;
-            case lv::TapeKind::Disconnected: ++st_.disconnects; buf.clear(); break;
+            case lv::TapeKind::Disconnected: ++st_.disconnects; buf.clear(); break_depth(); break;
             case lv::TapeKind::Data: {
                 buf.insert(buf.end(), rec.bytes.begin(), rec.bytes.end());
                 std::size_t at = 0;
@@ -330,6 +338,36 @@ public:
         return out;
     }
 
+    /// Finishes every instrument's minute in progress. Call once, after the
+    /// last tape and before depth_csv / depth_series_csv.
+    void finish_depth() {
+        for (auto& [sym, b] : depth_build_) b.flush(depth_[sym]);
+        st_.depth_minutes = 0;
+        for (const auto& [sym, v] : depth_) st_.depth_minutes += v.size();
+    }
+
+    /// depth_1m.csv: every instrument that showed a book.
+    [[nodiscard]] std::string depth_csv() const {
+        std::string o = std::string(depth::kCsvHeader) + "\n";
+        for (const auto& [sym, mins] : depth_)
+            for (const auto& m : mins) o += depth::csv_row(m, sym);
+        return o;
+    }
+
+    /// The near futures' depth minutes, by series key ("fut/nifty").
+    [[nodiscard]] std::map<std::string, std::string> depth_series_csv() const {
+        std::map<std::string, std::string> out;
+        for (const auto& [sym, key] : series_) {
+            if (key.rfind("fut/", 0) != 0) continue;
+            const auto it = depth_.find(sym);
+            if (it == depth_.end() || it->second.empty()) continue;
+            std::string& o = out[key];
+            if (o.empty()) o = std::string(depth::kCsvHeader) + "\n";
+            for (const auto& m : it->second) o += depth::csv_row(m, sym);
+        }
+        return out;
+    }
+
     [[nodiscard]] std::string stats_json(const std::string& day) const {
         const auto& s = st_;
         std::string o = "{\n  \"day\": " + json_str(day) + ",\n  \"tapes\": " + std::to_string(s.tapes)
@@ -344,6 +382,8 @@ public:
             + ",\n  \"missed_trades\": " + std::to_string(s.missed[kTopicTrades]) + ",\n  \"missed_books\": " + std::to_string(s.missed[kTopicBook])
             + ",\n  \"missed_quotes\": " + std::to_string(s.missed[kTopicQuote]) + ",\n  \"bytes_cut_short\": " + std::to_string(s.cut_bytes)
             + ",\n  \"first_exchange_time\": " + json_str(ist_ms_text(s.first_ns)) + ",\n  \"last_exchange_time\": " + json_str(ist_ms_text(s.last_ns))
+            + ",\n  \"depth_minutes\": " + std::to_string(s.depth_minutes)
+            + ",\n  \"depth_books_out_of_order\": " + std::to_string(s.depth_out_of_order)
             + ",\n  \"instruments\": " + std::to_string(bars_.size()) + ",\n  \"notes\": [";
         for (std::size_t i = 0; i < s.notes.size(); ++i) o += (i ? ", " : "") + json_str(s.notes[i]);
         return o + "]\n}\n";
@@ -602,7 +642,10 @@ private:
         ++st_.frames;
         if (!h.advances_seq()) { ++st_.heartbeats; return; }
         if (h.topic < kTopicTrades || h.topic > kTopicQuote) return;
+        const std::uint64_t books_missed = st_.missed[kTopicBook];
         if (!sequence(h)) return;
+        // A lost book frame could be any instrument's: no OFI across it.
+        if (st_.missed[kTopicBook] != books_missed) break_depth();
         open_ticks();
         if (h.topic == kTopicQuote) {
             const auto q = decode_quote(body, h.payload_len);
@@ -638,6 +681,19 @@ private:
             if (p.depth_levels > 5) ++st_.deep_books;
             if (p.depth_levels > 0)
                 note_top(*sym, d->bids[0].price_paise, d->asks[0].price_paise, h.engine_time_ns > 0 ? h.engine_time_ns : wall_ns);
+            if (p.depth_levels > 0) {
+                // RULE 11: deliberate truncation -- depth features are defined on
+                // the top five levels; a 50-level TBT book is read as its top five.
+                const std::size_t n = std::min<std::size_t>(p.depth_levels, depth::kLevels);
+                std::array<depth::BookRung, depth::kLevels> bids{}, asks{};
+                for (std::size_t k = 0; k < n; ++k) {
+                    bids[k] = {d->bids[k].price_paise, d->bids[k].qty};
+                    asks[k] = {d->asks[k].price_paise, d->asks[k].qty};
+                }
+                if (!depth_build_[*sym].on_book(bids.data(), n, asks.data(), n,
+                                                h.engine_time_ns > 0 ? h.engine_time_ns : wall_ns, depth_[*sym]))
+                    ++st_.depth_out_of_order;
+            }
             if (books_) {
                 std::string bids, asks;
                 for (std::uint16_t k = 0; k < p.depth_levels; ++k) {
@@ -695,6 +751,10 @@ private:
         tops_[sym][ist_s - ((ist_s % 60) + 60) % 60] = {bid, ask};
     }
 
+    void break_depth() noexcept {
+        for (auto& [sym, b] : depth_build_) b.break_stream();
+    }
+
     struct Top { std::int64_t bid = 0, ask = 0; };
     struct Seq { std::uint64_t last = 0; bool primed = false; };
     std::map<std::string, std::map<std::int64_t, Top>> tops_;   ///< options only: fyers -> minute -> top
@@ -707,6 +767,8 @@ private:
     std::map<std::string, std::string> series_;     ///< fyers -> "spot/nifty"
     std::map<std::string, std::int64_t> vol_base_;
     std::map<std::string, std::map<std::int64_t, MinuteBar>> bars_;
+    std::map<std::string, depth::DepthMinuteBuilder> depth_build_;   ///< fyers -> five-level depth, minute by minute
+    std::map<std::string, std::vector<depth::DepthMinute>> depth_;
 };
 
 // ---- 2. the snapshot ---------------------------------------------------------------
