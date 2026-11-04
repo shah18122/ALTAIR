@@ -210,5 +210,12 @@ int main(int argc, char** argv) {
     if (!dump.empty())
         std::ofstream(dump, std::ios::binary).write(reinterpret_cast<const char*>(answer.data()),
                                                     static_cast<std::streamsize>(answer.size()));
-    return tls->ready() && !answer.empty() ? 0 : 1;
+    std::fflush(stdout);
+    const int rc = tls->ready() && !answer.empty() ? 0 : 1;
+    // The port before the EAL, and the EAL before the process's static
+    // destructors: DPDK torn down in any other order can crash on exit.
+    tls.reset();
+    nic.reset();
+    DpdkPort::shutdown();
+    return rc;
 }

@@ -48,6 +48,9 @@ public:
     /// Copy one Ethernet frame into an mbuf and transmit it.
     bool send(const std::uint8_t* frame, std::size_t len);
 
+    /// Release DPDK's process-wide state (after every port is destroyed).
+    static void shutdown();
+
     std::uint64_t rx_frames() const noexcept { return rx_frames_; }
     std::uint64_t tx_frames() const noexcept { return tx_frames_; }
 

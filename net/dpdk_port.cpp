@@ -60,6 +60,11 @@ std::unique_ptr<DpdkPort> DpdkPort::open(const std::string& eal_args, const std:
     return p;
 }
 
+void DpdkPort::shutdown() {
+    if (g_eal_ready) rte_eal_cleanup();
+    g_eal_ready = false;
+}
+
 DpdkPort::~DpdkPort() {
     if (started_) {
         rte_eth_dev_stop(port_);
