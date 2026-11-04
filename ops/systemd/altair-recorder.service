@@ -17,8 +17,9 @@ LimitMEMLOCK=infinity
 LimitRTPRIO=50
 LimitNICE=-10
 # For the feed over kernel bypass (ops/linux/feed_bypass.sh): load and attach
-# the XDP filter, open AF_XDP sockets. Unused while the bypass is off.
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_BPF
+# the XDP filter (CAP_PERFMON: the verifier refuses its packet-pointer code
+# without it), open AF_XDP sockets. Unused while the bypass is off.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_BPF CAP_PERFMON
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
