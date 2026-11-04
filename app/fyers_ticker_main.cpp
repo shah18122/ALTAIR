@@ -180,8 +180,8 @@ int main(int argc, char** argv) {
     const bool stamp = has_flag(argc, argv, "--stamp");
     const bool stamp_ns = has_flag(argc, argv, "--stamp-ns");
     const char* bypass_if = arg_value(argc, argv, "--bypass");
-    const char* bypass_ip = arg_value(argc, argv, "--bypass-ip");
-    const char* bypass_q = arg_value(argc, argv, "--bypass-queues");
+    [[maybe_unused]] const char* bypass_ip = arg_value(argc, argv, "--bypass-ip");
+    [[maybe_unused]] const char* bypass_q = arg_value(argc, argv, "--bypass-queues");
 #ifndef ALTAIR_KERNEL_BYPASS
     if (bypass_if) {
         std::printf("  --bypass needs a build with -DALTAIR_KERNEL_BYPASS=ON\n");
