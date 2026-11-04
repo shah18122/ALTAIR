@@ -454,6 +454,11 @@ if(ALTAIR_BUILD_TESTS)
     add_dependencies(test_bar_consistency altair_bar_consistency)
     add_test(NAME desktop_bar_consistency COMMAND test_bar_consistency)
 
+    # The users file a Release build signs in from (auth.hpp).
+    qt_add_executable(altair_users_file_test tests/test_users_file.cpp)
+    target_link_libraries(altair_users_file_test PRIVATE altair_flags Qt6::Core)
+    add_test(NAME desktop_users_file COMMAND altair_users_file_test)
+
     # CX06: presentation-only registry, menus, persistence and keyboard tests.
     qt_add_executable(altair_navigation_test tests/test_navigation.cpp)
     target_link_libraries(altair_navigation_test PRIVATE

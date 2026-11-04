@@ -22,13 +22,43 @@ at 09:14 with a position open, or at 15:25 with a feed down.
 | [`fyers-webhook.md`](fyers-webhook.md) | | Exposing the FYERS order webhook |
 | [`phase8-acceptance.md`](phase8-acceptance.md) | | What still needs an entitled account or licensed data |
 
-`ops/setup.sh` installs or updates everything on the Linux server, and
+`ops/setup.sh` installs or updates everything on the Linux server (during market
+hours, or while an ALTAIR job runs, it still installs packages and the DCV screen
+but leaves the code, build, timers and tuning alone, and exits 3), and
 `ops/build.sh` builds. The Python jobs in `linux/` fetch data from FYERS
 (`fetch.py`: history, universe, pairs, meta, depth tapes, broker audit), record
 and store each session (`record_session`, `nightly`, `push_data`; systemd timers
 from `install.sh`, see `recorder.md`), save the option chains from FYERS
 before they expire (`chain_snapshot`, `fyers_chain`) and audit the broker account. Research notes and paper
 references moved to [`../docs/research/`](../docs/research).
+
+## Reaching the server's screen
+
+DCV listens on 8443, but the tunnel is the way in: no 8443 in the security
+group, and it works from networks that only let 443 out.
+
+```
+sudo ops/setup.sh --dcv --ssh-443                      # once: DCV, and SSH on 443 as well as 22
+ssh -p 443 -L 8443:localhost:8443 ubuntu@<server>      # from the PC, keep it open
+```
+
+Then open `https://localhost:8443` (accept the self-signed certificate) and log
+in as `ubuntu` (`sudo passwd ubuntu` sets the password). Without DCV, Qt's VNC
+plugin works the same way: `altair_desktop -platform vnc` on the server and
+`-L 5900:localhost:5900`.
+
+## Signing in to the terminal
+
+The `linux` preset is a Release build, so it has no admin/admin account. Add
+yours once on the server (it asks for the password twice, echo off):
+
+```
+~/ALTAIR/build/linux/desktop/altair_desktop --add-user smit admin
+```
+
+Accounts live in `~/.config/altair/users` (0600; salt and stretched hash only).
+`staff` instead of `admin` gives a read-only account. Running it again for the
+same name changes that password.
 
 ## The rule these three share
 
