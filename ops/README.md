@@ -47,6 +47,19 @@ in as `ubuntu` (`sudo passwd ubuntu` sets the password). Without DCV, Qt's VNC
 plugin works the same way: `altair_desktop -platform vnc` on the server and
 `-L 5900:localhost:5900`.
 
+## Signing in to the terminal
+
+The `linux` preset is a Release build, so it has no admin/admin account. Add
+yours once on the server (it asks for the password twice, echo off):
+
+```
+~/ALTAIR/build/linux/desktop/altair_desktop --add-user smit admin
+```
+
+Accounts live in `~/.config/altair/users` (0600; salt and stretched hash only).
+`staff` instead of `admin` gives a read-only account. Running it again for the
+same name changes that password.
+
 ## The rule these three share
 
 **Every claim states whether it has been verified, and on what.**

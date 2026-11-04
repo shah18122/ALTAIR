@@ -145,8 +145,8 @@ public:
         if (users_.empty()) {
             auto* none = new QLabel(
                 QStringLiteral(
-                    "No accounts are provisioned in this build. There is no "
-                    "default account to fall back to."),
+                    "No accounts are provisioned. Add one on the server: "
+                    "altair_desktop --add-user NAME admin"),
                 this);
             none->setWordWrap(true);
             set_role(none, QStringLiteral("error"));

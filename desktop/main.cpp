@@ -48,7 +48,13 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
+#include <iostream>
+#include <string>
 #include <vector>
+
+#include <termios.h>
+#include <unistd.h>
 
 namespace {
 
@@ -131,7 +137,58 @@ std::vector<altair::ReplayTick> demo_session(std::size_t count,
 
 } // namespace
 
+// `--add-user NAME admin|staff`: write one account to the users file and exit.
+// Runs before QApplication, so it needs no screen. The password is read from
+// the terminal with echo off, never from the command line (shell history and
+// the process list would keep it).
+static int add_user(int argc, char** argv) {
+    if (argc != 4) {
+        std::fprintf(stderr, "usage: altair_desktop --add-user NAME admin|staff\n");
+        return 2;
+    }
+    const QString user = QString::fromLocal8Bit(argv[2]);
+    const altair::ui::Role role = altair::ui::role_from_name(QString::fromLocal8Bit(argv[3]));
+    if (role == altair::ui::Role::None) {
+        std::fprintf(stderr, "the role is admin or staff, not '%s'\n", argv[3]);
+        return 2;
+    }
+    auto read_secret = [](const char* prompt) {
+        std::fprintf(stderr, "%s", prompt);
+        termios old{};
+        const bool tty = ::isatty(STDIN_FILENO) && ::tcgetattr(STDIN_FILENO, &old) == 0;
+        if (tty) {
+            termios quiet = old;
+            quiet.c_lflag &= ~static_cast<tcflag_t>(ECHO);
+            ::tcsetattr(STDIN_FILENO, TCSANOW, &quiet);
+        }
+        std::string line;
+        std::getline(std::cin, line);
+        if (tty) {
+            ::tcsetattr(STDIN_FILENO, TCSANOW, &old);
+            std::fprintf(stderr, "\n");
+        }
+        return QString::fromStdString(line);
+    };
+    const QString password = read_secret("password: ");
+    if (password != read_secret("again: ")) {
+        std::fprintf(stderr, "the two passwords differ; nothing saved\n");
+        return 1;
+    }
+    const QString path = altair::ui::users_file_path();
+    QString error;
+    if (!altair::ui::save_user(path, user, password, role, &error)) {
+        std::fprintf(stderr, "%s\n", qPrintable(error));
+        return 1;
+    }
+    std::fprintf(stderr, "saved %s (%s) in %s\n", qPrintable(user),
+                 qPrintable(altair::ui::role_name(role)), qPrintable(path));
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::strcmp(argv[1], "--add-user") == 0) {
+        return add_user(argc, argv);
+    }
     QApplication app(argc, argv);
     // One look for every window, dialog and control -- desktop/theme.hpp.
     altair::ui::apply_app_theme(app);
@@ -265,6 +322,10 @@ int main(int argc, char** argv) {
     // dialog says so rather than falling back to a default.
     altair::ui::UserStore users;
     altair::ui::seed_default_users(users);
+    if (QString users_error; !altair::ui::load_users_file(users, altair::ui::users_file_path(), &users_error)
+                             || !users_error.isEmpty()) {
+        qWarning().noquote() << users_error;
+    }
 
     // --as admin|staff skips the dialog. DEV BUILDS ONLY, and the guard is
     // the same compile definition that supplies the accounts: a build with no
