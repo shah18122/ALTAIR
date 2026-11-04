@@ -13,6 +13,10 @@
 # (Python's ssl), over a link that loses 2% of packets and reorders 10%
 # (tc netem) and drops every 5th segment ALTAIR sends, and must receive a 512 KiB answer byte for byte.
 #
+# Part 3 (when altair_bypass_ws is built): the FYERS transport. A TLS
+# WebSocket over the same lossy link: ALTAIR upgrades, subscribes, pings every
+# second, and must record 3000 binary messages (up to 70 KB) exactly as sent.
+#
 #   sudo ops/linux/xdp_netns_test.sh [build/xdp] [generic|native]
 #
 # Exit 0 when the stream matches. The namespaces are removed on exit.
@@ -93,5 +97,22 @@ if cmp -s "$work/answer" "$work/got_tls"; then
     echo "PASS: TLS over ALTAIR's own TCP through AF_XDP, 512 KiB answer byte for byte, 2% loss + reordering in, every 5th segment out dropped ($mode mode)"
 else
     echo "FAIL: the TLS answer differs ($(stat -c %s "$work/got_tls" 2>/dev/null || echo 0) of $((512 << 10)) bytes)" >&2
+    exit 1
+fi
+
+ws="$build/net/altair_bypass_ws"
+[ -x "$ws" ] || exit 0
+ip netns exec "$a" python3 -I "$here/xdp_ws_server.py" 10.77.0.1 4444 "$work/cert.pem" "$work/key.pem" "$work/ws_sent" \
+    > "$work/ws_server.log" 2>&1 &
+wspid=$!
+sleep 0.5
+ip netns exec "$b" "$ws" --iface vb --local-ip 10.77.0.2 --remote 10.77.0.1:4444 --host altair.test --path /feed \
+    --ca "$work/cert.pem" --send SUB --ping PING --seconds 30 --bpf "$obj" --dump "$work/ws_got" $flag || true
+wait "$wspid" || true
+cat "$work/ws_server.log"
+if cmp -s "$work/ws_sent" "$work/ws_got"; then
+    echo "PASS: TLS WebSocket over the bypass path, 3000 messages exactly as sent, lossy link ($mode mode)"
+else
+    echo "FAIL: the WebSocket messages differ" >&2
     exit 1
 fi

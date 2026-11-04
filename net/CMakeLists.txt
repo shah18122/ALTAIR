@@ -14,6 +14,13 @@ if(ALTAIR_BUILD_TESTS)
     add_executable(altair_net_test tests/test_net.cpp)
     target_link_libraries(altair_net_test PRIVATE altair_net altair_flags)
     add_test(NAME net COMMAND altair_net_test)
+
+    find_package(OpenSSL)
+    if(OpenSSL_FOUND)
+        add_executable(altair_websocket_test tests/test_websocket.cpp)
+        target_link_libraries(altair_websocket_test PRIVATE altair_net OpenSSL::Crypto altair_flags)
+        add_test(NAME websocket COMMAND altair_websocket_test)
+    endif()
 endif()
 
 # AF_XDP: -DALTAIR_KERNEL_BYPASS=ON (needs libxdp-dev, libbpf-dev, clang).
@@ -55,4 +62,14 @@ if(ALTAIR_KERNEL_BYPASS)
     target_link_libraries(altair_xdp_tls_client PRIVATE altair_af_xdp altair_tls_stream altair_flags)
     target_compile_options(altair_xdp_tls_client PRIVATE -Wno-conversion -Wno-sign-conversion)
     target_compile_definitions(altair_xdp_tls_client PRIVATE ALTAIR_XDP_OBJECT="${xdp_obj}")
+
+    # The whole bypass stack: AF_XDP -> TCP -> TLS -> WebSocket.
+    add_library(altair_bypass_ws STATIC bypass_ws.cpp)
+    target_link_libraries(altair_bypass_ws PUBLIC altair_af_xdp altair_tls_stream PRIVATE altair_flags)
+    target_compile_options(altair_bypass_ws PRIVATE -Wno-conversion -Wno-sign-conversion)
+
+    add_executable(altair_bypass_ws_probe tools/bypass_ws_main.cpp)
+    set_target_properties(altair_bypass_ws_probe PROPERTIES OUTPUT_NAME altair_bypass_ws)
+    target_link_libraries(altair_bypass_ws_probe PRIVATE altair_bypass_ws altair_flags)
+    target_compile_definitions(altair_bypass_ws_probe PRIVATE ALTAIR_XDP_OBJECT="${xdp_obj}")
 endif()

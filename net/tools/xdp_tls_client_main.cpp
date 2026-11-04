@@ -15,6 +15,7 @@
 // on the interface's subnet; --next-hop-mac overrides it. Needs root.
 
 #include <net/af_xdp.hpp>
+#include <net/neighbour.hpp>
 #include <net/packet.hpp>
 #include <net/tls_stream.hpp>
 #include <net/user_tcp.hpp>
@@ -47,55 +48,6 @@ using Clock = std::chrono::steady_clock;
 std::uint64_t now_ns() {
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count());
-}
-
-bool parse_mac(const std::string& s, std::array<std::uint8_t, 6>& out) {
-    unsigned b[6];
-    if (std::sscanf(s.c_str(), "%x:%x:%x:%x:%x:%x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) != 6) return false;
-    for (int i = 0; i < 6; ++i) {
-        if (b[i] > 255) return false;
-        out[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(b[i]);
-    }
-    return true;
-}
-
-bool read_text(const std::string& path, std::string& out) {
-    std::ifstream f(path);
-    if (!f) return false;
-    std::getline(f, out);
-    return true;
-}
-
-// The MAC for `ip` in /proc/net/arp, or for the default gateway of `iface`.
-bool next_hop_mac(const std::string& iface, const std::string& ip, std::array<std::uint8_t, 6>& mac) {
-    auto lookup = [&](const std::string& want) {
-        std::ifstream f("/proc/net/arp");
-        std::string line;
-        std::getline(f, line);
-        while (std::getline(f, line)) {
-            std::istringstream l(line);
-            std::string a, hw, flags, m, mask, dev;
-            l >> a >> hw >> flags >> m >> mask >> dev;
-            if (a == want && dev == iface && m != "00:00:00:00:00:00") return parse_mac(m, mac);
-        }
-        return false;
-    };
-    if (lookup(ip)) return true;
-    std::ifstream r("/proc/net/route");
-    std::string line;
-    std::getline(r, line);
-    while (std::getline(r, line)) {
-        std::istringstream l(line);
-        std::string dev, dest, gw;
-        l >> dev >> dest >> gw;
-        if (dev == iface && dest == "00000000") {
-            const std::uint32_t g = static_cast<std::uint32_t>(std::strtoul(gw.c_str(), nullptr, 16));
-            in_addr a{};
-            a.s_addr = g;
-            return lookup(inet_ntoa(a));
-        }
-    }
-    return false;
 }
 
 std::string unescape(const std::string& s) {
@@ -158,8 +110,7 @@ int main(int argc, char** argv) {
     if (rport <= 0 || rport > 65535) return usage();
     e.local_port = static_cast<std::uint16_t>(local_port);
     e.remote_port = static_cast<std::uint16_t>(rport);
-    std::string mac_file;
-    if (!read_text("/sys/class/net/" + o.iface + "/address", mac_file) || !parse_mac(mac_file, e.local_mac)) {
+    if (!interface_mac(o.iface, e.local_mac)) {
         std::fprintf(stderr, "altair_xdp_tls_client: no MAC for %s\n", o.iface.c_str());
         return 1;
     }
