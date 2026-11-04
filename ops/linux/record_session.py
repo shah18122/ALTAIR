@@ -28,6 +28,7 @@ when today's session already works). Until a session exists the log says
 from __future__ import annotations
 
 import argparse
+import os
 import datetime as dt
 import socket
 import subprocess
@@ -70,6 +71,11 @@ def main() -> int:
     feed_args = ["--live", "--go", "--until", a.until, "--strikes", str(a.strikes),
                  "--depth-strikes", str(a.depth_strikes), "--expiries", str(a.expiries),
                  "--monthly", "--depth50", a.depth50]
+    # The feed over kernel bypass (AF_XDP, ALTAIR's own TCP/TLS), set by
+    # ops/linux/feed_bypass.sh in /etc/altair/altair.env; the price service
+    # falls back to the kernel socket by itself if the bypass cannot start.
+    if os.environ.get("ALTAIR_FEED_BYPASS") and os.environ.get("ALTAIR_FEED_BYPASS_IP"):
+        feed_args += ["--bypass", os.environ["ALTAIR_FEED_BYPASS"], "--bypass-ip", os.environ["ALTAIR_FEED_BYPASS_IP"]]
     rec_args = ["--until", a.until, "--go"]
     t = require_tools("record", "altair_feed_recorder", "altair_price_service")
     recorder, service = t["altair_feed_recorder"], t["altair_price_service"]

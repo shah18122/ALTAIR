@@ -10,6 +10,8 @@
 #   sudo ops/linux/dpdk_bind.sh               list the ENA devices and what owns them
 #   sudo ops/linux/dpdk_bind.sh ens6          bind ens6 to vfio-pci for DPDK
 #   sudo ops/linux/dpdk_bind.sh --undo PCI    give the device back to the kernel (ena)
+#   sudo ops/linux/dpdk_bind.sh --at-boot ens6   bind it now and after every boot
+#                                                (altair-dpdk-bind.service)
 #
 # Then: altair_dpdk_tls_client --eal "-a <PCI> --in-memory" --port <PCI> --local-ip <the ENI's address> ...
 # EC2 guests have no IOMMU, so vfio runs in no-IOMMU mode (the AWS-documented
@@ -24,6 +26,16 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
+if [ "$1" = --at-boot ]; then
+    [ $# -eq 2 ] || { echo "usage: dpdk_bind.sh --at-boot IFACE" >&2; exit 2; }
+    mkdir -p /etc/altair
+    printf 'DPDK_IFACE=%s\n' "$2" > /etc/altair/dpdk.conf
+    systemctl enable altair-dpdk-bind.service
+    if [ -e "/sys/class/net/$2" ]; then exec "$0" "$2"; fi
+    echo "$2 is already bound (or absent); it is bound again at every boot"
+    exit 0
+fi
+
 if [ "$1" = --undo ]; then
     [ $# -eq 2 ] || { echo "usage: dpdk_bind.sh --undo PCI" >&2; exit 2; }
     dpdk-devbind.py --bind=ena "$2"
@@ -32,7 +44,10 @@ if [ "$1" = --undo ]; then
 fi
 
 ifc="$1"
-[ -e "/sys/class/net/$ifc/device" ] || { echo "no network device $ifc" >&2; exit 2; }
+if [ ! -e "/sys/class/net/$ifc/device" ]; then
+    echo "no network device $ifc (already bound to DPDK, or not attached)"
+    exit 0
+fi
 pci="$(basename "$(readlink -f "/sys/class/net/$ifc/device")")"
 default_if="$(ip route show default | awk '{for (i=1;i<NF;i++) if ($i=="dev") print $(i+1)}' | head -1)"
 first_if="$(ls -1 /sys/class/net | grep -v '^lo$' | while read -r n; do [ -e "/sys/class/net/$n/device" ] && echo "$n"; done | sort | head -1)"

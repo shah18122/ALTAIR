@@ -16,6 +16,9 @@ RuntimeMaxSec=8h
 LimitMEMLOCK=infinity
 LimitRTPRIO=50
 LimitNICE=-10
+# For the feed over kernel bypass (ops/linux/feed_bypass.sh): load and attach
+# the XDP filter, open AF_XDP sockets. Unused while the bypass is off.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_BPF
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full

@@ -69,6 +69,9 @@
 #include <atomic>
 #include <csignal>
 #include <optional>
+#ifdef ALTAIR_KERNEL_BYPASS
+#include <net/bypass_ws.hpp>
+#endif
 
 namespace {
 
@@ -226,6 +229,12 @@ struct Bar {
 
 std::atomic<bool> g_stop{false};
 extern "C" void on_stop_signal(int) { g_stop.store(true); }
+/// --bypass IFACE --bypass-ip ADDR: the HSM feed over AF_XDP and ALTAIR's own
+/// TCP/TLS (net/bypass_ws.hpp). The kernel socket is the fallback: a bypass
+/// that cannot start, or drops before its first message, hands the session to
+/// it for good. The 50-level book stays on the kernel socket.
+std::string g_bypass_if, g_bypass_ip;
+int g_bypass_queues = 8;
 /// How many instruments hold the FYERS 50-level book at once (--depth50 N;
 /// 0 = off). FYERS allows 1 on a Standard plan and 5 a connection, three
 /// connections, on Prime: up to 15, one socket and thread a connection.
@@ -904,6 +913,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
     };
 
     std::optional<altair::FyersSocketError> last_error;
+    [[maybe_unused]] bool bypass_off = false;
     for (long attempt = 0; !g_stop.load(); ++attempt) {
         const std::int64_t left = deadline_unix - unix_now();
         if (left < 1) { break; }
@@ -913,6 +923,48 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
             st.state = "reconnecting";
             altair::live_sources::write_status(status_path, st);
         }
+#ifdef ALTAIR_KERNEL_BYPASS
+        if (!g_bypass_if.empty() && !bypass_off) {
+            altair::net::BypassWsConfig bc;
+            bc.xdp.iface = g_bypass_if;
+            bc.xdp.bpf_object = ALTAIR_XDP_OBJECT;
+            bc.local_ip = g_bypass_ip;
+            bc.queues = g_bypass_queues;
+            bc.host = altair::kFyersDataSocketHost;
+            bc.path = altair::kFyersDataSocketPath;
+            altair::net::BypassWsStats bs;
+            std::string berr;
+            const bool ok = altair::net::bypass_ws_run(
+                bc, {hsm::auth_frame(*hsm_key, source), hsm::mode_frame(false, hsm::kDefaultChannel)}, on_frame,
+                hsm::ping_frame(), std::chrono::seconds{hsm::kPingSeconds}, std::chrono::seconds{left},
+                std::chrono::seconds{30}, bs, berr, [] { return g_stop.load(); });
+            std::printf("  bypass feed on %s: TCP %.3f ms, TLS %.3f ms, %zu messages, %llu TCP retransmits%s%s\n",
+                        g_bypass_if.c_str(), bs.connect_ms, bs.tls_ms, bs.messages,
+                        static_cast<unsigned long long>(bs.tcp_retransmits), ok ? "" : "; ", ok ? "" : berr.c_str());
+            std::fflush(stdout);
+            if (!ok && bs.messages == 0) {
+                bypass_off = true;
+                std::printf("  the bypass did not start: the kernel socket takes the feed from here\n");
+                std::fflush(stdout);
+            }
+            if (ok) {
+                last_error.reset();
+                if (g_stop.load()) { break; }
+            } else {
+                st.error = "bypass: " + berr;
+            }
+            if (auth_rejected) {
+                st.state = "refused";
+                st.error = "FYERS refused the socket token; link FYERS again";
+                break;
+            }
+            if (!bypass_off) {
+                const long backoff = attempt < 3 ? (1L << attempt) : 8L;
+                std::this_thread::sleep_for(std::chrono::seconds{backoff});
+            }
+            continue;
+        }
+#endif
         const auto run = altair::fyers_data_socket_run(
             {hsm::auth_frame(*hsm_key, source), hsm::mode_frame(false, hsm::kDefaultChannel)}, on_frame,
             hsm::ping_frame(), std::chrono::seconds{hsm::kPingSeconds}, std::chrono::seconds{left});
@@ -981,6 +1033,12 @@ int main(int argc, char** argv) {
             i += 2;
         } else if (a == "--go") {
             mode = "live";
+        } else if (a == "--bypass" && i + 1 < argc) {
+            g_bypass_if = argv[++i];
+        } else if (a == "--bypass-ip" && i + 1 < argc) {
+            g_bypass_ip = argv[++i];
+        } else if (a == "--bypass-queues" && i + 1 < argc) {
+            g_bypass_queues = std::atoi(argv[++i]);
         } else if (a == "--port" && i + 1 < argc) {
             port = static_cast<unsigned short>(std::atoi(argv[++i]));
         } else if (a == "--seconds" && i + 1 < argc) {
@@ -1032,6 +1090,12 @@ int main(int argc, char** argv) {
             return 0;
         }
     }
+#ifndef ALTAIR_KERNEL_BYPASS
+    if (!g_bypass_if.empty()) {
+        std::printf("--bypass: this build has no kernel bypass (-DALTAIR_KERNEL_BYPASS=ON); the kernel socket carries the feed\n");
+        g_bypass_if.clear();
+    }
+#endif
     if (fyers) { mode = mode == "live" ? "fyers" : "fyers-dry"; }
     else if (live_auto || mode == "live") { mode = mode == "live" ? "auto" : "auto-dry"; }
     if (sim) { mode = "sim"; }

@@ -31,9 +31,9 @@ if pgrep -f "$PWD/$dir/" >/dev/null 2>&1; then
     exit 3
 fi
 
-if [ ! -f "$dir/CMakeCache.txt" ]; then
-    cmake --preset "$preset"
-fi
+# Every time, not only the first: a cache variable the preset gained since
+# (ALTAIR_KERNEL_BYPASS) reaches an existing build directory too.
+cmake --preset "$preset" >/dev/null
 
 jobs="$(nproc)"
 if [ "$mode" = app ]; then

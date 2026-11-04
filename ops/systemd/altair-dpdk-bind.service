@@ -1,0 +1,15 @@
+[Unit]
+Description=ALTAIR: hand the second ENI to DPDK at boot (ops/linux/dpdk_bind.sh)
+# Only once ops/linux/dpdk_bind.sh --at-boot IFACE has chosen the interface.
+ConditionPathExists=/etc/altair/dpdk.conf
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/altair/dpdk.conf
+ExecStart=@ROOT@/ops/linux/dpdk_bind.sh ${DPDK_IFACE}
+
+[Install]
+WantedBy=multi-user.target

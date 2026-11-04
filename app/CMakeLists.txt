@@ -140,6 +140,11 @@ if(ALTAIR_HAVE_NET)
         target_link_libraries(altair_price_service PRIVATE
             altair_server altair_broker_net altair_feed altair_instruments
             altair_live altair_lockfree altair_credential_store altair_affinity altair_flags Boost::headers)
+        if(ALTAIR_KERNEL_BYPASS)   # --bypass: the HSM feed over AF_XDP (net/bypass_ws)
+            target_link_libraries(altair_price_service PRIVATE altair_bypass_ws)
+            target_compile_definitions(altair_price_service PRIVATE
+                ALTAIR_KERNEL_BYPASS ALTAIR_XDP_OBJECT="${ALTAIR_XDP_OBJECT}")
+        endif()
         target_compile_definitions(altair_price_service PRIVATE
             ALTAIR_DATASET_DIR="${CMAKE_SOURCE_DIR}/dataset"
             ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

@@ -65,6 +65,8 @@ done
 if [ "$go" = 1 ]; then
     systemctl daemon-reload
     for t in "${timers[@]}"; do systemctl enable --now "$t.timer"; done
+    # The DPDK binding at boot, once ops/linux/dpdk_bind.sh --at-boot chose an ENI.
+    [ -f /etc/altair/dpdk.conf ] && systemctl enable altair-dpdk-bind.service
     systemctl list-timers 'altair-*' --no-pager
 else
     echo "would enable: ${timers[*]/%/.timer}"
