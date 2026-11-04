@@ -2,7 +2,10 @@
 //   * a stream published while the engine's thread is busy (a 1.5 s stall,
 //     about 3 MB) still arrives whole: no sequence gap, nothing coalesced;
 //   * reconnect() drops the stream and makes a new one, in order;
-//   * the reader stops promptly.
+//   * the reader stops promptly;
+// all of it twice: as it always ran, and in spin mode (busy-polling, the
+// config/latency.toml `spin = true` path). The time from the socket to the
+// engine's take() is printed for both.
 // Runs threads: label `concurrency`.
 //
 // No check description here may contain the substring "F" "AIL" joined.
@@ -11,8 +14,14 @@
 #include <app/live_feed_sources.hpp>
 #include <server/protocol.hpp>
 
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
+
+#include <algorithm>
 #include <chrono>
 #include <memory>
+#include <vector>
 #include <cstdio>
 #include <thread>
 
@@ -27,17 +36,36 @@ void check(bool ok, const char* what) {
 
 using altair::live_feed::FeedEvent;
 
-}  // namespace
+// Spin mode is meant for two isolated cores; with 4+ cores the test puts the
+// reader and this thread on the last two, as config/latency.toml would.
+bool pin_to(long core) {
+    const long n = sysconf(_SC_NPROCESSORS_CONF);
+    if (n < 4 || core < 0 || core >= n) return false;
+    cpu_set_t one;
+    CPU_ZERO(&one);
+    CPU_SET(static_cast<std::size_t>(core), &one);
+    return pthread_setaffinity_np(pthread_self(), sizeof one, &one) == 0;
+}
 
-int main() {
+std::int64_t steady_now() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void suite(bool spin) {
     using namespace altair;
-    std::printf("feed reader\n");
+    std::printf("feed reader%s\n", spin ? " (spin mode)" : "");
     boost::asio::io_context io;
     PriceBus bus(io, 0);
-    if (!bus.ok()) { std::printf("  could not bind\n"); return 1; }
+    if (!bus.ok()) { std::printf("  could not bind\n"); ++failures; return; }
     live_sources::SharedBus shared(bus);
     {
-        auto owned = std::make_unique<live_feed::FeedReader>(bus.port());
+        const long last_core = sysconf(_SC_NPROCESSORS_CONF) - 1;
+        cpu_set_t was;
+        pthread_getaffinity_np(pthread_self(), sizeof was, &was);
+        const bool pinned = spin && pin_to(last_core);
+        auto owned = std::make_unique<live_feed::FeedReader>(bus.port(), std::size_t{256u << 20}, spin,
+                                                             [spin, last_core] { if (spin) pin_to(last_core - 1); });
+        if (spin) std::printf("  %s\n", pinned ? "reader and engine thread on the last two cores" : "not pinned (fewer than 4 cores)");
         live_feed::FeedReader& reader = *owned;
         const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         bool connected = false;
@@ -93,6 +121,31 @@ int main() {
         check(frames == kN && gaps == 0 && last == kN, "a stream during a 1.5 s stall arrives whole: every frame, in sequence");
         check(shared.coalesced() == 0, "the bus coalesced nothing for this reader");
 
+        // A quiet feed, one trade every 2 ms: how long from the socket (the
+        // reader's recv_ns) until this thread's take() has it.
+        std::vector<std::int64_t> handoff;
+        for (int k = 0; k < 500; ++k) {
+            PricePayload p;
+            p.token = 1;
+            p.last_paise = 100;
+            shared.trade(p, 1);
+            const auto until_one = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
+            bool got = false;
+            while (!got && std::chrono::steady_clock::now() < until_one)
+                for (const auto& e : reader.take(std::chrono::milliseconds(5)))
+                    if (e.kind == FeedEvent::Data) {
+                        handoff.push_back(steady_now() - e.recv_ns);
+                        got = true;
+                    }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        std::sort(handoff.begin(), handoff.end());
+        check(handoff.size() >= 490, "a quiet feed's trades all reach the engine's thread");
+        if (!handoff.empty())
+            std::printf("  socket -> engine thread: p50 %lld / p99 %lld ns (%zu)\n",
+                        static_cast<long long>(handoff[handoff.size() / 2]),
+                        static_cast<long long>(handoff[handoff.size() * 99 / 100]), handoff.size());
+
         reader.reconnect();
         int disc = 0, conn = 0;
         const auto until2 = std::chrono::steady_clock::now() + std::chrono::seconds(6);
@@ -105,7 +158,15 @@ int main() {
         const auto t0 = std::chrono::steady_clock::now();
         owned.reset();
         check(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(1), "and stops within a second");
+        pthread_setaffinity_np(pthread_self(), sizeof was, &was);
     }
+}
+
+}  // namespace
+
+int main() {
+    suite(false);
+    suite(true);
     std::printf("%s\n", failures == 0 ? "all feed reader checks passed" : "feed reader checks did not pass");
     return failures == 0 ? 0 : 1;
 }

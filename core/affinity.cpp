@@ -62,7 +62,7 @@ std::string lock_memory(const Plan& p) {
     return mlockall(flags) == 0 ? "memory locked (mlockall)" : "memory not locked (mlockall refused)";
 }
 
-std::string apply_thread(const Plan& p, std::string_view role) {
+std::string apply_thread(const Plan& p, std::string_view role, bool spinning) {
     const std::string name(role);
     if (!p.enabled) return name + ": not pinned (latency off)";
     const auto it = p.roles.find(name);
@@ -89,7 +89,8 @@ std::string apply_thread(const Plan& p, std::string_view role) {
     } else {
         out += " not pinned";
     }
-    if (p.realtime && pinned && (r.prio == Prio::Highest || r.prio == Prio::TimeCritical)) {
+    if (spinning && pinned) out += ", spinning";
+    if (p.realtime && pinned && !spinning && (r.prio == Prio::Highest || r.prio == Prio::TimeCritical)) {
         sched_param sp{};
         sp.sched_priority = r.prio == Prio::TimeCritical ? 40 : 20;
         if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0) {

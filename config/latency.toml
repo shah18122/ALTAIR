@@ -21,6 +21,14 @@ lock_memory = true
 # kernel RT throttle (95%) still leaves the kernel its share of each core.
 realtime = true
 
+# Busy-poll instead of sleeping: the engine's feed reader spins on the socket
+# and the engine thread spins on the reader's queue, each on its own isolated
+# core ("reader" and "engine" below), so a tick is picked up in well under a
+# microsecond instead of after a scheduler wake-up (tens of microseconds). Each
+# spinning thread keeps its core at 100%: only with isolated cores
+# (tune_host.sh), never on the desktop's cores. Off until it is measured live.
+spin = false
+
 # Cores left to the system and the DCV desktop (the Terminal paints there)
 # when a role below says "auto". With fewer than four cores nothing is pinned.
 # With tune_host.sh --isolate 2-7, keep this at 2 so "auto" lands on 2-7.
@@ -32,6 +40,7 @@ feed = "auto"    # the FYERS socket and decoder
 engine = "auto"  # the models engine
 router = "auto"  # the order router
 tbt = "auto"     # the FYERS 50-level book
+reader = "auto"  # the engine's feed reader (it spins on its socket with spin = true)
 
 [priority]       # normal | above_normal | highest | time_critical
 bus = "highest"
@@ -39,3 +48,4 @@ feed = "highest"
 engine = "highest"
 router = "highest"
 tbt = "above_normal"
+reader = "highest"

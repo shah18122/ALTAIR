@@ -716,11 +716,12 @@ int main(int argc, char** argv) {
 
     // ---- the engine --------------------------------------------------------
     // Cores and priorities (config/latency.toml): this thread runs the engine.
+    altair::latency::Plan plan;
     if (!replaying) {
         std::string note;
-        const auto plan = altair::latency::load_plan((root / "config/latency.toml").string(), note);
+        plan = altair::latency::load_plan((root / "config/latency.toml").string(), note);
         std::printf("%s\n  %s\n  %s\n", note.c_str(), altair::latency::apply_process(plan).c_str(),
-                    altair::latency::apply_thread(plan, "engine").c_str());
+                    altair::latency::apply_thread(plan, "engine", plan.spin).c_str());
     }
     lv::LiveEngine engine(universe, cost, policy);
     engine.set_limits(limits);
@@ -1031,7 +1032,12 @@ int main(int argc, char** argv) {
     // slow minute here never makes the bus drop frames for this reader. A
     // replay reads the tape instead.
     std::optional<altair::live_feed::FeedReader> reader;
-    if (!replaying) reader.emplace(port);
+    // With spin = true (config/latency.toml) the reader busy-polls on its own
+    // isolated core and this thread busy-polls the reader's queue.
+    if (!replaying)
+        reader.emplace(port, std::size_t{256u << 20}, plan.spin, [&plan] {
+            if (plan.spin) std::printf("  %s\n", altair::latency::apply_thread(plan, "reader", true).c_str());
+        });
     bool connected = false;
     std::vector<std::uint8_t> buf;
     buf.reserve(1 << 20);

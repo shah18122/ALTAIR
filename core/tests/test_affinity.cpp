@@ -64,10 +64,10 @@ int main() {
     s << f.rdbuf();
     err.clear();
     const auto shipped = parse_plan(s.str(), 8, err);
-    check(f.good() && shipped && shipped->enabled && shipped->roles.size() == 5, "config/latency.toml parses");
+    check(f.good() && shipped && shipped->enabled && shipped->roles.size() == 6, "config/latency.toml parses");
     std::string note;
     const Plan loaded = load_plan("config/latency.toml", note);
-    check(loaded.roles.size() == 5 && note.find("latency:") == 0, "and loads, saying what it used");
+    check(loaded.roles.size() == 6 && note.find("latency:") == 0, "and loads, saying what it used");
 
     // Applying: on whatever this machine allows, it reports and returns.
     std::string said;

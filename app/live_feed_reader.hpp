@@ -18,6 +18,13 @@
 // The thread runs an io_context in 100 ms slices so a stop is seen promptly;
 // it reconnects every 2 s while the service is away and says so in order,
 // between the chunks, so the engine knows where one stream ends.
+//
+// SPIN MODE (config/latency.toml spin = true). Both waits above are scheduler
+// wake-ups: epoll waking the reader, then the condition variable waking the
+// engine, tens of microseconds each. With spin the reader busy-polls a
+// non-blocking socket and take() busy-polls the queue, so a chunk crosses in
+// well under a microsecond. Each spinning thread holds its core at 100%, so the
+// caller pins both on isolated cores (the "reader" and "engine" roles).
 
 #pragma once
 
@@ -29,6 +36,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -46,8 +54,11 @@ struct FeedEvent {
 
 class FeedReader {
 public:
-    FeedReader(unsigned short port, std::size_t max_queued = 256u << 20)
-        : port_(port), max_(max_queued), th_([this] { run(); }) {}
+    /// `spin`: busy-poll (see above). `on_start` runs first on the reader's
+    /// own thread: where the caller pins it.
+    FeedReader(unsigned short port, std::size_t max_queued = 256u << 20, bool spin = false,
+               std::function<void()> on_start = {})
+        : port_(port), max_(max_queued), spin_(spin), on_start_(std::move(on_start)), th_([this] { run(); }) {}
     ~FeedReader() {
         stop_.store(true);
         th_.join();
@@ -58,8 +69,16 @@ public:
     /// Everything queued so far, in order. Waits up to `wait` for something
     /// to arrive when the queue is empty.
     std::vector<FeedEvent> take(std::chrono::milliseconds wait) {
+        if (spin_ && pending_.load(std::memory_order_acquire) == 0) {
+            const auto until = std::chrono::steady_clock::now() + wait;
+            for (unsigned i = 0; pending_.load(std::memory_order_acquire) == 0; ++i) {
+                cpu_relax();
+                if ((i & 1023) == 1023 && std::chrono::steady_clock::now() >= until) break;
+            }
+        }
         std::unique_lock lk(m_);
-        if (q_.empty()) cv_.wait_for(lk, wait, [this] { return !q_.empty(); });
+        if (!spin_ && q_.empty()) cv_.wait_for(lk, wait, [this] { return !q_.empty(); });
+        pending_.store(0, std::memory_order_relaxed);
         std::vector<FeedEvent> out(std::make_move_iterator(q_.begin()), std::make_move_iterator(q_.end()));
         q_.clear();
         queued_ = 0;
@@ -88,15 +107,25 @@ private:
             std::lock_guard lk(m_);
             queued_ += e.bytes.size();
             q_.push_back(std::move(e));
+            pending_.store(q_.size(), std::memory_order_release);
         }
-        cv_.notify_one();
+        if (!spin_) cv_.notify_one();
     }
     [[nodiscard]] bool full() const {
         std::lock_guard lk(m_);
         return queued_ >= max_;
     }
 
+    static void cpu_relax() noexcept {
+#if defined(__x86_64__) || defined(__i386__)
+        __builtin_ia32_pause();
+#elif defined(__aarch64__)
+        asm volatile("yield");
+#endif
+    }
+
     void run() {
+        if (on_start_) on_start_();
         namespace net = boost::asio;
         using tcp = net::ip::tcp;
         net::io_context io;
@@ -113,6 +142,10 @@ private:
             if (ec) continue;
             connected_.store(true);
             push(FeedEvent{FeedEvent::Connected, {}, {}});
+            if (spin_) {
+                if (spin_read(sock)) last_try = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+                continue;
+            }
 
             std::vector<std::uint8_t> chunk(1u << 18);
             bool reading = false, done = false, alive = true;
@@ -151,8 +184,43 @@ private:
         }
     }
 
+    // Spin mode's read loop: a non-blocking socket polled without sleeping.
+    // True when it ended for reconnect() (reconnect at once).
+    bool spin_read(boost::asio::ip::tcp::socket& sock) {
+        bool reset = false;
+        std::vector<std::uint8_t> chunk(1u << 18);
+        boost::system::error_code ec;
+        sock.non_blocking(true, ec);
+        while (!stop_.load(std::memory_order_relaxed)) {
+            if (reset_.exchange(false)) {
+                reset = true;
+                break;
+            }
+            if (full()) {
+                throttled_.fetch_add(1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
+            const std::size_t n = sock.read_some(boost::asio::buffer(chunk), ec);
+            if (ec == boost::asio::error::would_block || ec == boost::asio::error::try_again) {
+                cpu_relax();
+                continue;
+            }
+            if (ec) break;
+            push(FeedEvent{FeedEvent::Data, std::vector<std::uint8_t>(chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(n)), {}});
+        }
+        boost::system::error_code ignored;
+        sock.close(ignored);
+        if (connected_.exchange(false))
+            push(FeedEvent{FeedEvent::Disconnected, {}, stop_.load() ? std::string("stopping") : reset ? std::string("resync") : ec.message()});
+        return reset;
+    }
+
     unsigned short port_;
     std::size_t max_;
+    bool spin_ = false;
+    std::function<void()> on_start_;
+    std::atomic<std::size_t> pending_{0};   ///< events queued: spin mode's lock-free "anything yet?"
     mutable std::mutex m_;
     std::condition_variable cv_;
     std::deque<FeedEvent> q_;

@@ -61,7 +61,7 @@ enum class Prio : std::uint8_t { Normal, AboveNormal, Highest, TimeCritical };
 }
 
 /// The roles, most latency-critical first: "auto" hands out cores in this order.
-inline constexpr const char* kRoles[] = {"bus", "feed", "engine", "router", "tbt"};
+inline constexpr const char* kRoles[] = {"bus", "feed", "engine", "router", "tbt", "reader"};
 
 struct RolePlan {
     int core = -1;            ///< -1: not pinned
@@ -73,6 +73,7 @@ struct Plan {
     bool high_priority = true;   ///< the process: nice -5
     bool lock_memory = true;     ///< mlockall, when RLIMIT_MEMLOCK is unlimited
     bool realtime = false;       ///< SCHED_FIFO for pinned highest/time_critical threads
+    bool spin = false;           ///< hot-path threads busy-poll instead of sleeping (needs isolated cores)
     int reserve = 2;             ///< cores left to the OS and the desktop when "auto"
     std::map<std::string, RolePlan> roles;
 };
@@ -159,10 +160,11 @@ namespace detail {
         const std::string_view key = detail::trim(line.substr(0, eq)), raw = detail::trim(line.substr(eq + 1));
         const std::string_view val = detail::unquote(raw);
         if (section.empty()) {
-            if (key == "enabled" || key == "high_priority" || key == "lock_memory" || key == "realtime") {
+            if (key == "enabled" || key == "high_priority" || key == "lock_memory" || key == "realtime"
+                || key == "spin") {
                 if (val != "true" && val != "false") return bad(std::string(key) + " must be true or false");
                 bool& b = key == "enabled" ? p.enabled : key == "high_priority" ? p.high_priority
-                        : key == "lock_memory" ? p.lock_memory : p.realtime;
+                        : key == "lock_memory" ? p.lock_memory : key == "realtime" ? p.realtime : p.spin;
                 b = val == "true";
             } else if (key == "reserve") {
                 if (!detail::to_int(val)) return bad("reserve must be a whole number");
@@ -204,6 +206,9 @@ std::string apply_process(const Plan& p);
 std::string lock_memory(const Plan& p);
 
 /// The calling thread, as `role`: pin and priority. Returns what was done.
-std::string apply_thread(const Plan& p, std::string_view role);
+/// `spinning`: the thread busy-polls (Plan::spin). It is then never put on
+/// SCHED_FIFO: the kernel's RT throttle would stop a FIFO thread that never
+/// sleeps for 50 ms of every second. On an isolated core it needs no FIFO.
+std::string apply_thread(const Plan& p, std::string_view role, bool spinning = false);
 
 } // namespace altair::latency
