@@ -26,8 +26,8 @@ realtime = true
 # core ("reader" and "engine" below), so a tick is picked up in well under a
 # microsecond instead of after a scheduler wake-up (tens of microseconds). Each
 # spinning thread keeps its core at 100%: only with isolated cores
-# (tune_host.sh), never on the desktop's cores. Off until it is measured live.
-spin = false
+# (tune_host.sh), never on the desktop's cores. On: the c7i server has cores 2-7 isolated.
+spin = true
 
 # Cores left to the system and the DCV desktop (the Terminal paints there)
 # when a role below says "auto". With fewer than four cores nothing is pinned.
