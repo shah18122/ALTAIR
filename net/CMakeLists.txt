@@ -74,3 +74,23 @@ if(ALTAIR_KERNEL_BYPASS)
     target_link_libraries(altair_bypass_ws_probe PRIVATE altair_bypass_ws altair_flags)
     target_compile_definitions(altair_bypass_ws_probe PRIVATE ALTAIR_XDP_OBJECT="${xdp_obj}")
 endif()
+
+# DPDK: -DALTAIR_DPDK=ON (needs libdpdk-dev). The port for a second ENI bound
+# to vfio-pci; ARP is ALTAIR's own there (net/arp.hpp).
+option(ALTAIR_DPDK "Build the DPDK port and its TLS client" OFF)
+if(ALTAIR_DPDK)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBDPDK REQUIRED IMPORTED_TARGET libdpdk)
+    find_package(OpenSSL REQUIRED)
+    add_library(altair_dpdk_port STATIC dpdk_port.cpp)
+    target_link_libraries(altair_dpdk_port PUBLIC altair_net PkgConfig::LIBDPDK)
+    # DPDK's headers use what the project's warnings forbid.
+    target_compile_options(altair_dpdk_port PRIVATE -w)
+    if(NOT TARGET altair_tls_stream)
+        add_library(altair_tls_stream STATIC tls_stream.cpp)
+        target_link_libraries(altair_tls_stream PUBLIC altair_net OpenSSL::SSL OpenSSL::Crypto PRIVATE altair_flags)
+    endif()
+    add_executable(altair_dpdk_tls_client tools/dpdk_tls_client_main.cpp)
+    target_link_libraries(altair_dpdk_tls_client PRIVATE altair_dpdk_port altair_tls_stream altair_flags)
+    target_compile_options(altair_dpdk_tls_client PRIVATE -Wno-conversion -Wno-sign-conversion)
+endif()

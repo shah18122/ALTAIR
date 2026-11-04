@@ -112,7 +112,7 @@ step "1/9 system packages"
 # start-up; one missing (libxcb-cursor0 most often) aborts altair_desktop.
 pkgs=(build-essential cmake ninja-build git curl python3 python3-venv rsync chrony
       libboost-dev libssl-dev libtomlplusplus-dev
-      pkg-config clang libbpf-dev libxdp-dev
+      pkg-config clang libbpf-dev libxdp-dev dpdk libdpdk-dev
       libgl1-mesa-dev libegl1 libopengl0 libglib2.0-0t64 libfontconfig1 libfreetype6 libdbus-1-3
       libxkbcommon0 libxkbcommon-x11-0 libx11-6 libx11-xcb1 libsm6 libice6
       libxcb1 libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1

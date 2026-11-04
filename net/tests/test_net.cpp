@@ -1,5 +1,6 @@
 // net/packet.hpp and net/tcp_reassembly.hpp. Plain main(), like the rest of core.
 
+#include <net/arp.hpp>
 #include <net/packet.hpp>
 #include <net/tcp_reassembly.hpp>
 #include <net/user_tcp.hpp>
@@ -255,12 +256,37 @@ void test_frame_builder() {
           "addressed to the next hop, from this NIC");
 }
 
+void test_arp() {
+    std::puts("ARP (the DPDK port's own)");
+    const Mac me{2, 0, 0, 0, 0, 0xaa}, gw{2, 0, 0, 0, 0, 0xbb};
+    std::uint32_t my_ip = 0, gw_ip = 0, other = 0;
+    parse_ipv4("172.31.40.10", my_ip);
+    parse_ipv4("172.31.32.1", gw_ip);
+    parse_ipv4("172.31.40.11", other);
+    std::uint8_t req[64], rep[64];
+    const std::size_t n = arp_request(req, gw, gw_ip, my_ip);   // the gateway asks for us
+    ArpPacket a{};
+    check(n == kArpFrame && parse_arp(req, n, a) && a.op == 1 && a.sender_ip == gw_ip && a.target_ip == my_ip &&
+              a.sender_mac == gw && req[0] == 0xff,
+          "a broadcast request parses: who has us, from the gateway");
+    const std::size_t r = arp_reply_to(rep, a, me, my_ip);
+    ArpPacket b{};
+    check(r == kArpFrame && parse_arp(rep, r, b) && b.op == 2 && b.sender_mac == me && b.sender_ip == my_ip &&
+              b.target_ip == gw_ip && std::memcmp(rep, gw.data(), 6) == 0,
+          "it is answered with our MAC, sent to the asker");
+    ArpPacket c = a;
+    c.target_ip = other;
+    check(arp_reply_to(rep, c, me, my_ip) == 0, "a request for another address is not answered");
+    check(!parse_arp(rep, 20, b), "a runt is not ARP");
+}
+
 } // namespace
 
 int main() {
     test_parse();
     test_reassembly();
     test_frame_builder();
+    test_arp();
     std::printf("%s (%d failures)\n", failures ? "FAILED" : "passed", failures);
     return failures ? 1 : 0;
 }
