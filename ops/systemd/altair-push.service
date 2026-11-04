@@ -1,0 +1,21 @@
+[Unit]
+Description=ALTAIR: the day's compact data to altair-data right after the close (no retrain)
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=@USER@
+Group=@USER@
+WorkingDirectory=@ROOT@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/altair/altair.env
+ExecStart=/usr/bin/python3 @ROOT@/ops/linux/nightly.py --go --no-retrain
+TimeoutStopSec=60
+RuntimeMaxSec=1h
+LimitMEMLOCK=infinity
+LimitRTPRIO=50
+LimitNICE=-10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

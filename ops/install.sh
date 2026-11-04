@@ -6,6 +6,7 @@
 #   altair-chain-open.timer    Mon-Fri 09:20 IST  ops/linux/chain_snapshot.py --go
 #   altair-chain-close.timer   Mon-Fri 15:27 IST  ops/linux/chain_snapshot.py --go
 #   altair-fyers-chain.timer   Mon-Fri 15:45 IST  ops/linux/fyers_chain.py --go
+#   altair-push.timer          Mon-Fri 15:47 IST  ops/linux/nightly.py --go --no-retrain (the data, pushed by 16:00)
 #   altair-nightly.timer       Mon-Fri 20:00 IST  ops/linux/nightly.py --go (store, retrain, push)
 #
 # Times are IST whatever the server's clock zone is (OnCalendar ... Asia/Kolkata).
@@ -37,7 +38,7 @@ while [ $# -gt 0 ]; do
 done
 
 dest=/etc/systemd/system
-timers=(altair-fyers-login altair-recorder altair-chain-open altair-chain-close altair-fyers-chain altair-nightly)
+timers=(altair-fyers-login altair-recorder altair-chain-open altair-chain-close altair-fyers-chain altair-push altair-nightly)
 units=("$here"/systemd/*.service "$here"/systemd/*.timer)
 
 if [ "$remove" = 1 ]; then

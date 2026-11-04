@@ -1,0 +1,13 @@
+[Unit]
+Description=ALTAIR: push the day's data right after the recorder stops (15:45)
+
+[Timer]
+# Decode, IV, FYERS candles, snapshot and push take a few minutes (the day's
+# 2.5 GB of tapes decode in about 10 s): the data is in altair-data before
+# 16:00. The 20:00 nightly retrains and pushes again with its reports.
+OnCalendar=Mon..Fri 15:47 Asia/Kolkata
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
