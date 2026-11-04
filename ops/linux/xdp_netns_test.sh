@@ -8,6 +8,11 @@
 # through XDP + AF_XDP and must rebuild the stream byte for byte while the
 # filter passes every decoy to the kernel.
 #
+# Part 2 (when altair_xdp_tls_client is built): the full bypass path. ALTAIR's
+# own TCP and TLS connect through AF_XDP to Linux's TCP and an OpenSSL server
+# (Python's ssl), over a link that loses 2% of packets and reorders 10%
+# (tc netem) and drops every 5th segment ALTAIR sends, and must receive a 512 KiB answer byte for byte.
+#
 #   sudo ops/linux/xdp_netns_test.sh [build/xdp] [generic|native]
 #
 # Exit 0 when the stream matches. The namespaces are removed on exit.
@@ -59,3 +64,34 @@ else
     exit 1
 fi
 grep -qE 'passed to the kernel\)' "$work/rx.log"
+
+tls="$build/net/altair_xdp_tls_client"
+[ -x "$tls" ] || exit 0
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=altair.test \
+    -keyout "$work/key.pem" -out "$work/cert.pem" >/dev/null 2>&1
+head -c $((512 << 10)) /dev/urandom > "$work/answer"
+# A veth leaves TCP checksums for "the NIC" to fill in (CHECKSUM_PARTIAL); a
+# real NIC delivers them complete. Make the server side compute them in software.
+ip netns exec "$a" ethtool -K va tx off >/dev/null
+ip netns exec "$a" tc qdisc add dev va root netem loss 2% reorder 10% 50% delay 1ms
+# AF_XDP sends bypass the qdisc, so ALTAIR's own segments are dropped on the
+# server's way in instead: every 5th one, which exercises ALTAIR's retransmits.
+ip netns exec "$a" tc qdisc add dev va ingress
+ip netns exec "$a" tc filter add dev va ingress protocol ip prio 1 u32 match ip protocol 6 0xff \
+    action gact pass random determ drop 5
+ip netns exec "$a" python3 -I "$here/xdp_tls_server.py" 10.77.0.1 4443 "$work/cert.pem" "$work/key.pem" "$work/answer" \
+    > "$work/server.log" 2>&1 &
+srvpid=$!
+sleep 0.5
+ip netns exec "$b" ping -c1 -W1 10.77.0.1 >/dev/null   # the neighbour entry for the next-hop MAC
+ip netns exec "$b" "$tls" --iface vb --local-ip 10.77.0.2 --local-port 50001 --remote 10.77.0.1:4443 \
+    --host altair.test --ca "$work/cert.pem" --request 'GET / HTTP/1.0\r\n\r\n' --seconds 20 \
+    --bpf "$obj" --dump "$work/got_tls" $flag || true
+wait "$srvpid" || true
+cat "$work/server.log"
+if cmp -s "$work/answer" "$work/got_tls"; then
+    echo "PASS: TLS over ALTAIR's own TCP through AF_XDP, 512 KiB answer byte for byte, 2% loss + reordering in, every 5th segment out dropped ($mode mode)"
+else
+    echo "FAIL: the TLS answer differs ($(stat -c %s "$work/got_tls" 2>/dev/null || echo 0) of $((512 << 10)) bytes)" >&2
+    exit 1
+fi

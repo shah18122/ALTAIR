@@ -45,4 +45,14 @@ if(ALTAIR_KERNEL_BYPASS)
     target_link_libraries(altair_xdp_rx PRIVATE altair_af_xdp altair_flags)
     target_compile_options(altair_xdp_rx PRIVATE -Wno-conversion -Wno-sign-conversion)
     target_compile_definitions(altair_xdp_rx PRIVATE ALTAIR_XDP_OBJECT="${xdp_obj}")
+
+    # TLS over ALTAIR's own TCP: OpenSSL on memory BIOs.
+    find_package(OpenSSL REQUIRED)
+    add_library(altair_tls_stream STATIC tls_stream.cpp)
+    target_link_libraries(altair_tls_stream PUBLIC altair_net OpenSSL::SSL OpenSSL::Crypto PRIVATE altair_flags)
+
+    add_executable(altair_xdp_tls_client tools/xdp_tls_client_main.cpp)
+    target_link_libraries(altair_xdp_tls_client PRIVATE altair_af_xdp altair_tls_stream altair_flags)
+    target_compile_options(altair_xdp_tls_client PRIVATE -Wno-conversion -Wno-sign-conversion)
+    target_compile_definitions(altair_xdp_tls_client PRIVATE ALTAIR_XDP_OBJECT="${xdp_obj}")
 endif()

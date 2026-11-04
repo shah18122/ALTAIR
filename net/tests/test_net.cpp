@@ -2,10 +2,12 @@
 
 #include <net/packet.hpp>
 #include <net/tcp_reassembly.hpp>
+#include <net/user_tcp.hpp>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <random>
 #include <string>
 #include <vector>
@@ -229,11 +231,36 @@ void test_reassembly() {
     }
 }
 
+void test_frame_builder() {
+    std::puts("TCP frame builder");
+    TcpEndpoints e;
+    e.local_mac = {2, 0, 0, 0, 0, 1};
+    e.next_hop_mac = {2, 0, 0, 0, 0, 2};
+    parse_ipv4("172.31.44.249", e.local_ip);
+    parse_ipv4("104.18.4.135", e.remote_ip);
+    e.local_port = 50001;
+    e.remote_port = 443;
+    std::uint8_t buf[2048];
+    const std::uint8_t mss[4] = {2, 4, 0x05, 0xb4};
+    const std::string body = "odd-length body";
+    const std::size_t n = build_tcp_frame(buf, e, 7, 0xFFFFFFF0u, 1234, tcp_flag::ack | tcp_flag::psh, 65535, mss, 4,
+                                          reinterpret_cast<const std::uint8_t*>(body.data()), body.size());
+    TcpSegment s{};
+    check(parse_frame(buf, n, s) == Parse::Ok && n == 14 + 20 + 24 + body.size(), "a built frame parses, options included");
+    check(ipv4_checksum_ok(s) && tcp_checksum_ok(s), "and both checksums verify");
+    check(s.seq == 0xFFFFFFF0u && s.ack == 1234 && s.flow.src_ip == e.local_ip && s.flow.dst_ip == e.remote_ip &&
+              s.payload_len == body.size() && std::memcmp(s.payload, body.data(), body.size()) == 0,
+          "every field round-trips");
+    check(std::memcmp(buf, e.next_hop_mac.data(), 6) == 0 && std::memcmp(buf + 6, e.local_mac.data(), 6) == 0,
+          "addressed to the next hop, from this NIC");
+}
+
 } // namespace
 
 int main() {
     test_parse();
     test_reassembly();
+    test_frame_builder();
     std::printf("%s (%d failures)\n", failures ? "FAILED" : "passed", failures);
     return failures ? 1 : 0;
 }
