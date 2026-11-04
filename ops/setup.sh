@@ -5,7 +5,8 @@
 # update it: every step checks what is already there and only does what is
 # missing or out of date, so a second run changes nothing that is current.
 #
-#   1. system packages        apt: compilers, CMake, Ninja, Boost, OpenSSL, toml++, Qt's runtime libs
+#   1. system packages        apt: compilers, CMake, Ninja, Boost, OpenSSL, toml++, libxdp/libbpf
+#                             + clang (the AF_XDP path), Qt's runtime libs
 #   2. Qt 6.8.3               aqtinstall into /opt/altair/qt (Python venv /opt/altair/venv),
 #                             then a check that the xcb screen plugin finds every library it needs
 #   3. the screen             with --dcv: a GNOME desktop and Amazon DCV (virtual session,
@@ -111,6 +112,7 @@ step "1/9 system packages"
 # start-up; one missing (libxcb-cursor0 most often) aborts altair_desktop.
 pkgs=(build-essential cmake ninja-build git curl python3 python3-venv rsync chrony
       libboost-dev libssl-dev libtomlplusplus-dev
+      pkg-config clang libbpf-dev libxdp-dev
       libgl1-mesa-dev libegl1 libopengl0 libglib2.0-0t64 libfontconfig1 libfreetype6 libdbus-1-3
       libxkbcommon0 libxkbcommon-x11-0 libx11-6 libx11-xcb1 libsm6 libice6
       libxcb1 libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
