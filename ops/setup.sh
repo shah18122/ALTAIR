@@ -28,7 +28,11 @@
 #   sudo ops/setup.sh --test             # ... and run the test suite
 #   sudo ops/setup.sh --tune             # ... and apply the host latency tuning
 #   sudo ops/setup.sh --dcv              # ... and the desktop + Amazon DCV (first run on EC2)
+#   sudo ops/setup.sh --ssh-443          # ... and SSH on port 443 as well as 22 (networks that block 22)
 #   sudo ops/setup.sh --user altair      # the user that runs ALTAIR (default: who ran sudo)
+#
+# Reach the screen through SSH, not an open 8443:
+#   ssh -p 443 -L 8443:localhost:8443 ubuntu@<server>   then https://localhost:8443
 
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -37,7 +41,7 @@ qt_version=6.8.3
 prefix=/opt/altair
 qt_root="$prefix/qt/$qt_version/gcc_64"
 user="${SUDO_USER:-$(id -un)}"
-run_tests=0; tune=0; force=0; dcv=0
+run_tests=0; tune=0; force=0; dcv=0; ssh443=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -46,7 +50,8 @@ while [ $# -gt 0 ]; do
         --force) force=1 ;;
         --dcv) dcv=1 ;;
         --user) user="$2"; shift ;;
-        -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+        --ssh-443) ssh443=1 ;;
+        -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
     shift
@@ -141,6 +146,22 @@ if [ -f "$xcb_plugin" ]; then
     echo "Qt xcb plugin: every library found"
 fi
 
+if [ "$ssh443" = 1 ]; then
+    # Some networks only let 443 out. Keep 22, add 443. Ubuntu 24.04 starts sshd
+    # from ssh.socket; older setups run ssh.service on sshd_config's ports.
+    if systemctl cat ssh.socket >/dev/null 2>&1 && systemctl is-enabled --quiet ssh.socket 2>/dev/null; then
+        install -d -m 0755 /etc/systemd/system/ssh.socket.d
+        printf '%s\n' "[Socket]" "ListenStream=" "ListenStream=22" "ListenStream=443" \
+            > /etc/systemd/system/ssh.socket.d/port.conf
+        systemctl daemon-reload
+        systemctl restart ssh.socket
+    else
+        printf '%s\n' "Port 22" "Port 443" > /etc/ssh/sshd_config.d/altair-ports.conf
+        sshd -t && systemctl restart ssh
+    fi
+    echo "SSH listens on 22 and 443 (the security group must allow TCP 443 from YOUR address)"
+fi
+
 step "3/9 the screen (Amazon DCV)"
 dcv_installed() { dpkg -s nice-dcv-server >/dev/null 2>&1 && systemctl cat dcvserver.service >/dev/null 2>&1; }
 if [ "$dcv" = 1 ]; then
@@ -202,9 +223,10 @@ if [ "$dcv" = 1 ]; then
     else
         echo "DCV is installed but dcvserver is not running: journalctl -u dcvserver" >&2
     fi
-    echo "DCV: https://<server address>:8443 in a browser, or the DCV client; log in as $user."
-    echo "     $user needs a password for that login (sudo passwd $user), and the security group"
-    echo "     must allow TCP and UDP 8443 from YOUR address only."
+    echo "DCV: ssh -p 443 -L 8443:localhost:8443 $user@<server>   (or -p 22), then open"
+    echo "     https://localhost:8443 in a browser (or point the DCV client at localhost:8443)."
+    echo "     $user needs a password for the DCV login (sudo passwd $user). Port 8443 does"
+    echo "     not need to be open in the security group when the SSH tunnel is used."
 elif dcv_installed; then
     echo "DCV is installed"
 else

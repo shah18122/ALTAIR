@@ -32,6 +32,21 @@ from `install.sh`, see `recorder.md`), save the option chains from FYERS
 before they expire (`chain_snapshot`, `fyers_chain`) and audit the broker account. Research notes and paper
 references moved to [`../docs/research/`](../docs/research).
 
+## Reaching the server's screen
+
+DCV listens on 8443, but the tunnel is the way in: no 8443 in the security
+group, and it works from networks that only let 443 out.
+
+```
+sudo ops/setup.sh --dcv --ssh-443                      # once: DCV, and SSH on 443 as well as 22
+ssh -p 443 -L 8443:localhost:8443 ubuntu@<server>      # from the PC, keep it open
+```
+
+Then open `https://localhost:8443` (accept the self-signed certificate) and log
+in as `ubuntu` (`sudo passwd ubuntu` sets the password). Without DCV, Qt's VNC
+plugin works the same way: `altair_desktop -platform vnc` on the server and
+`-L 5900:localhost:5900`.
+
 ## The rule these three share
 
 **Every claim states whether it has been verified, and on what.**
