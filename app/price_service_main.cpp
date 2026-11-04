@@ -414,7 +414,13 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
         const auto& in = u[i];
         const auto spot = g_obi_spot.find(in.underlying);
         const bool obi = spot != g_obi_spot.end();
-        if (in.kind == LiveKind::Future) return {obi && near_expiry[in.underlying] == in.expiry_day ? 0 : 2, 0.0};
+        // Near futures in the OBI list's order, BANKNIFTY first: with FYERS
+        // Standard's single slot the 50-level book is always BANKNIFTY's.
+        if (in.kind == LiveKind::Future) {
+            const auto at = std::find(g_obi_unders.begin(), g_obi_unders.end(), in.underlying);
+            return {obi && near_expiry[in.underlying] == in.expiry_day ? 0 : 2,
+                    static_cast<double>(at - g_obi_unders.begin())};
+        }
         if (in.kind == LiveKind::Call || in.kind == LiveKind::Put) return {obi ? 1 : 3, obi ? std::fabs(in.strike - spot->second) : 0.0};
         return {4, 0.0};
     };
