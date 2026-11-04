@@ -22,7 +22,9 @@ at 09:14 with a position open, or at 15:25 with a feed down.
 | [`fyers-webhook.md`](fyers-webhook.md) | | Exposing the FYERS order webhook |
 | [`phase8-acceptance.md`](phase8-acceptance.md) | | What still needs an entitled account or licensed data |
 
-`ops/setup.sh` installs or updates everything on the Linux server, and
+`ops/setup.sh` installs or updates everything on the Linux server (during market
+hours, or while an ALTAIR job runs, it still installs packages and the DCV screen
+but leaves the code, build, timers and tuning alone, and exits 3), and
 `ops/build.sh` builds. The Python jobs in `linux/` fetch data from FYERS
 (`fetch.py`: history, universe, pairs, meta, depth tapes, broker audit), record
 and store each session (`record_session`, `nightly`, `push_data`; systemd timers
