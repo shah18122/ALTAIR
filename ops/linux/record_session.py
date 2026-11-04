@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """ops/linux/record_session.py -- record the whole FYERS session, whether or not the terminal is open.
 
-altair-recorder.timer runs this at 08:50 IST, Monday to Friday. It:
+altair-recorder.timer runs this at 08:50 IST, Monday to Friday, and 90 s after
+every boot, so a restart during the session resumes the recording. It:
   1. starts altair_feed_recorder, which records everything the price service
      publishes to data/store/tapes/<day>/ until --until (15:45; it waits for the feed);
   2. makes sure a FYERS feed is running on 127.0.0.1:7421. If the terminal
@@ -85,6 +86,14 @@ def main() -> int:
     last_try = now.replace(hour=15, minute=30, second=0, microsecond=0)
     if now >= end:
         log("record", "INFO", f"started after {a.until} IST; nothing to record today")
+        return 0
+    # The timer also starts this at boot: outside a weekday's session there is
+    # nothing to do (before 08:45 the 08:50 timer starts it).
+    if now.weekday() >= 5:
+        log("record", "INFO", "started on a weekend; nothing to record")
+        return 0
+    if now < now.replace(hour=8, minute=45, second=0, microsecond=0):
+        log("record", "INFO", "started before 08:45 IST; the 08:50 timer starts the session")
         return 0
     logs = ROOT / "data" / "logs"
     logs.mkdir(parents=True, exist_ok=True)

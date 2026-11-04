@@ -4,6 +4,10 @@ Description=ALTAIR: start the session recorder
 [Timer]
 OnCalendar=Mon..Fri 08:50 Asia/Kolkata
 Persistent=true
+# A reboot during the session (an AWS console restart, a new ENI) must not end
+# the day's recording: the job also runs 90 s after every boot, and
+# record_session.py exits at once outside a weekday's session.
+OnBootSec=90s
 AccuracySec=1s
 
 [Install]
