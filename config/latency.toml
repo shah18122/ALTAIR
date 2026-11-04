@@ -17,8 +17,9 @@ lock_memory = true
 
 # SCHED_FIFO for PINNED threads at highest (20) / time_critical (40). Needs
 # RLIMIT_RTPRIO (tune_host.sh). Best with the roles on isolated cores
-# (tune_host.sh --isolate); off until the probe shows it helps.
-realtime = false
+# (tune_host.sh --isolate). On: the roles sit on isolated cores 2-7 and the
+# kernel RT throttle (95%) still leaves the kernel its share of each core.
+realtime = true
 
 # Cores left to the system and the DCV desktop (the Terminal paints there)
 # when a role below says "auto". With fewer than four cores nothing is pinned.
