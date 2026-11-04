@@ -15,7 +15,8 @@
 #   5. the build              ops/build.sh (Release, Qt terminal included)
 #   6. the tests              ops/build.sh test (with --test)
 #   7. scheduled jobs         ops/install.sh --go (systemd timers, IST)
-#   8. launchers              "ALTAIR" and "Update ALTAIR" icons on the DCV desktop
+#   8. launchers              "ALTAIR" and "Update ALTAIR" icons on the DCV desktop, and
+#                             ALTAIR opening by itself when that desktop starts (every boot)
 #   9. latency tuning         ops/tune_host.sh, when present (needs --tune; may need a reboot)
 #
 # Steps 1-3 and 8 only add packages and files, so they always run. Steps 4-7 and 9
@@ -287,7 +288,13 @@ chown "$user:$user" "$apps/altair.desktop" "$apps/altair-update.desktop"
 if [ -d "$home/Desktop" ]; then
     install -o "$user" -g "$user" -m 0755 "$apps/altair.desktop" "$apps/altair-update.desktop" "$home/Desktop/"
 fi
-echo "launchers in $apps"
+# A machine given over to ALTAIR: the terminal opens on its own in the DCV
+# desktop after every boot (altair-dcv-session starts that desktop).
+auto="$home/.config/autostart"
+install -d -o "$user" -g "$user" "$home/.config" "$auto"
+sed -e '/^Categories=/a X-GNOME-Autostart-enabled=true\nX-GNOME-Autostart-Delay=5' "$apps/altair.desktop" > "$auto/altair.desktop"
+chown "$user:$user" "$auto/altair.desktop"
+echo "launchers in $apps; ALTAIR opens at login ($auto/altair.desktop)"
 
 step "9/9 latency tuning"
 if [ "$tune" = 1 ] && [ -n "$blocked" ]; then
