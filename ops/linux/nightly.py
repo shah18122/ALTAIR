@@ -21,6 +21,7 @@ the rest go on:
   8. PUSH     only when config/data_push.local.toml names a data repo (push_data.py).
 
     ops/linux/nightly.py --go [--day 2026-10-26] [--only daily] [--ticks]
+    ops/linux/nightly.py --go --quick     # 15:47 (altair-push.timer): wait for the recorder, decode, IV, push
 """
 
 from __future__ import annotations
@@ -76,6 +77,11 @@ def main() -> int:
     ap.add_argument("--only", default="")
     ap.add_argument("--ticks", action="store_true")
     ap.add_argument("--no-retrain", action="store_true")
+    # The 15:47 push (altair-push.timer): decode, IV, trades, tidy, push -- no
+    # FYERS calls (altair-fyers-chain is fetching then), no snapshot (it must
+    # wait for the day's FYERS candles: snapshots are never rebuilt over), no
+    # retrain. The 20:00 nightly does the rest and pushes again.
+    ap.add_argument("--quick", action="store_true")
     ap.add_argument("--backfill-days", type=int, default=7)
     ap.add_argument("--keep-snapshots", type=int, default=10)
     ap.add_argument("--with-dataset", action="store_true")
@@ -100,6 +106,16 @@ def main() -> int:
     def step(name: str, prog: str, args: list[str]) -> int:
         return run_to_file(exe[prog], args, logs / f"nightly-{day_s}-{name}.txt")
 
+    if a.quick and a.go:
+        # The recorder writes its last tape until --until (15:45) and then
+        # exits: wait for it (at most 10 minutes) so the push decodes a finished day.
+        for _ in range(120):
+            if subprocess.run(["systemctl", "is-active", "-q", "altair-recorder.service"]).returncode != 0:
+                break
+            time.sleep(5)
+        else:
+            log("nightly", "WARN", "the recorder is still running after 10 minutes; pushing what is on disk")
+
     # ---- 1-2. decode and IV ------------------------------------------------------
     tapes = store / "tapes" / day_s
     if tapes.is_dir():
@@ -113,7 +129,9 @@ def main() -> int:
     # ---- 3. FYERS candles --------------------------------------------------------
     fetched = failed = 0
     refused = False
-    for k in range(a.backfill_days, -1, -1):
+    if a.quick:
+        log("nightly", "INFO", "quick run: FYERS candles, snapshot and retrain are left to the 20:00 nightly")
+    for k in (range(a.backfill_days, -1, -1) if not a.quick else ()):
         if refused:
             break
         d = day - dt.timedelta(days=k)
@@ -140,56 +158,59 @@ def main() -> int:
                 time.sleep(0.35)
             if refused:
                 break
-    if refused:
+    if a.quick:
+        pass
+    elif refused:
         log("nightly", "WARN", "FYERS candles skipped: no valid FYERS session today (log in on Brokers). "
             "The snapshot uses the FYERS candles already on disk and the tapes.")
     else:
         log("nightly", "INFO" if failed == 0 else "WARN",
             f"FYERS candles: {fetched} file(s) fetched, {failed} failed or empty (holidays answer empty)")
 
-    # ---- 4. snapshot -------------------------------------------------------------
-    snap = store / "snapshots" / day_s
-    if snap.is_dir():
-        log("nightly", "INFO", f"snapshot {day_s} already exists: kept (snapshots are never rebuilt over)")
-        status["snapshot"] = 0
-    else:
-        args = ["snapshot", "--cutoff", day_s]
-        if a.with_dataset:
-            args += ["--source", "dataset=dataset"]
-        args += ["--source", f"fyers={store / 'fyers'}", "--fill", f"tape={store / 'tape_bars'}", "--iv", "data/live/iv"]
-        if a.with_bhavcopy:
-            args += ["--bhavcopy", "data/bhavcopy"]
-        status["snapshot"] = step("snapshot", "altair_store", args)
-
-    # ---- 5. retrain --------------------------------------------------------------
-    manifest = snap / "_snapshot.json"
-    if a.no_retrain:
-        log("nightly", "INFO", "retrain skipped (--no-retrain)")
-    elif status["snapshot"] != 0 or not manifest.is_file():
-        log("nightly", "ERROR", "retrain skipped: no snapshot to train on")
-    else:
-        snap_id = json.loads(manifest.read_text()).get("id", "")
-        run = store / "runs" / day_s
-        run.mkdir(parents=True, exist_ok=True)
-        args = ["--dataset", str(snap), "--out", str(run), "--recorded-iv", str(snap / "_inputs" / "iv"), "--leak-check"]
-        if a.with_bhavcopy:
-            args += ["--bhavcopy", str(snap / "_inputs" / "bhavcopy")]
-        if a.only:
-            args += ["--only", a.only]
-        log("nightly", "INFO", f"retrain on snapshot {snap_id} (cutoff {day_s}): altair_forecast_curriculum {' '.join(args)}")
-        t0 = time.monotonic()
-        status["retrain"] = step("retrain", "altair_forecast_curriculum", args)
-        mins = int((time.monotonic() - t0) / 60)
-        rev = subprocess.run(["git", "rev-parse", "--short=12", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-        (run / "run.json").write_text(json.dumps({"day": day_s, "snapshot_id": snap_id, "snapshot": str(snap),
-                                                  "exit": status["retrain"], "minutes": mins, "code": rev, "args": args}, indent=2))
-        if status["retrain"] == 0:
-            (store / "runs" / "LATEST.txt").write_text(f"{day_s} {snap_id} {run}\n")
-            log("nightly", "INFO", f"retrain done in {mins} min, leak check clean: promoted (runs/LATEST.txt)")
-        elif status["retrain"] == 3:
-            log("nightly", "ERROR", f"retrain: THE LEAK CHECK FAILED (see {run}/leak_check.csv). Not promoted.")
+    if not a.quick:
+        # ---- 4. snapshot -------------------------------------------------------------
+        snap = store / "snapshots" / day_s
+        if snap.is_dir():
+            log("nightly", "INFO", f"snapshot {day_s} already exists: kept (snapshots are never rebuilt over)")
+            status["snapshot"] = 0
         else:
-            log("nightly", "ERROR", f"retrain exited {status['retrain']} after {mins} min. Not promoted.")
+            args = ["snapshot", "--cutoff", day_s]
+            if a.with_dataset:
+                args += ["--source", "dataset=dataset"]
+            args += ["--source", f"fyers={store / 'fyers'}", "--fill", f"tape={store / 'tape_bars'}", "--iv", "data/live/iv"]
+            if a.with_bhavcopy:
+                args += ["--bhavcopy", "data/bhavcopy"]
+            status["snapshot"] = step("snapshot", "altair_store", args)
+
+        # ---- 5. retrain --------------------------------------------------------------
+        manifest = snap / "_snapshot.json"
+        if a.no_retrain:
+            log("nightly", "INFO", "retrain skipped (--no-retrain)")
+        elif status["snapshot"] != 0 or not manifest.is_file():
+            log("nightly", "ERROR", "retrain skipped: no snapshot to train on")
+        else:
+            snap_id = json.loads(manifest.read_text()).get("id", "")
+            run = store / "runs" / day_s
+            run.mkdir(parents=True, exist_ok=True)
+            args = ["--dataset", str(snap), "--out", str(run), "--recorded-iv", str(snap / "_inputs" / "iv"), "--leak-check"]
+            if a.with_bhavcopy:
+                args += ["--bhavcopy", str(snap / "_inputs" / "bhavcopy")]
+            if a.only:
+                args += ["--only", a.only]
+            log("nightly", "INFO", f"retrain on snapshot {snap_id} (cutoff {day_s}): altair_forecast_curriculum {' '.join(args)}")
+            t0 = time.monotonic()
+            status["retrain"] = step("retrain", "altair_forecast_curriculum", args)
+            mins = int((time.monotonic() - t0) / 60)
+            rev = subprocess.run(["git", "rev-parse", "--short=12", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+            (run / "run.json").write_text(json.dumps({"day": day_s, "snapshot_id": snap_id, "snapshot": str(snap),
+                                                      "exit": status["retrain"], "minutes": mins, "code": rev, "args": args}, indent=2))
+            if status["retrain"] == 0:
+                (store / "runs" / "LATEST.txt").write_text(f"{day_s} {snap_id} {run}\n")
+                log("nightly", "INFO", f"retrain done in {mins} min, leak check clean: promoted (runs/LATEST.txt)")
+            elif status["retrain"] == 3:
+                log("nightly", "ERROR", f"retrain: THE LEAK CHECK FAILED (see {run}/leak_check.csv). Not promoted.")
+            else:
+                log("nightly", "ERROR", f"retrain exited {status['retrain']} after {mins} min. Not promoted.")
 
     # ---- 6. the day's trades, with their reasons ---------------------------------
     for path, kind in ((ROOT / "data/live/paper/trades.csv", "paper"), (ROOT / "data/live_orders/strategy_trades.csv", "LIVE")):
