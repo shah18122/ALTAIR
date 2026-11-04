@@ -3,7 +3,8 @@
 //     altair_fyers_ticker [--symbols NSE:NIFTY50-INDEX,NSE:SBIN-EQ]
 //                         [--depth] [--lite] [--seconds 30] [--channel 11]
 //                         [--out PATH] [--jsonl PATH] [--stamp] [--store PATH]
-//                         [--source NAME] [--reconnect 3] --go
+//                         [--source NAME] [--reconnect 3]
+//                         [--bypass IFACE --bypass-ip LOCAL_IP [--bypass-queues 8]] --go
 //
 // The pipeline, and every stage of it is also what the official SDK does:
 //
@@ -25,6 +26,9 @@
 #include <feed/fyers_hsm.hpp>
 #include <feed/tick_store.hpp>
 #include <instruments/contract_spec.hpp>
+#ifdef ALTAIR_KERNEL_BYPASS
+#include <net/bypass_ws.hpp>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -144,6 +148,10 @@ void usage(const char* self) {
         "    --jsonl      append every update as the SDK's on_message JSON\n"
         "    --stamp      prefix each --jsonl line with \"recv_ms\" (receive time, epoch ms):\n"
         "                 depth updates carry no time of their own (altair_depth_study needs it)\n"
+        "    --stamp-ns   the same, \"recv_ns\" in epoch nanoseconds (transport comparisons)\n"
+        "    --bypass     the socket over kernel bypass on this interface: AF_XDP, ALTAIR's\n"
+        "                 own TCP and TLS (built with -DALTAIR_KERNEL_BYPASS=ON; needs root).\n"
+        "                 --bypass-ip is the interface's address, --bypass-queues its RX queues\n"
         "    --store      binary tick store to append (default none)\n"
         "    --source     client name sent at auth (default %.*s)\n"
         "    --reconnect  reconnect attempts after a drop (default 3)\n"
@@ -170,6 +178,16 @@ int main(int argc, char** argv) {
     const char* reconnect_s = arg_value(argc, argv, "--reconnect");
     const bool depth = has_flag(argc, argv, "--depth");
     const bool stamp = has_flag(argc, argv, "--stamp");
+    const bool stamp_ns = has_flag(argc, argv, "--stamp-ns");
+    const char* bypass_if = arg_value(argc, argv, "--bypass");
+    const char* bypass_ip = arg_value(argc, argv, "--bypass-ip");
+    const char* bypass_q = arg_value(argc, argv, "--bypass-queues");
+#ifndef ALTAIR_KERNEL_BYPASS
+    if (bypass_if) {
+        std::printf("  --bypass needs a build with -DALTAIR_KERNEL_BYPASS=ON\n");
+        return 2;
+    }
+#endif
     const bool lite = has_flag(argc, argv, "--lite");
     const bool go = has_flag(argc, argv, "--go");
 
@@ -339,7 +357,9 @@ int main(int argc, char** argv) {
         // JSON is only produced for the recording; the feed path is typed.
         if (jsonl) {
             hsm::render_sdk_json(u, lite, json_line);
-            if (stamp) {   // opt-in: the SDK's own JSON has no receive time
+            if (stamp_ns) {
+                json_line.insert(1, "\"recv_ns\":" + std::to_string(recv.ns_since_epoch()) + ",");
+            } else if (stamp) {   // opt-in: the SDK's own JSON has no receive time
                 json_line.insert(1, "\"recv_ms\":" + std::to_string(recv.ns_since_epoch() / 1'000'000) + ",");
             }
             jsonl << json_line << '\n';
@@ -400,6 +420,40 @@ int main(int argc, char** argv) {
         epoch = g_adapter.connected();
         g_adapter.subscriptions_sent();
         if (attempt > 0) ++reconnect_count;
+#ifdef ALTAIR_KERNEL_BYPASS
+        if (bypass_if) {
+            altair::net::BypassWsConfig bc;
+            bc.xdp.iface = bypass_if;
+            bc.xdp.bpf_object = ALTAIR_XDP_OBJECT;
+            bc.local_ip = bypass_ip ? bypass_ip : "";
+            bc.queues = bypass_q ? static_cast<int>(std::strtol(bypass_q, nullptr, 10)) : 8;
+            bc.host = altair::kFyersDataSocketHost;
+            bc.path = altair::kFyersDataSocketPath;
+            altair::net::BypassWsStats bs;
+            std::string berr;
+            const bool ok = altair::net::bypass_ws_run(
+                bc, {hsm::auth_frame(*hsm_key, source), hsm::mode_frame(lite, channel)}, on_frame,
+                hsm::ping_frame(), std::chrono::seconds{hsm::kPingSeconds}, left, std::chrono::seconds{30}, bs, berr);
+            g_adapter.disconnected(epoch);
+            std::printf("    bypass: TCP %.3f ms, TLS %.3f ms (%s), upgrade %.3f ms; %zu messages, %llu TCP retransmits;"
+                        " ALTAIR work per frame p50 %u / p99 %u ns\n",
+                        bs.connect_ms, bs.tls_ms, bs.tls_cipher.c_str(), bs.upgrade_ms, bs.messages,
+                        static_cast<unsigned long long>(bs.tcp_retransmits), bs.work_p50_ns, bs.work_p99_ns);
+            if (ok) {
+                last_error.reset();
+                if (!bs.closed_by_server) break;
+                std::printf("    FYERS closed the connection\n");
+            } else {
+                last_error = altair::FyersSocketError::TransportFailed;
+                std::printf("    bypass feed error: %s\n", berr.c_str());
+            }
+            if (auth_rejected) break;
+            const long backoff = std::min<long>(8, 1L << std::min<long>(attempt, 3));
+            if (deadline - std::chrono::steady_clock::now() <= std::chrono::seconds{backoff + 1}) break;
+            std::this_thread::sleep_for(std::chrono::seconds{backoff});
+            continue;
+        }
+#endif
         const auto st = altair::fyers_data_socket_run(
             {hsm::auth_frame(*hsm_key, source), hsm::mode_frame(lite, channel)},
             on_frame, hsm::ping_frame(), std::chrono::seconds{hsm::kPingSeconds}, left);

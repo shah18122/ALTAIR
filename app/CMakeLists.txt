@@ -81,6 +81,12 @@ if(ALTAIR_HAVE_NET)
         altair_broker_net altair_feed altair_instruments altair_flags)
     target_compile_definitions(altair_fyers_ticker PRIVATE
         ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    # --bypass IFACE: the same feed over AF_XDP and ALTAIR's own TCP/TLS (net/).
+    if(ALTAIR_KERNEL_BYPASS)
+        target_link_libraries(altair_fyers_ticker PRIVATE altair_bypass_ws)
+        target_compile_definitions(altair_fyers_ticker PRIVATE
+            ALTAIR_KERNEL_BYPASS ALTAIR_XDP_OBJECT="${ALTAIR_XDP_OBJECT}")
+    endif()
 
     # GETS screens: READ-ONLY /data/quotes snapshot (spot, option LTPs,
     # change and OHLC) for the Terminal's Greek, movers and index tabs.

@@ -33,6 +33,7 @@ if(ALTAIR_KERNEL_BYPASS)
 
     # The XDP program: compiled for the kernel's BPF VM, loaded at run time.
     set(xdp_obj ${CMAKE_CURRENT_BINARY_DIR}/altair_flow.bpf.o)
+    set(ALTAIR_XDP_OBJECT ${xdp_obj} CACHE INTERNAL "the built XDP program")
     add_custom_command(
         OUTPUT ${xdp_obj}
         COMMAND ${ALTAIR_BPF_CLANG} -O2 -g -target bpf
