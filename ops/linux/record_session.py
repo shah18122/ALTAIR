@@ -13,7 +13,11 @@ every boot, so a restart during the session resumes the recording. It:
      futures, the 5-level book on --depth-strikes each side, the 50-level book
      on the slots the plan allows);
   3. if the feed stops (no FYERS login yet, a drop), tries again every
-     5 minutes until 15:30, and says so in the activity log.
+     5 minutes until 15:30 -- at once when data/fyers_session.json changes --
+     and says so in the activity log;
+  4. when data/fyers_session.json changes while ITS feed runs (a new token: a
+     --force login, the 08:40 backstop), restarts that feed on the new token.
+     A feed the terminal runs is left alone (the terminal restarts its own).
 
 THE FYERS LOGIN IS AUTOMATIC. The altair-fyers-login timer (08:30) gets the
 day's token with TOTP + PIN (broker/tools/fyers_auto_login.py), and this job
@@ -46,13 +50,34 @@ def feed_up(port: int = 7421) -> bool:
         return False
 
 
+SESSION = ROOT / "data" / "fyers_session.json"
+
+
+def session_stamp() -> float:
+    """data/fyers_session.json's mtime (0 when absent): it changes with every new token."""
+    try:
+        return SESSION.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def wait_for_session_change(stamp: float, seconds: int) -> bool:
+    """Sleep up to `seconds`, waking early (True) when a new token is written."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if session_stamp() != stamp:
+            return True
+        time.sleep(5)
+    return session_stamp() != stamp
+
+
 def auto_login() -> None:
     """Today's FYERS login by TOTP + PIN; a no-op when the session already works."""
     script = ROOT / "broker" / "tools" / "fyers_auto_login.py"
     if not script.is_file():
         return
     try:
-        subprocess.run([sys.executable, str(script), "--root", str(ROOT)],
+        subprocess.run([sys.executable, str(script), "--root", str(ROOT), "--retry-minutes", "3"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         log("record", "WARN", f"auto-login did not finish: {type(e).__name__}")
@@ -108,6 +133,7 @@ def main() -> int:
     rec = subprocess.Popen([str(recorder), *rec_args], cwd=ROOT,
                            stdout=open(logs / f"recorder-{day}.out.txt", "ab"), stderr=subprocess.STDOUT)
     feed = None
+    feed_stamp = 0.0   # the session file the running feed started with
     started = 0
     waiting_since: dt.datetime | None = None
     feed_out = logs / f"price_service-{day}.out.txt"
@@ -116,6 +142,16 @@ def main() -> int:
             if waiting_since is not None:
                 log("record", "INFO", "the feed is streaming")
                 waiting_since = None
+            if feed is not None and feed.poll() is None and session_stamp() != feed_stamp:
+                log("record", "INFO", "a new FYERS token was written; restarting the feed on it")
+                feed.terminate()
+                try:
+                    feed.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    feed.kill()
+                    feed.wait()
+                feed = None
+                continue
             time.sleep(30)
             continue
         if feed is not None and feed.poll() is None:
@@ -133,9 +169,11 @@ def main() -> int:
             feed = None
             if ist_now() >= last_try:
                 break
-            time.sleep(300)
+            if wait_for_session_change(feed_stamp, 300):
+                log("record", "INFO", "a new FYERS token was written; starting the feed now")
             continue
         started += 1
+        feed_stamp = session_stamp()
         log("record", "INFO", f"starting altair_price_service (attempt {started}): {' '.join(feed_args)}")
         feed = subprocess.Popen([str(service), *feed_args], cwd=ROOT,
                                 stdout=open(feed_out, "ab"),

@@ -3,6 +3,9 @@ Description=ALTAIR: log in to FYERS before the recorder starts
 
 [Timer]
 OnCalendar=Mon..Fri 08:30 Asia/Kolkata
+# The backstop: a no-op when the 08:30 run got today's token, a second try
+# (another 10 minutes of retries) when it did not. The recorder starts at 08:50.
+OnCalendar=Mon..Fri 08:40 Asia/Kolkata
 Persistent=true
 AccuracySec=1s
 

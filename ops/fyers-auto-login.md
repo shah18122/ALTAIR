@@ -25,7 +25,8 @@ run is the one-time check below.
    ```
 
 3. `sudo ops/setup.sh` (or `sudo ops/install.sh --go`) registers the
-   **altair-fyers-login** timer, Mon-Fri 08:30 IST, before the recorder (08:50).
+   **altair-fyers-login** timer, Mon-Fri 08:30 IST and again at 08:40 as a
+   backstop (a no-op once today's token works), before the recorder (08:50).
    `journalctl -u altair-fyers-login` shows its last run.
 
 ## Where credentials can live
@@ -49,12 +50,24 @@ Never paste these into a chat, an issue or a commit.
 
 * Skips the login when today's saved session still passes FYERS's profile
   check (`--force` overrides).
-* Network failures and 5xx answers: up to 5 attempts, waiting 5, 10, 20, 40 s.
+* Requests carry the headers FYERS's own web login sends (a browser
+  User-Agent, Origin/Referer `login.fyers.in`) and keep cookies for the run:
+  urllib's default `Python-urllib` agent is what a bot filter answers with 403.
+* Network failures, timeouts, 5xx, 403/429 (a firewall), HTML pages and a
+  refused `send_login_otp` (no PIN or TOTP spent) are retried with backoff
+  (10, 20, 40, 80, 120 s...) for `--retry-minutes` (default 10). The 08:40
+  backstop and the recorder (every 5 minutes while it has no session) try again.
 * A refused TOTP is retried once, on the next 30 s window (clock skew, or a code
-  used a moment ago). Any other refusal (wrong PIN, secret, app id) stops at
-  once and writes `data/fyers_login_refused.txt`: no scheduled run tries again
-  that day, because FYERS locks the account after a few wrong PINs. Fix the
-  value, then run with `--force`.
+  used a moment ago). A second TOTP refusal or a wrong PIN stops at once and
+  writes `data/fyers_login_refused.txt` (`<day> wrong-credential <reason>`): no
+  scheduled run tries again that day, because FYERS locks the account after a
+  few wrong PINs. Fix the value, then run with `--force`. A refusal of the app
+  settings (secret, redirect uri) stops that run but does not lock the day.
+* Every refusal logs FYERS's whole answer, the HTTP status and the
+  server/firewall headers (secrets masked), so the cause is in the log.
+* Programs pick the new token up by themselves: the recorder restarts its feed
+  (kernel socket or AF_XDP bypass) when `data/fyers_session.json` changes, and
+  the desktop's Terminal starts or restarts its live feed within 30 s.
 * Nothing secret is printed or logged: one line per event goes to stdout and
   to `data/logs/altair-<IST day>.log` (component `fyers-login`), with the same
   masking as `app/activity_log.hpp`.

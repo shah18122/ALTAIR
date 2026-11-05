@@ -4,16 +4,19 @@ After=network-online.target time-sync.target
 Wants=network-online.target
 
 [Service]
-Type=exec
+# oneshot: the start job lasts until the login is done, so the recorder
+# (After=altair-fyers-login.service) waits for it rather than racing it.
+Type=oneshot
 User=@USER@
 Group=@USER@
 WorkingDirectory=@ROOT@
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/altair/altair.env
 # Exit 2 credentials missing, 3 FYERS refused, 4 network, 5 write (see the script).
-ExecStart=/usr/bin/python3 @ROOT@/broker/tools/fyers_auto_login.py --root @ROOT@
+# It retries firewall/network/server failures for 10 minutes by itself.
+ExecStart=/usr/bin/python3 @ROOT@/broker/tools/fyers_auto_login.py --root @ROOT@ --retry-minutes 10
 TimeoutStopSec=30
-RuntimeMaxSec=10min
+TimeoutStartSec=15min
 LimitMEMLOCK=infinity
 LimitRTPRIO=50
 LimitNICE=-10
