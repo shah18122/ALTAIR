@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ops/install.sh -- register ALTAIR's scheduled jobs as systemd timers (or remove them).
 #
-#   altair-fyers-login.timer   Mon-Fri 08:30 IST  broker/tools/fyers_auto_login.py (TOTP + PIN, no browser)
+#   altair-fyers-login.timer   Mon-Fri 08:30 IST  broker/tools/fyers_auto_login.py (TOTP + PIN, no browser),
+#                              again at 08:40 as a backstop (a no-op once today's token works)
 #   altair-recorder.timer      Mon-Fri 08:50 IST  ops/linux/record_session.py --go (records to 15:45)
 #   altair-chain-open.timer    Mon-Fri 09:20 IST  ops/linux/chain_snapshot.py --go
 #   altair-chain-close.timer   Mon-Fri 15:27 IST  ops/linux/chain_snapshot.py --go

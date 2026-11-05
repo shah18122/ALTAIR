@@ -1609,12 +1609,28 @@ public:
     /// tried again after five. At 15:45 a live feed is stopped (the service
     /// also stops itself then: --until 15:45), later with MCX or currency in
     /// the watchlist (feed_off_minute). True when this tick started it.
+    ///
+    /// A NEW TOKEN NEEDS NO RESTART OF THE APP. When data/fyers_session.json
+    /// changes (the 08:30 auto-login, its 08:40 backstop, a --force login,
+    /// Brokers -> Log in), the five-minute wait is dropped and a live feed this
+    /// page runs on the old token is restarted on the new one.
     bool market_tick() {
         if (!autostart_) return false;
         const QDateTime ist = now_ist ? now_ist() : QDateTime::currentDateTimeUtc().addSecs(19800);
         if (!in_market_hours(ist, feed_off_minute())) {
             if (feed_ != nullptr && !sim_running_) stop_feed();
             return false;
+        }
+        const qint64 stamp = session_stamp();
+        const bool new_token = session_seen_ >= 0 && stamp != session_seen_;
+        session_seen_ = stamp;
+        if (new_token) {
+            refused_at_ = QDateTime();
+            if (feed_ != nullptr && !sim_running_ && stamp != feed_session_) {
+                token_restart_ = true;
+                stop_feed();          // its finished handler starts it again
+                return false;
+            }
         }
         if (feed_ != nullptr || sim_running_) return false;
         if (client_ != nullptr && client_->connected()) return false;   // something else already streams
@@ -2101,9 +2117,14 @@ private:
             stop_->setEnabled(false);
             // A live feed that exits with an error is not restarted for five
             // minutes (market_tick): no login, a holiday, a refused session.
-            if (!was_sim && code != 0)
+            const bool token_restart = token_restart_;
+            token_restart_ = false;
+            if (!was_sim && code != 0 && !token_restart)
                 refused_at_ = now_ist ? now_ist() : QDateTime::currentDateTimeUtc().addSecs(19800);
-            if (code == 2 && out.contains(QStringLiteral("no live source today"))) {
+            if (token_restart) {
+                note_ = QStringLiteral("A new FYERS token was written: restarting the live feed on it…");
+                QTimer::singleShot(500, this, [this] { market_tick(); });
+            } else if (code == 2 && out.contains(QStringLiteral("no live source today"))) {
                 note_ = QStringLiteral("No live feed: %1 — log in to FYERS on the Brokers page; it is tried again in 5 minutes.")
                             .arg(out.section(QStringLiteral("no live source today."), 1).simplified().toHtmlEscaped());
             } else if (code != 0) {
@@ -2129,6 +2150,8 @@ private:
                  << QStringLiteral("%1:%2").arg(off / 60, 2, 10, QLatin1Char('0')).arg(off % 60, 2, 10, QLatin1Char('0'));
             note_ = auto_started_ ? QStringLiteral("Starting the FYERS live feed by itself (market hours)…")
                                   : QStringLiteral("Starting the FYERS live feed…");
+            feed_session_ = session_stamp();
+            session_seen_ = feed_session_;
         }
         sim_running_ = sim;
         feed_->start(exe, args);
@@ -2139,6 +2162,12 @@ private:
         QTimer::singleShot(1500, this, [this] {
             if (client_ != nullptr && !client_->connected()) client_->start(QStringLiteral("127.0.0.1"), 7421);
         });
+    }
+
+    /// data/fyers_session.json's mtime in ms (0 when absent): it changes with every new token.
+    [[nodiscard]] qint64 session_stamp() const {
+        const QFileInfo fi(root_ + QStringLiteral("/data/fyers_session.json"));
+        return fi.exists() ? fi.lastModified().toMSecsSinceEpoch() : 0;
     }
 
     void stop_feed() {
@@ -2176,6 +2205,9 @@ private:
     bool autostart_ = false;
     bool sim_running_ = false;
     QDateTime refused_at_;
+    qint64 session_seen_ = -1;     ///< data/fyers_session.json's stamp at the last tick (-1: not looked yet)
+    qint64 feed_session_ = 0;      ///< the stamp the running live feed started with
+    bool token_restart_ = false;   ///< the feed is being stopped to restart it on a new token
     QPushButton* start_sim_ = nullptr;
     QPushButton* stop_ = nullptr;
     QDateEdit* sim_date_ = nullptr;

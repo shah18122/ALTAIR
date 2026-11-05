@@ -31,8 +31,9 @@ REFRESH = "eyJ" + "r" * 200
 class FakeFyers:
     """Answers the six endpoints the way FYERS does; records what was sent."""
 
-    def __init__(self, fail_otp_times=0, transient_times=0, bad_pin=False):
+    def __init__(self, fail_otp_times=0, transient_times=0, bad_pin=False, otp_send_refused=0):
         self.calls = []
+        self.otp_send_refused = otp_send_refused
         self.fail_otp_times = fail_otp_times
         self.transient_times = transient_times
         self.bad_pin = bad_pin
@@ -43,6 +44,9 @@ class FakeFyers:
             if self.transient_times:
                 self.transient_times -= 1
                 raise fal.Transient("api-t2.fyers.in: timed out")
+            if self.otp_send_refused:
+                self.otp_send_refused -= 1
+                return 400, {"s": "error", "code": -1, "message": ""}
             return 200, {"s": "ok", "code": 200, "request_key": "rk1"}
         if url == fal.URL_VERIFY_OTP:
             if self.fail_otp_times:
@@ -158,6 +162,25 @@ class AutoLoginTests(unittest.TestCase):
         self.assertEqual(self.run_login(FakeFyers(), force=True)[0], 0)
         self.assertFalse((self.root / "data" / "fyers_login_refused.txt").exists())
 
+    def test_refused_send_otp_is_retried_and_never_locks(self):
+        code, out = self.run_login(FakeFyers(otp_send_refused=2))
+        self.assertEqual(code, 0)
+        self.assertIn('"code":-1', out)                     # FYERS's whole answer is logged
+        self.assertFalse((self.root / "data" / "fyers_login_refused.txt").exists())
+
+    def test_old_bare_date_marker_is_ignored(self):
+        # The old code wrote a bare date for ANY refusal (2026-11-05: a firewall 403).
+        marker = self.root / "data" / "fyers_login_refused.txt"
+        marker.parent.mkdir(parents=True)
+        marker.write_text(fal._dt.datetime.now(fal.IST).strftime("%Y-%m-%d") + "\n")
+        self.assertEqual(self.run_login(FakeFyers(), force=False)[0], 0)
+
+    def test_wrong_pin_marker_names_the_reason(self):
+        self.run_login(FakeFyers(bad_pin=True))
+        text = (self.root / "data" / "fyers_login_refused.txt").read_text()
+        self.assertIn("wrong-credential", text)
+        self.assertNotIn("4821", text)
+
     def test_totp_retried_only_once(self):
         fake = FakeFyers(fail_otp_times=5)
         self.assertEqual(self.run_login(fake)[0], 3)
@@ -186,6 +209,48 @@ class AutoLoginTests(unittest.TestCase):
             self.assertNotIn(v, m)
         self.assertIn("4-digit PIN (ALTAIR_FYERS_PIN)", fal.mask("4-digit PIN (ALTAIR_FYERS_PIN)"))
 
+
+class RequestTests(unittest.TestCase):
+    """_request itself: what a firewall answer turns into, and what is sent."""
+
+    def answer(self, status, body, ctype="application/json"):
+        import email.message
+        import urllib.error
+        hdrs = email.message.Message()
+        hdrs["Content-Type"] = ctype
+        hdrs["Server"] = "cloudflare"
+        seen = {}
+
+        def fake_open(req, timeout=None):
+            seen.update({k.lower(): v for k, v in req.header_items()})
+            raise urllib.error.HTTPError(req.full_url, status, "x", hdrs, io.BytesIO(body))
+        return seen, fake_open
+
+    def test_403_html_is_transient_with_detail(self):
+        seen, fake = self.answer(403, b"<html><title>Attention Required!</title></html>", "text/html")
+        with mock.patch.object(fal._opener, "open", fake):
+            with self.assertRaises(fal.Transient) as ctx:
+                fal._request(fal.URL_SEND_OTP, {"fy_id": "x", "app_id": "2"})
+        self.assertIn("HTTP 403", str(ctx.exception))
+        self.assertIn("Attention Required", str(ctx.exception))
+        self.assertIn("server=cloudflare", str(ctx.exception))
+        self.assertTrue(seen["user-agent"].startswith("Mozilla/5.0"))
+        self.assertEqual(seen["origin"], "https://login.fyers.in")
+
+    def test_403_json_is_transient(self):
+        _seen, fake = self.answer(403, b'{"s":"error","code":403}')
+        with mock.patch.object(fal._opener, "open", fake):
+            with self.assertRaises(fal.Transient):
+                fal._request(fal.URL_VERIFY_PIN, {"request_key": "k"})
+
+    def test_400_json_is_returned_for_the_step_to_judge(self):
+        _seen, fake = self.answer(400, b'{"s":"error","code":-1,"message":"Incorrect PIN"}')
+        with mock.patch.object(fal._opener, "open", fake):
+            st, body = fal._request(fal.URL_VERIFY_PIN, {"request_key": "k"})
+        self.assertEqual(st, 400)
+        with self.assertRaises(fal.LoginRefused) as ctx:
+            fal._step("verify_pin", st, body, lock=True)
+        self.assertTrue(ctx.exception.lock)
 
 
 class FileVaultTests(unittest.TestCase):

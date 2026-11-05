@@ -31,6 +31,22 @@ if [ "$1" = --at-boot ]; then
     mkdir -p /etc/altair
     printf 'DPDK_IFACE=%s\n' "$2" > /etc/altair/dpdk.conf
     systemctl enable altair-dpdk-bind.service
+    # Keep the spare off the kernel's network config at boot: on 2026-11-04 its
+    # DHCP took the default route before the bind ran and cut SSH off. Matched by
+    # MAC (the name can change); written once, never over a hand-made file.
+    if [ -r "/sys/class/net/$2/address" ]; then
+        mac="$(cat "/sys/class/net/$2/address")"
+        umask 077
+        if [ -d /etc/netplan ] && [ ! -e /etc/netplan/90-altair-spare.yaml ]; then
+            printf 'network:\n  version: 2\n  ethernets:\n    altair-spare:\n      match:\n        macaddress: "%s"\n      dhcp4: false\n      dhcp6: false\n      optional: true\n' "$mac" \
+                > /etc/netplan/90-altair-spare.yaml
+            echo "wrote /etc/netplan/90-altair-spare.yaml (no DHCP on $mac)"
+        fi
+        if [ -d /etc/NetworkManager/conf.d ] && [ ! -e /etc/NetworkManager/conf.d/99-altair-spare.conf ]; then
+            printf '[keyfile]\nunmanaged-devices=mac:%s\n' "$mac" > /etc/NetworkManager/conf.d/99-altair-spare.conf
+            echo "wrote /etc/NetworkManager/conf.d/99-altair-spare.conf (NetworkManager leaves $mac alone)"
+        fi
+    fi
     if [ -e "/sys/class/net/$2" ]; then exec "$0" "$2"; fi
     echo "$2 is already bound (or absent); it is bound again at every boot"
     exit 0

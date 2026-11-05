@@ -40,6 +40,14 @@ Usage:
 Exit codes: 0 session ready, 2 credentials missing, 3 FYERS refused the login
 (wrong PIN/TOTP/secret: retrying will not help), 4 network/server failure after
 all retries, 5 the session could not be written.
+
+WHAT LOCKS THE DAY. Only a definite "wrong PIN" or "wrong TOTP" answer (twice
+for the TOTP) writes data/fyers_login_refused.txt, because FYERS locks the
+account after a few of those. Everything else -- a 403 or 429 from FYERS's
+firewall, a 5xx, an HTML page, a timeout, a refused send_login_otp -- is retried
+with backoff for --retry-minutes (default 10), and the 08:40 backstop and the
+recorder try again after that. Every refusal logs FYERS's whole answer
+(secrets masked) so the cause is in the activity log, not a guess.
 """
 
 from __future__ import annotations
@@ -52,6 +60,7 @@ import datetime as _dt
 import getpass
 import hashlib
 import hmac
+import http.cookiejar
 import json
 import os
 import re
@@ -88,7 +97,12 @@ HTTP_TIMEOUT = 20
 
 
 class LoginRefused(Exception):
-    """FYERS answered and said no (bad PIN, TOTP, secret...): do not retry blindly."""
+    """FYERS answered and said no. `lock` is True only for a wrong PIN or TOTP:
+    those lock the account after a few tries, so no scheduled run repeats them today."""
+
+    def __init__(self, message: str, lock: bool = False):
+        super().__init__(message)
+        self.lock = lock
 
 
 class Transient(Exception):
@@ -289,43 +303,84 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # /api/v3/token answers 308 with the auth_code in the JSON body
 
 
-_opener = urllib.request.build_opener(_NoRedirect)
+# Cookies the login hosts set (their firewall's among them) are kept for the run.
+_opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+# What FYERS's own web login (login.fyers.in) sends. urllib's default
+# "Python-urllib/3.x" user agent and a bare Accept are what bot filters in front
+# of api-t1/api-t2 answer with 403, so the requests look like that page's.
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/130.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://login.fyers.in",
+    "Referer": "https://login.fyers.in/",
+}
+
+# Answers that say nothing about the credentials: a firewall, a timeout, a busy server.
+TRANSIENT_STATUS = {403, 408, 409, 425, 429}
+
+
+def _describe(status: int, raw: bytes, headers) -> str:
+    """HTTP status, the firewall/server headers and the whole body (masked by log())."""
+    text = raw.decode("utf-8", "replace").strip()
+    if "<html" in text[:400].lower():
+        title = re.search(r"(?is)<title>(.*?)</title>", text)
+        text = "HTML page" + (f" '{title.group(1).strip()[:80]}'" if title else "")
+    hdr = ""
+    if headers is not None:
+        keep = [f"{k}={headers.get(k)}" for k in ("server", "content-type", "cf-ray", "x-amzn-requestid",
+                                                     "x-cache", "retry-after") if headers.get(k)]
+        hdr = f" [{', '.join(keep)}]" if keep else ""
+    return f"HTTP {status}{hdr}: {text[:600] or 'empty body'}"
 
 
 def _request(url: str, payload: dict | None, headers: dict[str, str] | None = None) -> tuple[int, dict]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="GET" if payload is None else "POST")
-    req.add_header("Accept", "application/json")
+    for k, v in BROWSER_HEADERS.items():
+        req.add_header(k, v)
     if data is not None:
         req.add_header("Content-Type", "application/json")
     for k, v in (headers or {}).items():
         req.add_header(k, v)
     try:
         with _opener.open(req, timeout=HTTP_TIMEOUT) as resp:
-            status, body = resp.status, resp.read()
+            status, body, rh = resp.status, resp.read(), resp.headers
     except urllib.error.HTTPError as e:
-        status, body = e.code, e.read()
+        status, rh = e.code, e.headers
+        try:
+            body = e.read()
+        except OSError:
+            body = b""
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise Transient(f"{urllib.parse.urlsplit(url).netloc}: {getattr(e, 'reason', e)}") from None
     try:
         parsed = json.loads(body.decode("utf-8") or "{}")
     except (UnicodeDecodeError, json.JSONDecodeError):
-        parsed = {}
-    if status >= 500 or (not parsed and status not in (200, 308)):
-        raise Transient(f"{urllib.parse.urlsplit(url).path}: HTTP {status}")
+        parsed = None
+    path = urllib.parse.urlsplit(url).path
+    if status >= 500 or status in TRANSIENT_STATUS or not isinstance(parsed, dict) \
+            or (not parsed and status not in (200, 308)):
+        raise Transient(f"{path}: {_describe(status, body, rh)}")
     return status, parsed
 
 
 def _message(body: dict) -> str:
-    m = body.get("message") or body.get("msg") or body.get("s") or "no message"
-    return str(m)[:160]
+    """FYERS's whole answer (code, message and anything else), for the log."""
+    try:
+        return json.dumps(body, separators=(",", ":"))[:600]
+    except (TypeError, ValueError):
+        return str(body)[:600]
 
 
-def _step(name: str, status: int, body: dict) -> dict:
+def _step(name: str, status: int, body: dict, lock: bool = False) -> dict:
+    """`lock`: a refusal at this step means a wrong PIN/TOTP (see LoginRefused)."""
     if status >= 400 or body.get("s", "ok") != "ok":
-        if status == 429:
-            raise Transient(f"{name}: rate limited (HTTP 429)")
-        raise LoginRefused(f"{name} refused (HTTP {status}): {_message(body)}")
+        if status in TRANSIENT_STATUS or status >= 500:
+            raise Transient(f"{name}: HTTP {status}: {_message(body)}")
+        raise LoginRefused(f"{name} refused (HTTP {status}): {_message(body)}", lock=lock)
     return body
 
 
@@ -340,18 +395,22 @@ def app_id_hash(client_id: str, secret: str) -> str:
 def login_once(c: dict[str, str], used_window: int | None) -> tuple[str, str, str, int]:
     """One pass of the flow. Returns (access_token, refresh_token, profile fy_id, TOTP window used)."""
     st, body = _request(URL_SEND_OTP, {"fy_id": b64(c["fy_id"]), "app_id": "2"})
-    key = _step("send_login_otp", st, body).get("request_key")
+    # No PIN or TOTP is spent here, so a refusal cannot lock the account: retry it.
+    try:
+        key = _step("send_login_otp", st, body).get("request_key")
+    except LoginRefused as e:
+        raise Transient(str(e)) from None
     if not key:
         raise Transient("send_login_otp: no request_key in the answer")
 
     code, window = fresh_totp(c["totp_key"], used_window)
     st, body = _request(URL_VERIFY_OTP, {"request_key": key, "otp": code})
-    key = _step("verify_totp", st, body).get("request_key")
+    key = _step("verify_totp", st, body, lock=True).get("request_key")
     if not key:
         raise Transient("verify_totp: no request_key in the answer")
 
     st, body = _request(URL_VERIFY_PIN, {"request_key": key, "identity_type": "pin", "identifier": b64(c["pin"])})
-    login_token = (_step("verify_pin", st, body).get("data") or {}).get("access_token")
+    login_token = (_step("verify_pin", st, body, lock=True).get("data") or {}).get("access_token")
     if not login_token:
         raise Transient("verify_pin: no login token in the answer")
 
@@ -475,13 +534,16 @@ def refused_marker(root: Path) -> Path:
 
 
 def refused_today(root: Path) -> bool:
+    """The marker is "<IST day> wrong-credential <reason>". A bare date is the old
+    format, written for ANY refusal (a firewall 403 included): it is ignored."""
     try:
-        return refused_marker(root).read_text(encoding="utf-8").strip() == _dt.datetime.now(IST).strftime("%Y-%m-%d")
+        parts = refused_marker(root).read_text(encoding="utf-8").split(maxsplit=2)
     except OSError:
         return False
+    return len(parts) >= 2 and parts[0] == _dt.datetime.now(IST).strftime("%Y-%m-%d") and parts[1] == "wrong-credential"
 
 
-def cmd_login(root: Path, force: bool, attempts: int) -> int:
+def cmd_login(root: Path, force: bool, attempts: int, retry_minutes: float = 10.0) -> int:
     values, _src = load_credentials(root)
     missing = missing_fields(values)
     if missing:
@@ -492,16 +554,20 @@ def cmd_login(root: Path, force: bool, attempts: int) -> int:
     if not force and todays_session_works(root, client):
         log(root, "INFO", "today's FYERS session is already valid; nothing to do")
         return 0
-    # FYERS locks the account after a few wrong PINs/TOTPs. After one refusal no
-    # scheduled run tries again that day; a person fixes the value and uses --force.
+    # FYERS locks the account after a few wrong PINs/TOTPs. After one such refusal
+    # no scheduled run tries again that day; a person fixes the value and uses --force.
     if not force and refused_today(root):
-        log(root, "ERROR", "FYERS refused this login earlier today; not trying again (fix the value, then run with --force)")
+        log(root, "ERROR", "FYERS said the PIN or TOTP was wrong earlier today; not trying again "
+                           "(fix the value, then run with --force)")
         return 3
 
     used_window: int | None = None
     totp_retried = False
     last = ""
-    for attempt in range(1, attempts + 1):
+    deadline = time.monotonic() + max(0.0, retry_minutes) * 60
+    attempt = 0
+    while attempt < attempts:
+        attempt += 1
         try:
             access, refresh, profile_id, used_window = login_once(values, used_window)
         except LoginRefused as e:
@@ -513,17 +579,23 @@ def cmd_login(root: Path, force: bool, attempts: int) -> int:
                 log(root, "WARN", f"attempt {attempt}: {last}; retrying once on the next TOTP window")
                 used_window = int(time.time() // 30)
                 continue
-            log(root, "ERROR", f"FYERS refused the login: {last}. Check the credentials (--check); not retrying today.")
+            if not e.lock:
+                # The app's settings (redirect uri, secret), not the PIN/TOTP: this
+                # run stops, but the backstop and the recorder may try again.
+                log(root, "ERROR", f"FYERS refused the login: {last}. Check the app id, secret and redirect uri (--check).")
+                return 3
+            log(root, "ERROR", f"FYERS refused the login: {last}. The PIN or TOTP is wrong (--check); not retrying today.")
             try:
                 refused_marker(root).parent.mkdir(parents=True, exist_ok=True)
-                refused_marker(root).write_text(_dt.datetime.now(IST).strftime("%Y-%m-%d") + "\n", encoding="utf-8")
+                refused_marker(root).write_text(
+                    f"{_dt.datetime.now(IST).strftime('%Y-%m-%d')} wrong-credential {mask(last)[:300]}\n", encoding="utf-8")
             except OSError:
                 pass
             return 3
         except Transient as e:
             last = str(e)
-            if attempt < attempts:
-                wait = min(60, 5 * 2 ** (attempt - 1))
+            wait = min(120, 10 * 2 ** (attempt - 1))
+            if attempt < attempts and time.monotonic() + wait < deadline:
                 log(root, "WARN", f"attempt {attempt}/{attempts} failed: {last}; retrying in {wait}s")
                 time.sleep(wait)
                 continue
@@ -537,7 +609,7 @@ def cmd_login(root: Path, force: bool, attempts: int) -> int:
             refused_marker(root).unlink()
         log(root, "INFO", f"FYERS session established for {profile_id} (token {len(access)} chars, redacted) -> {path}")
         return 0
-    log(root, "ERROR", f"FYERS login failed after {attempts} attempts: {last}")
+    log(root, "ERROR", f"FYERS login failed after {attempt} attempt(s): {last}")
     return 4
 
 
@@ -547,14 +619,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force", action="store_true", help="log in even if today's session still works")
     p.add_argument("--check", action="store_true", help="show which credentials are found (never their values)")
     p.add_argument("--store", action="store_true", help="type the credentials once into the OS vault")
-    p.add_argument("--attempts", type=int, default=5, help="network retries (default 5)")
+    p.add_argument("--attempts", type=int, default=12, help="most tries in one run (default 12)")
+    p.add_argument("--retry-minutes", type=float, default=10.0,
+                   help="keep retrying firewall/network/server failures this long (default 10)")
     a = p.parse_args(argv)
     root = (a.root or default_root()).resolve()
     if a.store:
         return cmd_store()
     if a.check:
         return cmd_check(root)
-    return cmd_login(root, a.force, max(1, a.attempts))
+    return cmd_login(root, a.force, max(1, a.attempts), a.retry_minutes)
 
 
 if __name__ == "__main__":
