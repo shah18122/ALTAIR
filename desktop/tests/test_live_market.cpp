@@ -274,6 +274,12 @@ int main(int argc, char** argv) {
         check(!page.market_tick(), "with the schedule off (tests, scripts) nothing starts");
         page.set_autostart(true);
         check(!page.market_tick() && !page.feed_running(), "on a Saturday the schedule starts nothing");
+        page.now_ist = [&] { return at(2026, 10, 7, 11, 0); };   // a Wednesday, market hours
+        page.recorder_checked_ = true;
+        page.recorder_owns_ = true;
+        check(!page.market_tick() && !page.feed_running(),
+              "where the recorder owns the feed, market hours start no second one");
+        page.recorder_owns_ = false;
         page.set_autostart(false);
         page.now_ist = {};
         check(page.findChild<QPushButton*>(QStringLiteral("startLiveFeed")) == nullptr

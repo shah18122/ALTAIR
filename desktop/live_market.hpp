@@ -1634,11 +1634,38 @@ public:
         }
         if (feed_ != nullptr || sim_running_) return false;
         if (client_ != nullptr && client_->connected()) return false;   // something else already streams
+        // On a server where altair-recorder owns the day's feed (its timer is
+        // enabled), the Terminal never starts a second one: it would race the
+        // recorder's -- while it waits for the login, or in the 90 s after a
+        // boot -- and the recorder would then record this smaller,
+        // kernel-socket feed instead of its own. The Terminal connects to the
+        // recorder's feed once it streams. Start/Stop by hand still works.
+        if (recorder_owns_feed()) {
+            note_ = QStringLiteral("The recorder (altair-recorder) runs the live feed on this machine; "
+                                   "the Terminal shows it as soon as it streams.");
+            return false;
+        }
         if (refused_at_.isValid() && refused_at_.secsTo(ist) < 300) return false;
         auto_started_ = true;
         start_feed(false);
         return true;
     }
+    /// True when this machine's altair-recorder.timer is enabled (Linux, asked
+    /// once): the recorder starts and keeps the live feed, not the Terminal.
+    /// ALTAIR_TERMINAL_FEED=1 lets the Terminal start it anyway.
+    [[nodiscard]] bool recorder_owns_feed() {
+        if (recorder_checked_) return recorder_owns_;
+        recorder_checked_ = true;
+#ifdef Q_OS_LINUX
+        if (qEnvironmentVariable("ALTAIR_TERMINAL_FEED") != QStringLiteral("1")) {
+            QProcess p;
+            p.start(QStringLiteral("systemctl"), {QStringLiteral("is-enabled"), QStringLiteral("altair-recorder.timer")});
+            recorder_owns_ = p.waitForFinished(3000) && p.exitCode() == 0;
+        }
+#endif
+        return recorder_owns_;
+    }
+    bool recorder_checked_ = false, recorder_owns_ = false;
     /// IST now (UTC + 5:30 as a UTC QDateTime); tests set a clock.
     std::function<QDateTime()> now_ist;
     static constexpr int kFeedOnMinute = 9 * 60, kFeedOffMinute = 15 * 60 + 45;
