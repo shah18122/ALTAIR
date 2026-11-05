@@ -99,6 +99,7 @@
         "ALTAIR_BUILD_TESTS": "ON",
         "ALTAIR_BUILD_BENCH": "OFF",
         "ALTAIR_KERNEL_BYPASS": "ON",
+        "ALTAIR_DPDK": "ON",
         "ALTAIR_QT_ROOT": "$env{ALTAIR_QT_ROOT}"
       }
     }

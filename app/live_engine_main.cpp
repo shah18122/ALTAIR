@@ -1047,6 +1047,7 @@ int main(int argc, char** argv) {
     lv::LatencyHistogram lat_frame;     // receipt -> processed, every frame (queueing included)
     lv::LatencyHistogram lat_decision;  // receipt -> processed, frames that ran the models
     lv::LatencyHistogram lat_fill;      // decision -> fill, on the feed's clock (the paper latency plus the wait for a quote)
+    lv::LatencyHistogram lat_bus;       // the price bus's write -> this reader's receipt (loopback TCP + reader thread), live only
     const auto steady_ns = [] {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     };
@@ -1137,7 +1138,7 @@ int main(int argc, char** argv) {
             if (tape_out && !tape_failed && !tape_out->flush()) tape_lost();
         }
         engine.set_metrics("{\"frame_us\": " + lat_frame.json(1e3) + ", \"decision_us\": " + lat_decision.json(1e3)
-                           + ", \"fill_ms_feed\": " + lat_fill.json(1e6) + "}");
+                           + ", \"fill_ms_feed\": " + lat_fill.json(1e6) + ", \"bus_to_engine_us\": " + lat_bus.json(1e3) + "}");
         std::string page = note;
         for (const auto& e : events) page += " " + e + ".";
         if (!connected && !replaying) page += " Not connected to the price service.";
@@ -1169,6 +1170,9 @@ int main(int argc, char** argv) {
         if (resync || n == 0) return;
         buf.insert(buf.end(), p, p + n);
         marks.emplace_back(buf.size(), recv_ns);
+        // The bus stamps each frame with the wall clock as it writes it; this
+        // chunk's receipt on the same clock is its steady stamp plus the offset.
+        const std::int64_t recv_wall = replaying ? 0 : recv_ns + (wall_ns() - steady_ns());
         std::size_t at = 0;
         while (buf.size() - at >= altair::kFrameHeaderBytes) {
             const auto h = altair::decode_header(buf.data() + at, buf.size() - at);
@@ -1182,6 +1186,8 @@ int main(int argc, char** argv) {
             }
             const std::size_t need = altair::kFrameHeaderBytes + h->payload_len;
             if (buf.size() - at < need) break;
+            if (recv_wall > 0 && h->kind == altair::FrameKind::Delta && h->server_time_ns > 0)
+                lat_bus.record(recv_wall - h->server_time_ns);
             const std::uint64_t decisions_before = engine.decision_minutes();
             (void)consumer.on_frame(*h, buf.data() + at + altair::kFrameHeaderBytes);
             ++frames;
@@ -1355,6 +1361,7 @@ int main(int argc, char** argv) {
     std::printf("latency, frame received -> processed:  %s\n", lat_frame.text(1e3, "us").c_str());
     std::printf("latency, frames that ran the models:  %s\n", lat_decision.text(1e3, "us").c_str());
     std::printf("latency, decision -> fill (feed clock): %s\n", lat_fill.text(1e6, "ms").c_str());
+    std::printf("latency, bus write -> engine receipt:  %s\n", lat_bus.text(1e3, "us").c_str());
     int rc = 0;
     if (!engine.halt().empty() && !replaying) { std::printf("UNWRITTEN ROWS REMAIN: %s\n", engine.halt().c_str()); rc = 4; }
     else if (!replay_unwritten.empty()) { std::printf("UNWRITTEN ROWS REMAIN: %s\n", replay_unwritten.c_str()); rc = 4; }

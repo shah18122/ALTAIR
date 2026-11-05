@@ -74,6 +74,13 @@ if(ALTAIR_BUILD_TESTS)
         target_link_libraries(altair_ws_pump_test PRIVATE altair_flags Boost::headers Threads::Threads)
         target_include_directories(altair_ws_pump_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
         add_test(NAME ws_pump COMMAND altair_ws_pump_test)
+        if(TARGET altair_broker_net)
+            # The order router's kept connection (broker/https_keepalive.hpp), against a local HTTPS server.
+            add_executable(altair_https_keepalive_test tests/test_https_keepalive.cpp)
+            target_link_libraries(altair_https_keepalive_test PRIVATE altair_broker_net altair_flags)
+            target_compile_definitions(altair_https_keepalive_test PRIVATE ALTAIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+            add_test(NAME https_keepalive COMMAND altair_https_keepalive_test)
+        endif()
         set_tests_properties(ws_pump PROPERTIES LABELS concurrency)
     endif()
 

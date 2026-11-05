@@ -16,7 +16,11 @@
 #pragma once
 
 
-#include <broker/https_client.hpp>   // detail::load_platform_roots
+#include <broker/https_client.hpp>
+
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>   // detail::load_platform_roots
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/io_context.hpp>
@@ -142,6 +146,14 @@ fyers_data_socket_run(
         beast::get_lowest_layer(ws).expires_after(std::chrono::seconds{20});
         beast::get_lowest_layer(ws).connect(results, ec);
         if (ec) return std::unexpected(FyersSocketError::ConnectFailed);
+        // No Nagle on our pings and subscriptions; QUICKACK again after every
+        // frame below, so a server that holds its next segment for our ACK
+        // never waits out a delayed ACK (up to 40 ms) in front of a tick.
+        beast::get_lowest_layer(ws).socket().set_option(net::ip::tcp::no_delay(true), ec);
+        ec = {};
+        const int sock_fd = beast::get_lowest_layer(ws).socket().native_handle();
+        const auto quickack = [sock_fd] { const int one = 1; (void)::setsockopt(sock_fd, IPPROTO_TCP, TCP_QUICKACK, &one, sizeof one); };
+        quickack();
         beast::get_lowest_layer(ws).expires_after(std::chrono::seconds{20});
         ws.next_layer().handshake(ssl::stream_base::client, ec);
         if (ec) return std::unexpected(FyersSocketError::TlsFailed);
@@ -230,6 +242,7 @@ fyers_data_socket_run(
                     finish();
                     return;
                 }
+                quickack();
                 st.bytes += n;
                 if (!ws.got_binary()) {
                     ++st.text_frames;

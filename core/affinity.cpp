@@ -2,6 +2,7 @@
 
 #include <core/affinity.hpp>
 
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -20,22 +21,44 @@ unsigned hardware_cores() {
     return n == 0 ? 1u : n;
 }
 
+/// Each CPU's hyperthread twin, from /sys/devices/system/cpu/cpuN/topology/thread_siblings_list.
+std::vector<int> sibling_map(unsigned cores) {
+    std::vector<int> out(cores, -1);
+    for (unsigned c = 0; c < cores; ++c) {
+        std::ifstream f("/sys/devices/system/cpu/cpu" + std::to_string(c) + "/topology/thread_siblings_list");
+        std::string t;
+        if (!(f >> t)) continue;
+        // "2,6" or "2-3"
+        const auto sep = t.find_first_of(",-");
+        if (sep == std::string::npos) continue;
+        const int a = std::atoi(t.substr(0, sep).c_str()), b = std::atoi(t.substr(sep + 1).c_str());
+        out[c] = static_cast<int>(c) == a ? b : a;
+    }
+    return out;
+}
+
+static Plan with_layout(Plan p, unsigned cores, std::string& note) {
+    apply_sibling_layout(p, sibling_map(cores));
+    if (p.siblings) note += "; auto cores paired on shared caches (feed+bus, reader+engine)";
+    return p;
+}
+
 Plan load_plan(const std::string& path, std::string& note) {
     const unsigned cores = hardware_cores();
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         note = "latency: " + path + " not found; defaults (" + std::to_string(cores) + " cores)";
-        return default_plan(cores);
+        return with_layout(default_plan(cores), cores, note);
     }
     std::stringstream s;
     s << f.rdbuf();
     std::string err;
     if (auto p = parse_plan(s.str(), cores, err)) {
         note = "latency: " + path + " (" + std::to_string(cores) + " cores)";
-        return *p;
+        return with_layout(*p, cores, note);
     }
     note = "latency: " + err + "; defaults used";
-    return default_plan(cores);
+    return with_layout(default_plan(cores), cores, note);
 }
 
 std::string apply_process(const Plan& p) {

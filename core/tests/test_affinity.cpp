@@ -31,6 +31,25 @@ int main() {
     check(p8.roles.at("bus").core == 2 && p8.roles.at("feed").core == 3 && p8.roles.at("engine").core == 4
               && p8.roles.at("router").core == 5 && p8.roles.at("tbt").core == 6,
           "8 cores: 0 and 1 left to the system and the desktop, the roles on 2 to 6, most critical first");
+    {
+        // c7i.2xlarge: cpu c's twin is c+4; cores 0-1 reserved.
+        Plan ps = default_plan(8);
+        apply_sibling_layout(ps, {4, 5, 6, 7, 0, 1, 2, 3});
+        check(ps.roles["feed"].core == 2 && ps.roles["bus"].core == 6 && ps.roles["reader"].core == 3
+                  && ps.roles["engine"].core == 7 && ps.roles["router"].core == 4 && ps.roles["tbt"].core == 5,
+              "siblings: feed+bus and reader+engine share a physical core; router and tbt on the cores whose twin is reserved");
+        Plan pe = default_plan(8);
+        pe.roles["bus"].core = 3; pe.roles["bus"].automatic = false;
+        apply_sibling_layout(pe, {4, 5, 6, 7, 0, 1, 2, 3});
+        check(pe.roles["bus"].core == 3, "siblings: a core set by number is never moved");
+        Plan pn = default_plan(8);
+        const Plan before = pn;
+        apply_sibling_layout(pn, {-1, -1, -1, -1, -1, -1, -1, -1});
+        check(pn.roles["feed"].core == before.roles.at("feed").core, "no hyperthreads: the plan is unchanged");
+        std::string e2;
+        const auto sp = parse_plan("layout = \"spread\"\n[cores]\nbus = 5\n", 8, e2);
+        check(sp && !sp->siblings && !sp->roles.at("bus").automatic && sp->roles.at("feed").automatic, "layout and automatic parse");
+    }
     const Plan p4 = default_plan(4);
     check(p4.roles.at("bus").core == 2 && p4.roles.at("feed").core == 3 && p4.roles.at("engine").core == 2,
           "4 cores: the roles share 2 and 3");

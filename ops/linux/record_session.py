@@ -101,6 +101,11 @@ def main() -> int:
     # falls back to the kernel socket by itself if the bypass cannot start.
     if os.environ.get("ALTAIR_FEED_BYPASS") and os.environ.get("ALTAIR_FEED_BYPASS_IP"):
         feed_args += ["--bypass", os.environ["ALTAIR_FEED_BYPASS"], "--bypass-ip", os.environ["ALTAIR_FEED_BYPASS_IP"]]
+    # The feed on a DPDK port (the card bound to vfio-pci; ops/linux/nic_swap.sh
+    # writes these). Tried first; AF_XDP and the kernel socket stay behind it.
+    if all(os.environ.get(k) for k in ("ALTAIR_FEED_DPDK_PORT", "ALTAIR_FEED_DPDK_IP", "ALTAIR_FEED_DPDK_GW")):
+        feed_args += ["--dpdk-port", os.environ["ALTAIR_FEED_DPDK_PORT"], "--dpdk-ip", os.environ["ALTAIR_FEED_DPDK_IP"],
+                      "--dpdk-gw", os.environ["ALTAIR_FEED_DPDK_GW"]]
     rec_args = ["--until", a.until, "--go"]
     t = require_tools("record", "altair_feed_recorder", "altair_price_service")
     recorder, service = t["altair_feed_recorder"], t["altair_price_service"]

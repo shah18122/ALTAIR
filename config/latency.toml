@@ -34,6 +34,13 @@ spin = true
 # With tune_host.sh --isolate 2-7, keep this at 2 so "auto" lands on 2-7.
 reserve = 2
 
+# The NEAREST cores (core/affinity.hpp apply_sibling_layout): "siblings" puts
+# the threads that hand each tick on -- feed and bus, reader and engine -- on
+# the two hyperthreads of one physical core, so the tick stays in their shared
+# L1/L2 instead of crossing L3. On the c7i (cpu N's twin is N+4): feed 2, bus 6,
+# reader 3, engine 7, router 4, tbt 5. "spread": one role a core, in order.
+layout = "siblings"
+
 [cores]          # "auto", a core number (0 is the first), or "off"
 bus = "auto"     # the price bus's owner thread: every tick to every client
 feed = "auto"    # the FYERS socket and decoder

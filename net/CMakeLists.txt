@@ -23,6 +23,28 @@ if(ALTAIR_BUILD_TESTS)
     endif()
 endif()
 
+# TLS over ALTAIR's own TCP (OpenSSL on memory BIOs), and the kept-alive HTTPS
+# order line on it (net/bypass_https.hpp). Only OpenSSL is needed, so both are
+# built and tested on every machine; the links they run on are below.
+find_package(OpenSSL)
+if(OpenSSL_FOUND)
+    add_library(altair_tls_stream STATIC tls_stream.cpp)
+    target_link_libraries(altair_tls_stream PUBLIC altair_net OpenSSL::SSL OpenSSL::Crypto PRIVATE altair_flags)
+    add_library(altair_bypass_https STATIC bypass_https.cpp)
+    target_link_libraries(altair_bypass_https PUBLIC altair_tls_stream PRIVATE altair_flags)
+    target_compile_options(altair_bypass_https PRIVATE -Wno-conversion -Wno-sign-conversion)
+    # The FYERS WebSocket on any NetLink (a DPDK port in production).
+    add_library(altair_bypass_ws_link STATIC bypass_ws_link.cpp)
+    target_link_libraries(altair_bypass_ws_link PUBLIC altair_bypass_https PRIVATE altair_flags)
+    target_compile_options(altair_bypass_ws_link PRIVATE -Wno-conversion -Wno-sign-conversion)
+    if(ALTAIR_BUILD_TESTS)
+        add_executable(altair_bypass_https_test tests/test_bypass_https.cpp)
+        target_link_libraries(altair_bypass_https_test PRIVATE altair_bypass_https altair_bypass_ws_link altair_flags)
+        target_compile_options(altair_bypass_https_test PRIVATE -Wno-conversion -Wno-sign-conversion)
+        add_test(NAME bypass_https COMMAND altair_bypass_https_test)
+    endif()
+endif()
+
 # AF_XDP: -DALTAIR_KERNEL_BYPASS=ON (needs libxdp-dev, libbpf-dev, clang).
 option(ALTAIR_KERNEL_BYPASS "Build the AF_XDP kernel-bypass receive path" OFF)
 if(ALTAIR_KERNEL_BYPASS)
@@ -54,10 +76,7 @@ if(ALTAIR_KERNEL_BYPASS)
     target_compile_options(altair_xdp_rx PRIVATE -Wno-conversion -Wno-sign-conversion)
     target_compile_definitions(altair_xdp_rx PRIVATE ALTAIR_XDP_OBJECT="${xdp_obj}")
 
-    # TLS over ALTAIR's own TCP: OpenSSL on memory BIOs.
-    find_package(OpenSSL REQUIRED)
-    add_library(altair_tls_stream STATIC tls_stream.cpp)
-    target_link_libraries(altair_tls_stream PUBLIC altair_net OpenSSL::SSL OpenSSL::Crypto PRIVATE altair_flags)
+    find_package(OpenSSL REQUIRED)   # altair_tls_stream, above
 
     add_executable(altair_xdp_tls_client tools/xdp_tls_client_main.cpp)
     target_link_libraries(altair_xdp_tls_client PRIVATE altair_af_xdp altair_tls_stream altair_flags)
@@ -77,19 +96,23 @@ endif()
 
 # DPDK: -DALTAIR_DPDK=ON (needs libdpdk-dev). The port for a second ENI bound
 # to vfio-pci; ARP is ALTAIR's own there (net/arp.hpp).
+# The linux preset turns it on; without libdpdk-dev it says so and builds without it.
 option(ALTAIR_DPDK "Build the DPDK port and its TLS client" OFF)
 if(ALTAIR_DPDK)
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBDPDK REQUIRED IMPORTED_TARGET libdpdk)
+    pkg_check_modules(LIBDPDK IMPORTED_TARGET libdpdk)
+    if(NOT LIBDPDK_FOUND)
+        message(WARNING "ALTAIR_DPDK=ON but libdpdk was not found (sudo apt install libdpdk-dev): the DPDK order line is not built")
+        set(ALTAIR_DPDK OFF CACHE BOOL "Build the DPDK port and its TLS client" FORCE)
+    endif()
+endif()
+if(ALTAIR_DPDK)
     find_package(OpenSSL REQUIRED)
     add_library(altair_dpdk_port STATIC dpdk_port.cpp)
     target_link_libraries(altair_dpdk_port PUBLIC altair_net PkgConfig::LIBDPDK)
+    target_compile_definitions(altair_dpdk_port INTERFACE ALTAIR_DPDK=1)
     # DPDK's headers use what the project's warnings forbid.
     target_compile_options(altair_dpdk_port PRIVATE -w)
-    if(NOT TARGET altair_tls_stream)
-        add_library(altair_tls_stream STATIC tls_stream.cpp)
-        target_link_libraries(altair_tls_stream PUBLIC altair_net OpenSSL::SSL OpenSSL::Crypto PRIVATE altair_flags)
-    endif()
     add_executable(altair_dpdk_tls_client tools/dpdk_tls_client_main.cpp)
     target_link_libraries(altair_dpdk_tls_client PRIVATE altair_dpdk_port altair_tls_stream altair_flags)
     target_compile_options(altair_dpdk_tls_client PRIVATE -Wno-conversion -Wno-sign-conversion)
