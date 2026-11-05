@@ -1,6 +1,8 @@
 # Status
 
 Where ALTAIR stands, in one page. Updated 2026-11-02.
+For what runs when, where each model gets its data and where its output goes,
+see [DATA_FLOW.md](DATA_FLOW.md) (2026-11-05).
 
 The detailed history lives in [archive/SMIT.txt](archive/SMIT.txt) (plan and
 status to 2026-09-28) and [archive/change_by_codex.txt](archive/change_by_codex.txt)

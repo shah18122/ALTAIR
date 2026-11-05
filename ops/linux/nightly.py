@@ -218,15 +218,22 @@ def main() -> int:
             continue
         with open(path, newline="") as f:
             rows = [r for r in csv.DictReader(f) if r.get("date") == day_s]
-        net = 0.0
+        # The paper ledger takes simulator (--sim) fills too; its "source"
+        # column says which. SIM rows are listed and totalled apart, so a
+        # simulator run never reads as the market's result.
+        net: dict[str, float] = {}
+        count: dict[str, int] = {}
         for r in rows:
+            label = f"{kind} SIM" if r.get("source") == "SIM" else kind
+            count[label] = count.get(label, 0) + 1
             try:
-                net += float(r.get("net") or 0)
+                net[label] = net.get(label, 0.0) + float(r.get("net") or 0)
             except ValueError:
-                pass
-            log("trades", "INFO", f"{kind} {r.get('model')} {r.get('side')} {r.get('symbol')} x{r.get('qty')} "
+                net.setdefault(label, 0.0)
+            log("trades", "INFO", f"{label} {r.get('model')} {r.get('side')} {r.get('symbol')} x{r.get('qty')} "
                 f"{r.get('entry')}->{r.get('exit')} net {r.get('net')}; in: {r.get('why_in')}; out: {r.get('why_out')}")
-        log("trades", "INFO", f"{kind}: {len(rows)} round trip(s) on {day_s}, net {net:,.0f}")
+        for label in sorted(count) or [kind]:
+            log("trades", "INFO", f"{label}: {count.get(label, 0)} round trip(s) on {day_s}, net {net.get(label, 0.0):,.0f}")
 
     # ---- 7. tidy -----------------------------------------------------------------
     snaps = sorted(p for p in (store / "snapshots").glob("????-??-??") if p.is_dir()) if (store / "snapshots").is_dir() else []
