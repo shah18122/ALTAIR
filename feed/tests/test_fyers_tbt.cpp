@@ -114,6 +114,62 @@ int main() {
         check(books.on_message(far.data(), far.size(), m) && b->bid_px[0] == top, "a position past 49 is dropped, not wrapped");
     }
 
+    // ---- sequence discipline (NSE TBT practice, docs/NSE_NNF_TBT.md) -----------------
+    {
+        const std::string tk = "NSE:NIFTY26OCTFUT";
+        TbtBooks sb;
+        TbtMessage r;
+        const auto early = bid_diff(tk, {level_at(0, 2500000, 10)}, 41);
+        check(sb.on_message(early.data(), early.size(), r) && r.updated.empty() && sb.stats().before_snapshot == 1,
+              "a diff before any snapshot is not applied or published");
+        check(sb.on_message(v[0].data(), v[0].size(), r) && r.updated.size() == 1 && r.resync.empty(), "the snapshot starts the book (seq 42)");
+        const TbtBook* sbk = sb.book(tk);
+        const auto rep = bid_diff(tk, {level_at(0, 2500000, 11)}, 42);
+        check(sb.on_message(rep.data(), rep.size(), r) && r.updated.empty() && sbk->bid_qty[0] == 75 && sb.stats().old == 1,
+              "a repeat of the last sequence is dropped");
+        const auto next = bid_diff(tk, {level_at(0, 2500000, 12)}, 43);
+        check(sb.on_message(next.data(), next.size(), r) && r.updated.size() == 1 && sbk->bid_qty[0] == 12, "the next sequence applies");
+        const auto skip = bid_diff(tk, {level_at(0, 2500000, 13)}, 45);
+        check(sb.on_message(skip.data(), skip.size(), r) && r.updated.empty() && r.resync == std::vector<std::string>{tk}
+                  && sbk->stale && sbk->bid_qty[0] == 12 && sb.stats().gaps == 1,
+              "a skipped sequence (43 then 45) marks the book stale, unpublished, and asks for a resync");
+        const auto after = bid_diff(tk, {level_at(0, 2500000, 14)}, 46);
+        check(sb.on_message(after.data(), after.size(), r) && r.updated.empty() && r.resync.empty() && sbk->bid_qty[0] == 12,
+              "a stale book takes no more diffs");
+        check(sb.on_message(v[0].data(), v[0].size(), r) && r.updated.size() == 1 && !sbk->stale && sbk->bid_qty[0] == 75,
+              "a fresh snapshot clears the stale book");
+        const auto cross = bid_diff(tk, {level_at(0, 2500010, 5)}, 43);
+        check(sb.on_message(cross.data(), cross.size(), r) && r.updated.empty() && r.resync == std::vector<std::string>{tk}
+                  && sbk->stale && sb.stats().crossed == 1,
+              "a diff that crosses the book (bid at the ask) marks it stale and asks for a resync");
+
+        // Numbering across symbols: a gap on the first diff after each snapshot,
+        // three times, switches the sequence check off rather than starve the book.
+        TbtBooks gb;
+        for (int i = 0; i < 3; ++i) {
+            check(gb.on_message(v[0].data(), v[0].size(), r), "snapshot");
+            const auto g = bid_diff(tk, {level_at(0, 2500000, 20)}, 50 + static_cast<std::uint64_t>(i));
+            (void)gb.on_message(g.data(), g.size(), r);
+        }
+        check(gb.stats().sequence_check_off && gb.stats().gaps == 3, "three first-diff gaps: FYERS numbers across symbols, check off");
+        check(gb.on_message(v[0].data(), v[0].size(), r), "snapshot");
+        const auto g2 = bid_diff(tk, {level_at(0, 2500000, 21)}, 90);
+        check(gb.on_message(g2.data(), g2.size(), r) && r.updated.size() == 1 && gb.book(tk)->bid_qty[0] == 21,
+              "with the check off, a diff applies whatever its number");
+        gb.reset();
+        check(!gb.stats().sequence_check_off && gb.stats().gaps == 0, "a new connection starts the counts again");
+
+        const auto rs = tbt_resync_texts(tk, 1);
+        check(rs.size() == 3 && rs[0].find("\"subs\":-1") != std::string::npos && rs[1].find("\"subs\":1") != std::string::npos
+                  && rs[1].find(tk) != std::string::npos && rs[2].find("resumeChannels") != std::string::npos,
+              "a resync unsubscribes, subscribes again and resumes the channel");
+
+        check(feed_time_ns(1791200000ULL) == 1791200000000000000LL && feed_time_ns(1791200000123ULL) == 1791200000123000000LL
+                  && feed_time_ns(1791200000123456ULL) == 1791200000123456000LL
+                  && feed_time_ns(1791200000123456789ULL) == 1791200000123456789LL && feed_time_ns(0) == 0 && feed_time_ns(12345) == 0,
+              "feed time in s, ms, us or ns becomes ns; nonsense becomes 0");
+    }
+
     check(books.on_message(v[2].data(), v[2].size(), m) && m.error && m.text == "invalid symbol NSE:XYZ" && m.updated.empty(),
           "an error carries the server's reason and changes no book");
 

@@ -514,7 +514,10 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
 
     tbt::TbtBooks books;
     int server_errors = 0;
-    const auto on_frame = [&](const std::uint8_t* p, std::size_t n, std::vector<altair::FyersFrame>&) -> bool {
+    std::unordered_map<std::string, std::int64_t> resync_ns;   // ticker -> last resync asked (steady)
+    long resyncs = 0;
+    bool said_seq_off = false, said_no_snapshot = false;
+    const auto on_frame = [&](const std::uint8_t* p, std::size_t n, std::vector<altair::FyersFrame>& send) -> bool {
         tbt::TbtMessage m;
         if (books.on_message(p, n, m)) {
             if (m.error) {
@@ -524,6 +527,33 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
             }
             const std::int64_t recv = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
+            // Stale books (a sequence gap or a crossed book): ask for a fresh
+            // snapshot, at most once in 5 s a ticker, and say why (RULE 11:
+            // the first few are printed, the rest counted).
+            const std::int64_t now_steady = TbtFeed::steady_ns();
+            for (const auto& t : m.resync) {
+                if (std::find(held.begin(), held.end(), t) == held.end()) continue;
+                std::int64_t& last = resync_ns[t];
+                if (last != 0 && now_steady - last < 5'000'000'000LL) continue;
+                last = now_steady;
+                for (const auto& f : tbt::tbt_resync_texts(t, 1)) send.push_back(bytes(f));
+                const auto& st = books.stats();
+                if (++resyncs <= 5)
+                    std::printf("  50-level book: %s went stale, asking for a fresh snapshot (gaps %llu, crossed %llu)\n", t.c_str(),
+                                static_cast<unsigned long long>(st.gaps), static_cast<unsigned long long>(st.crossed));
+                std::fflush(stdout);
+            }
+            if (books.stats().sequence_check_off && !said_seq_off) {
+                said_seq_off = true;
+                std::printf("  50-level book: FYERS numbers diffs across symbols, not per symbol; the sequence check is off "
+                            "(crossed books are still caught)\n");
+                std::fflush(stdout);
+            }
+            if (books.stats().before_snapshot > 0 && !said_no_snapshot) {
+                said_no_snapshot = true;
+                std::printf("  50-level book: a diff came before any snapshot and was not applied\n");
+                std::fflush(stdout);
+            }
             for (const auto& t : m.updated) {
                 const auto slot = static_cast<std::size_t>(std::find(held.begin(), held.end(), t) - held.begin());
                 const auto it = token_of.find(t);
@@ -535,7 +565,14 @@ void run_fyers_tbt(const FySession& session, const std::vector<altair::live::Liv
                 pp.token = it->second;
                 pp.flags |= altair::kPriceHasBook;
                 pp.depth_levels = static_cast<std::uint16_t>(levels);
-                pp.exchange_ts_ns = recv;
+                // The exchange's time when FYERS sends one, as the 5-level path
+                // does; else receive time, flagged. The bus keeps `recv` apart.
+                if (const std::int64_t ft = tbt::feed_time_ns(b->feed_time); ft > 0) {
+                    pp.exchange_ts_ns = ft;
+                } else {
+                    pp.exchange_ts_ns = recv;
+                    pp.flags |= altair::kPriceNoExchTs;
+                }
                 altair::PriceLevel bids[altair::kMaxDepthLevels]{};
                 altair::PriceLevel asks[altair::kMaxDepthLevels]{};
                 for (std::size_t k = 0; k < levels; ++k) {
