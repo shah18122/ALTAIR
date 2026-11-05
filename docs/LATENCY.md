@@ -62,13 +62,30 @@ uncertain and is never resent.
 by itself, and without one the SYN goes nowhere (the router then says "no
 SYN-ACK: is there a public IP on this card?" and uses the kernel line).
 
-### Why not "DPDK on the main card"
+### DPDK on the main card (Smit's choice, 2026-11-05): `ops/linux/nic_swap.sh`
 
-Every ENI on the instance goes through the same Nitro card and the same VPC
-path. The main card (enp39s0) is not faster than the spare. Binding enp39s0 to
-DPDK takes it away from the kernel, and with it SSH and DCV. Moving those to
-the spare first is possible, but a mistake locks the box until the serial
-console. Extra cards give the same gain with none of that risk.
+Every ENI goes through the same Nitro card, so the main card is not faster
+than the spare. Smit still chose the swap: the kernel (SSH, DCV, the order
+line) moves to the spare (enp40s0, 172.31.34.83), and the main card (enp39s0)
+goes to DPDK for the feed. One DPDK port serves one process, so the feed takes
+it and orders stay on the kept-alive kernel line on the spare.
+
+Before (EC2 console): snapshot the root volume, enable the serial console,
+and associate an Elastic IP with the spare ENI. Then, on the server after
+15:47 IST with the recorder stopped:
+
+1. `sudo ops/linux/nic_swap.sh step1 --go`: puts the spare back on the kernel
+   with its own routing table, so SSH to its Elastic IP works. A 10-minute
+   dead-man revert is armed.
+2. Open a **new** SSH to the spare's Elastic IP and run
+   `sudo ops/linux/nic_swap.sh step2 --go`: binds enp39s0 to DPDK, writes
+   `ALTAIR_FEED_DPDK_*` into altair.env.
+3. Check SSH and DCV, then `sudo ops/linux/nic_swap.sh confirm`. Without it,
+   everything is reverted and the box reboots after 10 minutes, and at any
+   boot while the swap is unconfirmed.
+
+`sudo ops/linux/nic_swap.sh revert` undoes it at any time. It refuses to run
+09:00-15:47 IST on weekdays and while the recorder is active.
 
 ### EC2 steps (Smit, after 15:47 IST; nothing here has been done)
 
