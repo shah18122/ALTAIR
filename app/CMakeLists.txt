@@ -140,6 +140,10 @@ if(ALTAIR_HAVE_NET)
         target_link_libraries(altair_price_service PRIVATE
             altair_server altair_broker_net altair_feed altair_instruments
             altair_live altair_lockfree altair_credential_store altair_affinity altair_flags Boost::headers)
+        if(TARGET altair_bypass_ws_link AND TARGET altair_dpdk_port)   # --dpdk-port: the HSM feed on a DPDK port
+            target_link_libraries(altair_price_service PRIVATE altair_bypass_ws_link altair_dpdk_port)
+            target_compile_definitions(altair_price_service PRIVATE ALTAIR_DPDK_FEED)
+        endif()
         if(ALTAIR_KERNEL_BYPASS)   # --bypass: the HSM feed over AF_XDP (net/bypass_ws)
             target_link_libraries(altair_price_service PRIVATE altair_bypass_ws)
             target_compile_definitions(altair_price_service PRIVATE

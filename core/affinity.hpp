@@ -31,8 +31,10 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
+#include <utility>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -66,6 +68,7 @@ inline constexpr const char* kRoles[] = {"bus", "feed", "engine", "router", "tbt
 struct RolePlan {
     int core = -1;            ///< -1: not pinned
     Prio prio = Prio::Highest;
+    bool automatic = true;    ///< "auto" in [cores]: the layout below may move it
 };
 
 struct Plan {
@@ -75,8 +78,47 @@ struct Plan {
     bool realtime = false;       ///< SCHED_FIFO for pinned highest/time_critical threads
     bool spin = false;           ///< hot-path threads busy-poll instead of sleeping (needs isolated cores)
     int reserve = 2;             ///< cores left to the OS and the desktop when "auto"
+    bool siblings = true;        ///< "auto" pairs each producer with its consumer on one physical core
     std::map<std::string, RolePlan> roles;
 };
+
+/// The NEAREST cores for the threads that hand ticks to each other. A tick
+/// crosses feed -> bus (the ring) and reader -> engine (the queue); on two
+/// hyperthreads of ONE physical core the cache line it travels in is already
+/// in their shared L1/L2 (a few ns), where two physical cores move it through
+/// L3 (~30-60 ns each way, every tick). So "auto" puts feed+bus on one physical
+/// core and reader+engine on another, then router and tbt on what is left.
+/// `sibling[c]` is c's other hyperthread (-1 for none), from sysfs. Only
+/// "auto" roles move; with no pairs among the free cores the plan is unchanged.
+inline void apply_sibling_layout(Plan& p, const std::vector<int>& sibling) {
+    const int n = static_cast<int>(sibling.size());
+    if (!p.siblings || n < 4) return;
+    std::vector<std::pair<int, int>> pairs;
+    std::vector<int> singles;
+    for (int c = p.reserve; c < n; ++c) {
+        const int s = sibling[static_cast<std::size_t>(c)];
+        if (s > c && s >= p.reserve && s < n) pairs.emplace_back(c, s);
+        else if (s < p.reserve || s < 0 || s >= n) singles.push_back(c);
+    }
+    if (pairs.empty()) return;
+    std::vector<int> order;   // feed, bus, reader, engine, router, tbt
+    for (const auto& [a, b] : pairs) { order.push_back(a); order.push_back(b); }
+    // Singles (a core whose twin is reserved) go to router and tbt first: they
+    // spin least, so they suffer least from a busy twin they cannot see.
+    std::vector<int> cores;
+    const std::size_t first_pairs = std::min<std::size_t>(order.size(), 4);
+    cores.assign(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(first_pairs));
+    for (const int c : singles) cores.push_back(c);
+    for (std::size_t i = first_pairs; i < order.size(); ++i) cores.push_back(order[i]);
+    const char* roles[] = {"feed", "bus", "reader", "engine", "router", "tbt"};
+    std::size_t k = 0;
+    for (const char* r : roles) {
+        auto it = p.roles.find(r);
+        if (it == p.roles.end() || !it->second.automatic || it->second.core < 0) continue;
+        if (cores.empty()) return;
+        it->second.core = cores[k++ % cores.size()];
+    }
+}
 
 /// "auto" for every role: cores reserve.. in kRoles order, wrapping; none
 /// pinned with fewer than four cores (or no core left after the reserve).
@@ -168,6 +210,9 @@ namespace detail {
                 b = val == "true";
             } else if (key == "reserve") {
                 if (!detail::to_int(val)) return bad("reserve must be a whole number");
+            } else if (key == "layout") {
+                if (val != "siblings" && val != "spread") return bad("layout is \"siblings\" or \"spread\"");
+                p.siblings = val == "siblings";
             } else {
                 return bad("unknown key " + std::string(key));
             }
@@ -177,12 +222,13 @@ namespace detail {
         if (it == p.roles.end()) return bad("unknown role " + std::string(key));
         if (section == "[cores]") {
             if (val == "auto") continue;
-            if (val == "off") { it->second.core = -1; continue; }
+            if (val == "off") { it->second.core = -1; it->second.automatic = false; continue; }
             const auto v = detail::to_int(val);
             if (!v) return bad("a core is \"auto\", \"off\" or a number");
             if (*v >= static_cast<int>(cores)) return bad("core " + std::to_string(*v) + " does not exist here ("
                                                           + std::to_string(cores) + " cores)");
             it->second.core = *v;
+            it->second.automatic = false;
         } else {
             const auto pr = prio_from(val);
             if (!pr) return bad("a priority is normal, above_normal, highest or time_critical");

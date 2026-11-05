@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include <live/latency.hpp>
 #include <live/sim.hpp>
 #include <live/universe.hpp>
 #include <server/price_bus.hpp>
@@ -92,6 +93,7 @@ struct BusEvent {
     enum Kind : std::uint8_t { Trade = 1, Quote = 2, Book = 3 };
     std::uint8_t kind = 0;
     std::int64_t ns = 0;
+    std::int64_t pushed_ns = 0;   ///< steady clock when the source pushed it: the ring hop is measured from here
     PricePayload price{};
     QuotePayload quote{};
     PriceLevel bids[kMaxDepthLevels]{}, asks[kMaxDepthLevels]{};
@@ -108,8 +110,14 @@ public:
     static constexpr std::size_t kRing = 4096;
 
     /// `owner_init` runs first on the owner thread (its core and priority).
-    explicit SharedBus(PriceBus& bus, std::function<void()> owner_init = {})
-        : bus_(bus), ring_(std::make_unique<Ring>()), second_(std::make_unique<Ring>()), init_(std::move(owner_init)),
+    /// `spin` (config/latency.toml spin = true): the owner thread busy-polls
+    /// the rings instead of sleeping 1 ms when they are empty. A sleeping owner
+    /// made a tick that arrived in a quiet moment wait up to 1 ms (0.5 ms on
+    /// average, plus the timer's slack) before it reached any subscriber: the
+    /// largest delay inside the box. Spinning, it is picked up in well under a
+    /// microsecond; the thread then holds its (isolated) core at 100 %.
+    explicit SharedBus(PriceBus& bus, std::function<void()> owner_init = {}, bool spin = false)
+        : bus_(bus), ring_(std::make_unique<Ring>()), second_(std::make_unique<Ring>()), init_(std::move(owner_init)), spin_(spin),
           th_([this] {
               if (init_) init_();
               run();
@@ -169,12 +177,25 @@ public:
     [[nodiscard]] std::uint64_t waits() const noexcept { return waits_.load(std::memory_order_relaxed); }
     /// Baselines sent to late joiners.
     [[nodiscard]] std::uint64_t snapshots_sent() const noexcept { return snapshots_.load(std::memory_order_relaxed); }
+    /// The ring hop -- a source's push to the owner thread's publish (the frame
+    /// written to every subscriber's socket) -- in ns, over the session so far:
+    /// p50, p99 and the max, refreshed once a second by the owner thread.
+    struct HopNs { std::uint64_t n = 0, p50 = 0, p99 = 0, max = 0; };
+    [[nodiscard]] HopNs hop() const noexcept {
+        return {hop_n_.load(std::memory_order_relaxed), hop_p50_.load(std::memory_order_relaxed),
+                hop_p99_.load(std::memory_order_relaxed), hop_max_.load(std::memory_order_relaxed)};
+    }
+    [[nodiscard]] bool spinning() const noexcept { return spin_; }
 
 private:
     using Ring = SpscRing<BusEvent, kRing>;
 
-    void push(const BusEvent& e) { push(*ring_, e); }
-    void push(Ring& r, const BusEvent& e) {
+    void push(BusEvent& e) { push(*ring_, e); }
+    [[nodiscard]] static std::int64_t steady_now() noexcept {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+    void push(Ring& r, BusEvent& e) {
+        e.pushed_ns = steady_now();
         if (r.try_push(e)) return;
         waits_.fetch_add(1, std::memory_order_relaxed);
         // Backpressure, never loss: the owner thread does not block, so this
@@ -185,6 +206,7 @@ private:
     void run() {
         BusEvent e;
         auto last_poll = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+        auto last_hop = last_poll;
         for (;;) {
             const bool stopping = stop_.load(std::memory_order_acquire);
             std::size_t n = 0;
@@ -199,17 +221,35 @@ private:
             }
             published2_.store(second_->popped(), std::memory_order_release);
             const auto now = std::chrono::steady_clock::now();
-            if (n == 0 || now - last_poll >= std::chrono::milliseconds(5)) {
+            // Spinning, accept() and the retry of full outboxes run every 5 ms
+            // only: a syscall on every empty pass would sit in front of the next tick.
+            if ((n == 0 && !spin_) || now - last_poll >= std::chrono::milliseconds(5)) {
                 last_poll = now;
+                if (now - last_hop >= std::chrono::seconds(1)) {   // a 2048-bucket scan: once a second is plenty
+                    last_hop = now;
+                    hop_n_.store(hop_hist_.count(), std::memory_order_relaxed);
+                    hop_p50_.store(hop_hist_.quantile(0.5), std::memory_order_relaxed);
+                    hop_p99_.store(hop_hist_.quantile(0.99), std::memory_order_relaxed);
+                    hop_max_.store(hop_hist_.max(), std::memory_order_relaxed);
+                }
                 bus_.poll();
                 for (const auto id : bus_.take_joined()) { cache_.replay_to(bus_, id); snapshots_.fetch_add(1, std::memory_order_relaxed); }
                 clients_.store(bus_.clients(), std::memory_order_relaxed);
                 coalesced_.store(bus_.coalesced(), std::memory_order_relaxed);
             }
             if (stopping && ring_->empty_approx() && second_->empty_approx()) break;
-            if (n == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (n == 0) {
+                if (spin_) cpu_relax();
+                else std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
         }
         bus_.poll();   // a last flush of what will go
+    }
+
+    static void cpu_relax() noexcept {
+#if defined(__x86_64__) || defined(__i386__)
+        __builtin_ia32_pause();
+#endif
     }
 
     void apply(const BusEvent& e) {
@@ -228,6 +268,8 @@ private:
             break;
         default: break;
         }
+        // Push to written: the ring wait, the owner's wake-up and the socket writes.
+        if (e.pushed_ns > 0) hop_hist_.record(steady_now() - e.pushed_ns);
     }
 
     PriceBus& bus_;                 ///< owner thread only
@@ -240,6 +282,9 @@ private:
     std::atomic<std::size_t> clients_{0};
     std::atomic<std::uint64_t> trades_{0}, quotes_{0}, books_{0}, coalesced_{0}, waits_{0}, snapshots_{0};
     std::function<void()> init_;
+    bool spin_ = false;
+    live::LatencyHistogram hop_hist_;   ///< owner thread only
+    std::atomic<std::uint64_t> hop_n_{0}, hop_p50_{0}, hop_p99_{0}, hop_max_{0};
     std::thread th_;                ///< last: starts once everything above exists
 };
 
@@ -257,6 +302,9 @@ struct FeedStatus {
     /// fresh 50-level book; and the first ones with no price yet.
     std::size_t subscribed = 0, priced = 0, booked = 0, depth50 = 0;
     std::vector<std::string> no_price;
+    /// The ring hop inside the price service (SharedBus::hop), in ns.
+    std::uint64_t hop_n = 0, hop_p50_ns = 0, hop_p99_ns = 0, hop_max_ns = 0;
+    bool bus_spin = false;
 };
 
 inline void write_status(const std::string& path, const FeedStatus& s) {
@@ -279,7 +327,10 @@ inline void write_status(const std::string& path, const FeedStatus& s) {
             f << '"';
         }
         f << "],\n  \"subscribed\": " << s.subscribed << ",\n  \"priced\": " << s.priced << ",\n  \"booked\": " << s.booked
-          << ",\n  \"depth50\": " << s.depth50 << ",\n  \"no_price\": [";
+          << ",\n  \"depth50\": " << s.depth50 << ",\n  \"bus_hop\": {\"n\": " << s.hop_n << ", \"p50_us\": "
+          << static_cast<double>(s.hop_p50_ns) / 1e3 << ", \"p99_us\": " << static_cast<double>(s.hop_p99_ns) / 1e3
+          << ", \"max_us\": " << static_cast<double>(s.hop_max_ns) / 1e3 << ", \"spin\": " << (s.bus_spin ? "true" : "false")
+          << "},\n  \"no_price\": [";
         for (std::size_t i = 0; i < s.no_price.size() && i < 20; ++i) {
             f << (i ? ", \"" : "\"");
             for (const char c : s.no_price[i]) if (c != '"' && c != '\\' && static_cast<unsigned char>(c) >= 0x20) f << c;

@@ -67,6 +67,12 @@ fi
 pci="$(basename "$(readlink -f "/sys/class/net/$ifc/device")")"
 default_if="$(ip route show default | awk '{for (i=1;i<NF;i++) if ($i=="dev") print $(i+1)}' | head -1)"
 first_if="$(ls -1 /sys/class/net | grep -v '^lo$' | while read -r n; do [ -e "/sys/class/net/$n/device" ] && echo "$n"; done | sort | head -1)"
+# DPDK_ALLOW_PRIMARY=1 (/etc/altair/dpdk.conf, written by ops/linux/nic_swap.sh
+# after SSH and DCV have moved to the spare): the first ENI may go to DPDK, but
+# never while it carries the default route or this SSH session.
+if [ "${DPDK_ALLOW_PRIMARY:-0}" = 1 ] && [ "$ifc" = "$first_if" ] && [ "$ifc" != "$default_if" ]; then
+    first_if=""
+fi
 if [ "$ifc" = "$default_if" ] || [ "$ifc" = "$first_if" ]; then
     echo "refused: $ifc carries the default route or is the first ENI (SSH, DCV and the recorder use it)" >&2
     exit 3
@@ -83,5 +89,8 @@ if [ -z "$(ls /sys/kernel/iommu_groups 2>/dev/null)" ]; then
 fi
 ip link set "$ifc" down
 dpdk-devbind.py --bind=vfio-pci "$pci"
+# The recorder runs DPDK as its own user: give it the vfio device nodes.
+svc_user="${DPDK_USER:-$(stat -c %U "$(dirname "$0")")}"
+for d in /dev/vfio/*; do [ -e "$d" ] && chown "$svc_user" "$d" 2>/dev/null || true; done
 dpdk-devbind.py --status-dev net | grep -F "$pci"
 echo "bound: use --eal \"-a $pci --in-memory\" --port $pci"

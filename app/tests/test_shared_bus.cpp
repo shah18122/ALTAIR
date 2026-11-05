@@ -179,6 +179,32 @@ int main() {
               "two producers, one ring each: every trade and every 50-level book is taken, none dropped");
         (void)read_frames(a, abuf, 0, std::chrono::milliseconds(300));
     }
+    {
+        // spin = true: the owner thread busy-polls, a subscriber still joins
+        // (accept runs every 5 ms), every trade arrives, and the ring hop is measured.
+        live_sources::SharedBus shared(bus, {}, true);
+        boost::asio::io_context cio;
+        ip::tcp::socket a(cio);
+        boost::system::error_code ec;
+        a.connect(ip::tcp::endpoint(ip::make_address("127.0.0.1"), port), ec);
+        a.non_blocking(true, ec);
+        check(wait_for([&] { return shared.clients() >= 1; }), "spinning: a subscriber is accepted");
+        std::vector<std::uint8_t> abuf;
+        (void)read_frames(a, abuf, 0, std::chrono::milliseconds(200));   // the joiner's baseline
+        abuf.clear();
+        for (std::uint32_t t = 1; t <= 50; ++t) {   // one at a time, as ticks come: the hop of a lone tick
+            shared.trade(px(t, 100 * t), 1);
+            shared.drain();
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+        const auto got = read_frames(a, abuf, 50, std::chrono::milliseconds(500));
+        check(got.size() == 50, "spinning: all 50 trades reach the subscriber");
+        check(wait_for([&] { return shared.hop().n >= 50; }), "spinning: the ring hop is measured for each of them");
+        const auto h = shared.hop();
+        std::printf("    ring hop, spinning: p50 %.2f us, p99 %.2f us, max %.2f us (n %llu)\n", static_cast<double>(h.p50) / 1e3,
+                    static_cast<double>(h.p99) / 1e3, static_cast<double>(h.max) / 1e3, static_cast<unsigned long long>(h.n));
+        check(h.p50 > 0 && h.p50 <= h.p99 && h.p99 <= h.max, "the hop's quantiles are in order");
+    }
     std::printf("%s\n", failures == 0 ? "all shared bus checks passed" : "shared bus checks did not pass");
     return failures == 0 ? 0 : 1;
 }

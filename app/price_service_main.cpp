@@ -72,6 +72,10 @@
 #ifdef ALTAIR_KERNEL_BYPASS
 #include <net/bypass_ws.hpp>
 #endif
+#ifdef ALTAIR_DPDK_FEED
+#include <net/bypass_ws_link.hpp>
+#include <net/links.hpp>
+#endif
 
 namespace {
 
@@ -235,6 +239,12 @@ extern "C" void on_stop_signal(int) { g_stop.store(true); }
 /// it for good. The 50-level book stays on the kernel socket.
 std::string g_bypass_if, g_bypass_ip;
 int g_bypass_queues = 8;
+/// --dpdk-port PCI --dpdk-ip ADDR --dpdk-gw ADDR [--dpdk-eal ARGS]: the HSM
+/// feed on a DPDK port (the card bound to vfio-pci), ALTAIR's TCP/TLS on it,
+/// ARP its own (net/bypass_ws_link.hpp). Ahead of --bypass and the kernel
+/// socket, with the same fall-back: a DPDK feed that never gets a message
+/// hands the session on. The 50-level book stays on the kernel socket.
+std::string g_dpdk_port, g_dpdk_ip, g_dpdk_gw, g_dpdk_eal;
 /// How many instruments hold the FYERS 50-level book at once (--depth50 N;
 /// 0 = off). FYERS allows 1 on a Standard plan and 5 a connection, three
 /// connections, on Prime: up to 15, one socket and thread a connection.
@@ -940,6 +950,7 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
             last_status = now;
             st.clients = bus.clients();
             st.trades = bus.trades(); st.quotes = bus.quotes(); st.books = bus.books();
+            { const auto h = bus.hop(); st.hop_n = h.n; st.hop_p50_ns = h.p50; st.hop_p99_ns = h.p99; st.hop_max_ns = h.max; st.bus_spin = bus.spinning(); }
             altair::live_sources::write_status(status_path, st);
             if (take_added) {
                 auto added = take_added();
@@ -951,6 +962,24 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
 
     std::optional<altair::FyersSocketError> last_error;
     [[maybe_unused]] bool bypass_off = false;
+    [[maybe_unused]] bool dpdk_off = g_dpdk_port.empty();
+#ifdef ALTAIR_DPDK_FEED
+    std::unique_ptr<altair::net::DpdkPort> dpdk;
+    std::unique_ptr<altair::net::DpdkLink> dpdk_link;
+    if (!dpdk_off) {
+        std::string err;
+        dpdk = altair::net::DpdkPort::open(g_dpdk_eal.empty() ? "-a " + g_dpdk_port + " --in-memory --log-level=lib.*:error" : g_dpdk_eal,
+                                          g_dpdk_port, err);
+        if (!dpdk) {
+            dpdk_off = true;
+            std::printf("  DPDK feed: %s; the next transport takes the feed\n", err.c_str());
+        } else {
+            dpdk_link = std::make_unique<altair::net::DpdkLink>(*dpdk);
+        }
+    }
+#else
+    if (!dpdk_off) std::printf("  --dpdk-port: this build has no DPDK (ALTAIR_DPDK); the next transport takes the feed\n");
+#endif
     for (long attempt = 0; !g_stop.load(); ++attempt) {
         const std::int64_t left = deadline_unix - unix_now();
         if (left < 1) { break; }
@@ -960,6 +989,46 @@ int run_fyers(const FySession& session, const std::vector<altair::live::LiveInst
             st.state = "reconnecting";
             altair::live_sources::write_status(status_path, st);
         }
+#ifdef ALTAIR_DPDK_FEED
+        if (!dpdk_off) {
+            altair::net::BypassWsLinkConfig dc;
+            dc.local_ip = g_dpdk_ip;
+            dc.next_hop_ip = g_dpdk_gw;
+            dc.host = altair::kFyersDataSocketHost;
+            dc.path = altair::kFyersDataSocketPath;
+            altair::net::BypassWsStats ds;
+            std::string derr;
+            const bool ok = altair::net::bypass_ws_run_link(
+                *dpdk_link, dc, {hsm::auth_frame(*hsm_key, source), hsm::mode_frame(false, hsm::kDefaultChannel)}, on_frame,
+                hsm::ping_frame(), std::chrono::seconds{hsm::kPingSeconds}, std::chrono::seconds{left},
+                std::chrono::seconds{30}, ds, derr, [] { return g_stop.load(); });
+            std::printf("  DPDK feed on %s: TCP %.3f ms, TLS %.3f ms, %zu messages, work p50 %u ns p99 %u ns, %llu TCP retransmits%s%s\n",
+                        g_dpdk_port.c_str(), ds.connect_ms, ds.tls_ms, ds.messages, ds.work_p50_ns, ds.work_p99_ns,
+                        static_cast<unsigned long long>(ds.tcp_retransmits), ok ? "" : "; ", ok ? "" : derr.c_str());
+            std::fflush(stdout);
+            if (!ok && ds.messages == 0) {
+                dpdk_off = true;
+                std::printf("  the DPDK feed did not start: the next transport takes the feed from here\n");
+                std::fflush(stdout);
+            }
+            if (ok) {
+                last_error.reset();
+                if (g_stop.load()) { break; }
+            } else {
+                st.error = "dpdk: " + derr;
+            }
+            if (auth_rejected) {
+                st.state = "refused";
+                st.error = "FYERS refused the socket token; link FYERS again";
+                break;
+            }
+            if (!dpdk_off) {
+                const long backoff = attempt < 3 ? (1L << attempt) : 8L;
+                std::this_thread::sleep_for(std::chrono::seconds{backoff});
+            }
+            continue;
+        }
+#endif
 #ifdef ALTAIR_KERNEL_BYPASS
         if (!g_bypass_if.empty() && !bypass_off) {
             altair::net::BypassWsConfig bc;
@@ -1074,6 +1143,14 @@ int main(int argc, char** argv) {
             g_bypass_if = argv[++i];
         } else if (a == "--bypass-ip" && i + 1 < argc) {
             g_bypass_ip = argv[++i];
+        } else if (a == "--dpdk-port" && i + 1 < argc) {
+            g_dpdk_port = argv[++i];
+        } else if (a == "--dpdk-ip" && i + 1 < argc) {
+            g_dpdk_ip = argv[++i];
+        } else if (a == "--dpdk-gw" && i + 1 < argc) {
+            g_dpdk_gw = argv[++i];
+        } else if (a == "--dpdk-eal" && i + 1 < argc) {
+            g_dpdk_eal = argv[++i];
         } else if (a == "--bypass-queues" && i + 1 < argc) {
             g_bypass_queues = std::atoi(argv[++i]);
         } else if (a == "--port" && i + 1 < argc) {
@@ -1292,10 +1369,12 @@ int main(int argc, char** argv) {
             std::printf("%s\n  %s\n  %s\n", note.c_str(), altair::latency::apply_process(g_latency).c_str(),
                         altair::latency::apply_thread(g_latency, "feed").c_str());
         }
+        // With spin = true the owner thread busy-polls its rings (no 1 ms sleep), so it is
+        // pinned as a spinning thread: never SCHED_FIFO (core/affinity.hpp says why).
         altair::live_sources::SharedBus shared(bus, [] {
-            std::printf("  %s\n", altair::latency::apply_thread(g_latency, "bus").c_str());
+            std::printf("  %s\n", altair::latency::apply_thread(g_latency, "bus", g_latency.spin).c_str());
             std::fflush(stdout);
-        });
+        }, g_latency.spin);
         const std::string status = live_dir + "/feed_status.json";
         const auto started = std::chrono::steady_clock::now();
         // The watchlist file and the option chains the Terminal opened

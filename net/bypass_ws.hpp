@@ -14,6 +14,7 @@
 // kernel socket can be given it meanwhile.
 
 #include <net/af_xdp.hpp>
+#include <net/ws_types.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -41,21 +42,7 @@ struct BypassWsConfig {
     std::uint16_t mss = 1460;
 };
 
-struct BypassWsStats {
-    std::size_t messages = 0;
-    std::size_t bytes = 0;
-    std::size_t frames_sent = 0;
-    std::size_t pings = 0;
-    std::uint64_t tcp_retransmits = 0;
-    double connect_ms = -1, tls_ms = -1, upgrade_ms = -1;   // from the SYN
-    std::string tls_cipher;
-    bool closed_by_server = false;
-    /// ALTAIR's own work per received frame (parse, checksums, TCP, TLS
-    /// decrypt, WebSocket, your callback), nanoseconds, p50 / p99.
-    std::uint32_t work_p50_ns = 0, work_p99_ns = 0;
-};
 
-using BypassFrame = std::vector<std::uint8_t>;
 
 /// Returns false with `err` set on failure; `st` is filled either way.
 bool bypass_ws_run(const BypassWsConfig& cfg, const std::vector<BypassFrame>& opening,

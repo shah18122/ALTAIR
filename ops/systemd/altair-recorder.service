@@ -22,7 +22,11 @@ LimitNICE=-10
 # For the feed over kernel bypass (ops/linux/feed_bypass.sh): load and attach
 # the XDP filter (CAP_PERFMON: the verifier refuses its packet-pointer code
 # without it), open AF_XDP sockets. Unused while the bypass is off.
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_BPF CAP_PERFMON
+# For the feed on a DPDK port (ALTAIR_FEED_DPDK_*): vfio in no-IOMMU mode
+# (CAP_SYS_RAWIO), physical addresses of its hugepages (CAP_SYS_ADMIN reads
+# /proc/self/pagemap) and locking them (CAP_IPC_LOCK). /dev/vfio is handed to
+# the service user by altair-dpdk-bind. Unused while no DPDK port is set.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_BPF CAP_PERFMON CAP_SYS_RAWIO CAP_SYS_ADMIN CAP_IPC_LOCK
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
