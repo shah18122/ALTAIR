@@ -9,6 +9,7 @@
 #   altair-fyers-chain.timer   Mon-Fri 15:45 IST  ops/linux/fyers_chain.py --go
 #   altair-push.timer          Mon-Fri 15:47 IST  ops/linux/nightly.py --go --quick (the data, pushed by 16:00)
 #   altair-nightly.timer       Mon-Fri 20:00 IST  ops/linux/nightly.py --go (store, retrain, push)
+#   altair-fyers-callback      always             broker/tools/fyers_callback_server.py (FYERS redirect URL, 127.0.0.1:80)
 #
 # Times are IST whatever the server's clock zone is (OnCalendar ... Asia/Kolkata).
 # Persistent=true runs a job missed while the server was off as soon as it boots.
@@ -46,6 +47,7 @@ if [ "$remove" = 1 ]; then
     for t in "${timers[@]}"; do
         if [ "$go" = 1 ]; then systemctl disable --now "$t.timer" 2>/dev/null || true; else echo "would disable $t.timer"; fi
     done
+    if [ "$go" = 1 ]; then systemctl disable --now altair-fyers-callback.service 2>/dev/null || true; fi
     for u in "${units[@]}"; do
         n="$(basename "$u")"
         if [ "$go" = 1 ]; then rm -f "$dest/$n"; else echo "would remove $dest/$n"; fi
@@ -67,6 +69,10 @@ done
 if [ "$go" = 1 ]; then
     systemctl daemon-reload
     for t in "${timers[@]}"; do systemctl enable --now "$t.timer"; done
+    # The FYERS redirect URL on 127.0.0.1:80 (a browser login ends there; the
+    # tunnel from ops/linux/fyers_tunnel.sh brings https to it).
+    systemctl enable altair-fyers-callback.service
+    systemctl restart altair-fyers-callback.service || echo "altair-fyers-callback did not start: journalctl -u altair-fyers-callback"
     # The DPDK binding at boot, once ops/linux/dpdk_bind.sh --at-boot chose an ENI.
     [ -f /etc/altair/dpdk.conf ] && systemctl enable altair-dpdk-bind.service
     systemctl list-timers 'altair-*' --no-pager

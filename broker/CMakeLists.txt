@@ -58,6 +58,8 @@ if(ALTAIR_BUILD_TESTS)
     if(Python3_Interpreter_FOUND)
         add_test(NAME fyers_auto_login_py
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_fyers_auto_login.py)
+        add_test(NAME fyers_callback_server_py
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_fyers_callback_server.py)
     endif()
 
     add_executable(altair_fyers_webhook_test tests/test_fyers_webhook.cpp)

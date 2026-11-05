@@ -1,0 +1,25 @@
+[Unit]
+Description=ALTAIR: the FYERS redirect URL (browser login -> token saved, "Connected to FYERS" page)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@ROOT@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/altair/altair.env
+# 127.0.0.1:80 only: the origin the Cloudflare tunnel for altair.thesmitshah.com
+# points at (ops/linux/fyers_tunnel.sh). No public port is opened.
+ExecStart=/usr/bin/python3 @ROOT@/broker/tools/fyers_callback_server.py --root @ROOT@ --port 80
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
