@@ -658,6 +658,8 @@ public:
         seed_strip_from_disk();
         refresh_stream();
         build_live_trading();
+        models_->mode_of = [this](const QString& m) { return static_cast<int>(strategy_mode(m)); };
+        models_->on_mode = [this](const QString& m, bool live) { (void)set_strategy_live(m, live); };
     }
 
     ~TerminalPage() override {
@@ -759,15 +761,24 @@ public:
     void set_live_confirm(std::function<bool(const QString&)> f) { live_confirm_ = std::move(f); }
 
     /// Switch LIVE on with these limits (the dialog's OK; tests call it directly).
-    bool arm_live(const LiveTradingLimits& l) {
+    bool arm_live(const LiveTradingLimits& l, const QString& reason = {}) {
         if (halted()) {
             toast(QStringLiteral("Trading is halted: resume first (F11+F12), then switch LIVE on"), false);
             return false;
         }
         const QString path = live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingArmFile);
+        const LiveTradingArm before = read_live_arm(path, QDateTime::currentSecsSinceEpoch());
         if (!write_live_arm(path, true, live_user(), l, QDateTime::currentDateTimeUtc())) {
             toast(QStringLiteral("LIVE not switched on: %1 could not be written").arg(path), false);
             return false;
+        }
+        // Every strategy that now sends real orders, and every one unticked, logged with why.
+        for (const auto& c : l.strategies) {
+            bool was = false;
+            for (const auto& x : before.limits.strategies) if (x.key == c.key) was = x.on;
+            if (c.on && !was) log_mode(c, true, reason, true);
+            else if (c.on && !before.armed) log_mode(c, true, QStringLiteral("the Terminal's LIVE switched on (it was set to LIVE earlier)"), true);
+            else if (!c.on && was) log_mode(c, false, reason.isEmpty() ? QStringLiteral("unticked in the LIVE dialog") : reason, true);
         }
         log_line(QStringLiteral("%1  LIVE ON by %2: up to %3 lot(s) and Rs %4 per order, %5 orders, stop at a Rs %6 loss")
                                        .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), live_user())
@@ -790,10 +801,105 @@ public:
             return false;
         }
         log_line(QStringLiteral("%1  LIVE OFF").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss"))));
+        if (a.armed)
+            for (const auto& c : a.limits.strategies)
+                if (c.on) log_mode(c, false, QStringLiteral("the Terminal's LIVE switched off (its switch stays set to LIVE for next time)"), false);
         refresh_live();
         toast(QStringLiteral("LIVE off: orders are paper again. Orders already at FYERS stay there; cancel them in Live orders."), true);
         return true;
     }
+
+    /// One model's Paper/Live switch, from its button on the Models table.
+    /// To LIVE: a confirmation that shows its caps, a reason and LIVE typed
+    /// out. To PAPER: at once. The switch is written into the arm file either
+    /// way; it sends real orders only while the Terminal's LIVE is on.
+    bool set_strategy_live(const QString& model, bool live) {
+        const QString key = live_strategy_key(model);
+        if (!live::strategy_key_ok(key.toStdString())) return false;
+        if (live && live_strategy_paper_only(key)) {
+            toast(QStringLiteral("%1 is paper only: it opens with option BUYS, and ALTAIR never buys options").arg(model), false);
+            return false;
+        }
+        if (live && halted()) {
+            toast(QStringLiteral("Trading is halted: resume first (F11+F12)"), false);
+            return false;
+        }
+        const QString path = live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingArmFile);
+        const LiveTradingArm a = read_live_arm(path, QDateTime::currentSecsSinceEpoch());
+        LiveTradingLimits l = a.limits;
+        live_strategy_add(l.strategies, model);
+        LiveStrategyCaps* s = nullptr;
+        for (auto& c : l.strategies) if (c.key == key) s = &c;
+        if (s == nullptr || s->on == live) return true;
+        QString reason;
+        if (live) {
+            const QString text = QStringLiteral(
+                "<p style='color:#FF7B72;font-weight:700'>%1 &rarr; LIVE: it sends REAL orders to FYERS by itself.</p>"
+                "<p>Caps: %2 lot(s) a leg, Rs %3 a leg, %4 entries a day, stops entering at a real loss of Rs %5 today "
+                "(change them in the LIVE dialog). Only while the Terminal's LIVE is on%6; option BUYS only ever close a short.</p>")
+                .arg(model.toHtmlEscaped()).arg(s->max_lots).arg(paper_ui::money(s->max_order_value)).arg(s->max_orders_per_day)
+                .arg(paper_ui::money(s->max_daily_loss))
+                .arg(a.armed ? QStringLiteral(" (it is on now: this takes effect at once)")
+                             : QStringLiteral(" (it is off now: nothing is sent until you switch it on)"));
+            if (strategy_confirm_) {
+                reason = strategy_confirm_(text);
+            } else {
+                QDialog d(this);
+                d.setWindowTitle(QStringLiteral("Switch a strategy to LIVE?"));
+                auto* v = new QVBoxLayout(&d);
+                auto* t = new QLabel(text, &d);
+                t->setTextFormat(Qt::RichText);
+                t->setWordWrap(true);
+                v->addWidget(t);
+                auto* why = new QLineEdit(&d);
+                why->setPlaceholderText(QStringLiteral("Why (logged)"));
+                v->addWidget(why);
+                auto* phrase = new QLineEdit(&d);
+                phrase->setPlaceholderText(QStringLiteral("Type LIVE"));
+                v->addWidget(phrase);
+                auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &d);
+                bb->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Switch to LIVE"));
+                bb->button(QDialogButtonBox::Ok)->setEnabled(false);
+                bb->button(QDialogButtonBox::Cancel)->setDefault(true);
+                const auto check = [why, phrase, bb] {
+                    bb->button(QDialogButtonBox::Ok)->setEnabled(phrase->text() == QLatin1String("LIVE")
+                                                                 && !why->text().trimmed().isEmpty());
+                };
+                connect(why, &QLineEdit::textChanged, &d, check);
+                connect(phrase, &QLineEdit::textChanged, &d, check);
+                connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+                connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+                v->addWidget(bb);
+                if (d.exec() == QDialog::Accepted) reason = why->text().trimmed();
+            }
+            if (reason.isEmpty()) return false;
+        } else {
+            reason = QStringLiteral("switched to PAPER on the Models table");
+        }
+        s->on = live;
+        if (!write_live_arm(path, a.armed, live_user(), l, QDateTime::currentDateTimeUtc())) {
+            toast(QStringLiteral("%1 NOT switched: %2 could not be written").arg(model, path), false);
+            return false;
+        }
+        log_mode(*s, live, reason, a.armed);
+        refresh_live();
+        toast(live ? (a.armed ? QStringLiteral("%1 is LIVE: its orders go to FYERS").arg(model)
+                              : QStringLiteral("%1 is set to LIVE: it sends when you switch the Terminal's LIVE on").arg(model))
+                   : QStringLiteral("%1 is PAPER: no new real orders (its open real positions still get their exits)").arg(model),
+              true);
+        return true;
+    }
+    /// A strategy's mode as its Models button shows it.
+    enum class StrategyMode : std::uint8_t { Paper, Live, LiveWaiting, PaperOnly };
+    [[nodiscard]] StrategyMode strategy_mode(const QString& model) const {
+        const QString key = live_strategy_key(model);
+        if (live_strategy_paper_only(key)) return StrategyMode::PaperOnly;
+        for (const auto& s : last_arm_.limits.strategies)
+            if (s.key == key && s.on) return last_arm_.armed && !halted() ? StrategyMode::Live : StrategyMode::LiveWaiting;
+        return StrategyMode::Paper;
+    }
+    /// Tests: the strategy confirmation's answer (the reason; empty = cancelled).
+    void set_strategy_confirm(std::function<QString(const QString&)> f) { strategy_confirm_ = std::move(f); }
 
     // ---- HALT (F11 + F12, from the main window) --------------------------------
     [[nodiscard]] QString kill_path() const { return live_root_ + QStringLiteral("/data/kill_request.json"); }
@@ -1296,6 +1402,17 @@ private:
     // ---- LIVE plumbing ---------------------------------------------------------
     [[nodiscard]] QString live_user() const { return intent_user_ok(user_) ? user_ : QStringLiteral("terminal"); }
 
+    /// One strategy's switch change, logged with who and why
+    /// (data/live_orders/mode_changes.jsonl and the message log).
+    void log_mode(const LiveStrategyCaps& s, bool live, const QString& reason, bool armed) {
+        const QString why = reason.isEmpty() ? QStringLiteral("(no reason given)") : reason;
+        const bool ok = append_mode_change(live_root_, live_user(), s, live, why, armed);
+        log_line(QStringLiteral("%1  STRATEGY %2 -> %3 by %4: %5%6")
+                     .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), s.label,
+                          live ? QStringLiteral("LIVE") : QStringLiteral("PAPER"), live_user(), why,
+                          ok ? QString() : QStringLiteral(" (NOT written to %1)").arg(QLatin1String(kLiveTradingModeLog))));
+    }
+
     void build_live_trading() {
 #ifdef ALTAIR_SOURCE_DIR
         live_root_ = QStringLiteral(ALTAIR_SOURCE_DIR);
@@ -1316,8 +1433,10 @@ private:
         const LiveTradingArm a = read_live_arm(live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingArmFile),
                                                QDateTime::currentSecsSinceEpoch());
         if (a.armed) { disarm_live(); return; }
-        LiveTradingArmDialog d(a.limits, this);
-        if (d.exec() == QDialog::Accepted) arm_live(d.limits());
+        LiveTradingLimits start = a.limits;
+        for (const QString& m : live_engine_models(live_root_)) live_strategy_add(start.strategies, m);
+        LiveTradingArmDialog d(start, this);
+        if (d.exec() == QDialog::Accepted) arm_live(d.limits(), d.reason());
     }
 
     void cancel_live(const QString& id, bool all) {
@@ -1363,6 +1482,7 @@ private:
                                                QDateTime::currentSecsSinceEpoch());
         const LiveTradingView v = read_live_router(live_root_ + QLatin1Char('/') + QLatin1String(kLiveTradingOrdersFile), now_ns());
         live_on_ = a.armed;
+        last_arm_ = a;
         if (halted()) {
             live_btn_->setText(QStringLiteral("\u25A0 HALTED"));
             set_variant(live_btn_, QStringLiteral("halted"));
@@ -1672,6 +1792,8 @@ private:
     QString router_note_;
     QTimer live_timer_;
     bool live_on_ = false;
+    LiveTradingArm last_arm_;                                   ///< the arm file at the last refresh_live
+    std::function<QString(const QString&)> strategy_confirm_;   ///< tests
     bool router_autostart_ = true;
     qint64 router_started_ms_ = 0;
     QHash<QString, QString> live_seen_;

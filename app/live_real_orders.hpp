@@ -7,8 +7,9 @@
 // goes only when ALL hold, read from the files every second:
 //   * the feed is FYERS's live market -- never the SIM, never a replay;
 //   * LIVE is armed (data/live_trading.json, the Terminal's typed switch);
-//   * the strategy's own switch in it is on (Auto: Arbitrage / OHL / Option
-//     arb) -- the other models never send anything;
+//   * the strategy's own Paper/Live switch in it is on. Every model has one
+//     (live/strategy_keys.hpp), off unless switched to Live; option
+//     arbitrage is paper only (it buys options);
 //   * no halt (data/kill_request.json);
 //   * the strategy's real P&L today is above its own loss cap.
 // Exits are always sent for what is really held, switch or no switch: an exit
@@ -49,6 +50,7 @@
 #pragma once
 
 #include <live/engine.hpp>
+#include <live/strategy_keys.hpp>
 #include <oms/live_router.hpp>
 
 #include <chrono>
@@ -69,12 +71,12 @@ namespace altair::live_real {
 
 namespace fs = std::filesystem;
 
-/// The strategies that may send real orders, by model name. Option
-/// arbitrage is not one: it buys options (oms/live_router.hpp), paper only.
+/// The key a model's switch and requests go by; empty for one that never
+/// sends a real order (option arbitrage: it buys options).
 [[nodiscard]] inline std::string strategy_key(const std::string& model) {
-    if (model == "Cross-exchange arbitrage") return "arbitrage";
-    if (model == "OHL" || model.rfind("OHL ", 0) == 0) return "ohl";
-    return {};
+    std::string k = live::strategy_key(model);
+    if (!live::strategy_key_ok(k) || live::strategy_paper_only(k)) return {};
+    return k;
 }
 
 /// One request line, in the queue's exact field order (oms/order_intent.hpp).
@@ -337,6 +339,7 @@ private:
         f << line << '\n';
         f.flush();
         if (!f) { note("could not write a request for " + ev.inst.symbol); return; }
+        log_reason(id, wall, ev, key, exit, lots, px, product);
         RealLeg l;
         l.intent = id; l.model = ev.model; l.key = key; l.token = ev.inst.token; l.symbol = ev.inst.symbol;
         l.side = ev.side; l.lots = lots; l.lot = lot; l.decided_ns = ev.decided_ns; l.exit = exit; l.reason = ev.reason;
@@ -555,6 +558,32 @@ private:
             note("legging: " + g.first + "'s legs did not all fill; what filled is sent back out");
         }
         send_queued(out, now_ns);
+    }
+
+    /// Every real request with the strategy's reasoning, one JSON line each in
+    /// data/live_orders/strategy_orders.jsonl (the router's own journal has
+    /// what became of it, by the same intent id).
+    void log_reason(const std::string& id, std::int64_t wall, const live::LiveOrderEvent& ev, const std::string& key, bool exit,
+                    std::int64_t lots, std::int64_t px, const std::string& product) {
+        const auto esc = [](const std::string& t) {
+            std::string o;
+            for (const char c : t) {
+                if (c == '"' || c == '\\') { o.push_back('\\'); o.push_back(c); }
+                else if (static_cast<unsigned char>(c) < 0x20) o.push_back(' ');
+                else o.push_back(c);
+            }
+            return o;
+        };
+        const fs::path path = root_ / oms::kRouterDir / "strategy_orders.jsonl";
+        std::error_code ec;
+        fs::create_directories(path.parent_path(), ec);
+        std::ofstream f(path, std::ios::binary | std::ios::app);
+        f << "{\"at\":\"" << utc_text(wall) << "\",\"intent\":\"" << esc(id) << "\",\"model\":\"" << esc(ev.model)
+          << "\",\"key\":\"" << key << "\",\"kind\":\"" << (exit ? "exit" : "entry") << "\",\"side\":\""
+          << (ev.side > 0 ? "BUY" : "SELL") << "\",\"symbol\":\"" << esc(ev.inst.symbol) << "\",\"lots\":" << lots
+          << ",\"limit_paise\":" << px << ",\"product\":\"" << product << "\",\"why\":\""
+          << esc(ev.reason.empty() ? std::string("(the model gave no reason)") : ev.reason) << "\"}\n";
+        if (!f) note("could not log the reason for " + id + " in " + path.string());
     }
 
     void note(const std::string& s) {

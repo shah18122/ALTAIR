@@ -292,6 +292,63 @@ int main() {
               "a person's request is not a strategy's; .exit marks an exit");
     }
 
+    // ---- every model has a switch; option arbitrage never goes on ---------------------------
+    {
+        std::string text = arm_text(true, now_unix, 2);
+        text.pop_back();
+        text += ",\"strategies\":{\"obi-a-futures-banknifty\":{\"on\":true,\"max_lots\":1,\"max_order_value\":2000000,"
+                "\"max_orders_per_day\":2,\"max_daily_loss\":2000},\"option-arbitrage\":{\"on\":true,\"max_lots\":1,"
+                "\"max_order_value\":2000000,\"max_orders_per_day\":2,\"max_daily_loss\":2000},"
+                "\"Bad Key\":{\"on\":true,\"max_lots\":1,\"max_order_value\":2000000,\"max_orders_per_day\":2,"
+                "\"max_daily_loss\":2000}}}";
+        const RouterArm arm = read_router_arm(text, now_unix).arm;
+        check(arm.strategy("obi-a-futures-banknifty") && arm.strategy("obi-a-futures-banknifty")->on,
+              "any engine model's key carries its own switch");
+        check(arm.strategy("option-arbitrage") && !arm.strategy("option-arbitrage")->on,
+              "option arbitrage is off whatever the file says: it buys options");
+        check(arm.strategy("Bad Key") == nullptr, "a key that is not a-z, 0-9 and '-' is skipped");
+        check(live::strategy_key("OBI A futures BANKNIFTY") == "obi-a-futures-banknifty"
+                  && live::strategy_key("Straddle IV>=RV BANKNIFTY") == "straddle-iv-rv-banknifty"
+                  && live::strategy_key("Cross-exchange arbitrage") == "arbitrage" && live::strategy_key("OHL 0.3%") == "ohl"
+                  && live::strategy_key("Option arbitrage") == "option-arbitrage",
+              "a model's key is its name, lower case and hyphenated; the old two keep theirs");
+    }
+
+    // ---- never buy an option: a BUY only closes a short FYERS shows -------------------------
+    {
+        const RouterArm arm = read_router_arm(arm_text(true, now_unix, 2), now_unix).arm;
+        const RouterInstrument ce{444u, "NIFTY26OCT25000CE", "NSE:NIFTY26OCT25000CE", "NFO", 75, 5, true};
+        const RouterInstrument by_name{445u, "NIFTY26OCT25000PE", "NSE:NIFTY26OCT25000PE", "NFO", 75, 5};
+        check(router_is_option(by_name) && !router_is_option(fut()), "an F&O symbol ending PE is an option; a future is not");
+        RouterBook b{0, 0, -120'050};
+        OrderIntent buy = intent("o1", 444, "NIFTY26OCT25000CE", "NFO", 10'000);
+        const auto none = plan_router_order(buy, &ce, arm, b, 10'000, kMonday10);
+        check(!none && none.error().find("never buys options") != std::string::npos,
+              "an option BUY with no short read is refused");
+        b.option_short_units = 0;
+        const auto flat = plan_router_order(buy, &ce, arm, b, 10'000, kMonday10);
+        check(!flat && flat.error().find("may only close a short") != std::string::npos,
+              "an option BUY with nothing short is refused: it would open a long");
+        b.option_short_units = 75;
+        check(plan_router_order(buy, &ce, arm, b, 10'000, kMonday10).has_value(), "a BUY of one lot closes one lot short");
+        buy.lots = 2;
+        check(!plan_router_order(buy, &ce, arm, b, 10'000, kMonday10).has_value(),
+              "a BUY of two lots against one lot short is refused: it would flip long");
+        OrderIntent exit = intent("o2", 444, "NIFTY26OCT25000CE", "NFO", 10'000);
+        exit.by = "strategy.ohl.exit";
+        b.option_short_units = 0;
+        check(!plan_router_order(exit, &ce, arm, b, 10'000, kMonday10).has_value(),
+              "a strategy exit that would BUY an option with nothing short is refused too");
+        OrderIntent sell = intent("o3", 444, "NIFTY26OCT25000CE", "NFO", 10'000);
+        sell.side = IntentSide::Sell;
+        b.option_short_units = std::nullopt;
+        check(plan_router_order(sell, &ce, arm, b, 10'000, kMonday10).has_value(), "selling an option to open is allowed");
+        const auto j = parse_router_json(R"({"s":"ok","netPositions":[{"symbol":"NSE:NIFTY26OCT25000CE","netQty":-150},)"
+                                         R"({"symbol":"NSE:SBIN-EQ","netQty":10}]})");
+        check(j && router_net_qty(*j, "NSE:NIFTY26OCT25000CE") == -150 && router_net_qty(*j, "NSE:X") == 0,
+              "the net quantity of a symbol from FYERS positions");
+    }
+
     // ---- the gate --------------------------------------------------------------------------
     {
         RouterEvidence e{true, false, true, 77, 5, kMonday10, kMonday10, true, kMonday10};

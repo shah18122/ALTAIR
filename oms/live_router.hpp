@@ -28,6 +28,7 @@
 #include <oms/fyers_adapter.hpp>
 #include <oms/intent_queue.hpp>
 #include <oms/order_intent.hpp>
+#include <live/strategy_keys.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -298,10 +299,9 @@ struct RouterStrategy {
     std::int64_t max_orders_per_day = 0;     ///< entries
     std::int64_t max_daily_loss_paise = 0;
 };
-/// Option arbitrage is NOT here: every conversion, reversal and box BUYS an
-/// option, and Smit's rule is that ALTAIR never buys options (2026-10-25). It
-/// stays a paper model (live/option_arb.hpp); the router refuses its requests.
-inline constexpr const char* kRouterStrategyKeys[] = {"arbitrage", "ohl"};
+/// Every model the engine runs may have a switch, by its key
+/// (live/strategy_keys.hpp); the arm holds at most this many.
+inline constexpr std::size_t kRouterMaxStrategies = 128;
 
 /// Which strategy a request is from: (key, is an exit); nullopt for a person's.
 [[nodiscard]] inline std::optional<std::pair<std::string, bool>> router_strategy_of(std::string_view by) {
@@ -380,9 +380,11 @@ struct RouterArmRead {
     // The strategies' switches. A strategy whose caps are missing or beyond the
     // ceilings is off; the arm itself stands.
     if (const RouterJson* st = j->get("strategies"); st != nullptr && st->kind == RouterJson::Kind::Object) {
-        for (const char* key : kRouterStrategyKeys) {
-            const RouterJson* o = st->get(key);
-            if (o == nullptr || o->kind != RouterJson::Kind::Object) continue;
+        for (const auto& [key, o_] : st->fields) {
+            const RouterJson* o = &o_;
+            // RULE 11: a bad key or one past the bound is skipped (its strategy stays off), never guessed at.
+            if (!live::strategy_key_ok(key) || a.strategies.size() >= kRouterMaxStrategies) continue;
+            if (o->kind != RouterJson::Kind::Object || a.strategy(key) != nullptr) continue;
             RouterStrategy s;
             s.key = key;
             const double sl = o->num("max_lots", -1.0), sv = o->num("max_order_value", -1.0),
@@ -391,7 +393,8 @@ struct RouterArmRead {
                          && sv > 0.0 && sv * 100.0 <= static_cast<double>(kRouterCeilingOrderValuePaise)
                          && so >= 1.0 && so <= static_cast<double>(kRouterCeilingOrdersPerDay)
                          && sd > 0.0 && sd * 100.0 <= static_cast<double>(kRouterCeilingDailyLossPaise);
-            s.on = ok && o->truth("on");
+            // Option arbitrage opens with option buys: never on, whatever the file says.
+            s.on = ok && o->truth("on") && !live::strategy_paper_only(key);
             if (ok) {
                 s.max_lots = static_cast<std::int64_t>(sl);
                 s.max_order_value_paise = std::llround(sv * 100.0);
@@ -420,7 +423,16 @@ struct RouterInstrument {
     std::string exchange;          ///< NSE or BSE (equity), NFO (F&O)
     std::int64_t lot = 0;
     std::int64_t tick_paise = 0;
+    bool option = false;           ///< a call or a put (also known from an F&O symbol ending CE or PE)
 };
+
+/// An option, by the universe or by its FYERS symbol (NSE:NIFTY25N1324000CE).
+[[nodiscard]] inline bool router_is_option(const RouterInstrument& i) noexcept {
+    if (i.option) return true;
+    const std::string_view f = i.fyers;
+    const bool fno = i.exchange == "NFO" || i.exchange == "BFO";
+    return fno && f.size() > 2 && (f.substr(f.size() - 2) == "CE" || f.substr(f.size() - 2) == "PE");
+}
 
 struct RouterClock {
     std::int64_t day = 0;            ///< IST days since 1970-01-01
@@ -448,6 +460,9 @@ struct RouterBook {
     std::int64_t open_orders = 0;                ///< sent and not yet final
     std::optional<std::int64_t> day_pnl_paise;   ///< FYERS positions; nullopt = not read
     std::int64_t strategy_entries_today = 0;     ///< this request's strategy, entries sent today
+    /// For an option BUY: units FYERS shows SHORT in this symbol, less buys
+    /// already working there -- what a buy may close. nullopt = not read.
+    std::optional<std::int64_t> option_short_units;
 };
 
 /// One request, checked and translated: the exact body that will be sent.
@@ -527,6 +542,19 @@ plan_router_order(const OrderIntent& in, const RouterInstrument* inst, const Rou
     if (inst->lot > std::numeric_limits<std::int64_t>::max() / in.lots)
         return std::unexpected("the quantity overflows");
     p.qty = in.lots * inst->lot;
+
+    // NEVER BUY AN OPTION (Smit, 2026-10-25). An option is only ever sold to
+    // open; a BUY of one is allowed only to close a short that FYERS shows,
+    // and only up to it. This holds for a person's order and a strategy's
+    // exit alike: it is checked before anything else may let an exit through.
+    if (router_is_option(*inst) && in.side == IntentSide::Buy) {
+        if (!book.option_short_units)
+            return std::unexpected("ALTAIR never buys options: FYERS positions could not be read to confirm this BUY closes a short; not sent");
+        if (*book.option_short_units < p.qty)
+            return std::unexpected("ALTAIR never buys options: a BUY of " + inst->symbol + " may only close a short, and FYERS shows "
+                                   + std::to_string(*book.option_short_units) + " short to close against " + std::to_string(p.qty)
+                                   + "; not sent");
+    }
 
     if (!ltp_paise || *ltp_paise <= 0) return std::unexpected("FYERS gave no last price for " + inst->fyers + ": not sent");
     const std::int64_t ltp = *ltp_paise;
@@ -741,6 +769,19 @@ inline std::size_t apply_router_book(std::vector<RouterOrder>& rows, const Route
     for (const RouterJson& p : net->items)
         sum += p.has_num("pl") ? p.num("pl") : p.num("realized_profit") + p.num("unrealized_profit");
     return std::llround(sum * 100.0);
+}
+
+/// The signed net quantity of `symbol` in a FYERS positions reply
+/// (netPositions[].netQty; 0 when it is not listed). nullopt when the reply
+/// is not "ok" or has no netPositions.
+[[nodiscard]] inline std::optional<std::int64_t> router_net_qty(const RouterJson& reply, std::string_view symbol) {
+    if (reply.str("s") != "ok") return std::nullopt;
+    const RouterJson* net = reply.get("netPositions");
+    if (net == nullptr || net->kind != RouterJson::Kind::Array) return std::nullopt;
+    std::int64_t q = 0;
+    for (const RouterJson& p : net->items)
+        if (p.str("symbol") == symbol) q += std::llround(p.num("netQty", p.num("qty")));
+    return q;
 }
 
 /// The last price of `symbol` from a FYERS /data/quotes reply.
@@ -967,8 +1008,10 @@ private:
         // The P&L is refreshed every 15 s by tick(); a request reads it fresh
         // only when it is older than that (it no longer costs every order a round trip).
         if (now_ns - pnl_ns_ >= 15'000'000'000LL) refresh_pnl(now_ns);
-        RouterBook book{orders_today(now_ns), open_count(), day_pnl_};
+        RouterBook book{orders_today(now_ns), open_count(), day_pnl_, 0, std::nullopt};
         if (strat && !strat->second) book.strategy_entries_today = strategy_entries_today(in.by, now_ns);
+        if (inst != nullptr && in.side == IntentSide::Buy && router_is_option(*inst))
+            book.option_short_units = option_short_units(inst->fyers, now_ns);
         auto plan = plan_router_order(in, inst, arm_.arm, book, ltp, now_ns);
         if (!plan) return refuse(std::move(r), plan.error(), now_ns);
         r.qty = plan->qty;
@@ -1140,6 +1183,25 @@ private:
         }
         // A send that turned up open after the kill is cancelled now.
         if (killed_) cancel_open(now_ns, "the kill switch is on");
+    }
+
+    /// What an option BUY may close: FYERS's short in the symbol, read now
+    /// (never a cached reading: the short may have been closed a second ago),
+    /// less what BUYs this router already has working in it.
+    std::optional<std::int64_t> option_short_units(const std::string& fyers_symbol, std::int64_t now_ns) {
+        const RouterCall c = t_.get(kRouterPositionsPath);
+        note_auth(c, now_ns);
+        if (!c.transport_ok || c.status != 200) return std::nullopt;
+        const auto j = parse_router_json(c.body);
+        if (!j) return std::nullopt;
+        const auto net = router_net_qty(*j, fyers_symbol);
+        if (!net) return std::nullopt;
+        if (const auto pnl = router_day_pnl_paise(*j)) { day_pnl_ = pnl; pnl_ns_ = now_ns; account_ok_ns_ = now_ns; }
+        std::int64_t working = 0;
+        for (const RouterOrder& r : rows_)
+            if (r.fyers_symbol == fyers_symbol && r.side == "BUY" && !router_final(r.status))
+                working += std::max<std::int64_t>(0, r.qty - r.filled);
+        return std::max<std::int64_t>(0, -*net - working);
     }
 
     void refresh_pnl(std::int64_t now_ns) {

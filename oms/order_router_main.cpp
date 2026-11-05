@@ -83,6 +83,7 @@ std::vector<oms::RouterInstrument> read_instruments(const std::string& path) {
         r.exchange = i.kind == live::LiveKind::Equity ? (i.fyers.rfind("BSE:", 0) == 0 ? "BSE" : "NSE") : "NFO";
         r.lot = i.lot;
         r.tick_paise = std::llround(i.tick * 100.0);
+        r.option = i.kind == live::LiveKind::Call || i.kind == live::LiveKind::Put;
         out.push_back(std::move(r));
     }
     return out;
