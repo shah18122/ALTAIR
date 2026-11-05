@@ -26,7 +26,17 @@
 // official SDK (fyers-apiv3 up to 3.1.18) writes by that index and corrupts
 // every level a sparse diff skips -- the "wrong prices after level 5" this
 // code had while it copied the SDK. A level without `num` (the SDK's own test
-// vectors) keeps its index. A snapshot replaces the book. This file decodes with no protobuf library: the format
+// vectors) keeps its index. A snapshot replaces the book.
+//
+// SEQUENCE DISCIPLINE (the NSE TBT book-builder rules, docs/NSE_NNF_TBT.md):
+// a diff applies only to a book that has had a snapshot; a diff whose
+// sequence_no skips marks the book stale, as does a diff that leaves it
+// crossed; a stale book is not published and its ticker is handed back in
+// `resync` so the caller asks for a fresh snapshot. A repeat (sequence at or
+// below the last) is dropped. If FYERS turns out to number across symbols
+// rather than per symbol, the sequence check switches itself off (stats).
+//
+// This file decodes with no protobuf library: the format
 // is small, fixed by the SDK, and pinned by vectors the SDK itself encoded
 // (feed/tests/vectors/fyers_tbt.txt).
 #pragma once
@@ -65,6 +75,15 @@ struct TbtBook {
     std::uint64_t feed_time = 0;      ///< as FYERS sends it
     std::uint64_t sequence = 0;
     bool seen_snapshot = false;
+    /// A gap or a crossed book: this book is wrong until the next snapshot,
+    /// and is not published.
+    bool stale = false;
+    std::uint64_t diffs_since_snapshot = 0;
+
+    /// Best bid at or above best ask: a book built from a missed update.
+    [[nodiscard]] bool crossed() const noexcept {
+        return bid_px[0] > 0 && ask_px[0] > 0 && bid_px[0] >= ask_px[0];
+    }
 
     /// Levels from the top with a price on BOTH sides counted separately;
     /// the deeper of the two, so a frame carries both sides to that depth.
@@ -81,7 +100,30 @@ struct TbtMessage {
     bool error = false;
     std::string text;                        ///< `msg`: the server's reason on an error
     std::vector<std::string> updated;        ///< tickers whose book changed, in message order
+    std::vector<std::string> resync;         ///< tickers that went stale here: ask for a fresh snapshot
 };
+
+/// What the book builder refused, since the connection began. TBT practice:
+/// a book is only as good as its sequence; one missed diff leaves it wrong
+/// with nothing on screen to say so.
+struct TbtStats {
+    std::uint64_t gaps = 0;              ///< a diff whose sequence skipped
+    std::uint64_t crossed = 0;           ///< a diff that left best bid >= best ask
+    std::uint64_t before_snapshot = 0;   ///< a diff for a book with no snapshot yet
+    std::uint64_t old = 0;               ///< a diff at or below the sequence already applied
+    bool sequence_check_off = false;     ///< FYERS's numbering is not per symbol (see on_message)
+};
+
+/// FYERS's feed_time in nanoseconds since the epoch, whatever unit it came
+/// in (seconds, milliseconds, microseconds or nanoseconds, told apart by
+/// size). 0 when it does not look like a 2001..2286 time.
+[[nodiscard]] inline std::int64_t feed_time_ns(std::uint64_t t) noexcept {
+    if (t >= 1'000'000'000ULL && t < 10'000'000'000ULL) return static_cast<std::int64_t>(t) * 1'000'000'000LL;
+    if (t >= 1'000'000'000'000ULL && t < 10'000'000'000'000ULL) return static_cast<std::int64_t>(t) * 1'000'000LL;
+    if (t >= 1'000'000'000'000'000ULL && t < 10'000'000'000'000'000ULL) return static_cast<std::int64_t>(t) * 1'000LL;
+    if (t >= 1'000'000'000'000'000'000ULL && t <= 9'223'372'036'854'775'807ULL) return static_cast<std::int64_t>(t);
+    return 0;
+}
 
 namespace detail {
 
@@ -320,8 +362,25 @@ public:
             if (!fd.has_depth || fd.ticker.empty()) continue;
             TbtBook& b = books_[fd.ticker];
             if (fd.snapshot || message_snapshot) {
-                b = TbtBook{};   // a snapshot is the whole book
+                b = TbtBook{};   // a snapshot is the whole book, and clears a stale one
                 b.seen_snapshot = true;
+            } else if (!b.seen_snapshot) {
+                ++stats_.before_snapshot;   // nothing to apply a diff to
+                continue;
+            } else if (b.stale) {
+                continue;                   // wrong until the snapshot the caller asked for
+            } else if (!stats_.sequence_check_off && fd.sequence != 0 && b.sequence != 0) {
+                if (fd.sequence <= b.sequence) { ++stats_.old; continue; }   // a repeat: already in the book
+                if (fd.sequence != b.sequence + 1) {
+                    ++stats_.gaps;
+                    // A gap on the very first diff after a snapshot, again
+                    // and again, means FYERS numbers across symbols, not per
+                    // symbol: then the numbers say nothing and are not used.
+                    if (b.diffs_since_snapshot == 0 && ++first_diff_gaps_ >= 3) stats_.sequence_check_off = true;
+                    b.stale = true;
+                    out.resync.push_back(fd.ticker);
+                    continue;
+                }
             }
             detail::apply_side(fd.bids, b.bid_px, b.bid_qty, b.bid_orders);
             detail::apply_side(fd.asks, b.ask_px, b.ask_qty, b.ask_orders);
@@ -329,6 +388,13 @@ public:
             if (fd.tsq) b.total_ask_qty = *fd.tsq;
             if (fd.feed_time) b.feed_time = *fd.feed_time;
             b.sequence = fd.sequence;
+            if (!(fd.snapshot || message_snapshot)) ++b.diffs_since_snapshot;
+            if (b.crossed()) {
+                ++stats_.crossed;
+                b.stale = true;
+                out.resync.push_back(fd.ticker);
+                continue;
+            }
             out.updated.push_back(fd.ticker);
         }
         return true;
@@ -338,10 +404,14 @@ public:
         const auto it = books_.find(ticker);
         return it == books_.end() ? nullptr : &it->second;
     }
-    void reset() { books_.clear(); }
+    [[nodiscard]] const TbtStats& stats() const noexcept { return stats_; }
+    /// A new connection: no books, and the counts start again.
+    void reset() { books_.clear(); stats_ = TbtStats{}; first_diff_gaps_ = 0; }
 
 private:
     std::unordered_map<std::string, TbtBook> books_;
+    TbtStats stats_;
+    int first_diff_gaps_ = 0;
 };
 
 // ---- what the client sends ------------------------------------------------------
@@ -407,6 +477,13 @@ inline constexpr std::size_t kTbtPrimeConnections = 3;
         out.push_back("{\"type\":2,\"data\":{\"resumeChannels\":[\"" + std::to_string(channel) + "\"],\"pauseChannels\":[]}}");
     }
     return out;
+}
+
+/// A fresh snapshot for one stale book: unsubscribe it, subscribe it again,
+/// resume the channel. FYERS opens every subscription with a snapshot.
+[[nodiscard]] inline std::vector<std::string> tbt_resync_texts(const std::string& ticker, int channel) {
+    return {tbt_unsubscribe_text({ticker}, channel), tbt_subscribe_text({ticker}, channel),
+            "{\"type\":2,\"data\":{\"resumeChannels\":[\"" + std::to_string(channel) + "\"],\"pauseChannels\":[]}}"};
 }
 
 [[nodiscard]] inline std::string tbt_resume_text(int channels) {

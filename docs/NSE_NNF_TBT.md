@@ -136,7 +136,11 @@ Checked in the code on 2026-11-05.
    broker later provides NSE TBT, the decoder is a small fixed-layout parser in
    the style of `feed/fyers_tbt.hpp`.
 
-Items 1 to 3 are passed to the latency thread to implement.
+Items 1 to 3 are done (2026-11-05): `feed/fyers_tbt.hpp` gates on the snapshot,
+marks a book stale on a sequence gap or a crossed book, and the price service
+resubscribes that ticker for a fresh snapshot; the 50-level book carries FYERS'
+feed time. If FYERS numbers diffs across symbols, the sequence check switches
+itself off and the service prints that once.
 
 ## 5. Practical path
 
