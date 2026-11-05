@@ -20,7 +20,8 @@
 //
 // THIS PANEL LINKS NO BROKER. The engine itself only writes requests for the
 // strategies switched on in the LIVE switch (app/live_real_orders.hpp); the
-// order router decides and sends them.
+// order router decides and sends them. The Mode column is each model's
+// PAPER / LIVE button: the Terminal owns what a click does (on_mode).
 
 #pragma once
 
@@ -168,10 +169,12 @@ public:
         v->addWidget(totals_);
 
         tabs_ = new QTabWidget(this);
-        models_ = make_live_table(5, {QStringLiteral("Model"), QStringLiteral("Family"), QStringLiteral("State"),
-                                      QStringLiteral("Signal"), QStringLiteral("Why")}, this);
+        models_ = make_live_table(6, {QStringLiteral("Model"), QStringLiteral("Family"), QStringLiteral("State"),
+                                      QStringLiteral("Signal"), QStringLiteral("Why"), QStringLiteral("Mode")}, this);
         models_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-        models_->horizontalHeader()->setStretchLastSection(true);
+        models_->horizontalHeader()->setStretchLastSection(false);
+        models_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+        models_->setColumnWidth(5, 118);
         models_->setColumnWidth(0, 215);
         models_->setColumnWidth(1, 120);
         models_->setColumnWidth(2, 100);
@@ -268,6 +271,12 @@ public:
         mark();
     }
     [[nodiscard]] QTableWidget* models_table() const noexcept { return models_; }
+
+    /// A model's Paper/Live state, for its Mode button: 0 paper, 1 live,
+    /// 2 live but the Terminal's LIVE is off, 3 paper only. Set by the Terminal.
+    std::function<int(const QString& model)> mode_of;
+    /// A click on a Mode button: switch `model` to LIVE (true) or PAPER.
+    std::function<void(const QString& model, bool live)> on_mode;
     /// "Price UNVERIFIED expenses": the Terminal's paper orders follow it too.
     [[nodiscard]] bool price_unverified() const { return unverified_->isChecked(); }
     /// The models run by themselves (the app turns this on; tests leave it off).
@@ -289,6 +298,33 @@ private:
         bool carry = false;
         QString state, exit_reason;   ///< opening / open / closing, and why it is closing
     };
+
+    /// The Mode cell of row `r`: one button, made once and relabelled.
+    void mode_button(int r, const QString& model) {
+        auto* b = qobject_cast<QPushButton*>(models_->cellWidget(r, 5));
+        if (b == nullptr) {
+            b = new QPushButton(models_);
+            b->setObjectName(QStringLiteral("modelMode"));
+            b->setCursor(Qt::PointingHandCursor);
+            models_->setCellWidget(r, 5, b);
+            connect(b, &QPushButton::clicked, this, [this, b] {
+                const QString name = b->property("model").toString();
+                const int m = mode_of ? mode_of(name) : 0;
+                if (on_mode && m != 3) on_mode(name, m == 0);
+            });
+        }
+        b->setProperty("model", model);
+        const int m = mode_of ? mode_of(model) : 0;
+        b->setEnabled(m != 3 && static_cast<bool>(on_mode));
+        b->setText(m == 1 ? QStringLiteral("\u25CF LIVE") : m == 2 ? QStringLiteral("LIVE (off)")
+                 : m == 3 ? QStringLiteral("PAPER only") : QStringLiteral("PAPER"));
+        b->setStyleSheet(m == 1 ? QStringLiteral("color:#FFFFFF;background:#B3261E;font-weight:700")
+                       : m == 2 ? QStringLiteral("color:#F4C95D;font-weight:700") : QString());
+        b->setToolTip(m == 1 ? QStringLiteral("LIVE: sends real orders to FYERS. Click to switch to PAPER.")
+                    : m == 2 ? QStringLiteral("Set to LIVE, but the Terminal's LIVE is off (or halted): nothing real is sent. Click for PAPER.")
+                    : m == 3 ? QStringLiteral("Paper only: it opens with option BUYS, and ALTAIR never buys options.")
+                             : QStringLiteral("PAPER: demo trades only. Click to switch to LIVE (asks to confirm)."));
+    }
 
     void read_state() {
         QFile f(root_ + QStringLiteral("/data/live/engine_state.json"));
@@ -351,6 +387,7 @@ private:
             live_set(models_, r, 3, m.value(QStringLiteral("signal")).toString());
             live_set(models_, r, 4, m.value(QStringLiteral("reason")).toString());
             for (int c = 0; c < 5; ++c) if (auto* it = models_->item(r, c)) it->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            mode_button(r, m.value(QStringLiteral("name")).toString());
             std::vector<std::pair<QString, QString>> fv;
             for (const auto& x : m.value(QStringLiteral("fields")).toArray()) {
                 const QJsonArray kv = x.toArray();

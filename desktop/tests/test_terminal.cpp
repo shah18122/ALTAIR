@@ -19,6 +19,7 @@
 #include <core/time/timestamp.hpp>
 #include <core/types/units.hpp>
 
+#include <type_traits>
 #include <QApplication>
 #include <QShortcut>
 #include <QCheckBox>
@@ -557,6 +558,43 @@ int main(int argc, char** argv)
 
         check(term.disarm_live() && !term.live_on() && term.live_switch()->text() == QStringLiteral("PAPER"),
               "switched off: PAPER again");
+
+        // Every model's own Paper/Live switch (the Models table's Mode button).
+        {
+            const QString obi = QStringLiteral("OBI A futures BANKNIFTY");
+            using Mode = std::remove_reference_t<decltype(term)>::StrategyMode;
+            term.set_strategy_confirm([](const QString&) { return QString(); });
+            check(!term.set_strategy_live(obi, true) && term.strategy_mode(obi) == Mode::Paper,
+                  "switching a model to LIVE without a confirmed reason does nothing");
+            QString shown;
+            term.set_strategy_confirm([&](const QString& t) { shown = t; return QStringLiteral("1 lot test"); });
+            check(term.set_strategy_live(obi, true) && shown.contains(QStringLiteral("REAL orders"))
+                      && term.strategy_mode(obi) == Mode::LiveWaiting,
+                  "confirmed with a reason: set to LIVE, waiting while the Terminal's LIVE is off");
+            const LiveTradingArm a2 = read_live_arm(tmp.path() + QStringLiteral("/data/live_trading.json"),
+                                                    QDateTime::currentSecsSinceEpoch());
+            bool on = false;
+            for (const auto& c : a2.limits.strategies) on = on || (c.key == QStringLiteral("obi-a-futures-banknifty") && c.on);
+            check(on && !a2.armed, "the switch is saved in the arm file by the model's key; LIVE stays off");
+            check(!term.set_strategy_live(QStringLiteral("Option arbitrage"), true)
+                      && term.strategy_mode(QStringLiteral("Option arbitrage")) == Mode::PaperOnly,
+                  "option arbitrage cannot go LIVE: it buys options");
+            check(term.set_strategy_live(obi, false) && term.strategy_mode(obi) == Mode::Paper, "and back to PAPER at once");
+            QFile ml(tmp.path() + QStringLiteral("/data/live_orders/mode_changes.jsonl"));
+            const QByteArray log = ml.open(QIODevice::ReadOnly) ? ml.readAll() : QByteArray{};
+            check(log.count('\n') == 2 && log.contains("\"to\":\"LIVE\"") && log.contains("1 lot test")
+                      && log.contains("\"to\":\"PAPER\""),
+                  "each switch is logged with who, which way and why");
+            LiveTradingLimits l3;
+            live_strategy_add(l3.strategies, obi);
+            LiveTradingArmDialog d3(l3);
+            d3.set_strategy(QStringLiteral("obi-a-futures-banknifty"), true);
+            d3.type_phrase(QStringLiteral("LIVE"));
+            const bool blocked = !d3.can_accept();
+            d3.type_reason(QStringLiteral("paper days were good"));
+            check(blocked && d3.can_accept() && d3.reason() == QStringLiteral("paper days were good"),
+                  "the LIVE dialog needs a reason when a strategy is newly ticked LIVE");
+        }
         o.qty = 75;
         check(!term.place_live(o, false).has_value(), "and nothing more is requested");
         check(live_arm_expiry(QDateTime(QDate(2026, 10, 5), QTime(4, 0), QTimeZone::utc())) ==

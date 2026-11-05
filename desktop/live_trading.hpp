@@ -13,15 +13,20 @@
 // with "armed": false. The halt (F11+F12, kill_switch.hpp) stops the router
 // sending and cancels what is open.
 //
-// STRATEGIES. The arm also carries each auto strategy's own switch and caps
-// ("strategies": arbitrage, ohl -- oms/live_router.hpp; option arbitrage buys
-// options, so it is paper only and not offered here). A
-// strategy switched on sends its own orders, without asking, through the same
-// router, only while LIVE is on; all are off unless switched on here.
+// STRATEGIES. The arm also carries every model's own Paper/Live switch and
+// caps ("strategies", by live/strategy_keys.hpp's key; option arbitrage buys
+// options, so it is paper only and cannot be switched to Live). A strategy
+// switched to Live sends its own orders, without asking, through the same
+// router, only while LIVE is on; all are Paper unless switched here or on the
+// Models table. The switches stay in the file after LIVE goes off or expires,
+// so tomorrow's LIVE dialog starts from them. Every change of a switch is
+// logged, with who and why, in data/live_orders/mode_changes.jsonl.
 #pragma once
 
 #include "order_ticket.hpp"
 #include "paper_windows.hpp"
+
+#include <live/strategy_keys.hpp>
 
 #include <QAbstractItemView>
 #include <QCheckBox>
@@ -45,6 +50,7 @@
 #include <QLockFile>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTimeZone>
@@ -62,6 +68,7 @@ inline constexpr const char* kLiveTradingArmFile = "data/live_trading.json";
 inline constexpr const char* kLiveTradingOrdersFile = "data/live_orders/orders.json";
 inline constexpr const char* kLiveTradingCancelsFile = "data/live_orders/cancels.jsonl";
 inline constexpr const char* kLiveTradingIntentFile = "data/order_intents.jsonl";
+inline constexpr const char* kLiveTradingModeLog = "data/live_orders/mode_changes.jsonl";
 /// The router writes orders.json at least every two seconds; older is "not running".
 inline constexpr std::int64_t kLiveTradingBeatNs = 6'000'000'000LL;
 
@@ -82,6 +89,36 @@ struct LiveStrategyCaps {
         {QStringLiteral("arbitrage"), QStringLiteral("Arbitrage (NSE \u2194 BSE)"), false, 1, 2'50'000.0, 20, 2'000.0},
         {QStringLiteral("ohl"), QStringLiteral("OHL threshold"), false, 1, 25'00'000.0, 4, 2'000.0},
     };
+}
+
+/// A model's key, as the router and the engine know it (live/strategy_keys.hpp).
+[[nodiscard]] inline QString live_strategy_key(const QString& model) {
+    return QString::fromStdString(live::strategy_key(model.toStdString()));
+}
+[[nodiscard]] inline bool live_strategy_paper_only(const QString& key) {
+    return live::strategy_paper_only(key.toStdString());
+}
+
+/// Add a row for `model` (by its key) unless there is one: Paper, one lot.
+inline void live_strategy_add(std::vector<LiveStrategyCaps>& v, const QString& model) {
+    const QString key = live_strategy_key(model);
+    if (!live::strategy_key_ok(key.toStdString())) return;
+    for (const auto& s : v)
+        if (s.key == key) return;
+    v.push_back({key, model, false, 1, 2'50'000.0, 10, 2'000.0});
+}
+
+/// Every model the engine runs, by name, from data/live/engine_state.json.
+[[nodiscard]] inline QStringList live_engine_models(const QString& root) {
+    QFile f(root + QStringLiteral("/data/live/engine_state.json"));
+    QStringList out;
+    if (!f.open(QIODevice::ReadOnly)) return out;
+    const QJsonArray ms = QJsonDocument::fromJson(f.readAll()).object().value(QStringLiteral("models")).toArray();
+    for (const auto& m : ms) {
+        const QString n = m.toObject().value(QStringLiteral("name")).toString();
+        if (!n.isEmpty()) out << n;
+    }
+    return out;
 }
 
 /// The limits the router enforces, as the arm dialog edits them. Rupees.
@@ -134,6 +171,15 @@ struct LiveTradingArm {
     l.max_daily_loss = o.value(QStringLiteral("max_daily_loss")).toDouble(l.max_daily_loss);
     l.price_band_pct = o.value(QStringLiteral("price_band_pct")).toDouble(l.price_band_pct);
     const QJsonObject st = o.value(QStringLiteral("strategies")).toObject();
+    // Every switch the file holds, the two built-in rows first.
+    for (auto it = st.begin(); it != st.end(); ++it) {
+        if (!live::strategy_key_ok(it.key().toStdString())) continue;
+        bool have = false;
+        for (const auto& s : l.strategies) have = have || s.key == it.key();
+        if (have) continue;
+        const QString label = it.value().toObject().value(QStringLiteral("label")).toString();
+        l.strategies.push_back({it.key(), label.isEmpty() ? it.key() : label, false, 1, 2'50'000.0, 10, 2'000.0});
+    }
     for (auto& s : l.strategies) {
         const QJsonObject j = st.value(s.key).toObject();
         if (j.isEmpty()) continue;
@@ -173,7 +219,8 @@ struct LiveTradingArm {
     QJsonObject st;
     for (const auto& s : l.strategies) {
         QJsonObject j;
-        j[QStringLiteral("on")] = s.on;
+        j[QStringLiteral("on")] = s.on && !live_strategy_paper_only(s.key);
+        j[QStringLiteral("label")] = s.label;
         j[QStringLiteral("max_lots")] = s.max_lots;
         j[QStringLiteral("max_order_value")] = s.max_order_value;
         j[QStringLiteral("max_orders_per_day")] = s.max_orders_per_day;
@@ -186,6 +233,30 @@ struct LiveTradingArm {
     if (!f.open(QIODevice::WriteOnly)) return false;
     f.write(QJsonDocument(o).toJson(QJsonDocument::Indented));
     return f.commit();
+}
+
+/// One line in data/live_orders/mode_changes.jsonl: a strategy switched
+/// between Paper and Live, by whom, and why. False when it could not be written.
+inline bool append_mode_change(const QString& root, const QString& by, const LiveStrategyCaps& s, bool live,
+                               const QString& reason, bool live_armed) {
+    const QString path = root + QLatin1Char('/') + QLatin1String(kLiveTradingModeLog);
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Append)) return false;
+    QJsonObject o;
+    o[QStringLiteral("at")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    o[QStringLiteral("by")] = by;
+    o[QStringLiteral("key")] = s.key;
+    o[QStringLiteral("strategy")] = s.label;
+    o[QStringLiteral("to")] = live ? QStringLiteral("LIVE") : QStringLiteral("PAPER");
+    o[QStringLiteral("live_armed")] = live_armed;
+    o[QStringLiteral("max_lots")] = s.max_lots;
+    o[QStringLiteral("max_order_value")] = s.max_order_value;
+    o[QStringLiteral("max_orders_per_day")] = s.max_orders_per_day;
+    o[QStringLiteral("max_daily_loss")] = s.max_daily_loss;
+    o[QStringLiteral("reason")] = reason;
+    const QByteArray line = QJsonDocument(o).toJson(QJsonDocument::Compact) + '\n';
+    return f.write(line) == line.size() && f.flush();
 }
 
 /// One row of the router's book.
@@ -340,31 +411,45 @@ public:
         form->addRow(QStringLiteral("Refuse a limit this far from the last price"), band_);
         v->addLayout(form);
         // The auto strategies: each off unless ticked, each with its own caps.
-        auto* box = new QGroupBox(QStringLiteral("Strategies that send their own orders (off unless ticked)"), this);
-        auto* grid = new QGridLayout(box);
-        const QStringList heads{QStringLiteral("Strategy"), QStringLiteral("Lots a leg"), QStringLiteral("Rs a leg"),
+        auto* box = new QGroupBox(QStringLiteral("Strategies: tick = LIVE (sends its own orders), unticked = PAPER"), this);
+        auto* box_v = new QVBoxLayout(box);
+        auto* scroll = new QScrollArea(box);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setMinimumHeight(std::min<int>(360, 40 + 30 * static_cast<int>(start.strategies.size())));
+        auto* inner = new QWidget(scroll);
+        auto* grid = new QGridLayout(inner);
+        scroll->setWidget(inner);
+        box_v->addWidget(scroll);
+        const QStringList heads{QStringLiteral("Strategy (LIVE?)"), QStringLiteral("Lots a leg"), QStringLiteral("Rs a leg"),
                                 QStringLiteral("Entries today"), QStringLiteral("Stop at a loss of Rs")};
-        for (int c = 0; c < heads.size(); ++c) grid->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(heads[c]), box), 0, c);
+        for (int c = 0; c < heads.size(); ++c) grid->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(heads[c]), inner), 0, c);
         int r = 1;
         for (const auto& s : start.strategies) {
             StrategyRow w;
             w.caps = s;
-            w.on = new QCheckBox(s.label, box);
+            w.was_on = s.on;
+            w.on = new QCheckBox(s.label, inner);
             w.on->setObjectName(QStringLiteral("liveArmStrategy_") + s.key);
-            w.on->setChecked(s.on);
-            w.lots = new QSpinBox(box);
+            w.on->setChecked(s.on && !live_strategy_paper_only(s.key));
+            if (live_strategy_paper_only(s.key)) {
+                w.on->setEnabled(false);
+                w.on->setToolTip(QStringLiteral("Paper only: it opens with option BUYS, and ALTAIR never buys options"));
+            }
+            connect(w.on, &QCheckBox::toggled, this, [this] { update_ok(); });
+            w.lots = new QSpinBox(inner);
             w.lots->setRange(1, 50);
             w.lots->setValue(s.max_lots);
             w.lots->setToolTip(QStringLiteral("For a stock a lot is one share; the router's ceiling is 50 an order"));
-            w.value = new QDoubleSpinBox(box);
+            w.value = new QDoubleSpinBox(inner);
             w.value->setRange(1'000.0, 1'00'00'000.0);
             w.value->setDecimals(0);
             w.value->setSingleStep(50'000.0);
             w.value->setValue(s.max_order_value);
-            w.orders = new QSpinBox(box);
+            w.orders = new QSpinBox(inner);
             w.orders->setRange(1, 200);
             w.orders->setValue(s.max_orders_per_day);
-            w.loss = new QDoubleSpinBox(box);
+            w.loss = new QDoubleSpinBox(inner);
             w.loss->setRange(100.0, 10'00'000.0);
             w.loss->setDecimals(0);
             w.loss->setSingleStep(500.0);
@@ -378,6 +463,13 @@ public:
             ++r;
         }
         v->addWidget(box);
+        auto* why_row = new QHBoxLayout;
+        why_row->addWidget(new QLabel(QStringLiteral("Why (logged; needed when a strategy goes LIVE):"), this));
+        reason_ = new QLineEdit(this);
+        reason_->setObjectName(QStringLiteral("liveArmReason"));
+        reason_->setPlaceholderText(QStringLiteral("e.g. OBI futures BANKNIFTY: 3 green paper days, 1 lot test"));
+        why_row->addWidget(reason_);
+        v->addLayout(why_row);
         auto* type_row = new QHBoxLayout;
         type_row->addWidget(new QLabel(QStringLiteral("Type <b>LIVE</b> to switch on:"), this));
         phrase_ = new QLineEdit(this);
@@ -390,8 +482,9 @@ public:
         ok_->setEnabled(false);
         buttons->button(QDialogButtonBox::Cancel)->setDefault(true);
         v->addWidget(buttons);
-        connect(phrase_, &QLineEdit::textChanged, this, [this](const QString& t) { ok_->setEnabled(t == QLatin1String("LIVE")); });
-        connect(buttons, &QDialogButtonBox::accepted, this, [this] { if (phrase_->text() == QLatin1String("LIVE")) accept(); });
+        connect(phrase_, &QLineEdit::textChanged, this, [this] { update_ok(); });
+        connect(reason_, &QLineEdit::textChanged, this, [this] { update_ok(); });
+        connect(buttons, &QDialogButtonBox::accepted, this, [this] { if (ok_->isEnabled()) accept(); });
         connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     }
 
@@ -415,8 +508,11 @@ public:
         }
         return l;
     }
-    /// For tests: type the phrase; tick a strategy.
+    /// What the person typed as the reason.
+    [[nodiscard]] QString reason() const { return reason_->text().trimmed(); }
+    /// For tests: type the phrase and the reason; tick a strategy.
     void type_phrase(const QString& t) { phrase_->setText(t); }
+    void type_reason(const QString& t) { reason_->setText(t); }
     void set_strategy(const QString& key, bool on, int lots = 0) {
         for (auto& w : rows_)
             if (w.caps.key == key) {
@@ -427,14 +523,22 @@ public:
     [[nodiscard]] bool can_accept() const { return ok_->isEnabled(); }
 
 private:
+    /// LIVE typed out, and a reason when a strategy is newly switched to LIVE.
+    void update_ok() {
+        bool newly = false;
+        for (const auto& w : rows_) newly = newly || (w.on->isChecked() && !w.was_on);
+        ok_->setEnabled(phrase_->text() == QLatin1String("LIVE") && (!newly || !reason_->text().trimmed().isEmpty()));
+    }
     struct StrategyRow {
         LiveStrategyCaps caps;
+        bool was_on = false;
         QCheckBox* on = nullptr;
         QSpinBox* lots = nullptr;
         QDoubleSpinBox* value = nullptr;
         QSpinBox* orders = nullptr;
         QDoubleSpinBox* loss = nullptr;
     };
+    QLineEdit* reason_ = nullptr;
     QSpinBox* lots_ = nullptr;
     QDoubleSpinBox* value_ = nullptr;
     QSpinBox* orders_ = nullptr;

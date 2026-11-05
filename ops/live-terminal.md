@@ -275,12 +275,28 @@ LIVE on:
    refuses every new request, cancels every open order the router placed and
    switches LIVE off. F11 + F12 again opens Resume, which asks for a reason.
 
-**Strategies that send their own orders.** The LIVE dialog also lists
-**Arbitrage (NSE ↔ BSE)**, **OHL threshold** and **Option arbitrage**, each
-**off unless ticked**, each with its own caps: lots a leg, rupees a leg,
-entries today, and a loss today at which it stops entering. A ticked strategy
-sends its entries **without asking**, through the same router, and only while
-all of these hold:
+**Strategies that send their own orders: a PAPER / LIVE switch for every model.**
+Every model the engine runs has its own switch, **PAPER by default**:
+- the **Mode** button at the end of its row on **Models** (PAPER, **● LIVE**,
+  *LIVE (off)* when it is set to LIVE but the Terminal's LIVE is off or halted,
+  *PAPER only* for Option arbitrage, which opens with option buys). To LIVE asks
+  for a reason and **LIVE** typed out; back to PAPER is at once;
+- the same rows in the LIVE dialog (scroll), each with its own caps: lots a leg,
+  rupees a leg, entries today, and a loss today at which it stops entering. A
+  strategy newly ticked LIVE there needs the reason too.
+
+The switches are kept in `data/live_trading.json` by the model's key
+(`live/strategy_keys.hpp`: its name, lower case, hyphenated; Arbitrage and OHL
+keep `arbitrage` and `ohl`), and stay there after LIVE goes off or expires, so
+the next day starts from them. Every change is logged with who, which way and
+why in `data/live_orders/mode_changes.jsonl` (and the message log, F10).
+
+**The Terminal's PAPER / LIVE button is the master switch.** While it says
+PAPER, nothing real is sent by anyone, whatever the strategies' switches say;
+F11 + F12 halts everything and cancels what is open.
+
+A strategy switched to LIVE sends its entries **without asking**, through the
+same router, and only while all of these hold:
 - the feed is FYERS's live market. Never the SIM, never a replay;
 - LIVE is on and not expired, nothing is halted, and its own loss today is
   above its cap.
@@ -309,7 +325,23 @@ The router takes a strategy order's own limit as its reference price instead
 of asking FYERS for a quote (about 100 ms saved per leg), and polls the queue
 every 5 ms while armed.
 
+**Never buy an option.** The router refuses every option BUY that does not
+close a short: it reads FYERS positions at that moment and lets a BUY through
+only up to the short FYERS shows in that symbol, less buys already working.
+This holds for a person's order and a strategy's exit alike. Selling an
+option to open is the only way in.
+
+**FYERS's side (SEBI retail-algo rules, from 1 April 2026).** FYERS accepts API
+orders only from an API app of the new kind (its app id ends in -200) whose
+**static IP is whitelisted** in the FYERS API dashboard; an order from any
+other IP is rejected by FYERS and shows here as REJECTED with FYERS's message.
+Whitelist the EC2 server's Elastic IP there before the first LIVE order. The
+router sets `offlineOrder` false (no AMO) and tags every order `AL…`.
+
 **Records.**
+- Every real request a strategy writes is logged with its reasoning in
+  `data/live_orders/strategy_orders.jsonl` (model, key, entry or exit, side,
+  lots, limit, why), by the same intent id as the router's journal.
 - Every real round trip is written to `data/live_orders/strategy_trades.csv`
   with FYERS's average prices, gross, expenses and net. Expenses the schedule
   cannot price are shown as *unpriced*, never as zero.
@@ -439,7 +471,7 @@ says so.
 | Cross-exchange arbitrage | on every quote: when one exchange's bid beats the other's ask (NSE vs BSE, same stock) by the two fills' expenses (each exchange's own charges) and 2 bp, sell at the dear bid and buy at the cheap ask, for the lower of the two visible quantities; the clearing corporation nets the pair (no exit, no exit expenses), so each pair is one round trip; the same stock again only after 5 s and fresh quotes on both | netted at once |
 | OHL | at 09:15:00 plus one second, on every near future: open = high → sell one lot, stop at high + 0.5 %; open = low → buy one lot, stop at low − 0.5 %; from 1.5 % in profit a stop trails 0.25 % behind the best price (`live/threshold.hpp`) | intraday, out at 15:20 |
 | Option arbitrage | on every quote: put-call parity against the same-expiry future (conversion / reversal) and box spreads, entered when the lock beats every leg's expenses and spreads in and out plus 3 bp; the order book's imbalance orders the legs (the one about to move first) and holds back a lock its book leans against; unwound when under 0.5 bp is left (`live/option_arb.hpp`) | carried (NRML) until the gap closes |
-| Desk trader | at 10:30, reads every model above, `altair_trader`'s call for this session (`data/verified/altair_trader/days.csv`) and the vol premium's latest reading (`data/verified/vol_premium/signals.csv`), and lists each on its card. A source votes only once it has committed by its own rule: a model holding NIFTY futures one way, or `altair_trader`'s call when it beats its cost and was made at the previous close (within 4 days). Options, other underlyings and relative-value models are noted, not counted; the vol premium is shown only. The majority trades one NIFTY future lot on paper; a tie or no votes, no trade (`live/desk_trader.hpp`). Refresh its inputs after each close with **Refresh daily call** on Demo Trading (ops/demo-trading.md). Paper only: it has no LIVE switch | intraday, out at 15:20 |
+| Desk trader | at 10:30, reads every model above, `altair_trader`'s call for this session (`data/verified/altair_trader/days.csv`) and the vol premium's latest reading (`data/verified/vol_premium/signals.csv`), and lists each on its card. A source votes only once it has committed by its own rule: a model holding NIFTY futures one way, or `altair_trader`'s call when it beats its cost and was made at the previous close (within 4 days). Options, other underlyings and relative-value models are noted, not counted; the vol premium is shown only. The majority trades one NIFTY future lot on paper; a tie or no votes, no trade (`live/desk_trader.hpp`). Refresh its inputs after each close with **Refresh daily call** on Demo Trading (ops/demo-trading.md). PAPER unless switched to LIVE (Mode, on Models) | intraday, out at 15:20 |
 
 **At the touch.** "The touch" is the best bid and the best ask on screen. Every
 model here buys at the ask and sells at the bid, so a round trip pays a whole

@@ -130,6 +130,16 @@ int main() {
     check(e.book().trades().size() == 2 && e.book().trades().back().qty == 100,
           "the demo trades its own 100 shares a leg (the lower visible size)");
     check(ls.size() == 2, "LIVE armed and Auto: Arbitrage on: two requests, one per leg");
+    {
+        const auto why = lines(root / "data" / "live_orders" / "strategy_orders.jsonl");
+        check(why.size() == 2 && why[0].find("\"key\":\"arbitrage\"") != std::string::npos
+                  && why[0].find("\"kind\":\"entry\"") != std::string::npos && why[0].find("\"why\":\"") != std::string::npos
+                  && why[0].find(field(ls[0], "id")) != std::string::npos,
+              "every real request is logged with its strategy, its intent id and the strategy's reasoning");
+        check(altair::live_real::strategy_key("OBI A futures BANKNIFTY") == "obi-a-futures-banknifty"
+                  && altair::live_real::strategy_key("Option arbitrage").empty(),
+              "every model has a key to switch by; option arbitrage (it buys options) has none");
+    }
     std::vector<std::tuple<std::string, std::string, std::int64_t, std::int64_t>> all;
     const auto csv = [](const std::string& line) {
         std::vector<std::string> c;
