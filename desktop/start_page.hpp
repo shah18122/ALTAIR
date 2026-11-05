@@ -181,9 +181,11 @@ public:
              QStringLiteral("strategies.demo-trading"));
         tile(QStringLiteral("\u25C7  Model Atlas"), QStringLiteral("Every model, what it is for and what it does in the real market"),
              QStringLiteral("models.atlas"));
+        tile(QStringLiteral("\u21C4  Who does what"), QStringLiteral("Every job and model: what it reads, what it writes, and whether it ran today"),
+             QStringLiteral("data.pipeline"));
         auto* tile_box = new QWidget(body);
         tile_box->setLayout(tiles);
-        tile_box->setMaximumWidth(1100);
+        tile_box->setMaximumWidth(1320);
         v->addWidget(tile_box);
         // The one switch for the whole app (desktop/simple_mode.hpp).
         auto* sw = new QHBoxLayout;

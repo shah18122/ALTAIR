@@ -73,6 +73,7 @@ qt_add_executable(altair_desktop
     daily_findings_page.hpp
     work_log_page.hpp
     server_page.hpp
+    pipeline_page.hpp
     obi_page.hpp
     workspace_pages.hpp
     workspace_layout.hpp
@@ -944,6 +945,7 @@ if(ALTAIR_BUILD_TESTS)
         saved_layouts.hpp
         work_log_page.hpp
         server_page.hpp
+        pipeline_page.hpp
         trade_reason.hpp
         demo_trading_page.hpp
         strategy_record.hpp)

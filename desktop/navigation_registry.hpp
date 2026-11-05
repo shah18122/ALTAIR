@@ -9,31 +9,36 @@ struct NavigationGroup { const char* id; const char* label; const char* short_la
 // The group ID is stable (saved state uses it); its label, glyph and place in
 // the sidebar are presentation.
 inline constexpr std::array<NavigationGroup, 7> kNavigationGroups{{
-    {"market", "Trading", "TRD", "\u25B2"},
-    {"options", "Options & Volatility", "OPT", "\u223F"},
-    {"strategies", "Strategies", "STR", "\u265E"},
-    {"models", "Models & Research", "MDL", "\u25C6"},
+    {"market", "Live Market", "LIV", "\u25B2"},
+    {"trades", "Trades & Logs", "LOG", "\u2261"},
+    {"strategies", "Strategies & Tests", "STR", "\u265E"},
+    {"models", "Models & Signals", "MDL", "\u25C6"},
     {"risk", "Risk & Portfolio", "RSK", "\u25CE"},
-    {"accounts", "Brokers & Execution", "BRK", "\u21C4"},
-    {"system", "System & Audit", "SYS", "\u2699"},
+    {"data", "Data & Recorder", "DAT", "\u21C4"},
+    {"system", "System & Broker", "SYS", "\u2699"},
 }};
-/// The order groups appear in: trading and the brokers that feed it first.
-inline constexpr std::array<int, 7> kNavigationGroupOrder{{0, 5, 1, 2, 3, 4, 6}};
-inline constexpr std::array<NavigationPage, 44> kNavigationPages{{
+/// Group IDs saved by builds before 2026-11-05; read back as nothing rather
+/// than as a corrupt preference (navigation_state.hpp drops them).
+inline constexpr std::array<const char*, 2> kRetiredNavigationGroups{{"options", "accounts"}};
+/// The order groups appear in, the order of a trading day: the live market,
+/// what the models say, the strategies, the trades they made, risk, the data
+/// behind them, and the system and broker underneath.
+inline constexpr std::array<int, 7> kNavigationGroupOrder{{0, 3, 2, 1, 4, 5, 6}};
+inline constexpr std::array<NavigationPage, 45> kNavigationPages{{
     {"market.grid", "Live Grid", 0},
     {"market.chart", "Chart", 0},
     {"market.terminal", "Terminal", 0},
     {"models.overview", "Models", 3},
-    {"system.data-flow", "Data Flow", 6},
-    {"accounts.account", "Broker Account", 5},
+    {"system.data-flow", "Data Flow", 5},
+    {"accounts.account", "Broker Account", 6},
     {"risk.cost", "Cost", 4},
-    {"options.analytics", "Analytics", 1},
+    {"options.analytics", "Analytics", 3},
     {"strategies.pair-trading", "Pair Trading", 2},
     {"models.dcf", "Value — DCF", 3},
     {"models.aggregator", "Aggregator", 3},
-    {"system.audit", "Audit Trail", 6},
-    {"accounts.execution", "Execution", 5},
-    {"options.volatility", "Volatility", 1},
+    {"system.audit", "Audit Trail", 1},
+    {"accounts.execution", "Execution", 1},
+    {"options.volatility", "Volatility", 3},
     {"risk.var", "Risk — VaR", 4},
     {"risk.portfolio", "Portfolio", 4},
     {"models.trees", "ML — Trees", 3},
@@ -41,43 +46,51 @@ inline constexpr std::array<NavigationPage, 44> kNavigationPages{{
     {"models.forecast", "Forecast", 3},
     {"strategies.overview", "Strategies", 2},
     {"strategies.overnight", "Overnight Gap", 2},
-    {"options.chain", "Options", 1},
+    {"options.chain", "Options", 0},
     {"strategies.basis", "Basis", 2},
     {"system.flagging", "Flagging", 6},
     {"market.microstructure", "Microstructure", 0},
     {"risk.sizing", "Sizing & Limits", 4},
     {"strategies.cointegration", "Cointegration", 2},
     {"models.memory", "Memory", 3},
-    {"accounts.connections", "Link Broker", 5},
+    {"accounts.connections", "Link Broker", 6},
     {"models.neural", "Neural", 3},
     {"models.features", "Features", 3},
     {"strategies.parity-calendar", "Arbitrage", 2},
     {"models.atlas", "Model Atlas", 3},
-    {"accounts.fyers", "FYERS Primary", 5},
-    {"accounts.brokers", "Brokers", 5},
+    {"accounts.fyers", "FYERS Primary", 6},
+    {"accounts.brokers", "Brokers", 6},
     {"strategies.demo-trading", "Demo Trading", 2},
     {"strategies.threshold", "Threshold", 2},
     {"system.about", "About", 6},
     {"market.start", "Start here", 0},
     {"strategies.backtests", "Backtests", 2},
     {"models.findings", "Daily findings", 3},
-    {"system.work-log", "Work log", 6},
+    {"system.work-log", "Work log", 1},
     {"market.order-book-imbalance", "Order Book Imbalance", 0},
     {"system.server", "Server", 6},
+    {"data.pipeline", "Who Does What", 5},
 }};
-// Traversal order is NOT a legacy page index.
-// Within a group: what is used most comes first (Backtests: every trade log;
-// then Demo Trading, Threshold). Daily findings heads Models & Research and
-// Work log heads System & Audit: the day's results, and all the work done.
-// Start here (ALTAIR in plain words, desktop/start_page.hpp) heads the list.
-// Order Book Imbalance (desktop/obi_page.hpp) follows the Terminal it reads from.
-// Server (desktop/server_page.hpp: jobs, latency, Install or update) follows Work log.
+// Traversal order is NOT a legacy page index. Groups by workflow (2026-11-05):
+//   Live Market         Start here, Terminal, Order Book Imbalance, Options
+//   Models & Signals    Daily findings, Model Atlas, Models
+//   Strategies & Tests  Backtests (every trade log) first, then the strategies
+//   Trades & Logs       Execution, Work log, Audit Trail
+//   Risk & Portfolio    Portfolio, VaR, Cost
+//   Data & Recorder     Who Does What (desktop/pipeline_page.hpp), Data Flow
+//   System & Broker     Brokers (login), Server (jobs, latency), About
 // The model pages (DCF, Aggregator, ML Trees, Regimes, Forecast, Memory,
 // Neural, Features, Volatility, Analytics, Microstructure, Cointegration,
 // Sizing, Flagging) are not listed: they open from the Model Atlas, which has
 // the way back. Their routes stay so saved links and the Atlas still work.
-inline constexpr std::array<int, 25> kNavigationOrder{{
-    38, 2, 42, 34, 12, 21, 39, 35, 36, 31, 19, 8, 22, 20, 40, 32, 3, 15, 14, 6, 41, 43, 4, 11, 37
+inline constexpr std::array<int, 26> kNavigationOrder{{
+    38, 2, 42, 21,
+    40, 32, 3,
+    39, 35, 36, 31, 19, 8, 22, 20,
+    12, 41, 11,
+    15, 14, 6,
+    44, 4,
+    34, 43, 37
 }};
 /// A page the sidebar lists (the rest open from the Model Atlas or search).
 [[nodiscard]] constexpr bool nav_listed(int index) noexcept {

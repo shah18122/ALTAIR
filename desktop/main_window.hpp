@@ -39,6 +39,7 @@
 #include "daily_findings_page.hpp"
 #include "work_log_page.hpp"
 #include "server_page.hpp"
+#include "pipeline_page.hpp"
 #include "command_palette.hpp"
 #include "saved_layouts.hpp"
 #include "chart/chart_widget.hpp"
@@ -99,6 +100,7 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QSplitter>
+#include <QProcess>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QTableView>
@@ -1759,6 +1761,8 @@ private:
         pages_->addWidget(new OrderBookImbalancePage(terminal_->stream(), source_root()));
         // 43: the Linux server: scheduled jobs, latency tuning, Install or update (desktop/server_page.hpp).
         pages_->addWidget(new ServerPage(source_root()));
+        // 44: who does what -- every job and model, what it reads and writes (desktop/pipeline_page.hpp).
+        pages_->addWidget(new PipelinePage(source_root()));
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
@@ -1823,6 +1827,27 @@ private:
         connect(broker_status_, &QLabel::linkActivated, this, [this] {
             show_page(QStringLiteral("accounts.brokers"));
         });
+        // Today's token, the recorder and the models engine: the three things
+        // that decide whether anything is happening (desktop/pipeline_page.hpp).
+        // Each is a link: token -> Brokers, recorder -> Server, models -> Who Does What.
+        const auto pill_link = [this](QLabel*& label, const char* name, const QString& page) {
+            label = new QLabel;
+            label->setObjectName(QString::fromLatin1(name));
+            label->setTextFormat(Qt::RichText);
+            label->setCursor(Qt::PointingHandCursor);
+            connect(label, &QLabel::linkActivated, this, [this, page] { show_page(page); });
+        };
+        pill_link(token_status_, "tokenStatus", QStringLiteral("accounts.brokers"));
+        pill_link(recorder_status_, "recorderStatus", QStringLiteral("system.server"));
+        pill_link(engine_status_, "engineStatus", QStringLiteral("data.pipeline"));
+        recorder_probe_ = new QProcess(this);
+        connect(recorder_probe_, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
+            recorder_state_ = QString::fromLatin1(recorder_probe_->readAllStandardOutput()).trimmed();
+            refresh_pipeline_pills();
+        });
+        connect(recorder_probe_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
+            if (e == QProcess::FailedToStart) { recorder_state_.clear(); refresh_pipeline_pills(); }
+        });
         who_ = new QLabel;
         phase_ = new QLabel;
         engine_clock_ = new QLabel;
@@ -1832,6 +1857,9 @@ private:
         // talk to the broker"): independent questions, so two separate items.
         statusBar()->addWidget(pill_);
         statusBar()->addWidget(broker_status_);
+        statusBar()->addWidget(token_status_);
+        statusBar()->addWidget(recorder_status_);
+        statusBar()->addWidget(engine_status_);
         halt_badge_ = new QLabel;
         halt_badge_->setObjectName(QStringLiteral("haltBadge"));
         set_role(halt_badge_, QStringLiteral("pill-halt"));
@@ -1905,6 +1933,29 @@ private:
                                : fyers.detail));
     }
 
+    void refresh_pipeline_pills() {
+        if (token_status_ == nullptr) return;
+        const auto p = pipeline_pills(source_root(), QDateTime::currentDateTimeUtc());
+        const auto paint = [](QLabel* l, const QString& href, const QString& colour, const QString& text, const QString& tip) {
+            const qsizetype dot = text.indexOf(QChar(0x25CF));
+            l->setText(QStringLiteral("<a href='%1' style='color:#AFC0C9;text-decoration:none'><span style='color:%2'>●</span>%3</a>")
+                .arg(href, colour, text.mid(dot + 1).toHtmlEscaped()));
+            l->setToolTip(tip);
+        };
+        paint(token_status_, QStringLiteral("token"), token_pill_colour(p.token), token_pill_text(p.token),
+              QStringLiteral("data/fyers_session.json, written by the 08:30 auto-login (backstop 08:40). "
+                             "A FYERS token lasts one trading day.\n\nClick to open Brokers."));
+        paint(recorder_status_, QStringLiteral("recorder"), recorder_pill_colour(recorder_state_, p.feed),
+              recorder_pill_text(recorder_state_, p.feed),
+              QStringLiteral("altair-recorder.service (08:50 to 15:45) and the feed's data/live/feed_status.json.\n\n"
+                             "Click to open Server."));
+        paint(engine_status_, QStringLiteral("engine"),
+              p.engine.health == StepHealth::Fresh ? health_colour(StepHealth::Fresh) : QStringLiteral("#8B949E"),
+              engine_pill_text(p.engine),
+              QStringLiteral("altair_live_engine's data/live/engine_state.json. The models run only while this desktop "
+                             "is open.\n\nClick to see who does what."));
+    }
+
     void refresh_status() {
         // Rule 10's one live field. Pushed IN rather than the panel reaching
         // for the replayer: the audit page reports what the engine did.
@@ -1916,6 +1967,11 @@ private:
         if (since_broker_-- <= 0) {
             since_broker_ = 10;
             refresh_broker_pill();
+            // systemctl answers in milliseconds, asynchronously; never twice at once.
+            if (recorder_probe_ != nullptr && recorder_probe_->state() == QProcess::NotRunning)
+                recorder_probe_->start(QStringLiteral("systemctl"),
+                                       {QStringLiteral("is-active"), QStringLiteral("altair-recorder.service")});
+            refresh_pipeline_pills();
         }
         if (halt_badge_ != nullptr && terminal_ != nullptr) halt_badge_->setVisible(terminal_->halted());
         refresh_mode();
@@ -2010,6 +2066,11 @@ private:
     QLabel* broker_status_ = nullptr;
     int since_broker_ = 0;
     QLabel* who_ = nullptr;
+    QLabel* token_status_ = nullptr;
+    QLabel* recorder_status_ = nullptr;
+    QLabel* engine_status_ = nullptr;
+    QProcess* recorder_probe_ = nullptr;
+    QString recorder_state_;
     QLabel* phase_ = nullptr;
     QLabel* engine_clock_ = nullptr;
     QLabel* wall_clock_ = nullptr;

@@ -41,7 +41,13 @@ struct NavigationState {
     const QString page = settings.value(QStringLiteral("page")).toString();
     const auto raw_expanded = settings.value(QStringLiteral("expanded"));
     const auto raw_favourites = settings.value(QStringLiteral("favourites"));
-    const auto expanded = raw_expanded.toStringList();
+    // A group retired by the 2026-11-05 regroup is dropped, not treated as a
+    // corrupt preference: everything else the user saved is kept.
+    auto expanded = raw_expanded.toStringList();
+    expanded.removeIf([](const QString& id) {
+        for (const char* old : kRetiredNavigationGroups) if (id == QLatin1String(old)) return true;
+        return false;
+    });
     auto favourites = raw_favourites.toStringList();
     // QSettings writes an EMPTY list as @Invalid() and reads it back as an
     // invalid QVariant. A present key holding nothing is an empty list, not

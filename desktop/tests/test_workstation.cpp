@@ -6,6 +6,7 @@
 #include "../saved_layouts.hpp"
 #include "../work_log_page.hpp"
 #include "../server_page.hpp"
+#include "../pipeline_page.hpp"
 
 #include <QApplication>
 #include <QTemporaryDir>
@@ -141,6 +142,46 @@ int main(int argc, char** argv) {
     remove_layout(s, "Evening");
     check(load_layouts(s).size() == 1, "a saved layout can be deleted");
     check(builtin_layouts().size() == 3 && builtin_layouts()[0].page == "models.findings", "Morning, Trading and Review are built in");
+
+    // ---- Who does what (desktop/pipeline_page.hpp) ------------------------------
+    {
+        // 2026-11-05 10:00 IST = 04:30 UTC. 20:00 UTC is already the next IST day.
+        const QDateTime now(QDate(2026, 11, 5), QTime(4, 30), QTimeZone::UTC);
+        check(ist_today(now) == QDate(2026, 11, 5) && ist_today(QDateTime(QDate(2026, 11, 4), QTime(20, 0), QTimeZone::UTC)) == QDate(2026, 11, 5),
+              "the trading day is IST's date, not the server's UTC date");
+        const QString pr = root + "/pipe";
+        check(evidence_of(pr, "data/fyers_session.json", 0, now).health == StepHealth::Never, "no token file: never");
+        write(pr + "/data/fyers_session.json", "{}");
+        write(pr + "/data/live/feed_status.json", "{}");
+        QFile tok(pr + "/data/fyers_session.json");
+        tok.open(QIODevice::ReadWrite);
+        tok.setFileTime(QDateTime(QDate(2026, 11, 5), QTime(3, 1), QTimeZone::UTC), QFileDevice::FileModificationTime);
+        tok.close();
+        QFile feed(pr + "/data/live/feed_status.json");
+        feed.open(QIODevice::ReadWrite);
+        feed.setFileTime(now.addSecs(-10), QFileDevice::FileModificationTime);
+        feed.close();
+        const auto p = pipeline_pills(pr, now);
+        check(p.token.health == StepHealth::Today && token_pill_text(p.token).contains("today 08:31"),
+              "a token written at 08:31 IST today reads as today's");
+        check(evidence_of(pr, "data/fyers_session.json", 0, now.addDays(1)).health == StepHealth::NotToday
+              && token_pill_text(evidence_of(pr, "data/fyers_session.json", 0, now.addDays(1))).contains("old"),
+              "yesterday's token reads as old");
+        check(p.feed.health == StepHealth::Fresh && p.engine.health == StepHealth::Never, "a feed written 10 s ago is running; no engine file");
+        check(recorder_pill_text("active", p.feed).contains("recording") && recorder_pill_text("inactive", p.feed).contains("desktop feed on")
+              && recorder_pill_text("", Evidence{}).contains("unknown") && engine_pill_text(p.engine).contains("off"),
+              "the recorder pill combines systemd's state with the feed's file");
+        QDir().mkpath(pr + "/data/store/tapes");
+        check(evidence_of(pr, "data/store/tapes/{day}", 120, now).health == StepHealth::NotToday,
+              "a {day} folder not made yet, under a folder that exists, is not today");
+        PipelinePage page(pr);
+        auto* steps = page.findChild<QTableWidget*>("pipelineSteps");
+        auto* models = page.findChild<QTableWidget*>("pipelineModels");
+        check(steps && models && steps->rowCount() == static_cast<int>(kPipelineSteps.size())
+              && models->rowCount() == static_cast<int>(kPipelineModels.size())
+              && !steps->item(1, 1)->text().isEmpty(),
+              "the page lists every step with a status and every model");
+    }
 
     std::printf("%s\n", failures == 0 ? "all workstation checks passed" : "workstation checks did not pass");
     return failures == 0 ? 0 : 1;
