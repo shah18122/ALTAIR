@@ -75,3 +75,23 @@ Never paste these into a chat, an issue or a commit.
   sees half a token.
 
 Exit codes: 0 ready, 2 credentials missing, 3 refused, 4 network, 5 write failed.
+
+## Browser login (the redirect URL)
+
+The daily login above is fully server-side: TOTP, PIN, `auth_code`, access
+token, profile check, saved. No redirect is ever visited.
+
+For a login from a browser, `altair-fyers-callback.service`
+(`broker/tools/fyers_callback_server.py`) is the FYERS app's redirect URL. It
+listens on `127.0.0.1:80` only; `sudo ops/linux/fyers_tunnel.sh` installs
+cloudflared with the Cloudflare tunnel's token, so
+`https://altair.thesmitshah.com/fyers/*` reaches it over an outbound connection
+(SSH on 22/443 and DCV are untouched).
+
+* Open `https://altair.thesmitshah.com/fyers/login`, log in to FYERS, and the
+  redirect lands on a page that says **Connected to FYERS** (or exactly what
+  failed). The token is exchanged, checked and saved to `data/fyers_session.json`;
+  the recorder and the desktop pick it up by themselves.
+* Only a token for the configured FYERS user id is saved.
+* `POST /fyers/callback` (order webhooks) is passed to `altair_fyers_webhook`
+  on 127.0.0.1:8787 when it runs (`ops/fyers-webhook.md`).
