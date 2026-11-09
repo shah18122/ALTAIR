@@ -190,10 +190,10 @@ struct PipelinePills {
 
 /// The token pill's text: the token is good for one trading day.
 [[nodiscard]] inline QString token_pill_text(const Evidence& e) {
-    if (e.health == StepHealth::Never) return QStringLiteral("● Token: none (run the FYERS login)");
+    if (e.health == StepHealth::Never) return QStringLiteral("● No token");
     if (e.health == StepHealth::NotToday)
-        return QStringLiteral("● Token: old (%1), today's login has not run").arg(e.when.toString(QStringLiteral("dd MMM")));
-    return QStringLiteral("● Token: today %1").arg(e.when.toUTC().addSecs(19800).toString(QStringLiteral("HH:mm")));
+        return QStringLiteral("● Token old (%1)").arg(e.when.toString(QStringLiteral("dd MMM")));
+    return QStringLiteral("● Token %1").arg(e.when.toUTC().addSecs(19800).toString(QStringLiteral("HH:mm")));
 }
 [[nodiscard]] inline QString token_pill_colour(const Evidence& e) {
     return e.health >= StepHealth::Today ? health_colour(StepHealth::Fresh)
@@ -204,10 +204,10 @@ struct PipelinePills {
 [[nodiscard]] inline QString recorder_pill_text(const QString& systemd_state, const Evidence& feed) {
     const bool streaming = feed.health == StepHealth::Fresh;
     if (systemd_state == QLatin1String("active"))
-        return streaming ? QStringLiteral("● Recorder: recording") : QStringLiteral("● Recorder: running, feed quiet");
-    if (streaming) return QStringLiteral("● Recorder: off · desktop feed on");
-    if (systemd_state.isEmpty()) return QStringLiteral("● Recorder: unknown");
-    return QStringLiteral("● Recorder: %1").arg(systemd_state == QLatin1String("inactive") ? QStringLiteral("idle") : systemd_state);
+        return streaming ? QStringLiteral("● Recording") : QStringLiteral("● Recorder: feed quiet");
+    if (streaming) return QStringLiteral("● Recorder off");
+    if (systemd_state.isEmpty()) return QStringLiteral("● Recorder ?");
+    return QStringLiteral("● Recorder %1").arg(systemd_state == QLatin1String("inactive") ? QStringLiteral("idle") : systemd_state);
 }
 [[nodiscard]] inline QString recorder_pill_colour(const QString& systemd_state, const Evidence& feed) {
     const bool streaming = feed.health == StepHealth::Fresh;
@@ -217,8 +217,8 @@ struct PipelinePills {
 }
 
 [[nodiscard]] inline QString engine_pill_text(const Evidence& e) {
-    return e.health == StepHealth::Fresh ? QStringLiteral("● Models: running")
-                                         : QStringLiteral("● Models: off (Terminal → Models)");
+    return e.health == StepHealth::Fresh ? QStringLiteral("● Models on")
+                                         : QStringLiteral("● Models off");
 }
 
 class PipelinePage final : public QWidget {

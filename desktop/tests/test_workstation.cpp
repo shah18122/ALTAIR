@@ -7,6 +7,7 @@
 #include "../work_log_page.hpp"
 #include "../server_page.hpp"
 #include "../pipeline_page.hpp"
+#include "../help_text.hpp"
 
 #include <QApplication>
 #include <QTemporaryDir>
@@ -162,14 +163,14 @@ int main(int argc, char** argv) {
         feed.setFileTime(now.addSecs(-10), QFileDevice::FileModificationTime);
         feed.close();
         const auto p = pipeline_pills(pr, now);
-        check(p.token.health == StepHealth::Today && token_pill_text(p.token).contains("today 08:31"),
+        check(p.token.health == StepHealth::Today && token_pill_text(p.token).contains("Token 08:31"),
               "a token written at 08:31 IST today reads as today's");
         check(evidence_of(pr, "data/fyers_session.json", 0, now.addDays(1)).health == StepHealth::NotToday
               && token_pill_text(evidence_of(pr, "data/fyers_session.json", 0, now.addDays(1))).contains("old"),
               "yesterday's token reads as old");
         check(p.feed.health == StepHealth::Fresh && p.engine.health == StepHealth::Never, "a feed written 10 s ago is running; no engine file");
-        check(recorder_pill_text("active", p.feed).contains("recording") && recorder_pill_text("inactive", p.feed).contains("desktop feed on")
-              && recorder_pill_text("", Evidence{}).contains("unknown") && engine_pill_text(p.engine).contains("off"),
+        check(recorder_pill_text("active", p.feed).contains("Recording") && recorder_pill_text("inactive", p.feed).contains("Recorder off")
+              && recorder_pill_text("", Evidence{}).contains("?") && engine_pill_text(p.engine).contains("off"),
               "the recorder pill combines systemd's state with the feed's file");
         QDir().mkpath(pr + "/data/store/tapes");
         check(evidence_of(pr, "data/store/tapes/{day}", 120, now).health == StepHealth::NotToday,
@@ -181,6 +182,32 @@ int main(int argc, char** argv) {
               && models->rowCount() == static_cast<int>(kPipelineModels.size())
               && !steps->item(1, 1)->text().isEmpty(),
               "the page lists every step with a status and every model");
+    }
+
+    // ---- Help text (desktop/help_text.hpp) ---------------------------------------
+    {
+        QWidget page;
+        auto* v = new QVBoxLayout(&page);
+        const QString prose = QStringLiteral("This page explains at length what it is for, where its numbers come from, "
+                                             "and how a reader should use each of the controls below it.");
+        auto* note = new QLabel(prose); note->setWordWrap(true); v->addWidget(note);
+        auto* titled = new QLabel(QStringLiteral("<h3>Threshold strategies</h3>") + prose); titled->setWordWrap(true); v->addWidget(titled);
+        auto* status = new QLabel(QStringLiteral("● ") + prose); status->setWordWrap(true); v->addWidget(status);
+        auto* table = new QLabel(QStringLiteral("<table><tr><td>") + prose + QStringLiteral("</td></tr></table>")); table->setWordWrap(true); v->addWidget(table);
+        auto* mono = new QLabel(prose); mono->setWordWrap(true); mono->setStyleSheet(QStringLiteral("font-family:monospace")); v->addWidget(mono);
+        auto* shortl = new QLabel(QStringLiteral("Short line")); shortl->setWordWrap(true); v->addWidget(shortl);
+        auto* warn = new QLabel(prose); warn->setWordWrap(true); set_role(warn, QStringLiteral("warn")); v->addWidget(warn);
+        help_text::sweep(&page);
+        check(note->isHidden() && !status->isHidden() && !table->isHidden() && !mono->isHidden() && !shortl->isHidden() && !warn->isHidden(),
+              "help paragraphs hide; status lines, tables, reports, short lines and warnings stay");
+        check(!titled->isHidden() && titled->text() == QStringLiteral("<h3>Threshold strategies</h3>"),
+              "a paragraph under a heading keeps its heading");
+        check(help_text::collected(&page).contains(QStringLiteral("explains at length")), "Help shows what was hidden");
+        help_text::sweep(&page);
+        check(note->isHidden(), "a second sweep changes nothing");
+        note->setText(QStringLiteral("Feed stopped at 10:02 -- now a status the page is saying"));
+        help_text::sweep(&page);
+        check(!note->isHidden(), "a hidden label the page reuses for a status comes back");
     }
 
     std::printf("%s\n", failures == 0 ? "all workstation checks passed" : "workstation checks did not pass");

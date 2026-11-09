@@ -40,6 +40,7 @@
 #include "work_log_page.hpp"
 #include "server_page.hpp"
 #include "pipeline_page.hpp"
+#include "help_text.hpp"
 #include "command_palette.hpp"
 #include "saved_layouts.hpp"
 #include "chart/chart_widget.hpp"
@@ -109,6 +110,8 @@
 #include <QShortcut>
 #include <QToolBar>
 #include <QToolButton>
+#include <QTextBrowser>
+#include <QDialog>
 #include <QInputDialog>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -191,6 +194,15 @@ public:
         build_pages();
         build_status();
         build_workspace_controls();
+
+        // Pages show data, not paragraphs (desktop/help_text.hpp): the page on
+        // screen is swept now, on every page change and every second (tabs
+        // and panels build their labels late), and "? Help" shows what was hidden.
+        help_sweep_.setInterval(1000);
+        connect(&help_sweep_, &QTimer::timeout, this, [this] { help_text::sweep(pages_->currentWidget()); });
+        connect(pages_, &QStackedWidget::currentChanged, this, [this] { help_text::sweep(pages_->currentWidget()); });
+        help_text::sweep(pages_->currentWidget());
+        help_sweep_.start();
 
         // The shell follows the LIVE stream the Terminal holds, not a replay.
         // The replay tape still exists for --prime and the chart's history,
@@ -1881,6 +1893,12 @@ private:
         connect(layouts, &QMenu::aboutToShow, this, [this, layouts] { fill_layout_menu(layouts); });
         layout_btn_->setMenu(layouts);
         statusBar()->addPermanentWidget(layout_btn_);
+        auto* help = new QToolButton;
+        help->setObjectName(QStringLiteral("pageHelp"));
+        help->setText(QStringLiteral("? Help"));
+        help->setToolTip(QStringLiteral("What this page is and how it works"));
+        connect(help, &QToolButton::clicked, this, [this] { show_page_help(); });
+        statusBar()->addPermanentWidget(help);
         statusBar()->addPermanentWidget(who_);
         statusBar()->addPermanentWidget(phase_);
         statusBar()->addPermanentWidget(engine_clock_);
@@ -1931,6 +1949,23 @@ private:
         broker_status_->setToolTip(QStringLiteral("FYERS: %1\n\nClick to open Brokers.")
             .arg(fyers_service ? QStringLiteral("fresh service evidence from a verified read-only call.")
                                : fyers.detail));
+    }
+
+    void show_page_help() {
+        help_text::sweep(pages_->currentWidget());
+        const QString body = help_text::collected(pages_->currentWidget());
+        QDialog dlg(this);
+        dlg.setWindowTitle(QStringLiteral("Help"));
+        dlg.resize(720, 520);
+        auto* v = new QVBoxLayout(&dlg);
+        auto* text = new QTextBrowser(&dlg);
+        text->setOpenExternalLinks(false);
+        text->setHtml(body.isEmpty() ? QStringLiteral("Nothing more to explain on this page.") : body);
+        v->addWidget(text);
+        auto* close = new QPushButton(QStringLiteral("Close"), &dlg);
+        connect(close, &QPushButton::clicked, &dlg, &QDialog::accept);
+        v->addWidget(close, 0, Qt::AlignRight);
+        dlg.exec();
     }
 
     void refresh_pipeline_pills() {
@@ -2070,6 +2105,7 @@ private:
     QLabel* recorder_status_ = nullptr;
     QLabel* engine_status_ = nullptr;
     QProcess* recorder_probe_ = nullptr;
+    QTimer help_sweep_;
     QString recorder_state_;
     QLabel* phase_ = nullptr;
     QLabel* engine_clock_ = nullptr;

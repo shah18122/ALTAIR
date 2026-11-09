@@ -61,12 +61,11 @@ namespace start_detail {
     qint64 feed_age = 0;
     const QJsonObject feed = read_json(root + QStringLiteral("/data/live/feed_status.json"), &feed_age);
     if (feed.isEmpty() || feed_age > 120) {
-        lines << dot("#8A93A2", QStringLiteral("<b>Prices: not running.</b> The live feed starts by itself on weekdays from "
-                                               "09:00 IST once FYERS is logged in (Brokers page)."));
+        lines << dot("#8A93A2", QStringLiteral("<b>Prices: not running</b>"));
     } else {
         const QString src = feed.value(QStringLiteral("source")).toString().toUpper();
         lines << dot(src == QLatin1String("SIM") ? "#F4C95D" : "#7FD17F",
-                     src == QLatin1String("SIM") ? QStringLiteral("<b>Prices: SIMULATION</b> -- a replayed or made-up market, not today's")
+                     src == QLatin1String("SIM") ? QStringLiteral("<b>Prices: SIMULATION</b> (not today's market)")
                                                  : QStringLiteral("<b>Prices: live from %1</b> (%2)").arg(src.toHtmlEscaped(),
                                                        feed.value(QStringLiteral("state")).toString().toHtmlEscaped()));
     }
@@ -74,18 +73,15 @@ namespace start_detail {
     // Fail-safe, as everywhere: a halt file that cannot be read counts as a halt.
     const bool halted = read_kill_request(root + QStringLiteral("/data/kill_request.json")).halted();
     if (halted)
-        lines << dot("#F07A6A", QStringLiteral("<b>HALTED</b> (F11+F12). Nothing is sent; press F11+F12 again to resume, with a reason."));
+        lines << dot("#F07A6A", QStringLiteral("<b>HALTED</b> · F11+F12 to resume"));
     else if (arm.armed)
-        lines << dot("#F07A6A", QStringLiteral("<b>REAL ORDERS ARE ON</b> (LIVE armed by %1). Orders you place go to FYERS, within "
-                                               "the limits you set. F11+F12 stops everything.").arg(arm.by.toHtmlEscaped()));
+        lines << dot("#F07A6A", QStringLiteral("<b>REAL ORDERS ARE ON</b> (armed by %1) · F11+F12 stops").arg(arm.by.toHtmlEscaped()));
     else
-        lines << dot("#7FD17F", QStringLiteral("<b>Paper only.</b> Every order is a demo order; nothing reaches FYERS until you "
-                                               "switch LIVE on."));
+        lines << dot("#7FD17F", QStringLiteral("<b>Paper only</b>"));
     qint64 eng_age = 0;
     const QJsonObject eng = read_json(root + QStringLiteral("/data/live/engine_state.json"), &eng_age);
     if (eng.isEmpty() || eng_age > 30) {
-        lines << dot("#8A93A2", QStringLiteral("<b>Models: not running.</b> They start by themselves once prices stream, and "
-                                               "trade on paper only."));
+        lines << dot("#8A93A2", QStringLiteral("<b>Models: not running</b>"));
     } else {
         int in_pos = 0, abstain = 0;
         const QJsonArray ms = eng.value(QStringLiteral("models")).toArray();
@@ -95,8 +91,7 @@ namespace start_detail {
             if (s == QLatin1String("abstaining")) ++abstain;
         }
         const QString halt = eng.value(QStringLiteral("halt")).toString();
-        lines << dot("#7FD17F", QStringLiteral("<b>Models: %1 running on paper</b> -- %2 holding a position, %3 sitting out "
-                                               "(they sit out when they are not sure)%4.")
+        lines << dot("#7FD17F", QStringLiteral("<b>Models: %1 running on paper</b> · %2 holding a position · %3 sitting out%4")
                                     .arg(ms.size()).arg(in_pos).arg(abstain)
                                     .arg(halt.isEmpty() ? QString() : QStringLiteral("; entries stopped: ") + halt.toHtmlEscaped()));
     }
@@ -151,7 +146,7 @@ public:
             label->setTextFormat(Qt::RichText);
             label->setWordWrap(true);
             label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-            label->setMaximumWidth(1100);
+            label->setMaximumWidth(1320);
             v->addWidget(label);
         };
         // Quick start: the places a trading day begins, one click each.
@@ -189,24 +184,10 @@ public:
         v->addWidget(tile_box);
         // The one switch for the whole app (desktop/simple_mode.hpp).
         auto* sw = new QHBoxLayout;
-        auto* sw_text = new QLabel(QStringLiteral(
-            "<span style='color:#8FA3AE'><b>Simple view</b> shows the columns and tabs you read every minute, in plain "
-            "words; <b>Advanced view</b> shows everything. The same switch sits on the Terminal's top bar and on Demo "
-            "Trading.</span>"), body);
-        sw_text->setTextFormat(Qt::RichText);
-        sw_text->setWordWrap(true);
         sw->addWidget(simple_mode::button(body));
-        sw->addWidget(sw_text, 1);
+        sw->addStretch();
         v->addLayout(sw);
-        QLabel* term = nullptr;
-        QLabel* tests = nullptr;
         card(QStringLiteral("RIGHT NOW"), now_, start_now_html(root_, QDateTime::currentSecsSinceEpoch()));
-        card(QStringLiteral("THE TERMINAL, IN FIVE THINGS"), term, start_terminal_html());
-        card(QStringLiteral("WHAT THE TESTS FOUND"), tests,
-             start_verdicts_html(start_verdicts())
-                 + QStringLiteral("<br><span style='color:#8FA3AE'>Green: works. Amber: real but not proven. Red: does not "
-                                  "work, or not worth it. Every number is after expenses, from the document named under "
-                                  "it. Ideas for what to test next: docs/research/research-ideas.md.</span>"));
         v->addStretch();
         scroll->setWidget(body);
         outer->addWidget(scroll);
