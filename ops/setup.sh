@@ -201,7 +201,8 @@ if [ "$dcv" = 1 ]; then
         grep -q '^WaylandEnable=false' /etc/gdm3/custom.conf \
             || sed -i '/^\[daemon\]/a WaylandEnable=false' /etc/gdm3/custom.conf
     fi
-    # One virtual session for the ALTAIR user, created at every boot.
+    # One virtual session for the ALTAIR user, created at every boot -- retried and
+    # checked by ops/linux/dcv_session.sh (a slow Xdcv once left it unjoinable).
     printf '%s\n' \
         "[Unit]" \
         "Description=ALTAIR: the DCV desktop session for $user" \
@@ -211,8 +212,9 @@ if [ "$dcv" = 1 ]; then
         "[Service]" \
         "Type=oneshot" \
         "RemainAfterExit=yes" \
+        "TimeoutStartSec=900" \
         "ExecStartPre=/bin/sleep 5" \
-        "ExecStart=/usr/bin/dcv create-session --type=virtual --owner $user --name ALTAIR altair" \
+        "ExecStart=$root/ops/linux/dcv_session.sh $user" \
         "ExecStop=/usr/bin/dcv close-session altair" \
         "" \
         "[Install]" \
