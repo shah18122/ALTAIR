@@ -1,6 +1,8 @@
 [Unit]
 Description=ALTAIR: REST snapshot of every NIFTY/BANKNIFTY strike (%i)
 After=network-online.target time-sync.target
+# At boot every caught-up timer fires at once: wait for the day's FYERS login first.
+After=altair-fyers-login.service
 Wants=network-online.target
 
 [Service]

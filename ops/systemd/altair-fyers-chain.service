@@ -1,6 +1,8 @@
 [Unit]
 Description=ALTAIR: save the NIFTY/BANKNIFTY chains from FYERS history
 After=network-online.target time-sync.target
+# At boot every caught-up timer fires at once: wait for the day's FYERS login first.
+After=altair-fyers-login.service
 Wants=network-online.target
 
 [Service]
