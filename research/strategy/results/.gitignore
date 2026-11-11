@@ -1,2 +1,3 @@
-# Trade-level files carry Drive prices; keep them local (repo is public).
+# Trade-level files carry Drive or FYERS prices; keep them local (repo is public).
 *_trades.csv
+option_sessions.csv

@@ -99,3 +99,55 @@ and the forward test that can validate it are in [README.md](README.md#s1).
 It cannot be backtested on the Drive data (no options) or on FYERS history
 (FYERS serves no expired contracts), so its test is forward, on the chains
 the recorder saves each day.
+
+## Options: the first five recorded FYERS sessions (4-11 Nov 2026)
+
+Smit, 2026-11-11: "at least do 5 sessions, will get to know how it works".
+`option_sessions.py` replays sell-only variants on the chains the recorder
+saved (`altair-data/chain_iv`, source `fyers_tape`), one lot, sold at the
+minute's mid and bought back at 15:20, every fill charged an assumed
+half-spread (Rs 1 BANKNIFTY, Rs 0.25 NIFTY) plus schedule-2 option costs.
+Only 6 Nov and 11 Nov were recorded in full; the others start late or end
+early (10 Nov has no chain), so a blank means the variant had no clean quote
+in the recorded window. **Five sessions prove nothing either way**; this
+shows how the trade behaves, not whether it pays.
+
+Net Rs per lot:
+
+| Session | Index | Recorded | Straddle 09:20 | Same, hedged (4 lots) | Straddle 13:00 | 25-delta strangle | 0DTE straddle |
+|---|---|---|---|---|---|---|---|
+| 04 Nov | BANKNIFTY | 11:58-15:18 |  |  | +1,046 | +865 |  |
+| 04 Nov | NIFTY | 11:46-15:18 |  |  | +335 |  |  |
+| 05 Nov | NIFTY | 10:22-12:47 | +1,217 | +1,217 |  | +776 |  |
+| 06 Nov | BANKNIFTY | full | -16,110 | -8,819 | -5,405 | -11,740 |  |
+| 06 Nov | NIFTY | full | -16,500 | -4,350 | -7,187 | -11,420 |  |
+| 09 Nov | BANKNIFTY | 09:55-15:30 |  |  | -107 |  |  |
+| 09 Nov | NIFTY | 10:36-15:30 |  |  | +208 |  | -113 |
+| 11 Nov | BANKNIFTY | full | -2,473 | -3,894 | +1,849 | -2,862 |  |
+| 11 Nov | NIFTY | full | -1,845 | -1,325 | -478 | -1,477 |  |
+| **Total** | | | **-35,711** (1 win of 5) | **-17,171** (1/5) | **-9,739** (4/8) | **-25,859** (2/6) | -113 (0/1) |
+
+What it shows:
+
+- **The shape of short vol.** Quiet sessions earn Rs 300-1,800 a lot; one
+  trend day (6 Nov, BANKNIFTY +2.4 % in a straight line from 57,520 to
+  58,900) costs Rs 16,000, ten quiet days' worth. A strategy that sells
+  premium lives or dies on skipping or limiting those days.
+- **Both full sessions realised more than the IV sold.** BANKNIFTY ATM IV at
+  09:20 was 15.8 % on 6 Nov (realised 18.6 %) and 17.3 % on 11 Nov
+  (realised 34.6 %). That is exactly the case the IV >= forecast-RV gate is
+  for; whether HAR saw it coming is what the paper model's own log will show.
+- **Selling later loses less.** The 13:00 straddle lost a third as much on
+  6 Nov and won on 11 Nov: less time left for a trend, at nearly the same
+  premium (intraday theta is small on a 12-17 day option).
+- **A 1-lot BANKNIFTY straddle cannot be delta-hedged.** The futures lot is
+  the same size as the option lot, so the straddle's delta (it reached 0.49
+  on 6 Nov) never rounds to one futures lot and the hedge never trades
+  ("hedged" = unhedged for BANKNIFTY). With 4 straddle lots per hedge it
+  halves the trend-day loss on 6 Nov but costs more on the choppy 11 Nov.
+- **The strangle is not safer intraday**: it collects a third of the
+  straddle's premium and still loses about 70 % as much on the trend day.
+
+Next: these variants run every day as paper shadows of the live model, and
+the scorer adds each session to this table, so the 60-session verdict in
+README.md builds up day by day.
