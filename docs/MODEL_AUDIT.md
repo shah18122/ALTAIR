@@ -120,3 +120,15 @@ marks them "too few forecasts to judge". Ignore them until they have 60+ days.
    fat tails), and the arrival-rate model for execution timing.
 4. The variance premium waits for FYERS chain history; nothing else can
    validate it.
+4. **Every Model Atlas row against the new data** (Smit, 2026-11-11: "update
+   all the model based on new data, every single model in model atlas").
+   Done for all 108 rows: `docs/research/atlas_retrain_2026-11-11/README.md`
+   (before = FYERS nightly 2026-11-10, after = Drive ticks). 37 retrained,
+   4 are the test harness itself, 1 half (straddle: RV side only), 66 cannot
+   be retrained on that data and each says why (no options, no order book,
+   no stocks, no news, or nothing to fit). Result: still no direction edge
+   on price at any timeframe; HAR size forecasts hold (32-35 % below the
+   random walk intraday). Each row's ⓘ in the Atlas shows its line
+   (`desktop/atlas_retrain.hpp`, checked by `altair_atlas_test`).
+   `app/fyers_source.hpp` no longer labels a SOURCE.txt saying "NOT FYERS"
+   as FYERS.

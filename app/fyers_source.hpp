@@ -24,6 +24,8 @@ namespace altair::app {
     if (in) {
         std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        // "NOT FYERS" (e.g. drive-ticks) is an explicit no, never a yes.
+        if (s.find("NOT FYERS") != std::string::npos) { return false; }
         if (s.find("FYERS") != std::string::npos) { return true; }
     }
     std::error_code ec;

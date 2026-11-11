@@ -13,11 +13,13 @@
 // No check description here may contain the substring "F" "AIL" joined.
 
 #include "../atlas.hpp"
+#include "../atlas_retrain.hpp"
 
 #include <QApplication>
 
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <unordered_set>
 
 namespace {
@@ -53,6 +55,17 @@ int main(int argc, char** argv)
                 altair::ui::kAtlasCount, built, partial, absent);
     check(built == altair::ui::kAtlasCount && partial == 0 && absent == 0,
           "all Atlas numerical engines are implemented; training remains a separate gate");
+
+    // Every row says what the 2026-11-11 retrain on the new data did to it.
+    {
+        std::size_t covered = 0;
+        for (const auto& r : altair::ui::kAtlasRows)
+            if (altair::ui::atlas_retrain(r.model) != nullptr) ++covered;
+        check(covered == altair::ui::kAtlasCount,
+              "every Atlas row has its 2026-11-11 retrain entry (retrained, or why not)");
+        check(std::size(altair::ui::kAtlasRetrain) == altair::ui::kAtlasCount,
+              "no stale retrain entries for rows that no longer exist");
+    }
 
     // ---- the table's own invariants ------------------------------------
     //

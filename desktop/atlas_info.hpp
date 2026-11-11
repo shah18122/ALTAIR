@@ -19,6 +19,7 @@
 #include <QString>
 #include <QVBoxLayout>
 #include <cstdint>
+#include "atlas_retrain.hpp"
 #include <cstring>
 
 namespace altair::ui {
@@ -324,6 +325,14 @@ enum class AtlasTraining : std::uint8_t {
         .arg(built, trained, when.isEmpty() ? QString{} : QStringLiteral("<br>") + when);
 }
 
+/// The 2026-11-11 retrain on the new data (docs/research/atlas_retrain_2026-11-11).
+[[nodiscard]] inline QString retrain_html(const AtlasRow& row) {
+    const AtlasRetrain* r = atlas_retrain(row.model);
+    if (r == nullptr) return {};
+    return QStringLiteral("<b>New data (2026-11-11): %1.</b> %2<br><br>")
+        .arg(QString::fromUtf8(r->status).toHtmlEscaped(), QString::fromUtf8(r->result).toHtmlEscaped());
+}
+
 /// The ⓘ as one block of rich text.
 [[nodiscard]] inline QString atlas_info_html(const AtlasRow& row, const QString& root = {}) {
     const AtlasInfo i = atlas_info(row);
@@ -335,13 +344,15 @@ enum class AtlasTraining : std::uint8_t {
         "<b>How it is trained.</b> %5<br><br>"
         "<b>On what data.</b> %6<br><br>"
         "<b>In the real market.</b> %7<br><br>"
+        "%10"
         "<span style='color:#8B949E'>Code: <code>%8</code></span></div>")
         .arg(QString::fromUtf8(row.model).toHtmlEscaped(), QString::fromUtf8(row.family).toHtmlEscaped(),
              QString::fromUtf8(atlas_status_text(row.status)), QString::fromUtf8(row.what).toHtmlEscaped(),
              QString::fromUtf8(i.trained).toHtmlEscaped(), QString::fromUtf8(i.data).toHtmlEscaped(),
              QString::fromUtf8(i.market).toHtmlEscaped(),
              QString::fromUtf8(row.file[0] != 0 ? row.file : "(none)"),
-             atlas_build_train_html(row, root));
+             atlas_build_train_html(row, root),
+             retrain_html(row));
 }
 
 /// The ⓘ window for a row.

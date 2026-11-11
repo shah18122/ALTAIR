@@ -137,6 +137,7 @@ qt_add_executable(altair_desktop
     atlas_data.hpp
     atlas.hpp
     atlas_info.hpp
+    atlas_retrain.hpp
     # The full-screen shell: About, the live data-flow page, F11+F12 halt.
     shell_pages.hpp
     strategy_record.hpp

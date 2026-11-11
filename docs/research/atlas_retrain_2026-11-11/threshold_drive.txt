@@ -1,0 +1,43 @@
+altair_threshold: history /tmp/claude-0/dds2 (FYERS)
+THRESHOLD STRATEGIES -- paper only, nothing is sent to a broker (altair_threshold)
+Expenses: config/charges.toml (verified), every fill; 1 lot(s) at today's lot sizes (BANKNIFTY 30, NIFTY 65, data/instruments.csv). Index levels stand in for the
+near future (the dataset has no continuous futures series, so its basis is left out); a holding across a
+month end pays a roll (out and back in at that close).
+
+1. PREV-2-DAY BREAKOUT, BANKNIFTY (market bnf sheets/2D-H-L.xlsx)
+   Long above the higher of the previous two highs, short below the lower of the previous two lows, at
+   that level (the open on a gap). Stop fixed at entry at the previous day's low (long) / high (short);
+   trailed at each previous day's low / high from the day after entry; on an exit day the opposite
+   breakout reverses the position (flip). One position at a time.
+   2019-11-01 to 2023-12-28: 263 trades (132 long, 131 short, 119 flips), 2.4 sessions held on average, 27 month-end rolls
+   gross 22249.1 points = Rs 6,67,472
+   expenses Rs 96,241 (263 of 263 trades priced)
+   NET Rs 5,71,230; net win rate 37.6 %, profit factor 1.29
+   Stops here fill exactly at their level. Slippage of 36.2 points a fill (entry and exit) would take the whole net away.
+   With the workbook's own cost (0.15 % of turnover a round trip, Rs 15,000 a crore): net -5917.2 points. Real futures expenses are a fraction of that.
+   Next session: long above 48679.00, short below 47856.05; holding LONG from 2023-12-27 at 48280.15, out below 48357.90 (from the 2023-12-28 bar)
+   CHECK against the workbook's own trade log (2007-09-19 to 2025-12-31):
+     on every session in our data: 263 trades against its 1467; 237 enter on the same day and side, 211 also leave on the same day for the same reason; gross 22249.1 points against its 59528.8
+     on the workbook's sessions only: 263 trades against its 1467; 238 enter on the same day and side, 212 also leave on the same day for the same reason; gross 21465.5 points against its 59528.8
+     The rules agree; where trades differ, the bars differ: our closes and ranges come from the broker's
+     daily candles, the workbook's from another source, and some sessions (special Saturday and Muhurat
+     sessions, a few missing days) are in one and not the other.
+
+2. BANKNIFTY / NIFTY RATIO Z-SCORE (market bnf sheets/BNFNF)
+   z of BANKNIFTY/NIFTY over 120 sessions: short the ratio above +1, buy it below -1, flat inside 0.25.
+   Positions formed at a close earn to the next close.
+   As the note measures it (equal notional, net of 6 bps a change):
+   to 2023-12-28: total -0.2 %, CAGR -0.0 %, vol 10.1 %, Sharpe 0.04, max drawdown -11.1 %, in the market 59 % of days; 8 trades, 62 % won, held 126 calendar days on average
+   The note's own figures to 2026-06-08: total -2.3 %, CAGR -0.1 %, vol 11.2 %, Sharpe 0.04, max drawdown
+   -31.0 %, in the market 71 %; 71 trades, 72 % won, held 68 days on average. Ours differ where the
+   closes differ (the note used Yahoo Finance closes).
+   to 2023-12-28: total -0.2 %, CAGR -0.0 %, vol 10.1 %, Sharpe 0.04, max drawdown -11.1 %, in the market 59 % of days; 8 trades, 62 % won, held 126 calendar days on average
+   In rupees, 1 lot(s) of BANKNIFTY against the NIFTY lots nearest equal notional at entry: 8 trades (3 short the ratio), gross -Rs 16,019, expenses Rs 19,310 (8 priced), NET -Rs 35,329, 62 % won net
+   Now (2023-12-28): ratio 2.2272, z -1.41, position LONG the ratio
+
+Not built yet -- their rules are not in the folder: Short Straddle, Nifty CE Buy on High Close, BNF CE Buy,
+Monthly SIP with Expiry, BNF, Wed + Mon Both, Tue + Thursday Both, Delta Hedge using Option. The TradingView
+results in BACKTEST/ are shown as TradingView wrote them (threshold_strategy/extracted/tradingview_backtests.csv).
+
+wrote /tmp/claude-0/runs/thr/threshold/{breakout_trades,ratio_trades,ratio_days}.csv and summary.txt
+rc=0

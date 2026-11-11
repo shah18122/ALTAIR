@@ -1,0 +1,80 @@
+altair_trader -- models over every model's output, refitted walk-forward, traded on paper
+candidates each step: no change, the ridge stack, a temporal CNN, the analogs; the one with the least
+recent prequential error trades. Expenses: config/charges.toml (verified); one round trip in bp is the bar every entry must clear
+
+NIFTY (at each close, lot 65 x 1, 134 inputs)
+  trips 24, won 10, lost 14, win rate 41.7 %
+  gross 219501.75  expenses 11816.29  net 207685.46
+  long  trips 13, net 208412.38
+  short trips 11, net -726.92
+  trips opened by: Gokhale stack (linear) 24;
+  buy and hold one lot 2022-02-03 to 2023-12-29 (22 rolls): gross 273523.25, expenses 8268.74, net 265254.51 -- what the timing has to beat
+  average win 28087.34, average loss -5227.71, profit factor 3.84
+  direction: 61.2 % right on 152 called steps; 62.1 % on the 140 steps held
+  best single model after the warm-up (chosen after the fact, so flattered): Momentum 57.5 % on 466 days
+  per exit day: Sharpe 4.59, Sortino 28.27, max drawdown 28188.94 (annualised by sqrt(252) over exit days)
+  candidates (prequential, each on the steps it was live):
+    No change: 716 steps, RMSE 167.45 bp vs no change 167.45 (skill 0.000 %), traded on 310 steps
+    Ridge stack: 466 steps, RMSE 89.71 bp vs no change 88.40 (skill -1.478 %), direction 51.9 % on 466, traded on 0 steps
+    CNN: 466 steps, RMSE 88.40 bp vs no change 88.40 (skill 0.000 %), traded on 254 steps; last fit: fit 8 on 546 steps (12 epochs kept): held-back MSE 0.2617 vs no change 0.0837 -- forecasts no change
+    Analogs: 466 steps, RMSE 88.40 bp vs no change 88.40 (skill 0.000 %), traded on 0 steps; last fit: fit 8 on 691 steps, 8 components: held-back MSE 3146.455 vs no change 2960.184 -- forecasts no change
+    Gokhale stack (linear): 212 steps, RMSE 59.51 bp vs no change 60.76 (skill 2.070 %), direction 58.0 % on 212, traded on 152 steps; last fit: w: 12.596325 67.355687 -30.013057 1.230400 28.441251
+
+BANKNIFTY (at each close, lot 30 x 1, 134 inputs)
+  trips 1, won 1, lost 0, win rate 100.0 %
+  gross 186360.00  expenses 3621.87  net 182738.13
+  long  trips 1, net 182738.13
+  short trips 0, net 0.00
+  trips opened by: Gokhale stack (linear) 1;
+  buy and hold one lot 2022-01-05 to 2023-12-28 (23 rolls): gross 322347.00, expenses 8954.14, net 313392.86 -- what the timing has to beat
+  direction: 55.6 % right on 171 called steps; 55.6 % on the 171 steps held
+  best single model after the warm-up (chosen after the fact, so flattered): Logistic regression 55.5 % on 485 days
+  candidates (prequential, each on the steps it was live):
+    No change: 735 steps, RMSE 211.02 bp vs no change 211.02 (skill 0.000 %), traded on 310 steps
+    Ridge stack: 485 steps, RMSE 115.12 bp vs no change 113.44 (skill -1.486 %), direction 54.1 % on 484, traded on 0 steps
+    CNN: 485 steps, RMSE 113.44 bp vs no change 113.44 (skill 0.000 %), traded on 254 steps; last fit: fit 8 on 546 steps (13 epochs kept): held-back MSE 0.2587 vs no change 0.0784 -- forecasts no change
+    Analogs: 485 steps, RMSE 129.03 bp vs no change 113.44 (skill -13.745 %), direction 49.6 % on 125, traded on 0 steps; last fit: fit 8 on 691 steps, 8 components: held-back MSE 5187.115 vs no change 4540.107 -- forecasts no change
+    Gokhale stack (linear): 231 steps, RMSE 83.87 bp vs no change 80.74 (skill -3.870 %), direction 55.8 % on 231, traded on 171 steps; last fit: w: 13.652844 -132.025470 157.876938 -20.594436 38.403939
+
+NIFTY intraday (hourly decisions, flat every night, lot 65 x 1, 92 inputs)
+  trips 28, won 9, lost 19, win rate 32.1 %
+  gross -4322.50  expenses 9586.82  net -13909.32
+  long  trips 21, net -29903.01
+  short trips 7, net 15993.69
+  trips opened by: Ridge stack 28;
+  average win 3777.02, average loss -2521.18, profit factor 0.71
+  direction: 46.1 % right on 167 called steps; 48.1 % on the 52 steps held
+  per exit day: Sharpe -2.02, Sortino -3.25, max drawdown 26090.54 (annualised by sqrt(252) over exit days)
+  candidates (prequential, each on the steps it was live):
+    No change: 4404 steps, RMSE 37.90 bp vs no change 37.90 (skill 0.000 %), traded on 1860 steps
+    Ridge stack: 2904 steps, RMSE 23.53 bp vs no change 23.49 (skill -0.173 %), direction 50.9 % on 2902, traded on 167 steps
+    CNN: 2904 steps, RMSE 23.49 bp vs no change 23.49 (skill 0.000 %), traded on 2377 steps; last fit: fit 8 on 3310 steps (8 epochs kept): held-back MSE 0.1502 vs no change 0.1358 -- forecasts no change
+    Analogs: 2904 steps, RMSE 23.49 bp vs no change 23.49 (skill 0.000 %), traded on 0 steps; last fit: fit 8 on 4146 steps, 8 components: held-back MSE 260.0963 vs no change 248.7687 -- forecasts no change
+
+BANKNIFTY intraday (hourly decisions, flat every night, lot 30 x 1, 92 inputs)
+  trips 30, won 13, lost 17, win rate 43.3 %
+  gross 4161.00  expenses 10375.70  net -6214.70
+  long  trips 21, net -33225.02
+  short trips 9, net 27010.32
+  trips opened by: Ridge stack 30;
+  average win 5439.04, average loss -4524.83, profit factor 0.92
+  direction: 42.1 % right on 133 called steps; 47.6 % on the 63 steps held
+  per exit day: Sharpe -0.64, Sortino -0.85, max drawdown 21684.40 (annualised by sqrt(252) over exit days)
+  candidates (prequential, each on the steps it was live):
+    No change: 4416 steps, RMSE 54.54 bp vs no change 54.54 (skill 0.000 %), traded on 1860 steps
+    Ridge stack: 2916 steps, RMSE 31.86 bp vs no change 31.80 (skill -0.211 %), direction 49.1 % on 2911, traded on 132 steps
+    CNN: 2916 steps, RMSE 31.80 bp vs no change 31.80 (skill 0.000 %), traded on 2423 steps; last fit: fit 8 on 3310 steps (6 epochs kept): held-back MSE 0.1291 vs no change 0.1095 -- forecasts no change
+    Analogs: 2916 steps, RMSE 31.84 bp vs no change 31.80 (skill -0.135 %), direction 48.1 % on 378, traded on 1 steps; last fit: fit 8 on 4146 steps, 8 components: held-back MSE 430.2405 vs no change 418.8211 -- forecasts no change
+
+Leak check (--leak-check): every arm rerun with another future after two cuts --
+  NIFTY cut at 2022-07-12: 359 decisions compared with another future after it -- all identical
+  NIFTY cut at 2023-04-03: 538 decisions compared with another future after it -- all identical
+  BANKNIFTY cut at 2022-06-27: 368 decisions compared with another future after it -- all identical
+  BANKNIFTY cut at 2023-03-23: 552 decisions compared with another future after it -- all identical
+  NIFTY intraday cut at 2022-06-29T10:15:00+05:30: 2203 decisions compared with another future after it -- all identical
+  NIFTY intraday cut at 2023-03-24T13:15:00+05:30: 3304 decisions compared with another future after it -- all identical
+  BANKNIFTY intraday cut at 2022-06-28T10:15:00+05:30: 2209 decisions compared with another future after it -- all identical
+  BANKNIFTY intraday cut at 2023-03-24T10:15:00+05:30: 3313 decisions compared with another future after it -- all identical
+  every decision up to each cut identical: no call saw its future
+
+Files: trades.csv, days.csv, candidates.csv, analogs.csv (the latest step's most similar past moments), weights.csv

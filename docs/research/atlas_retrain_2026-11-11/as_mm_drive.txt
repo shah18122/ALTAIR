@@ -1,0 +1,24 @@
+altair_as_mm: 302872 one-minute bars from /tmp/claude-0/dds2/fut/nifty/1m (NOT FYERS: smoke test only); gamma 0.0001, cap 5 lots, 1.50 bp a fill
+altair_as_mm -- Avellaneda-Stoikov quoting on index futures, one-minute bars, paper only
+source: /tmp/claude-0/dds2/fut/nifty/1m (NOT FYERS: smoke test only, not a result)
+sessions 823, fills 182120 (lots), largest inventory 5 lots
+gross Rs -4103336, expenses Rs 27902760, net Rs -32006096; Rs -38890 a session, sd 20620, Sharpe -29.94 (x sqrt 252)
+sessions up 5 of 823; max drawdown Rs 32006096
+quoted edge against the mid: 4.53 pts a fill on 179842 quote fills
+five-minute markout: -0.21 pts a fill on 179842 fills (negative = adverse selection eats the edge)
+expenses 1.50 bp a fill; gamma 0.0001; cap 5 lots; tick 0.05; lot 65
+Fills are simulated from bars (trade-through by a tick at the quote); the book, the queue and partial fills are not seen.
+-> /tmp/claude-0/runs/asmm/nifty
+rc=0
+altair_as_mm: 299748 one-minute bars from /tmp/claude-0/dds2/fut/banknifty/1m (NOT FYERS: smoke test only); gamma 0.0001, cap 5 lots, 1.50 bp a fill
+altair_as_mm -- Avellaneda-Stoikov quoting on index futures, one-minute bars, paper only
+source: /tmp/claude-0/dds2/fut/banknifty/1m (NOT FYERS: smoke test only, not a result)
+sessions 823, fills 159960 (lots), largest inventory 5 lots
+gross Rs -7066356, expenses Rs 25373891, net Rs -32440247; Rs -39417 a session, sd 21643, Sharpe -28.91 (x sqrt 252)
+sessions up 8 of 823; max drawdown Rs 32440247
+quoted edge against the mid: 13.98 pts a fill on 158054 quote fills
+five-minute markout: -1.31 pts a fill on 158054 fills (negative = adverse selection eats the edge)
+expenses 1.50 bp a fill; gamma 0.0001; cap 5 lots; tick 0.05; lot 30
+Fills are simulated from bars (trade-through by a tick at the quote); the book, the queue and partial fills are not seen.
+-> /tmp/claude-0/runs/asmm/banknifty
+rc=0
