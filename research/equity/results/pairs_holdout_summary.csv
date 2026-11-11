@@ -1,0 +1,2 @@
+split,pairs,trades,months,gross_bp,net_bp,t_monthly,t_trades,win_rate,by_year,groups_positive,placebo95_bp,late_net_bp,leak_caught,hold_days_med
+holdout,63,634,12,20.1527,10.1527,0.8458,1.3227,0.6088,2023:+10.2,4,2.7098,7.3057,True,14.0000
