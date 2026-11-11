@@ -24,3 +24,36 @@ better than HAR + time of day (0.64-0.70); HAR wins at 15m, 60m and 1d (0.58-0.7
 So the CNN is at best a size/volatility input for the option-selling gate, not a direction trader.
 
     python research/cnn/cnn_test.py --bars data/drive_ticks --out research/cnn/results
+
+# Combining the CNN with every other signal (`combo.py`, 2026-11-12)
+
+Smit: "finish the CNN work by finding a combination of models and understanding how the market
+works to generate the best alpha". 5-minute bars, NIFTY and BANKNIFTY front futures, 2020/2022/2023.
+29 features: CNN p(up) and p(big move) (walk-forward), own and other-index returns over 5-60 min and
+since the open, overnight gap, NIFTY futures-minus-spot basis and its changes, HAR move size, bar range
+and close location, volume, open-interest change and OI x trend, time of day, weekday, days to the
+monthly expiry. Combined by ridge, gradient-boosted trees and their average, refit monthly on the past
+only. Horizons 5, 15, 30, 60 min and to the close. 6 bp round trip. Tables: `results/combo_summary.csv`,
+`results/combo_ic.csv`.
+
+## Verdict: no combination makes money after costs
+
+All 90 tests (2 futures x 5 horizons x 3 models x 3 trading rules) lose after 6 bp. The best gross
+edges are 2-5 bp per trade, never steady across years; out-of-sample IC is at most 0.04.
+Most confident 10%: -1.4 to -11 bp net per trade. Trading only when HAR expects a big move does
+not help. Adding the CNN changes nothing: its p(up) has IC under 0.01 and p(big) carries no direction.
+
+## How the market works (signals with the same sign in 2020, 2022 and 2023)
+
+| Effect | IC range by year | What it means |
+|---|---|---|
+| Move since the open continues to the close (both indices) | +0.035 to +0.09 | intraday trend days persist |
+| NIFTY trend confirmed by rising OI continues to the close | +0.035 to +0.13 | new positions behind a move = trend day |
+| BANKNIFTY follows NIFTY's day move to the close | +0.037 to +0.074 | the market leads the bank index |
+| Last 5-15 min move and close location reverse next 5 min | -0.015 to -0.07 | short-term noise mean reverts |
+| NIFTY futures-vs-spot basis jump reverses next 5 min | -0.018 to -0.031 | futures overshoot, spot catches up |
+| Later in the day, less left to the close | time of day | most of the day's move is done by midday |
+
+These are real but small: each is worth about 1-5 bp a trade, below the 6 bp a futures round trip
+costs. They are more useful as risk filters for the option-selling strategy (S1, `research/strategy/`):
+a day with a big move since the open and rising OI is a trend day, the day a short straddle loses most.
