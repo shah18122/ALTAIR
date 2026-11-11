@@ -68,11 +68,23 @@ marks them "too few forecasts to judge". Ignore them until they have 60+ days.
    named with `--dataset`, and is then printed as NOT FYERS.
    (`altair_data_audit` still audits `dataset/`: that is its job.)
 2. **Forecast models for every timeframe, judged on RMSE/MAE** (Smit,
-   2026-11-11). Forecast what can be forecast: realised volatility and the
-   size of the move per timeframe, plus the 5-level depth features for the
-   1m-15m tracks. Nested walk-forward (tune on the past only), Diebold-Mariano
-   test against the random walk and against HAR, and a model is kept only if
-   it beats both after the multiple-testing correction.
+   2026-11-11). **Built:** `altair_vol_forecast` (`models/vol_forecast.hpp`)
+   forecasts the size of the next move (|r| in bp) on 1m, 5m, 15m, 60m and
+   1d for NIFTY and BANKNIFTY spot and futures, over the whole history:
+   random walk, 22-session mean, EWMA, time-of-day seasonal, HAR-seasonal
+   ridge (with INDIA VIX) and an error-weighted combination. All walk
+   forward; Diebold-Mariano against the random walk and the 22-session mean,
+   Bonferroni over every test, skill required in each third of the period,
+   and the HAR fit's in-sample error compared with its real forecasts' error
+   on the same rows (equal means it learned no noise). The nightly runs it on
+   the FYERS snapshot (`runs/<day>/vol_forecast.txt`, pushed to altair-data).
+   A smoke run on `dataset/` (not FYERS, so not evidence) gave the shape:
+   HAR-seasonal has the lowest RMSE on every timeframe, about 35 % below the
+   random walk and 11-18 % below the plain average intraday (significant),
+   but only about 1.5 % below the average on daily bars (not significant);
+   in-sample and out-of-sample errors agree within 1-2 %.
+   Next: the 5-level depth features on 1m-15m, and feeding the forecast to
+   the straddle sellers' RV side.
 3. **The Google Drive tick data** (NIFTY / BANKNIFTY futures trades and NIFTY
    spot ticks, 2020, 2022, 2023) as a separate `drive-ticks` source: tick-level
    realised vol and trade-flow features for the years before ALTAIR's own

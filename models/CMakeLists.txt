@@ -78,6 +78,12 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_hmm_regime_test PRIVATE altair_models altair_flags)
     add_test(NAME models_hmm_regime COMMAND altair_hmm_regime_test)
 
+    # How big the next move is, every timeframe: skill where it exists, none
+    # where it does not, and no look-ahead.
+    add_executable(altair_vol_forecast_test tests/test_vol_forecast.cpp)
+    target_link_libraries(altair_vol_forecast_test PRIVATE altair_models altair_flags)
+    add_test(NAME models_vol_forecast COMMAND altair_vol_forecast_test)
+
     add_executable(altair_magnitude_test tests/test_magnitude.cpp)
     target_link_libraries(altair_magnitude_test PRIVATE altair_models altair_flags)
     add_test(NAME models_magnitude COMMAND altair_magnitude_test)

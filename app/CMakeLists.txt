@@ -298,6 +298,11 @@ if(ALTAIR_BUILD_TESTS)
 endif()
 
 # Magnitude-aware scoring and the per-call value gate over the curriculum's logs.
+# How big the next move is, every timeframe, on FYERS history (models/vol_forecast.hpp).
+add_executable(altair_vol_forecast vol_forecast_main.cpp)
+target_link_libraries(altair_vol_forecast PRIVATE altair_models altair_analytics altair_flags)
+target_include_directories(altair_vol_forecast PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
 add_executable(altair_magnitude magnitude_main.cpp)
 target_link_libraries(altair_magnitude PRIVATE altair_models altair_analytics altair_flags)
 target_include_directories(altair_magnitude PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)

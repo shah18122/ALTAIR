@@ -12,7 +12,7 @@ refuses any other folder, and refuses a clone whose origin is the public ALTAIR 
 WHAT GOES, for the one day: bars/<yyyy>/<day>.csv.gz, candles/<seg>/<inst>/<tf>/<day>.csv,
 iv/<INDEX>/<day>.csv, vol/<yyyy>/<day>.csv.gz, chain_iv/<yyyy>/<day>.csv.gz,
 chain_snap/<day>/<HHMM>.csv.gz, reports/<day>/ (decode, snapshot manifest, conflicts,
-run.json, forecast_curriculum.txt, leak_check.csv) and logs/altair-<day>.log.
+run.json, forecast_curriculum.txt, leak_check.csv, vol_forecast.txt) and logs/altair-<day>.log.
 WHAT NEVER GOES: tapes, anything under data/live/ other than the IV, and session
 or credential files of any kind. Every file is checked again before the commit,
 by name and by content.
@@ -120,7 +120,7 @@ def main() -> int:
         plain(snap / "_snapshot.json", f"reports/{day}/snapshot.json")
     if (snap / "_conflicts.csv").is_file():
         gz(snap / "_conflicts.csv", f"reports/{day}/conflicts.csv.gz")
-    for f in ("run.json", "forecast_curriculum.txt", "leak_check.csv"):
+    for f in ("run.json", "forecast_curriculum.txt", "leak_check.csv", "vol_forecast.txt"):
         if (s / "runs" / day / f).is_file():
             plain(s / "runs" / day / f, f"reports/{day}/{f}")
     lg = ROOT / "data" / "logs" / f"altair-{day}.log"

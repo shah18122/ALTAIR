@@ -13,7 +13,8 @@ the rest go on:
               Needs today's FYERS login; without one the step is skipped.
   4. SNAPSHOT altair_store snapshot at one IST cutoff. FYERS data only by default:
               --with-dataset opts in. Snapshots are never rebuilt over.
-  5. RETRAIN  altair_forecast_curriculum on the snapshot with --leak-check, into
+  5. RETRAIN  altair_forecast_curriculum on the snapshot with --leak-check, then
+              altair_vol_forecast (next-move size, every timeframe), into
               data/store/runs/<day>/. Promoted to data/store/runs/LATEST.txt only if
               the leak check is clean.
   6. TRADES   the day's paper and live round trips, with their reasons, into the log.
@@ -206,6 +207,14 @@ def main() -> int:
                 log("nightly", "ERROR", f"retrain: THE LEAK CHECK FAILED (see {run}/leak_check.csv). Not promoted.")
             else:
                 log("nightly", "ERROR", f"retrain exited {status['retrain']} after {mins} min. Not promoted.")
+            # How big the next move is, every timeframe (models/vol_forecast.hpp). Optional
+            # until the binary is built on this machine.
+            vf = tool("altair_vol_forecast")
+            if vf.is_file():
+                rc = run_to_file(vf, ["--dataset", str(snap), "--out", str(run)], run / "vol_forecast.txt")
+                log("nightly", "INFO" if rc == 0 else "ERROR", f"vol forecast on snapshot {snap_id}: exit {rc} (runs/{day_s}/vol_forecast.txt)")
+            else:
+                log("nightly", "WARN", "vol forecast skipped: altair_vol_forecast not built (ops/build.sh app)")
 
     # ---- 6. the day's trades, with their reasons ---------------------------------
     for path, kind in ((ROOT / "data/live/paper/trades.csv", "paper"), (ROOT / "data/live_orders/strategy_trades.csv", "LIVE")):
