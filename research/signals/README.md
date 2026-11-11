@@ -134,3 +134,19 @@ approximated from the future: delta 0.5, ₹1 spread, ₹1.35 a unit in charges.
 These rows trade when \|f60\| > 0.5 bp; all thresholds are in the script output. The forecast
 does a little better than a coin flip, about ₹0.3 to 0.8 a unit, but the ₹1 spread plus ₹1.35
 in charges is larger. The IV > RV gate can't be tested here (no IV in the Drive data).
+
+## In the live engine: "Straddle IV>=RV timed BANKNIFTY" (paper)
+
+This is the IV >= RV BANKNIFTY straddle seller (live/straddle.hpp) with two additions, both
+switched on only in this one new copy. The existing sellers are unchanged.
+
+1. **Timed legs.** Once forecast IV >= forecast RV, each leg waits up to 60 s for the basket-alpha
+   60 s forecast to favour it. The call sells on a down forecast, the put on an up one. A leg that
+   gets no favourable forecast is sold when the wait ends. Drive-tick test: +₹0.28 a unit a leg
+   against a random second (t 2.0).
+2. **Resting quotes.** Each leg's sale rests at its ask (paper book `open_passive`, filled through
+   the queue model) instead of hitting the bid. It is pulled while the forecast is against it,
+   quoted again when it isn't, and sold at the bid if still unfilled 5 min after the signal.
+
+Exits are the plain straddle's (bought back by 15:20). The resting-quote gain depends on real fill
+rates, which only the FYERS paper record can show.

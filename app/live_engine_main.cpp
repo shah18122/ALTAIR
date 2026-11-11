@@ -736,6 +736,21 @@ int main(int argc, char** argv) {
     // Sell the ATM straddle when forecast IV >= forecast RV, read on every tick (live/straddle.hpp).
     engine.add_model(std::make_unique<lv::LiveStraddleModel>(nst));
     engine.add_model(std::make_unique<lv::LiveStraddleModel>(bst));
+    // The same BANKNIFTY seller with each leg timed on the basket-alpha 60 s forecast (the call
+    // sold on a down forecast, the put on an up one, within 60 s of the IV >= RV signal), each
+    // sale resting at the ask and pulled while the forecast is against it. Paper.
+    const lv::LiveBasketAlphaModel* basket_alpha = nullptr;   // set below, before the session starts
+    {
+        lv::LiveStraddleInputs timed = bst;
+        timed.rules.tag = "timed";
+        timed.rules.timing_wait_s = 60;
+        timed.rules.passive_quotes = true;      // rest at the ask, pull on an adverse forecast
+        timed.rules.passive_deadline_s = 300;   // ...and sell at the bid if still unfilled after 5 min
+        timed.rules.direction_60s = [&basket_alpha](std::int64_t ns) {
+            return basket_alpha != nullptr ? basket_alpha->forecast60(ns) : std::numeric_limits<double>::quiet_NaN();
+        };
+        engine.add_model(std::make_unique<lv::LiveStraddleModel>(timed));
+    }
     for (const auto& br : book_rules) engine.add_model(std::make_unique<lv::LiveStraddleModel>(br));
     for (std::size_t i = 0; i <= dir->names.size(); ++i)
         engine.add_model(std::make_unique<altair::live_direction::LiveDirectionModel>(dirs, i));
@@ -822,7 +837,9 @@ int main(int argc, char** argv) {
     if (auto bp = lv::read_basket_alpha((root / "config/signals/basket_bnf.csv").string()); bp.ok) {
         lv::BasketAlphaRules br;
         br.dir = (live_dir / "basket_alpha").string();
-        engine.add_model(std::make_unique<lv::LiveBasketAlphaModel>(std::move(bp), br));
+        auto ba = std::make_unique<lv::LiveBasketAlphaModel>(std::move(bp), br);
+        basket_alpha = ba.get();
+        engine.add_model(std::move(ba));
     } else {
         std::printf("basket alpha off: %s\n", bp.why.c_str());
     }

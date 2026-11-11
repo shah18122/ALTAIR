@@ -7,6 +7,7 @@
 #include <live/straddle.hpp>
 
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <string>
 
@@ -169,6 +170,34 @@ int main() {
               "past the monthly loss halt: nothing sold");
         R.month_closed_pnl = -1000.0;
         check(session(0.004, R).sold_calls == 1, "inside the monthly limit: it sells as before");
+    }
+    {
+        // Timed entry: no forecast at all -> each leg waits the full minute, then sells anyway.
+        LiveStraddleRules R;
+        R.direction_60s = [](std::int64_t) { return std::numeric_limits<double>::quiet_NaN(); };
+        const Run s = session(0.004, R);
+        check(s.sold_calls == 1 && s.sold_puts == 1 && s.all_findings.find("no favourable forecast in 60 s") != std::string::npos,
+              "timed entry without a forecast: both legs sold when the 60 s wait ends");
+        check(s.bought == 2 && s.legs_open == 0, "timed legs are bought back by the square-off like the plain straddle");
+        // A down forecast: the call sells at once on it, the put waits out the minute.
+        R.direction_60s = [](std::int64_t) { return -2.0; };
+        const Run d = session(0.004, R);
+        check(d.sold_calls == 1 && d.sold_puts == 1 && d.all_findings.find("CE: 60 s forecast -2.00 bp favours it") != std::string::npos
+                  && d.all_findings.find("PE: no favourable forecast") != std::string::npos,
+              "a down forecast sells the call on the signal and the put at the end of the wait");
+    }
+    {
+        // Resting quotes: an up forecast quotes the put at its ask at once; the call is never quoted
+        // into the adverse forecast and is sold at the bid at the 300 s deadline.
+        LiveStraddleRules R;
+        R.direction_60s = [](std::int64_t) { return 2.0; };
+        R.passive_quotes = true;
+        const Run s = session(0.004, R);
+        check(s.all_findings.find("Quoting NIFTYW") != std::string::npos && s.all_findings.find("PE: 60 s forecast 2.00 bp favours it, resting at the ask") != std::string::npos,
+              "resting quotes: the favoured put rests at its ask");
+        check(s.all_findings.find("CE: no favourable forecast in 60 s, deadline: at the bid") != std::string::npos,
+              "the opposed call is never quoted into the forecast and is sold at the bid at the deadline");
+        check(s.sold_calls == 1 && s.sold_puts == 1 && s.legs_open == 0, "both legs end up sold and are bought back by the square-off");
     }
     {
         // Closes whose last five days swing far more than the fifteen before, and fall.

@@ -89,6 +89,7 @@
 #include <live/models.hpp>
 
 #include <chrono>
+#include <functional>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -127,6 +128,20 @@ struct LiveStraddleRules {
     /// leg's ask is this much above what it was sold for, BOTH legs are bought
     /// back (a bracket group in the paper book, live/paper.hpp). 0 = off.
     double leg_stop_pct = 0.0;
+    /// TIMED ENTRY (2026-11-11). When set: once IV >= RV says sell, each leg waits up to
+    /// `timing_wait_s` for the 60 s direction forecast to favour it -- the call is sold when the
+    /// forecast is down, the put when it is up -- and is sold at the end of the wait regardless.
+    /// Returns the forecast in bp, NaN when there is none (live/basket_alpha.hpp). Drive-tick test:
+    /// +Rs 0.28 a unit a leg against a random second at a 60 s wait (research/signals/README.md).
+    std::function<double(std::int64_t)> direction_60s;
+    int timing_wait_s = 60;
+    /// With the timed entry: each leg is SOLD RESTING AT ITS ASK (book open_passive, filled only through
+    /// the queue model) instead of hitting the bid, so the spread is earned rather than paid. A resting
+    /// leg is pulled while the forecast turns against it (the call on an up forecast, the put on a down
+    /// one) and quoted again when it does not; one that is still unfilled `passive_deadline_s` after
+    /// the IV >= RV signal is sold at the bid.
+    bool passive_quotes = false;
+    int passive_deadline_s = 300;
 };
 
 /// What the straddle seller knows before the session.
@@ -273,6 +288,7 @@ public:
     void on_new_day(LiveEngine&) override {
         traded_ = false; closed_note_ = false; resumed_checked_ = false; taken_ = false;
         note_.clear(); last_ = {}; call_ = put_ = nullptr; ticks_ = 0; credit_ = 0.0; entry_ns_ = 0; gate_.clear();
+        armed_ns_ = 0; armed_ = {}; resting_.clear();
     }
 
     void on_quote(LiveEngine& e, std::uint32_t token) override {
@@ -285,6 +301,7 @@ public:
         }
         const LiveInstrument* in = e.instrument(token);
         if (in == nullptr || in->underlying != in_.vol.under) return;
+        if (armed_ns_ != 0) { timed_step(e, e.quote_ns(), live_minute_of_day(live_ist_minute_index(e.quote_ns()))); return; }
         consider(e, e.quote_ns());
     }
 
@@ -302,6 +319,7 @@ public:
             }
             return;
         }
+        if (armed_ns_ != 0) { timed_step(e, e.clock_ns(), m); return; }
         consider(e, e.clock_ns());   // the minute's close is a tick too, for a quiet chain
     }
 
@@ -496,6 +514,7 @@ private:
         if (R.min_cone_rank > 0.0 && !(last_.cone_rank >= R.min_cone_rank)) return;   // watch on: the rank moves with the IV
         if (R.max_risk > 0.0 && !(last_.risk <= R.max_risk)) return;
         if (R.max_gap_loss > 0.0 && !(last_.gap_loss <= R.max_gap_loss)) return;
+        if (R.direction_60s) { timed(e, ns, m); return; }
         traded_ = true;
         const std::string reason = live_fmt::hhmm(m) + " " + reading_text(last_) + "; " + books_text(last_) + ": forecast IV >= forecast RV, SELL";
         LiveDecisionScope log(e, name(), [this] { return note_; });
@@ -513,6 +532,78 @@ private:
               + (R.leg_stop_pct > 0.0 ? "; stop: both legs bought back once either leg's ask is " + live_fmt::num(100 * R.leg_stop_pct, 0)
                                             + " % above its sale price"
                                       : std::string());
+    }
+
+    /// The timed entry (LiveStraddleRules::direction_60s): the gate said sell at `armed_ns_`; each
+    /// leg of that reading is sold once the forecast favours it or the wait is over.
+    void timed(LiveEngine& e, std::int64_t ns, int m) {
+        const auto& R = in_.rules;
+        if (armed_ns_ == 0) {
+            armed_ns_ = ns;
+            armed_ = last_;
+            e.note_decision(name(), live_fmt::hhmm(m) + " " + reading_text(armed_) + ": forecast IV >= forecast RV; timing each leg on the 60 s forecast (up to "
+                                        + std::to_string(R.timing_wait_s) + " s)");
+        }
+        timed_step(e, ns, m);
+    }
+    void timed_step(LiveEngine& e, std::int64_t ns, int m) {
+        const auto& R = in_.rules;
+        const double f = R.direction_60s(ns);
+        const std::int64_t since = ns - armed_ns_;
+        const bool over = since >= static_cast<std::int64_t>(R.timing_wait_s) * 1'000'000'000;
+        const bool deadline = !R.passive_quotes || since >= static_cast<std::int64_t>(R.passive_deadline_s) * 1'000'000'000;
+        const std::string base = reading_text(armed_) + "; " + books_text(armed_) + ": forecast IV >= forecast RV, SELL";
+        // leg: the instrument; held: set once it is sold (or resting); good/bad: the forecast favours / opposes it
+        const auto step_leg = [&](const LiveInstrument* leg, const LiveInstrument*& held, bool good, bool bad) {
+            if (leg == nullptr) return;
+            if (held != nullptr) {
+                const LivePosition* p = e.book().position(name(), held->token);
+                if (p == nullptr) { held = nullptr; }                       // a resting sale timed out unfilled: quote again
+                else if (p->filled() || !resting_.contains(held->token)) return;   // sold, or a market sale on its way
+                else if (deadline) {                                        // still resting at the deadline: cross
+                    (void)e.book().close(name(), held->token, ns, "unfilled at the deadline: selling at the bid");
+                    resting_.erase(held->token);
+                    held = nullptr;
+                } else if (bad) {                                           // the forecast turned against it: pull
+                    (void)e.book().close(name(), held->token, ns, "pulled: 60 s forecast " + live_fmt::num(f) + " bp against it");
+                    e.note_decision(name(), "Pulled the resting " + leg->symbol + ": forecast " + live_fmt::num(f) + " bp against it");
+                    resting_.erase(held->token);
+                    held = nullptr;
+                    return;
+                } else return;                                              // resting, still fine
+            }
+            if (!(good || over)) return;
+            if (R.passive_quotes && !deadline && bad) return;               // never quote into an adverse forecast
+            const bool cross = !R.passive_quotes || deadline;
+            const std::string why_now = (good ? "60 s forecast " + live_fmt::num(f) + " bp favours it"
+                                              : "no favourable forecast in " + std::to_string(R.timing_wait_s) + " s")
+                                      + (cross ? (R.passive_quotes ? ", deadline: at the bid" : "") : ", resting at the ask");
+            std::string why;
+            const std::string reason = live_fmt::hhmm(m) + " " + base + " (" + why_now + ")";
+            const bool ok = cross ? e.book().open(name(), *leg, -1, 1, ns, reason, false, &why)
+                                  : e.book().open_passive(name(), *leg, -1, 1, ns, reason, &why);
+            if (!ok) { note_ = "Could not sell " + leg->symbol + ": " + why; return; }
+            held = leg;
+            if (cross) resting_.erase(leg->token); else resting_.insert(leg->token);
+            e.note_decision(name(), (cross ? "Sold " : "Quoting ") + leg->symbol + ": " + why_now);
+        };
+        step_leg(armed_.call, call_, std::isfinite(f) && f < 0.0, std::isfinite(f) && f > 0.0);
+        step_leg(armed_.put, put_, std::isfinite(f) && f > 0.0, std::isfinite(f) && f < 0.0);
+        const auto sold = [&](const LiveInstrument* leg) {
+            if (leg == nullptr) return false;
+            const LivePosition* p = e.book().position(name(), leg->token);
+            return p != nullptr && p->filled();
+        };
+        if (sold(call_) && sold(put_)) {
+            traded_ = true;
+            entry_ns_ = ns;
+            last_ = armed_;
+            arm_stops(e);
+            note_ = "Sold " + call_->symbol + " + " + put_->symbol + ", each leg timed on the 60 s forecast"
+                  + (R.passive_quotes ? " (resting at the ask where it filled)" : "");
+        } else if (deadline && over && (call_ == nullptr || put_ == nullptr)) {
+            traded_ = true;   // a leg refused at the end: no second attempt today
+        }
     }
 
     /// The per-leg stop, watched by the paper book (both legs in one group).
@@ -626,6 +717,9 @@ private:
 
     LiveStraddleInputs in_;
     bool traded_ = false, closed_note_ = false, resumed_checked_ = false, taken_ = false;
+    std::int64_t armed_ns_ = 0;   ///< timed entry: when the gate said sell (0 = not armed)
+    LiveStraddleReading armed_;   ///< timed entry: the reading whose legs are being sold
+    std::set<std::uint32_t> resting_;   ///< timed entry: legs whose sale rests at the ask (not a market sale)
     std::uint64_t ticks_ = 0;
     double credit_ = 0.0;
     std::int64_t entry_ns_ = 0;

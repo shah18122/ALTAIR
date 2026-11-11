@@ -314,6 +314,12 @@ public:
     }
 
     [[nodiscard]] const BasketAlphaState& state() const noexcept { return st_; }
+    /// The latest 60 s forecast in bp, NaN when there is none or it is more than 10 s old at `now_ns`
+    /// (the straddle seller's timed entry reads it: live/straddle.hpp direction_60s).
+    [[nodiscard]] double forecast60(std::int64_t now_ns) const {
+        if (last_sample_ < 0 || now_ns / 1'000'000'000 - last_sample_ > 10) return std::numeric_limits<double>::quiet_NaN();
+        return f_[1];
+    }
 
 private:
     void step(LiveEngine& e, std::int64_t ns) {
