@@ -20,7 +20,9 @@
 // data/pairs/<sym>/1d (ops/linux/fetch.py universe --go) as the warm-up, overwritten by the
 // stock's own last trade the engine sees from 15:25 on each day, saved to
 // <live dir>/pair_trading/closes.csv so a restart keeps them. Every decision, with its z and why,
-// goes to <live dir>/pair_trading/decisions.csv.
+// goes to <live dir>/pair_trading/decisions.csv; an open pair's side and entry day to
+// <live dir>/pair_trading/state_<A>_<B>.csv. On the futures' expiry day the engine's 15:15 roll
+// closes the legs and the model reopens them in the next month (the research held through).
 #pragma once
 
 #include <live/engine.hpp>
@@ -208,13 +210,16 @@ private:
 class LiveBankPairModel final : public LiveModel {
 public:
     LiveBankPairModel(std::string a, std::string b, const BankPairsCloses* closes, std::string dir, BankPairRule r = {})
-        : a_(std::move(a)), b_(std::move(b)), closes_(closes), dir_(std::move(dir)), r_(r) {}
+        : a_(std::move(a)), b_(std::move(b)), closes_(closes), dir_(std::move(dir)), r_(r) {
+        load_state();
+    }
 
     [[nodiscard]] std::string name() const override { return "Pair trading " + a_ + "/" + b_; }
     [[nodiscard]] std::string family() const override { return "pairs"; }
     [[nodiscard]] bool carry() const override { return true; }
 
     void on_minute(LiveEngine& e, int m) override {
+        reopen_after_roll(e, m);
         if (decided_day_ == e.today() || m < r_.decide_minute || m > r_.last_decide_minute) return;
         if (e.stale() || e.paused()) { note_ = "waiting for a fresh feed to decide"; return; }
         decided_day_ = e.today();
@@ -222,11 +227,15 @@ public:
         std::vector<std::int64_t> days;
         closes_->pair(a_, b_, e.today(), ca, cb, days);
         const bool in = e.book().engaged(name());
+        if (!in && side_ != 0) { side_ = 0; save_state(); }   // the legs were closed elsewhere (by hand)
         int since = 0;
         if (in) {
-            std::int64_t entry_day = e.today();
-            for (const auto& p : e.book().positions())
-                if (p.model == name()) entry_day = std::min(entry_day, live_day_of(live_ist_minute_index(p.decided_ns ? p.decided_ns : p.entry_ns)));
+            // the entry day from the saved state: an expiry roll reopens the legs, so their own
+            // timestamps would restart the 10-session count
+            std::int64_t entry_day = side_ != 0 ? entry_day_ : e.today();
+            if (side_ == 0)
+                for (const auto& p : e.book().positions())
+                    if (p.model == name()) entry_day = std::min(entry_day, live_day_of(live_ist_minute_index(p.decided_ns ? p.decided_ns : p.entry_ns)));
             for (const auto d : days) since += d >= entry_day ? 1 : 0;
         }
         const auto act = bank_pair_decide(ca, cb, in, since, r_);
@@ -235,8 +244,11 @@ public:
         if (act.kind == BankPairAction::Exit) {
             e.book().close_if([this](const LivePosition& p) { return p.model == name(); }, e.clock_ns(), act.why);
             what = "EXIT";
+            side_ = 0;
+            save_state();
         } else if (act.kind == BankPairAction::Enter) {
-            what = enter(e, act) ? "ENTRY" : "ENTRY refused";
+            what = enter(e, act.side_a, name() + " " + act.why) ? "ENTRY" : "ENTRY refused";
+            if (what == "ENTRY") { side_ = act.side_a; entry_day_ = e.today(); save_state(); }
         }
         note_ = act.why + (what == "ENTRY refused" ? " -- " + refused_ : "");
         e.note_decision(name(), what + ": " + note_);
@@ -254,7 +266,51 @@ public:
     }
 
 private:
-    bool enter(LiveEngine& e, const BankPairAction& act) {
+    /// The 15:15 expiry roll closes legs in a future that expires today; the pair is still open
+    /// by the rule, so reopen both legs in the next month's futures (once filled flat, by 15:29).
+    void reopen_after_roll(LiveEngine& e, int m) {
+        if (side_ == 0 || reopened_day_ == e.today()) return;
+        if (m < 15 * 60 + 15) {
+            // the roll runs before the models at 15:15, so note beforehand that a leg expires today
+            for (const auto& p : e.book().positions())
+                if (p.model == name() && p.inst.expiry_day != 0 && p.inst.expiry_day <= e.today()) rolling_day_ = e.today();
+            return;
+        }
+        if (rolling_day_ != e.today() || m > 15 * 60 + 29 || !e.book().flat(name())) return;
+        reopened_day_ = e.today();
+        const bool ok = enter(e, side_, name() + " reopened in the next futures after the expiry roll");
+        const std::string what = ok ? "ROLL" : "ROLL refused";
+        note_ = ok ? "rolled into the next month's futures" : "roll refused -- " + refused_;
+        e.note_decision(name(), what + ": " + note_);
+        BankPairAction a;
+        a.side_a = side_;
+        a.z = z_;
+        a.why = "expiry roll";
+        log(e, a, what);
+        if (!ok) { side_ = 0; save_state(); }
+    }
+
+    [[nodiscard]] std::filesystem::path state_path() const {
+        return std::filesystem::path(dir_) / ("state_" + a_ + "_" + b_ + ".csv");
+    }
+    void load_state() {
+        if (dir_.empty()) return;
+        std::ifstream in(state_path());
+        long long d = -1;
+        int sd = 0;
+        char comma = 0;
+        if (in >> d >> comma >> sd && comma == ',' && (sd == 1 || sd == -1) && d > 0) { entry_day_ = d; side_ = sd; }
+    }
+    void save_state() const {
+        if (dir_.empty()) return;
+        std::error_code ec;
+        std::filesystem::create_directories(dir_, ec);
+        const auto tmp = state_path().string() + ".tmp";
+        { std::ofstream o(tmp, std::ios::trunc); o << entry_day_ << ',' << side_ << '\n'; }
+        std::filesystem::rename(tmp, state_path(), ec);
+    }
+
+    bool enter(LiveEngine& e, int side_a, const std::string& why) {
         const LiveInstrument* fa = e.carry_future(a_);
         const LiveInstrument* fb = e.carry_future(b_);
         if (fa == nullptr || fb == nullptr) { refused_ = "no future of " + std::string(fa ? b_ : a_) + " in the feed"; return false; }
@@ -265,10 +321,9 @@ private:
         std::int64_t la = 1, lb = 1;
         if (na >= nb) lb = std::max<std::int64_t>(1, std::llround(na / nb));
         else la = std::max<std::int64_t>(1, std::llround(nb / na));
-        const std::string why = name() + " " + act.why;
         std::string w;
-        if (!e.book().open(name(), *fa, act.side_a, la, e.clock_ns(), why, true, &w)
-            || !e.book().open(name(), *fb, -act.side_a, lb, e.clock_ns(), why, true, &w)) {
+        if (!e.book().open(name(), *fa, side_a, la, e.clock_ns(), why, true, &w)
+            || !e.book().open(name(), *fb, -side_a, lb, e.clock_ns(), why, true, &w)) {
             e.book().close_if([this](const LivePosition& p) { return p.model == name(); }, e.clock_ns(), "leg refused");
             refused_ = w.empty() ? "a leg was refused" : w;
             return false;
@@ -288,7 +343,8 @@ private:
         const bool fresh = !std::filesystem::exists(path);
         std::ofstream o(path, std::ios::app);
         if (fresh) o << "day,pair,z,action,side_a,reason\n";
-        std::string why = act.why + (what == "ENTRY" ? sizing_ : what == "ENTRY refused" ? " -- " + refused_ : "");
+        std::string why = act.why + (what == "ENTRY" || what == "ROLL" ? sizing_
+                                     : what == "ENTRY refused" || what == "ROLL refused" ? " -- " + refused_ : "");
         for (auto& ch : why) if (ch == ',' || ch == '\n') ch = ';';
         o << day_text(e.today()) << ',' << a_ << '/' << b_ << ',' << live_fmt::num(act.z, 3) << ',' << what << ','
           << act.side_a << ',' << why << '\n';
@@ -298,7 +354,8 @@ private:
     const BankPairsCloses* closes_;
     std::string dir_;
     BankPairRule r_;
-    std::int64_t decided_day_ = -1;
+    std::int64_t decided_day_ = -1, entry_day_ = -1, rolling_day_ = -1, reopened_day_ = -1;
+    int side_ = 0;   ///< the open pair's side on A (saved: survives restarts and the expiry roll)
     double z_ = std::numeric_limits<double>::quiet_NaN();
     std::string note_, refused_, sizing_;
 };
