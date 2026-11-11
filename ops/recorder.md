@@ -45,6 +45,18 @@ up or FYERS refuses it, log in by hand (Brokers page, or `altair_fyers_login`);
 until a session exists the log says `waiting for today's FYERS login` every 30
 minutes, and the recorder starts by itself as soon as the feed comes up.
 
+**Every model retrains by itself, no AI involved.** After the curriculum and the
+vol forecast, the nightly runs `ops/linux/train_all.py`: altair_trader (and
+combos), magnitude, regimes, AS-MM, band demo, vol premium, tune, OBI selection,
+the paper report and, when `data/drive-ticks/` exists, the tick forecast. Each
+job has a time limit, all end by 05:30 IST, it refuses market hours, and
+`data/store/runs/<day>/train_all/summary.md` (pushed to the data repo under
+`reports/<day>/train_all/`) says what ran and how it ended. `altair_tune` writes
+`config/model_params/<key>.toml` only for settings that pass its guard (the engine
+loads them at its next start); `--no-train-all` on the nightly skips all of it,
+`train_all.py --go --no-tune-write` keeps tune a dry run.
+`python3 ops/linux/train_all.py` (no --go) lists what would run and what is missing.
+
 Check the timers: `systemctl list-timers 'altair-*'`; a job's output:
 `journalctl -u altair-nightly`. Remove them: `sudo ops/install.sh --remove --go`.
 
