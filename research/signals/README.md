@@ -78,3 +78,23 @@ start. Basket betas are fitted, so a name that has left the index just gets a be
     python3 research/signals/load.py "<Drive>/NSE Contract Futures 2022-23" "<Drive>/NSE Equities (Tick)/2023" bnf2023.npz \
         HDFCBANK,ICICIBANK,SBIN,KOTAKBANK,AXISBANK,INDUSINDBK,BANKBARODA,AUBANK,FEDERALBNK,IDFCFIRSTB,PNB,BANDHANBNK
     python3 research/signals/study.py bnf2023.npz report.md
+
+## Live model: fitted on Drive ticks, tested on FYERS (live or simulation)
+
+`fit.py` fits the 10 s and 60 s forecasts on all Drive days of 2020, 2022 and 2023 and writes
+`config/signals/basket_bnf.csv`, which holds the betas of the 11 banks the recorder streams and
+the coefficients. Days the fit never saw (the last 15% of each year) score IC +0.07 / +0.17 /
++0.11 at 10 s and +0.05 / +0.10 / +0.05 at 60 s.
+
+`live/basket_alpha.hpp` ("Basket alpha BANKNIFTY" in the live engine, paper only) builds the same
+1-second grid from FYERS prints. Its features match the Python training features exactly on a real
+day (checked on 2023-11-01). Every 5 s it logs both forecasts to
+`data/live/basket_alpha/forecasts_<day>.csv`. It trades one lot only when the 60 s forecast beats
+the round trip's expense plus 1 bp, and on the fits above that will be rare.
+
+Score a simulated or live session:
+
+    python3 research/signals/score_live.py data/live/basket_alpha
+
+The scorer measures from 5 s after each forecast, so it is stricter than the fit's 1 s. The edge
+fades within seconds, so expect lower numbers than the fit's.

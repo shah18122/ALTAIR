@@ -1,0 +1,40 @@
+# config/signals/basket_bnf.csv -- written by research/signals/fit.py; read by live/basket_alpha.hpp.
+# Fitted on Drive ticks (source drive-ticks, NOT FYERS): 20200129..20201231, 20220201..20221230, 20230131..20231228.
+# forecast_h (bp, the future's log return over h s starting 1 s later) = c0_h + sum coef_h_<feature> * feature.
+# held out 10 s, last 35 days of 2020: OOS R2 +0.343%, mean daily IC +0.0705, IC>0 on 97% of days
+# held out 10 s, last 35 days of 2022: OOS R2 +2.036%, mean daily IC +0.1696, IC>0 on 100% of days
+# held out 10 s, last 34 days of 2023: OOS R2 +0.967%, mean daily IC +0.1074, IC>0 on 100% of days
+# held out 60 s, last 35 days of 2020: OOS R2 +0.185%, mean daily IC +0.0495, IC>0 on 94% of days
+# held out 60 s, last 35 days of 2022: OOS R2 +0.577%, mean daily IC +0.0978, IC>0 on 97% of days
+# held out 60 s, last 34 days of 2023: OOS R2 -0.007%, mean daily IC +0.0498, IC>0 on 85% of days
+key,value
+ew_half_s,1800
+beta_HDFCBANK,0.231616
+beta_ICICIBANK,0.220161
+beta_SBIN,0.090099
+beta_KOTAKBANK,0.110057
+beta_AXISBANK,0.111336
+beta_INDUSINDBK,0.089412
+beta_BANKBARODA,0.038125
+beta_AUBANK,0.025012
+beta_FEDERALBNK,0.031840
+beta_IDFCFIRSTB,0.010981
+beta_PNB,0.021878
+c0_10,0.002169
+coef_10_rev10,0.073166
+coef_10_rev60,-0.009264
+coef_10_misprice,0.004234
+coef_10_leadgap10,0.096651
+coef_10_leadgap30,0.055888
+coef_10_breadth,0.099897
+coef_10_flow60,-0.107975
+coef_10_flow300,-0.016841
+c0_60,0.005893
+coef_60_rev10,0.061415
+coef_60_rev60,-0.011413
+coef_60_misprice,0.011269
+coef_60_leadgap10,0.101180
+coef_60_leadgap30,0.066962
+coef_60_breadth,0.039048
+coef_60_flow60,-0.199287
+coef_60_flow300,-0.182466

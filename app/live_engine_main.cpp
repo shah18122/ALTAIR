@@ -75,6 +75,7 @@
 #include <live/models.hpp>
 #include <live/obi_quoter.hpp>
 #include <live/obi_trader.hpp>
+#include <live/basket_alpha.hpp>
 #include <live/diffusion.hpp>
 #include <live/obi_underlyings.hpp>
 #include <live/option_arb.hpp>
@@ -815,6 +816,16 @@ int main(int argc, char** argv) {
             r.log_file = (live_dir / "diffusion" / "trades.csv").string();
             engine.add_model(std::make_unique<lv::LiveDiffusionTraderModel>(r, dhub, hub));
         }
+    // BANKNIFTY future vs its bank stocks (live/basket_alpha.hpp): a 10 s / 60 s forecast
+    // fitted on the Drive ticks (research/signals/fit.py -> config/signals/basket_bnf.csv),
+    // run tick by tick. Paper. Forecasts and trades go to <live dir>/basket_alpha/.
+    if (auto bp = lv::read_basket_alpha((root / "config/signals/basket_bnf.csv").string()); bp.ok) {
+        lv::BasketAlphaRules br;
+        br.dir = (live_dir / "basket_alpha").string();
+        engine.add_model(std::make_unique<lv::LiveBasketAlphaModel>(std::move(bp), br));
+    } else {
+        std::printf("basket alpha off: %s\n", bp.why.c_str());
+    }
     // The OBI-skewed option quoter (live/obi_quoter.hpp): a sale resting on
     // the put and the call two strikes out, the threatened leg pulled. Paper.
     // Its settings come the same way (config/model_params/obiq_<under>.toml).

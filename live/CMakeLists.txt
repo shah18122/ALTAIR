@@ -12,6 +12,10 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_live_universe_test PRIVATE altair_live)
     add_test(NAME live_universe COMMAND altair_live_universe_test)
 
+    add_executable(altair_live_basket_alpha_test tests/test_basket_alpha.cpp)
+    target_link_libraries(altair_live_basket_alpha_test PRIVATE altair_live)
+    add_test(NAME live_basket_alpha COMMAND altair_live_basket_alpha_test)
+
     add_executable(altair_live_instrument_master_test tests/test_instrument_master.cpp)
     target_link_libraries(altair_live_instrument_master_test PRIVATE altair_live)
     add_test(NAME live_instrument_master COMMAND altair_live_instrument_master_test)
