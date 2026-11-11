@@ -37,3 +37,45 @@ reversal do not exist in this large-cap universe (both are slightly *continuatio
 gross). Adding stock dispersion / correlation / constituent RV to HAR makes the index
 vol forecast worse out of sample, not better: the extra regressors add noise that HAR's
 own index RV already contains.
+
+## Holdout 2023 (run once, after the dev section above was committed in bb200f3)
+
+| Rule | n | Gross | Net | t | Verdict |
+|---|---|---|---|---|---|
+| E1 daily reversal | 242 | +0.7 | -7.3 | -1.9 | FAIL |
+| E2 30-min reversal | 2,662 | -0.6 | -7.6 | -26.5 | FAIL |
+| E3 1-month momentum | 51 | -14.7 | -19.5 | -1.0 | FAIL |
+| E4 basket lead 5m BANKNIFTY | 915 | +0.2 | -6.8 | -17.5 | FAIL |
+| E4 basket lead 5m NIFTY | 820 | +0.2 | -6.8 | -23.8 | FAIL |
+| E5 mispricing level BANKNIFTY | 224 | +0.6 | -6.4 | -4.5 | FAIL |
+| E5 mispricing level NIFTY | 202 | +0.5 | -6.5 | -5.3 | FAIL |
+
+| Test | n | Gain vs HAR | DM t | Verdict |
+|---|---|---|---|---|
+| E6a next hour BANKNIFTY | 1,205 | +1.1 % | +1.2 | FAIL |
+| E6b next day BANKNIFTY | 241 | -0.5 % | -0.2 | FAIL |
+| E6a next hour NIFTY | 1,205 | +1.0 % | +0.7 | FAIL |
+| E6b next day NIFTY | 241 | -5.3 % | -0.9 | FAIL |
+
+## Verdict
+
+The stock data adds no tradable edge and no volatility skill on top of what we have:
+
+- **Cross-sectional** (long some stocks, short others): no daily or 30-minute reversal,
+  no one-month momentum in the 100 most liquid names. Gross edges are -15 to +1 bp;
+  costs are 7-10 bp.
+- **Index vs constituents at 5 minutes**: the basket's lead and the cumulative
+  mispricing are worth +0.2 to +2.2 bp gross a trade, a third of the 7 bp round trip.
+  This matches the 10-second study (`research/signals/`): the gap is real but tiny,
+  and it closes faster than a taker can trade it.
+- **Volatility**: adding constituent RV, dispersion and correlation to HAR does not
+  beat HAR (dev -3 % to -25 %, holdout -5 % to +1 %, never significant). HAR on the
+  index's own RV stays the volatility model.
+
+Caveats: the universe is today's large-cap list (some survivorship bias, which would
+favour momentum, and momentum still failed); stock-futures returns are proxied by cash
+prices; 5-minute bar closes are last trades, not mid-quotes.
+
+Exploratory only (not part of any pass/fail): E1 and E2 are slightly *continuation*
+gross in dev; E5 BANKNIFTY had the largest gross (+2.2 bp dev, +0.6 bp 2023), which
+shrank out of sample. Nothing here is worth a forward test.
