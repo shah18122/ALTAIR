@@ -38,6 +38,7 @@
 // Offline and read-only. Writes <out>/band_option_demo/: trades_<rule>.csv,
 // summary.csv (every rule, instrument and model) and meta.csv.
 
+#include <app/fyers_source.hpp>
 #include <analytics/inr_rate.hpp>
 #include <app/forecast_tracks.hpp>
 #include <models/band_curriculum.hpp>
@@ -77,7 +78,7 @@ void usage(const char* exe) {
         "    %s [--dataset DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
         "       [--rules R1,R2,...] [--clock variance|calendar|trading] [--rate R] [--slippage-pts P]\n"
         "       [--unverified-costs]\n\n"
-        "    --dataset DIR         default dataset\n"
+        "    --dataset DIR         default: the newest FYERS snapshot, else data/store/fyers\n"
         "    --out DIR             default data/verified (writes band_option_demo/)\n"
         "    --instrument X        default both\n"
         "    --clock C             variance (default: each day's time split between the overnight gap and\n"
@@ -266,7 +267,7 @@ std::string leg_exit(const FadeTrade& t) {
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path root = "dataset", out = "data/verified";
+    fs::path root, out = "data/verified";
     std::string which = "both", rules_arg;
     double rate = altair::kInrRiskFreeRate, slip = 0.5;
     bool unverified = false, trading_clock = true, variance_clock = true;   // default: the variance clock
@@ -291,6 +292,8 @@ int main(int argc, char** argv) {
         usage(argv[0]);
         return 2;
     }
+    root = altair::app::pick_history(root, "altair_band_option_demo");
+    if (root.empty()) return 2;
     std::vector<Rule> rules;
     for (const Rule& r : all_rules()) {
         if (rules_arg.empty() || ("," + rules_arg + ",").find("," + r.id + ",") != std::string::npos) { rules.push_back(r); }

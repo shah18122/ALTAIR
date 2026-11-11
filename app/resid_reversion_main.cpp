@@ -19,6 +19,7 @@
 // Stock data is broker data in data/pairs/ (git-ignored): ops/linux/fetch.py universe.
 // Writes <out>/resid_reversion/{trades,daily}_<variant>.csv, summary.csv, meta.csv.
 
+#include <app/fyers_source.hpp>
 #include <app/demo_costs.hpp>
 #include <app/forecast_tracks.hpp>
 #include <risk/charges_toml.hpp>
@@ -49,7 +50,7 @@ void usage(const char* exe) {
         "    %s [--universe FILE] [--market DIR] [--out DIR] [--notional RS] [--window N]\n"
         "       [--entry S] [--unverified-costs]\n\n"
         "    --universe FILE       default config/universe_nifty50.csv (symbol,fyers,sector,dir)\n"
-        "    --market DIR          the market's daily bars (default dataset/spot/nifty/1d)\n"
+        "    --market DIR          the market's daily bars (default: spot/nifty/1d of the newest FYERS snapshot)\n"
         "    --out DIR             default data/verified (writes resid_reversion/)\n"
         "    --notional RS         rupees per position (default 1000000)\n"
         "    --window N            estimation window in sessions (default 60)\n"
@@ -78,7 +79,7 @@ struct Stock { std::string symbol, sector, dir; };
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path universe = "config/universe_nifty50.csv", market_dir = "dataset/spot/nifty/1d", out = "data/verified";
+    fs::path universe = "config/universe_nifty50.csv", market_dir, out = "data/verified";
     double notional = 1'000'000.0, window = 60, entry = 1.25;
     bool unverified = false;
     for (int i = 1; i < argc; ++i) {
@@ -94,6 +95,11 @@ int main(int argc, char** argv) {
         if (a == "--unverified-costs") { unverified = true; continue; }
         usage(argv[0]);
         return 2;
+    }
+    if (market_dir.empty()) {
+        const auto h = altair::app::pick_history({}, "altair_resid_reversion");
+        if (h.empty()) return 2;
+        market_dir = h / "spot/nifty/1d";
     }
 
     std::vector<altair::ChargeSchedule> schedules;

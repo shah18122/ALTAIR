@@ -21,6 +21,7 @@
 //   <out>/leak_check.csv             with --leak-check: every track rebuilt and
 //                                    rerun at two cuts (app/forecast_leak_check.hpp)
 
+#include <app/fyers_source.hpp>
 #include <app/forecast_leak_check.hpp>
 #include <app/fyers_chain.hpp>
 #include <app/forecast_tracks.hpp>
@@ -808,7 +809,7 @@ void usage(const char* exe) {
         "    %s [--dataset DIR] [--out DIR] [--first-days N] [--cap-days N] [--jobs N]\n"
         "       [--other-cost-bp X] [--only TEXT] [--skip TEXT] [--no-bands] [--no-feeds] [--no-log] [--leak-check]\n"
         "       [--fyers-chain DIR] [--recorded-iv DIR] [--no-ivrv]\n\n"
-        "    --dataset DIR      default dataset\n"
+        "    --dataset DIR      default: the newest FYERS snapshot, else data/store/fyers; never dataset/ unless named\n"
         "    --out DIR          default data/verified\n"
         "    --first-days N     days learned before the first forecast (default 3)\n"
         "    --cap-days N       stop doubling once a block exceeds N days; 0 = pure doubling (default)\n"
@@ -855,7 +856,7 @@ std::string tf_label(int tf) {
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path root = "dataset";
+    fs::path root;
     fs::path out = "data/verified";
     long first_days = 3, cap_days = 0, jobs = static_cast<long>(std::max(1u, std::thread::hardware_concurrency()));
     double other_cost = 1.3;
@@ -899,6 +900,8 @@ int main(int argc, char** argv) {
         usage(argv[0]);
         return 2;
     }
+    root = altair::app::pick_history(root, "altair_forecast_curriculum");
+    if (root.empty()) return 2;
 
     const auto t_start = std::chrono::steady_clock::now();
     std::printf("Forecast curriculum over %s (%ld parallel jobs)\n", root.string().c_str(), jobs);

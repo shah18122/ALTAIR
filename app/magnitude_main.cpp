@@ -21,6 +21,7 @@
 // <out>/magnitude/summary.csv; prints each track's best gated models and the
 // t a result needs to survive the number of tests.
 
+#include <app/fyers_source.hpp>
 #include <analytics/har_rv.hpp>
 #include <app/forecast_tracks.hpp>
 #include <models/magnitude.hpp>
@@ -105,7 +106,7 @@ struct Row {
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path logs = "data/verified/forecast_log", root = "dataset", out = "data/verified";
+    fs::path logs = "data/verified/forecast_log", root, out = "data/verified";
     double cost = 6.3, gate_z = 1.0;
     bool with_feeds = false;
     for (int i = 1; i < argc; ++i) {
@@ -121,6 +122,8 @@ int main(int argc, char** argv) {
         usage(argv[0]);
         return 2;
     }
+    root = altair::app::pick_history(root, "altair_magnitude");
+    if (root.empty()) return 2;
     struct Track { std::string file, instrument; std::int64_t start_minute; };   // -1: daily close to close
     std::vector<Track> tracks;
     for (const std::string base : {"nifty_daily", "banknifty_daily", "nifty_fut_daily", "nifty_0920_close", "banknifty_0920_close",

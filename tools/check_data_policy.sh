@@ -15,7 +15,7 @@ benign='SADBHAV|VAIBHAV'
 pattern='bhav|udiff|_(fo|cm)_0_0_0_'
 
 if git rev-parse --git-dir >/dev/null 2>&1; then
-    files() { git ls-files -z; }
+    files() { git ls-files -z --cached --others --exclude-standard; }   # new files too, before they are committed
 else
     files() { find . -type f -not -path './.git/*' -not -path './build*' -printf '%P\0'; }
 fi

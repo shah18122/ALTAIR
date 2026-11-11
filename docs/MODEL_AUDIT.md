@@ -1,8 +1,8 @@
 # Model audit, 2026-11-11
 
 Every ALTAIR model checked for two things: **where its data comes from** (the
-rule in [DATA_POLICY.md](DATA_POLICY.md): FYERS only, never the NSE
-bhavcopy, no silent fallback) and **whether its numbers are right**. The
+rule in [DATA_POLICY.md](DATA_POLICY.md): FYERS only, never the banned exchange
+file, no silent fallback) and **whether its numbers are right**. The
 accuracy figures are from the latest nightly run on the server (snapshot
 `7e1ae57f`, cutoff 2026-11-10, FYERS candles only, leak check clean;
 `altair-data/reports/2026-11-10/`).
@@ -11,16 +11,16 @@ accuracy figures are from the latest nightly run on the server (snapshot
 
 | Problem | Fix |
 |---|---|
-| Seven tools could still read the bhavcopy (`--source bhavcopy`, `--bhavcopy`, `--with-bhavcopy`), the snapshot could carry it, and three exchange files were committed. | Removed, with a CI scan and a snapshot-time refusal (DATA_POLICY.md). |
-| Published results (variance premium 2015-2026, vol of vol, quantum smile, the curriculum's old IV tracks) were bhavcopy numbers still shown as findings, one on the desktop's verdict list. | Withdrawn from the docs and the desktop. |
+| Seven tools could still read the banned exchange file (an opt-in source option each), the snapshot could carry it, and three exchange files were committed. | Removed, with a CI scan and a snapshot-time refusal (DATA_POLICY.md). |
+| Published results (variance premium 2015-2026, vol of vol, quantum smile, the curriculum's old IV tracks) were numbers from that file still shown as findings, one on the desktop's verdict list. | Withdrawn from the docs and the desktop. |
 | `altair_live_engine` fell back to `dataset/` (TradingView, not FYERS) for HAR, pairs, stat-arb and direction history when no FYERS history existed. Only the straddle sellers refused it. | It no longer falls back: no FYERS history means no history, and the models say why. |
 
 ## Data source of every model
 
 | Model | Where | Data | Verdict |
 |---|---|---|---|
-| Forecast curriculum (about 33 models x 20 tracks, 1m to daily) | `altair_forecast_curriculum` | Nightly: FYERS snapshot only. Run by hand or by the desktop's Refresh daily call: `dataset/` by default. | Nightly is clean. The desktop path reads `dataset/` (TradingView merged with FYERS by `altair_dataset_update`): **conflict, see open item 1.** |
-| altair_trader, Desk trader | `altair_trader`, `live/desk_trader.hpp` | The curriculum's logs; `dataset/` 5m bars for RV by default | Same conflict as above when run from the desktop. |
+| Forecast curriculum (about 33 models x 20 tracks, 1m to daily) | `altair_forecast_curriculum` | Nightly: FYERS snapshot only. Run by hand or by the desktop's Refresh daily call: `dataset/` by default. | Clean: the newest FYERS snapshot by default (fixed today; it used to default to `dataset/`). |
+| altair_trader, Desk trader | `altair_trader`, `live/desk_trader.hpp` | The curriculum's logs; `dataset/` 5m bars for RV by default | Clean: FYERS snapshot by default (fixed today). |
 | Straddle IV>=RV NIFTY / BANKNIFTY | `live/straddle.hpp` | Live FYERS chain; FYERS history for RV; refuses stale or non-FYERS history | Clean. Rule matches (sell when forecast IV >= forecast RV, no margin). |
 | Strangle 80%, books straddle | `live/models.hpp` | Live FYERS chain | Clean. Sell only. |
 | Vol band (HAR), Pairs BANKNIFTY/NIFTY, Stat-arb NIFTY 50, Direction 10:15-14:15 | `live/models.hpp` | FYERS snapshot history (fixed today) | Clean now. |
@@ -59,11 +59,14 @@ marks them "too few forecasts to judge". Ignore them until they have 60+ days.
 
 ## Open items, in the order I would do them
 
-1. **Desktop and manual runs read `dataset/`.** `altair_forecast_curriculum`,
-   `altair_trader`, `altair_vol_premium`, `altair_band_option_demo`,
-   `altair_magnitude`, `altair_threshold` and `altair_data_audit` default to
-   `dataset/`. Make them default to the newest FYERS snapshot, as the live
-   engine does, and refuse `dataset/` unless named.
+1. ~~Desktop and manual runs read `dataset/`.~~ **Fixed 2026-11-11:**
+   `altair_forecast_curriculum`, `altair_trader`, `altair_vol_premium`,
+   `altair_band_option_demo`, `altair_magnitude`, `altair_threshold` and
+   `altair_resid_reversion` now default to the newest FYERS snapshot, else
+   `data/store/fyers`, and stop when there is neither
+   (`app/fyers_source.hpp` `pick_history`). `dataset/` is read only when
+   named with `--dataset`, and is then printed as NOT FYERS.
+   (`altair_data_audit` still audits `dataset/`: that is its job.)
 2. **Forecast models for every timeframe, judged on RMSE/MAE** (Smit,
    2026-11-11). Forecast what can be forecast: realised volatility and the
    size of the move per timeframe, plus the 5-level depth features for the

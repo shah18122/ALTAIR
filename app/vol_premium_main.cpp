@@ -36,6 +36,7 @@
 // Writes <out>/vol_premium/: trades_<variant>.csv, summary.csv,
 // signals.csv, forecast_eval.csv, meta.csv.
 
+#include <app/fyers_source.hpp>
 #include <analytics/inr_rate.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/har_rv.hpp>
@@ -161,7 +162,7 @@ struct Priced {
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path root = "dataset", out = "data/verified";
+    fs::path root, out = "data/verified";
     fs::path chain_dir = "data/store/fyers_chain", snap_dir = "data/store/chain_snap";
     std::string which = "both", source = "fyers", vix_log, vix_model = "Hedge", events_file;
     double rate = altair::kInrRiskFreeRate, slip = 1.0, min_s = 10, exit_s = 1, month_halt = 0.0, max_risk = 0.0;
@@ -194,6 +195,8 @@ int main(int argc, char** argv) {
         usage(argv[0]);
         return 2;
     }
+    root = altair::app::pick_history(root, "altair_vol_premium");
+    if (root.empty()) return 2;
     if (source != "fyers" && source != "synthetic") { usage(argv[0]); return 2; }
 
     std::vector<altair::ChargeSchedule> schedules;

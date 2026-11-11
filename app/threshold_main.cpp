@@ -20,6 +20,7 @@
 // Writes <out>/threshold/{breakout_trades,ratio_trades,ratio_days}.csv and
 // summary.txt.
 
+#include <app/fyers_source.hpp>
 #include <app/demo_costs.hpp>
 #include <risk/charges_toml.hpp>
 #include <strategies/threshold.hpp>
@@ -48,7 +49,7 @@ void usage(const char* exe) {
     std::printf(
         "  The threshold strategies of threshold_strategy/, on paper, with real futures expenses.\n\n"
         "    %s [--dataset DIR] [--out DIR] [--from YYYY-MM-DD] [--lots N] [--unverified-costs]\n\n"
-        "    --dataset DIR      default dataset (reads spot/banknifty and spot/nifty, 1d)\n"
+        "    --dataset DIR      default: the newest FYERS snapshot, else data/store/fyers (reads spot/banknifty and spot/nifty, 1d)\n"
         "    --out DIR          default data/verified (writes threshold/)\n"
         "    --from DATE        first session (default 2007-09-17, where the owner's workbook starts)\n"
         "    --lots N           lots per trade (default 1)\n"
@@ -198,7 +199,7 @@ SeriesStats series_stats(const std::vector<double>& r, const std::vector<int>& p
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path dataset = "dataset", out_root = "data/verified";
+    fs::path dataset, out_root = "data/verified";
     std::string from = "2007-09-17";
     long long lots = 1;
     bool unverified = false;
@@ -212,6 +213,8 @@ int main(int argc, char** argv) {
         else if (a == "--unverified-costs") unverified = true;
         else { usage(argv[0]); return a == "--help" || a == "-h" ? 0 : 2; }
     }
+    dataset = altair::app::pick_history(dataset, "altair_threshold");
+    if (dataset.empty()) return 2;
 
     // ---- expenses -------------------------------------------------------------------------
     std::vector<altair::ChargeSchedule> schedules;
