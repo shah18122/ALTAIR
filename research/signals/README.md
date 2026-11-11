@@ -98,3 +98,22 @@ Score a simulated or live session:
 
 The scorer measures from 5 s after each forecast, so it is stricter than the fit's 1 s. The edge
 fades within seconds, so expect lower numbers than the fit's.
+
+### Replay check, 2023-10-03 to 2023-12-29 (59 days the fit never saw)
+
+Fitted with `fit.py --until 20231001`. Then `basket_replay.cpp` ran the live model's own C++ code
+print by print over the Drive ticks (`replay_events.py`):
+
+| | OOS R2 | IC | days IC > 0 |
+|---|---|---|---|
+| 10 s | +1.25% | +0.112 | 59 of 59 |
+| 60 s | +0.11% | +0.043 | 52 of 59 |
+
+| trade when \|f60\| > | trades | gross bp | net bp (5.6 bp round trip) |
+|---|---|---|---|
+| 0 (every signal) | 19,352 | +0.07 | -5.53 |
+| 1 bp | 59 | -0.17 | -5.77 |
+| 6.6 bp (the live rule) | 0 | | |
+
+The forecast is right more often than not, every single day, but the moves it calls are a fraction
+of a basis point. The live rule never trades, which is the correct outcome.

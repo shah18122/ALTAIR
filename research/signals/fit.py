@@ -18,7 +18,10 @@ also says how well the fitted model did on days it never saw.
 
 Writes config/signals/basket_bnf.csv ("key,value" lines; read by live/basket_alpha.hpp).
 
-    python3 research/signals/fit.py OUT.csv bnf2020.npz bnf2022.npz bnf2023.npz
+    python3 research/signals/fit.py OUT.csv bnf2020.npz bnf2022.npz bnf2023.npz [--until YYYYMMDD]
+
+--until fits on days BEFORE that day only (betas from the 20 days before it), for an honest replay
+of the days after it (research/signals/basket_replay.cpp).
 """
 from __future__ import annotations
 
@@ -81,8 +84,11 @@ def fit_betas(S, F, i0, i1):
     return np.linalg.solve(X.T @ X + 1e-2 * len(X) * np.eye(K) * X.var(0).mean(), X.T @ y)
 
 
-def features(path):
+def features(path, until=None):
     z = np.load(path)
+    if until is not None:
+        keep = z["days"] < until
+        z = {k: (z[k][keep] if k in ("days", "expiry", "fpx", "fvol", "fsv", "foi", "fn", "spx", "svol") else z[k]) for k in z.files}
     syms = list(z["syms"])
     sel = [syms.index(s) for s in STOCKS]
     F = np.log(z["fpx"])
@@ -130,8 +136,9 @@ def score(X, y, c0, coef):
     return r2, float(np.mean(ics)), float(np.mean(np.array(ics) > 0)), len(ics)
 
 
-def main(out, paths):
-    parts = [features(p) for p in paths]
+def main(out, paths, until=None):
+    parts = [features(p, until) for p in paths]
+    parts = [p for p in parts if p[0].shape[0] > 0]
     live_beta = parts[-1][2]
     lines = ["# config/signals/basket_bnf.csv -- written by research/signals/fit.py; read by live/basket_alpha.hpp.",
              "# Fitted on Drive ticks (source drive-ticks, NOT FYERS): " + ", ".join(
@@ -166,4 +173,10 @@ def main(out, paths):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2:])
+    args = sys.argv[2:]
+    until = None
+    if "--until" in args:
+        k = args.index("--until")
+        until = int(args[k + 1])
+        args = args[:k] + args[k + 2:]
+    main(sys.argv[1], args, until)
