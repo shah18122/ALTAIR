@@ -57,7 +57,7 @@ def newest_snapshot(day: str) -> Path | None:
     return found[-1] if found else None
 
 
-def jobs(day: str, run: Path, snap: Path | None, tune_write: bool) -> list[dict]:
+def jobs(day: str, run: Path, snap: Path | None, tune_write: bool, ticks: Path) -> list[dict]:
     """Every job: name, tool, args, the inputs it needs, minutes it may take."""
     out = run / "train_all"
     logs = run / "forecast_log"
@@ -91,8 +91,8 @@ def jobs(day: str, run: Path, snap: Path | None, tune_write: bool) -> list[dict]
              args=["--day", day]),
         dict(name="paper_report", tool="altair_paper_report", minutes=20, needs=[ROOT / "data" / "live" / "paper"],
              args=["--out", str(out / "paper_report")]),
-        dict(name="tick_forecast", tool="altair_tick_forecast", minutes=240, needs=[ROOT / "data" / "drive-ticks"],
-             args=["--ticks", str(ROOT / "data" / "drive-ticks"), "--out", str(out / "tick_forecast")]),
+        dict(name="tick_forecast", tool="altair_tick_forecast", minutes=240, needs=[ticks],
+             args=["--ticks", str(ticks), "--out", str(out / "tick_forecast")]),
     ]
     return j
 
@@ -108,6 +108,7 @@ def main() -> int:
     ap.add_argument("--only", default="", help="comma-separated job names (prefix match)")
     ap.add_argument("--force", action="store_true", help="run even in market hours")
     ap.add_argument("--no-tune-write", action="store_true", help="altair_tune --dry-run: write no model_params")
+    ap.add_argument("--ticks-dir", default=str(ROOT / "data" / "drive-ticks"), help="Drive tick CSVs (NOT FYERS)")
     ap.add_argument("--stop-at", default="05:30", help="IST, next morning: every job ends by this")
     a = ap.parse_args()
 
@@ -115,7 +116,7 @@ def main() -> int:
     day = a.day or now.date().isoformat()
     run = STORE / "runs" / day
     snap = newest_snapshot(day)
-    todo = jobs(day, run, snap, not a.no_tune_write)
+    todo = jobs(day, run, snap, not a.no_tune_write, Path(a.ticks_dir))
     if a.only:
         keep = [k.strip() for k in a.only.split(",") if k.strip()]
         todo = [t for t in todo if any(t["name"].startswith(k) for k in keep)]

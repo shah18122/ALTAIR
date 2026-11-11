@@ -33,7 +33,7 @@ def bin_dir() -> Path:
 
 
 def tool(name: str) -> Path:
-    return bin_dir() / name
+    return bin_dir() / (name + ".exe" if os.name == "nt" else name)
 
 
 def ist_now() -> _dt.datetime:
