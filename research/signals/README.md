@@ -143,7 +143,9 @@ switched on only in this one new copy. The existing sellers are unchanged.
 1. **Timed legs.** Once forecast IV >= forecast RV, each leg waits up to 60 s for the basket-alpha
    60 s forecast to favour it. The call sells on a down forecast, the put on an up one. A leg that
    gets no favourable forecast is sold when the wait ends. Drive-tick test: +₹0.28 a unit a leg
-   against a random second (t 2.0).
+   against a random second (t 2.0). The forecast only starts at about 09:20 (its features need
+   minutes of prints), so when IV >= RV holds at the open the seller waits for the forecast, up
+   to 10 min, rechecking IV >= RV on every tick (found in the FYERS simulation, 2026-11-11).
 2. **Resting quotes.** Each leg's sale rests at its ask (paper book `open_passive`, filled through
    the queue model) instead of hitting the bid. It is pulled while the forecast is against it,
    quoted again when it isn't, and sold at the bid if still unfilled 5 min after the signal.

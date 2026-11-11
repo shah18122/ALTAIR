@@ -135,6 +135,10 @@ struct LiveStraddleRules {
     /// +Rs 0.28 a unit a leg against a random second at a 60 s wait (research/signals/README.md).
     std::function<double(std::int64_t)> direction_60s;
     int timing_wait_s = 60;
+    /// The forecast only starts ~09:20 (its features need minutes of prints), while IV >= RV usually
+    /// says sell at the open. So the timed entry waits, with IV >= RV checked on every tick, until
+    /// a forecast exists -- at most `forecast_wait_s` after IV >= RV first held, then it goes untimed.
+    int forecast_wait_s = 600;
     /// With the timed entry: each leg is SOLD RESTING AT ITS ASK (book open_passive, filled only through
     /// the queue model) instead of hitting the bid, so the spread is earned rather than paid. A resting
     /// leg is pulled while the forecast turns against it (the call on an up forecast, the put on a down
@@ -288,7 +292,7 @@ public:
     void on_new_day(LiveEngine&) override {
         traded_ = false; closed_note_ = false; resumed_checked_ = false; taken_ = false;
         note_.clear(); last_ = {}; call_ = put_ = nullptr; ticks_ = 0; credit_ = 0.0; entry_ns_ = 0; gate_.clear();
-        armed_ns_ = 0; armed_ = {}; resting_.clear();
+        armed_ns_ = 0; first_ok_ns_ = 0; armed_ = {}; resting_.clear();
     }
 
     void on_quote(LiveEngine& e, std::uint32_t token) override {
@@ -514,7 +518,18 @@ private:
         if (R.min_cone_rank > 0.0 && !(last_.cone_rank >= R.min_cone_rank)) return;   // watch on: the rank moves with the IV
         if (R.max_risk > 0.0 && !(last_.risk <= R.max_risk)) return;
         if (R.max_gap_loss > 0.0 && !(last_.gap_loss <= R.max_gap_loss)) return;
-        if (R.direction_60s) { timed(e, ns, m); return; }
+        if (R.direction_60s) {
+            if (armed_ns_ == 0 && !std::isfinite(R.direction_60s(ns))) {
+                if (first_ok_ns_ == 0) {
+                    first_ok_ns_ = ns;
+                    e.note_decision(name(), live_fmt::hhmm(m) + " forecast IV >= forecast RV; waiting for the 60 s forecast (up to "
+                                                + std::to_string(R.forecast_wait_s) + " s, IV >= RV rechecked each tick)");
+                }
+                if (ns - first_ok_ns_ < static_cast<std::int64_t>(R.forecast_wait_s) * 1'000'000'000) return;
+            }
+            timed(e, ns, m);
+            return;
+        }
         traded_ = true;
         const std::string reason = live_fmt::hhmm(m) + " " + reading_text(last_) + "; " + books_text(last_) + ": forecast IV >= forecast RV, SELL";
         LiveDecisionScope log(e, name(), [this] { return note_; });
@@ -719,6 +734,7 @@ private:
     bool traded_ = false, closed_note_ = false, resumed_checked_ = false, taken_ = false;
     std::int64_t armed_ns_ = 0;   ///< timed entry: when the gate said sell (0 = not armed)
     LiveStraddleReading armed_;   ///< timed entry: the reading whose legs are being sold
+    std::int64_t first_ok_ns_ = 0;      ///< timed entry: when IV >= RV first held while no forecast existed
     std::set<std::uint32_t> resting_;   ///< timed entry: legs whose sale rests at the ask (not a market sale)
     std::uint64_t ticks_ = 0;
     double credit_ = 0.0;

@@ -399,7 +399,7 @@ private:
         std::snprintf(b + n, sizeof b - static_cast<std::size_t>(n), "\n");
         std::string head = "epoch_s,future,f10_bp,f60_bp";
         for (const char* f : kBasketFeatureNames) head += std::string(",") + f;
-        append(std::filesystem::path(r_.dir) / ("forecasts_" + std::to_string(day_) + ".csv"), head + "\n", b);
+        append(std::filesystem::path(r_.dir) / ("forecasts_" + day_text(day_) + ".csv"), head + "\n", b);
     }
     void log_trade(std::int64_t ns, const char* what, int side, double px, std::string reason) const {
         for (auto& ch : reason) if (ch == ',' || ch == '\n') ch = ';';

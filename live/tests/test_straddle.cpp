@@ -187,6 +187,19 @@ int main() {
               "a down forecast sells the call on the signal and the put at the end of the wait");
     }
     {
+        // No forecast before 09:20 (the basket model's warm-up): the timed entry waits for it rather
+        // than burning its 60 s wait at the open, then times the legs on it.
+        LiveStraddleRules R;
+        R.direction_60s = [](std::int64_t ns) {
+            return live_minute_of_day(live_ist_minute_index(ns)) >= 9 * 60 + 20 ? -2.0 : std::numeric_limits<double>::quiet_NaN();
+        };
+        const Run s = session(0.004, R);
+        check(s.all_findings.find("waiting for the 60 s forecast") != std::string::npos
+                  && s.all_findings.find("CE: 60 s forecast -2.00 bp favours it") != std::string::npos,
+              "no forecast at the open: the timed entry waits for it, then sells the call on it");
+        check(s.sold_calls == 1 && s.sold_puts == 1 && s.entry_minute >= 9 * 60 + 20, "both legs sold, none before the forecast starts");
+    }
+    {
         // Resting quotes: an up forecast quotes the put at its ask at once; the call is never quoted
         // into the adverse forecast and is sold at the bid at the 300 s deadline.
         LiveStraddleRules R;
