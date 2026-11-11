@@ -1,0 +1,7 @@
+sym,rule,n,gross_bp,cost_bp,net_bp,t,by_year,placebo95_bp,late_net_bp,leak_caught,total_pct
+HDFCBANK,P1 intraday momentum,241,-1.9198,8.0000,-9.9198,-5.9679,2023:-9.92,-5.2786,-7.8724,True,-23.9068
+HDFCBANK,P2 opening range breakout,241,7.4895,8.0000,-0.5105,-0.1166,2023:-0.51,-0.9466,0.5533,True,-1.2304
+HDFCBANK,P3 gap fade,63,0.4342,8.0000,-7.5658,-1.1523,2023:-7.57,2.7330,-12.4665,True,-4.7664
+HDFCBANK,P4 overnight drift,242,7.7136,10.0000,-2.2864,-0.5468,2023:-2.29,-5.6629,-8.4479,True,-5.5330
+HDFCBANK,P5 residual reversion vs BANKNIFTY,220,-0.6040,8.0000,-8.6040,-4.5776,2023:-8.60,-5.0225,-9.0961,True,-18.9288
+HDFCBANK,P6 pair HDFCBANK/ICICIBANK,8,24.0862,10.0000,14.0862,0.2850,2023:+14.09,58.4642,13.8628,True,1.1269
