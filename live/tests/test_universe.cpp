@@ -109,6 +109,18 @@ int main() {
               "on expiry day the expiring weekly and the next expiry are both streamed");
     }
     {
+        // config/universe_banknifty.csv: a BANKNIFTY constituent outside the NIFTY 50 is streamed on NSE
+        // with its book, labelled as such, and without a BSE twin.
+        const std::vector<LiveStock> bank{{"SBIN", "NSE:SBIN-EQ", "banknifty"}};
+        const auto ub = build_universe(rows, bank, o);
+        int nse = 0, bse = 0;
+        for (const auto& i : ub.instruments) {
+            if (i.fyers == "NSE:SBIN-EQ" && i.group == "BANKNIFTY stocks" && i.depth) ++nse;
+            if (i.fyers == "BSE:SBIN-A") ++bse;
+        }
+        check(nse == 1 && bse == 0, "a BANKNIFTY-basket stock streams on NSE with its book, no BSE twin");
+    }
+    {
         // FYERS's F&O master adds the weeklies a day-old instrument master lacks.
         const long long exp = 20'739LL * 86'400 + 36'000;   // 2026-10-13 15:30 IST
         std::ostringstream fo;

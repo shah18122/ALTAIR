@@ -1333,8 +1333,13 @@ int main(int argc, char** argv) {
             g_obi_unders.push_back(uo.fo_stocks[k]);
             if (k < uo.fo_spots.size() && uo.fo_spots[k] > 0.0) g_obi_spot[uo.fo_stocks[k]] = uo.fo_spots[k];
         }
-        auto uni = altair::live::build_universe(
-            rows, altair::live::read_stock_universe(src + "/config/universe_nifty50.csv"), uo);
+        // NIFTY 50, plus the BANKNIFTY constituents outside it (config/universe_banknifty.csv), so the
+        // recorder holds the whole bank basket for the index-vs-constituents signals.
+        auto stock_list = altair::live::read_stock_universe(src + "/config/universe_nifty50.csv");
+        for (auto& s : altair::live::read_stock_universe(src + "/config/universe_banknifty.csv"))
+            if (std::none_of(stock_list.begin(), stock_list.end(), [&s](const auto& x) { return x.symbol == s.symbol; }))
+                stock_list.push_back(std::move(s));
+        auto uni = altair::live::build_universe(rows, stock_list, uo);
         g_depth_request = live_dir + "/depth_request.csv";
         g_obi_watch = live_dir + "/obi_watch.csv";
         const std::string watch_path = live_dir + "/watchlist.csv";

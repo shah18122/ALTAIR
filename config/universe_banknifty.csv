@@ -1,0 +1,15 @@
+# config/universe_banknifty.csv -- BANKNIFTY constituents that are NOT in the NIFTY 50.
+# The price service streams them (equity, 5-level book, near futures) on top of
+# config/universe_nifty50.csv so the recorder captures the whole bank basket for
+# the index-vs-constituents signals (research/signals/). NSE revises the index
+# twice a year: an extra name here is harmless (its basket beta comes out ~0).
+symbol,fyers,sector,dir
+INDUSINDBK,NSE:INDUSINDBK-EQ,banknifty,
+BANKBARODA,NSE:BANKBARODA-EQ,banknifty,
+PNB,NSE:PNB-EQ,banknifty,
+CANBK,NSE:CANBK-EQ,banknifty,
+FEDERALBNK,NSE:FEDERALBNK-EQ,banknifty,
+IDFCFIRSTB,NSE:IDFCFIRSTB-EQ,banknifty,
+AUBANK,NSE:AUBANK-EQ,banknifty,
+UNIONBANK,NSE:UNIONBANK-EQ,banknifty,
+YESBANK,NSE:YESBANK-EQ,banknifty,

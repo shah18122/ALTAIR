@@ -457,7 +457,7 @@ inline void add_chain(const std::vector<LiveMasterRow>& rows, const std::string&
             in.kind = LiveKind::Equity;
             in.lot = 1;
             in.tick = it->second->tick > 0.0 ? it->second->tick : 0.05;
-            in.group = "NIFTY 50";
+            in.group = s.sector == "banknifty" ? "BANKNIFTY stocks" : "NIFTY 50";
             in.depth = true;
             rep.instruments.push_back(std::move(in));
         }
@@ -469,6 +469,7 @@ inline void add_chain(const std::vector<LiveMasterRow>& rows, const std::string&
                 if (r.segment == "BSE" && r.exchange == "BSE" && r.type == "EQ") bse.emplace(r.symbol, &r);
             for (const auto& s : stocks) {
                 if (eq.find(s.symbol) == eq.end()) continue;   // no NSE leg, no pair
+                if (s.sector == "banknifty") continue;          // index-basket extras: NSE only
                 const auto it = bse.find(s.symbol);
                 if (it == bse.end()) { rep.notes.push_back(s.symbol + ": not a BSE equity in the master"); continue; }
                 LiveInstrument in;
