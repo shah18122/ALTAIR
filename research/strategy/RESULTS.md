@@ -148,6 +148,6 @@ What it shows:
 - **The strangle is not safer intraday**: it collects a third of the
   straddle's premium and still loses about 70 % as much on the trend day.
 
-Next: these variants run every day as paper shadows of the live model, and
-the scorer adds each session to this table, so the 60-session verdict in
-README.md builds up day by day.
+Rerun `option_sessions.py` on the latest altair-data to extend this table.
+Not built yet: a nightly scorer that does it automatically, so the
+60-session verdict in README.md builds up day by day.
