@@ -117,3 +117,20 @@ print by print over the Drive ticks (`replay_events.py`):
 
 The forecast is right more often than not, every single day, but the moves it calls are a fraction
 of a basis point. The live rule never trades, which is the correct outcome.
+
+### Selling the opposite option on the 60 s forecast (`option_sell_sim.py`)
+
+Same 59 unseen days. An up forecast sells the ATM PE and a down forecast sells the CE. Each trade
+sells at the bid and buys back at the ask, and exits at a ₹ target or a stop. Option prices are
+approximated from the future: delta 0.5, ₹1 spread, ₹1.35 a unit in charges.
+
+| target / stop (₹ a unit) | trades | win % | net ₹ a lot of 30 | random side |
+|---|---|---|---|---|
+| 5 / 10 | 3,716 | 64% | -46 | worse |
+| 5 / 15 | 3,273 | 72% | -45 | worse |
+| 10 / 20 | 2,249 | 65% | -49 | worse |
+| 10 / 30 | 1,800 | 73% | -52 | worse |
+
+These rows trade when \|f60\| > 0.5 bp; all thresholds are in the script output. The forecast
+does a little better than a coin flip, about ₹0.3 to 0.8 a unit, but the ₹1 spread plus ₹1.35
+in charges is larger. The IV > RV gate can't be tested here (no IV in the Drive data).

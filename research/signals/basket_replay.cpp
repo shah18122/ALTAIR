@@ -50,6 +50,8 @@ int main(int argc, char** argv) {
     std::vector<double> fpx(86400, std::nan(""));
     std::vector<Row> rows;
     long long last_sample = -1;
+    // BASKET_ROWS=path: also write every forecast (day,sec,f10,f60) for other tests
+    FILE* dump = std::getenv("BASKET_ROWS") ? std::fopen(std::getenv("BASKET_ROWS"), "w") : nullptr;
 
     auto finish_day = [&]() {
         if (day == 0) return;
@@ -100,6 +102,7 @@ int main(int argc, char** argv) {
         std::array<double, kBasketFeatures> x{};
         if (!st.features(x)) continue;
         rows.push_back({day, t, basket_forecast(p, 0, x), basket_forecast(p, 1, x)});
+        if (dump != nullptr) std::fprintf(dump, "%lld,%lld,%.4f,%.4f\n", day, t, rows.back().f10, rows.back().f60);
     }
     finish_day();
 
