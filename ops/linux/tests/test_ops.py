@@ -81,7 +81,7 @@ class DryRuns(unittest.TestCase):
                 p.write_text("#!/bin/sh\nexit 0\n")
                 p.chmod(p.stat().st_mode | stat.S_IEXEC)
             env = dict(os.environ, ALTAIR_BIN=d)
-            for script in ("record_session.py", "nightly.py", "fyers_chain.py"):
+            for script in ("record_session.py", "nightly.py", "fyers_chain.py", "train_all.py"):
                 r = subprocess.run([sys.executable, str(OPS / script)], env=env, capture_output=True, text=True)
                 self.assertEqual(r.returncode, 0, script + r.stdout + r.stderr)
 

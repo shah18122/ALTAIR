@@ -14,7 +14,8 @@ the rest go on:
   4. SNAPSHOT altair_store snapshot at one IST cutoff. FYERS data only by default:
               --with-dataset opts in. Snapshots are never rebuilt over.
   5. RETRAIN  altair_forecast_curriculum on the snapshot with --leak-check, then
-              altair_vol_forecast (next-move size, every timeframe), into
+              altair_vol_forecast (next-move size, every timeframe), then every other
+              trainer (ops/linux/train_all.py; --no-train-all skips it), into
               data/store/runs/<day>/. Promoted to data/store/runs/LATEST.txt only if
               the leak check is clean.
   6. TRADES   the day's paper and live round trips, with their reasons, into the log.
@@ -78,6 +79,7 @@ def main() -> int:
     ap.add_argument("--only", default="")
     ap.add_argument("--ticks", action="store_true")
     ap.add_argument("--no-retrain", action="store_true")
+    ap.add_argument("--no-train-all", action="store_true")
     # The 15:47 push (altair-push.timer): decode, IV, trades, tidy, push -- no
     # FYERS calls (altair-fyers-chain is fetching then), no snapshot (it must
     # wait for the day's FYERS candles: snapshots are never rebuilt over), no
@@ -215,6 +217,13 @@ def main() -> int:
                 log("nightly", "INFO" if rc == 0 else "ERROR", f"vol forecast on snapshot {snap_id}: exit {rc} (runs/{day_s}/vol_forecast.txt)")
             else:
                 log("nightly", "WARN", "vol forecast skipped: altair_vol_forecast not built (ops/build.sh app)")
+
+            # Every other trainer and walk-forward study (ops/linux/train_all.py: plain
+            # programs, no AI). Each job has its own time limit; all end by 05:30.
+            if not a.no_train_all:
+                rc = subprocess.run([sys.executable, str(Path(__file__).with_name("train_all.py")), "--go", "--day", day_s],
+                                    cwd=ROOT).returncode
+                status["train_all"] = rc
 
     # ---- 6. the day's trades, with their reasons ---------------------------------
     for path, kind in ((ROOT / "data/live/paper/trades.csv", "paper"), (ROOT / "data/live_orders/strategy_trades.csv", "LIVE")):
