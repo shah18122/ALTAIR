@@ -1,0 +1,2 @@
+split,pairs,trades,months,gross_bp,net_bp,t_monthly,t_trades,win_rate,by_year,groups_positive,placebo95_bp,late_net_bp,leak_caught,hold_days_med
+dev,63,1119,23,38.0897,28.0897,1.2982,3.0722,0.6336,2020:+50.0 2022:+3.5,6,4.8531,30.7176,True,12.0000
