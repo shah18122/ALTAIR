@@ -1,5 +1,5 @@
-// live/tests/test_bank_pairs.cpp -- the bank-pairs rule (live/bank_pairs.hpp).
-#include <live/bank_pairs.hpp>
+// live/tests/test_pair_trading.cpp -- the bank-pairs rule (live/pair_trading.hpp).
+#include <live/pair_trading.hpp>
 
 #include <cassert>
 #include <cmath>
@@ -43,6 +43,6 @@ int main() {
     assert(act.kind == BankPairAction::None);
     act = bank_pair_decide(a, b, true, 11);
     assert(act.kind == BankPairAction::Exit);
-    std::puts("bank pairs: ok");
+    std::puts("pair trading: ok");
     return 0;
 }

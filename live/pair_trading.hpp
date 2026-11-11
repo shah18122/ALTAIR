@@ -1,11 +1,11 @@
-// live/bank_pairs.hpp -- bank-stock pairs reversion, paper: one model per pair of
+// live/pair_trading.hpp -- bank-stock pairs reversion, paper: one model per pair of
 // ICICIBANK, KOTAKBANK, AXISBANK, SBIN, INDUSINDBK (10 pairs), traded in stock futures.
 //
 // WHERE IT COMES FROM. research/equity/PAIRS_RESULTS.md: rule P6 on 63 same-sector pairs failed
 // its pre-registered bar (monthly t 1.3 dev, 0.85 in 2023), but the bank pairs were positive on
 // every split (+61 bp a trade 2020+2022, +51 bp 2023, after 10 bp). That is exploratory, so this
 // model is PAPER, a forward test with the rule unchanged: judge it on ~30 paper trades against
-// /mnt/project-files/pairs/bank_pairs_trade_log.csv before anyone switches it to LIVE.
+// /mnt/project-files/pair_trading/pair_trading_trade_log.csv before anyone switches it to LIVE.
 //
 // THE RULE (unchanged from research/equity/pairs.py):
 //   s = log(close A / close B), one value per session (the stock's last trade at ~15:29).
@@ -19,8 +19,8 @@
 // CLOSES. BankPairsCloses keeps every leg's session closes: FYERS daily candles from
 // data/pairs/<sym>/1d (ops/linux/fetch.py universe --go) as the warm-up, overwritten by the
 // stock's own last trade the engine sees from 15:25 on each day, saved to
-// <live dir>/bank_pairs/closes.csv so a restart keeps them. Every decision, with its z and why,
-// goes to <live dir>/bank_pairs/decisions.csv.
+// <live dir>/pair_trading/closes.csv so a restart keeps them. Every decision, with its z and why,
+// goes to <live dir>/pair_trading/decisions.csv.
 #pragma once
 
 #include <live/engine.hpp>
@@ -122,7 +122,7 @@ public:
         load_own();
     }
 
-    [[nodiscard]] std::string name() const override { return "Bank pairs closes"; }
+    [[nodiscard]] std::string name() const override { return "Pair trading closes"; }
     [[nodiscard]] std::string family() const override { return "pairs"; }
 
     void on_minute(LiveEngine& e, int m) override {
@@ -210,7 +210,7 @@ public:
     LiveBankPairModel(std::string a, std::string b, const BankPairsCloses* closes, std::string dir, BankPairRule r = {})
         : a_(std::move(a)), b_(std::move(b)), closes_(closes), dir_(std::move(dir)), r_(r) {}
 
-    [[nodiscard]] std::string name() const override { return "Bank pair " + a_ + "/" + b_; }
+    [[nodiscard]] std::string name() const override { return "Pair trading " + a_ + "/" + b_; }
     [[nodiscard]] std::string family() const override { return "pairs"; }
     [[nodiscard]] bool carry() const override { return true; }
 

@@ -1,9 +1,9 @@
-// research/equity/bank_pairs_replay.cpp -- run the live rule (live/bank_pairs.hpp, bank_pair_decide)
+// research/equity/pair_trading_replay.cpp -- run the live rule (live/pair_trading.hpp, bank_pair_decide)
 // over a closes file and print its trades, to check it against research/equity/pairs.py.
 //
-//   bank_pairs_replay CLOSES.csv A B      (CLOSES.csv: day,SYM,close; one row per stock per session)
+//   pair_trading_replay CLOSES.csv A B      (CLOSES.csv: day,SYM,close; one row per stock per session)
 // Prints entry_day,exit_day,side_a (the morning each was decided).
-#include <live/bank_pairs.hpp>
+#include <live/pair_trading.hpp>
 
 #include <cstdio>
 #include <fstream>

@@ -350,8 +350,8 @@ inline constexpr std::array kAtlasRows{
              "Forecasts the BANKNIFTY future's next 10-60 s from its 12 bank "
              "stocks (mispricing, lead, breadth, flow), fitted on Drive ticks. "
              "Real but about 1 bp, below a round trip's cost. Paper only."},
-    AtlasRow{"4. Microstructure & execution", "Bank pairs (10 bank-stock pairs)",
-             AtlasStatus::Implemented, "live/bank_pairs.hpp", -1,
+    AtlasRow{"4. Microstructure & execution", "Pair trading (10 bank-stock pairs)",
+             AtlasStatus::Implemented, "live/pair_trading.hpp", -1,
              "Sells the rich bank stock's future and buys the cheap one's when "
              "their 20-day spread z passes 2; out at 0.5 or 10 sessions. Failed "
              "its pre-registered bar; banks held up on every split. Paper test."},
