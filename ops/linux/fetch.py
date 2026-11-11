@@ -8,7 +8,8 @@ place an order: they call only FYERS's read-only history and data endpoints.
 
   history   the whole FYERS price history ALTAIR trains on, into
             data/store/fyers/<seg>/<inst>/<tf>/history.csv (the nightly job adds each new day)
-  universe  daily closes for every stock in config/universe_nifty50.csv -> data/pairs/
+  universe  daily closes for every stock in config/universe_nifty50.csv and
+            config/universe_banknifty.csv -> data/pairs/
   pairs     daily closes for every stock leg in config/pairs.csv -> data/pairs/
   meta      the FYERS history `altair_trader combos` reads, one year a file, into
             data/fyers_meta/ (--run then runs the meta-trader on it)
@@ -144,6 +145,13 @@ def cmd_universe(a) -> int:
         f = line.split(",")
         if len(f) >= 4:
             legs[f[1]] = f[3]
+    # BANKNIFTY names outside the NIFTY 50 (INDUSINDBK...): the bank-pairs model needs their closes too
+    for line in (ROOT / "config/universe_banknifty.csv").read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#") or line.startswith("symbol,"):
+            continue
+        f = line.split(",")
+        if len(f) >= 2 and f[1] not in legs:
+            legs[f[1]] = f"data/pairs/{f[0].strip().lower()}/1d"
     return daily_closes(a, legs)
 
 

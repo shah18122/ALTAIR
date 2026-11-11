@@ -75,6 +75,7 @@
 #include <live/models.hpp>
 #include <live/obi_quoter.hpp>
 #include <live/obi_trader.hpp>
+#include <live/bank_pairs.hpp>
 #include <live/basket_alpha.hpp>
 #include <live/diffusion.hpp>
 #include <live/obi_underlyings.hpp>
@@ -842,6 +843,25 @@ int main(int argc, char** argv) {
         engine.add_model(std::move(ba));
     } else {
         std::printf("basket alpha off: %s\n", bp.why.c_str());
+    }
+    // Bank-stock pairs (live/bank_pairs.hpp): 10 pairs of ICICIBANK, KOTAKBANK, AXISBANK, SBIN,
+    // INDUSINDBK in stock futures, decided at 09:20 on yesterday's closes, carried overnight.
+    // Paper forward test of research/equity/PAIRS_RESULTS.md. Warm-up closes: FYERS daily
+    // candles in data/pairs/<sym>/1d (ops/linux/fetch.py universe --go); then its own.
+    {
+        std::map<std::string, lv::BankPairsCloses::Series> warm;
+        for (const auto& sym : lv::kBankPairStocks) {
+            std::string dir = sym;
+            for (auto& ch : dir) ch = static_cast<char>(ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch);
+            warm[sym] = daily_closes(root / "data/pairs" / dir / "1d", today);
+        }
+        auto hub_closes = std::make_unique<lv::BankPairsCloses>(std::move(warm), (live_dir / "bank_pairs").string());
+        const lv::BankPairsCloses* bpc = hub_closes.get();
+        engine.add_model(std::move(hub_closes));
+        for (std::size_t i = 0; i < lv::kBankPairStocks.size(); ++i)
+            for (std::size_t j = i + 1; j < lv::kBankPairStocks.size(); ++j)
+                engine.add_model(std::make_unique<lv::LiveBankPairModel>(lv::kBankPairStocks[i], lv::kBankPairStocks[j], bpc,
+                                                                         (live_dir / "bank_pairs").string()));
     }
     // The OBI-skewed option quoter (live/obi_quoter.hpp): a sale resting on
     // the put and the call two strikes out, the threatened leg pulled. Paper.
