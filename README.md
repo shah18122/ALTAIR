@@ -255,8 +255,8 @@ Demo Trading** page runs both and shows trades, per-model totals and equity.
   with futures.
   - On VIX-priced (synthetic) options it earns in every year to 2025 (t ≈ 5),
     but the forecast adds nothing over selling every month.
-  - Real prices come from NSE bhavcopy (`(bhavcopy fetch removed: FYERS data only)`,
-    `--source bhavcopy`).
+  - Real prices come only from the FYERS chains ALTAIR saves daily
+    (`altair_fyers_chain`); see docs/DATA_POLICY.md.
 - `altair_resid_reversion`: the quant-fund version of pairs. Each NIFTY 50
   stock's residual against the market and its sector peers is traded on an
   OU s-score (Avellaneda-Lee) with many small hedged positions.

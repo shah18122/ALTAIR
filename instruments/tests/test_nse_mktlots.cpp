@@ -75,8 +75,8 @@ void the_real_padded_file_parses()
 
     const auto n = g_tbl.lot_for("NIFTY", ExpiryMonth{2026, 9});
     check(n.has_value() && *n == LotSize{65},
-          "NIFTY September lot is 65 -- the live value, matching both the NSE "
-          "bhavcopy and the instrument master");
+          "NIFTY September lot is 65 -- the live value, matching "
+          "the instrument master");
     check(g_tbl.lot_for("ABB", ExpiryMonth{2026, 9}).value() == LotSize{125},
           "ABB is 125");
 }
@@ -91,7 +91,7 @@ void symbol_is_the_join_key_not_underlying()
           "\"NIFTY\" -- the SYMBOL column -- resolves");
     check(!g_tbl.lot_for("NIFTY 50", ExpiryMonth{2026, 9}).has_value(),
           "\"NIFTY 50\" -- the UNDERLYING column -- does NOT, and must not: "
-          "the master's `name` and UDiFF's TckrSymb both carry NIFTY, so SYMBOL is "
+          "the master's `name` carries NIFTY, so SYMBOL is "
           "the only column that joins to anything");
     check(g_tbl.lot_for("BANKNIFTY", ExpiryMonth{2026, 9}).value() == LotSize{30},
           "BANKNIFTY likewise, at 30");
@@ -239,7 +239,7 @@ void completes_a_spec_lot_size()
     check(lot.has_value() && *lot == LotSize{65},
           "and fo_mktlots gives lot 65 for it");
     check(lot.has_value() && *lot == LotSize{65},
-          "which is the SAME 65 the UDiFF bhavcopy's NewBrdLotQty carries and "
+          "which is the SAME 65 the exchange's own lot file carries and "
           "the same 65 in the instrument master -- three files, three formats, one "
           "lot size, and rule 1 satisfied without a literal anywhere");
 }

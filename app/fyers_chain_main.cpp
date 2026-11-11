@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
     const std::int64_t today = today_ist();
     if (from.empty()) { from = fc::day_text(today); }
     if (to.empty()) { to = fc::day_text(today); }
-    const auto d_from = altair::bhavcopy::detail::date(from), d_to = altair::bhavcopy::detail::date(to);
+    const auto d_from = altair::chain::detail::date(from), d_to = altair::chain::detail::date(to);
     if (!d_from || !d_to || *d_to < *d_from || *d_to - *d_from > 366 || strikes == 0 || strikes > 200 || nearest == 0
         || nearest > 10) {
         usage(argv[0]);

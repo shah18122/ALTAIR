@@ -21,7 +21,7 @@
 //   BZ  surveillance
 //
 // There is no tick-size column. `tick_size` is left zero for P1-06 to fill,
-// exactly as UDiFF's is.
+// as the F&O exchange file's was.
 //
 // THE UNDERLYING OF A CASH INSTRUMENT IS ITSELF.
 //

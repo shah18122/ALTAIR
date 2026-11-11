@@ -28,7 +28,7 @@
 // their own recent history. Everything is decided at a close from that close
 // and earlier; P&L is marked on later closes only.
 //
-// PRICES are the caller's: NSE bhavcopy closes in the app (traded strikes
+// PRICES are the caller's: saved FYERS chain closes in the app (traded strikes
 // only; a leg with no trade that day keeps its last mark and cannot be
 // closed until it trades, or it settles at expiry). Wings trade thinner than
 // the money, so their closes can be stale: the results say so.

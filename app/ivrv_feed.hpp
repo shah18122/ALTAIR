@@ -8,7 +8,7 @@
 //   * IMPLIED volatility: INDIA VIX for NIFTY (NSE's 30-day IV of NIFTY
 //     options); the 30-day at-the-money IV of the index's monthly options from
 //     the FYERS chains ALTAIR saves (NIFTY and BANKNIFTY, app/fyers_chain.hpp;
-//     the NSE F&O bhavcopy, app/bhavcopy.hpp, only when a tool opts in); and the
+//     no other option source is read, docs/DATA_POLICY.md); and the
 //     at-the-money IV the terminal records from the FYERS chain, minute by
 //     minute (altair_iv_record);
 //   * the SPREAD between them, implied over realised (the variance risk
@@ -27,8 +27,6 @@
 //   * FYERS chain IV: the close is the last bar to 15:29 and altair_fyers_chain
 //     saves it at 15:45, so it is stamped 15:45 -- a decision at 15:30 reads
 //     the previous session's;
-//   * bhavcopy IV: NSE publishes the file in the evening, so it is stamped
-//     18:00;
 //   * FYERS IV: the end of each recorded minute.
 // The leak check (app/forecast_leak_check.hpp) rebuilds these inputs from only
 // what was known at its cut, and from a different future after it, and needs
@@ -39,7 +37,7 @@
 #include <analytics/inr_rate.hpp>
 #include <analytics/har_rv.hpp>
 #include <analytics/iv.hpp>
-#include <app/bhavcopy.hpp>
+#include <app/option_chain.hpp>
 #include <app/data_audit.hpp>
 #include <models/curriculum_feeds.hpp>
 
@@ -62,8 +60,6 @@ using Bars = std::vector<da::AuditBar>;
 
 inline constexpr std::int64_t kDaySec = 86'400;
 inline constexpr std::int64_t kCloseSec = 15 * 3600 + 30 * 60;
-/// NSE puts the day's F&O bhavcopy out in the evening.
-inline constexpr std::int64_t kBhavKnownSec = 18 * 3600;
 /// altair_fyers_chain saves the day's chain closes at 15:45 (ops/linux/fyers_chain.py).
 inline constexpr std::int64_t kFyersChainKnownSec = 15 * 3600 + 45 * 60;
 /// Five-minute bars in a full session, 09:15 to 15:30.
@@ -88,7 +84,7 @@ inline constexpr double kTradingDays = 252.0;
 struct IvPoint {
     std::int64_t t = 0;      ///< known at
     double iv = nan();       ///< annualised, e.g. 0.14
-    double iv_next = nan();  ///< the next expiry's, for the term slope (bhavcopy only)
+    double iv_next = nan();  ///< the next expiry's, for the term slope (chain IV only)
 };
 using IvSeries = std::vector<IvPoint>;
 
@@ -211,18 +207,18 @@ struct SessionRv {
     return f;
 }
 
-// ---- implied: NSE bhavcopy ------------------------------------------------------
+// ---- implied: FYERS chain ------------------------------------------------------
 
-/// One expiry's at-the-money implied vol on a bhavcopy day: the strike nearest
+/// One expiry's at-the-money implied vol on a saved chain day: the strike nearest
 /// the expiry's own future with both a call and a put traded, Black-76 on that
 /// future, the two IVs averaged (NaN if neither solves).
-[[nodiscard]] inline double atm_iv(const bhavcopy::Day& d, std::int64_t day, std::int64_t expiry, double rate) {
+[[nodiscard]] inline double atm_iv(const chain::Day& d, std::int64_t day, std::int64_t expiry, double rate) {
     const auto fut = d.fut.find(expiry);
     const auto opt = d.opt.find(expiry);
     if (fut == d.fut.end() || opt == d.opt.end() || !(fut->second > 0.0) || expiry <= day) { return nan(); }
     const double F = fut->second;
     double best = std::numeric_limits<double>::infinity(), K = 0.0;
-    bhavcopy::Leg leg;
+    chain::Leg leg;
     for (const auto& [k, l] : opt->second) {
         if (!(l.call > 0.0) || !(l.put > 0.0)) { continue; }
         if (std::fabs(k - F) < best) { best = std::fabs(k - F); K = k; leg = l; }
@@ -241,12 +237,12 @@ struct SessionRv {
     return n > 0 ? sum / n : nan();
 }
 
-/// The 30-day at-the-money implied vol of each bhavcopy day, from the two
+/// The 30-day at-the-money implied vol of each saved chain day, from the two
 /// monthly expiries either side of 30 days (total variance interpolated in
 /// time; the nearest one alone when 30 days is outside them). Expiries within
 /// 5 days are skipped: an expiring option's IV is mostly noise. Stamped
 /// `known_sec` after midnight of each day.
-[[nodiscard]] inline IvSeries iv_from_chain(const std::map<std::int64_t, bhavcopy::Day>& days, double rate,
+[[nodiscard]] inline IvSeries iv_from_chain(const std::map<std::int64_t, chain::Day>& days, double rate,
                                             std::int64_t known_sec) {
     IvSeries out;
     constexpr double kTarget = 30.0;
@@ -282,13 +278,8 @@ struct SessionRv {
     return out;
 }
 
-/// The bhavcopy's (opt-in): stamped 18:00.
-[[nodiscard]] inline IvSeries iv_from_bhavcopy(const std::map<std::int64_t, bhavcopy::Day>& days, double rate = kInrRiskFreeRate) {
-    return iv_from_chain(days, rate, kBhavKnownSec);
-}
-
 /// The FYERS chains' (app/fyers_chain.hpp load_dir): stamped 15:45.
-[[nodiscard]] inline IvSeries iv_from_fyers_chain(const std::map<std::int64_t, bhavcopy::Day>& days, double rate = kInrRiskFreeRate) {
+[[nodiscard]] inline IvSeries iv_from_fyers_chain(const std::map<std::int64_t, chain::Day>& days, double rate = kInrRiskFreeRate) {
     return iv_from_chain(days, rate, kFyersChainKnownSec);
 }
 

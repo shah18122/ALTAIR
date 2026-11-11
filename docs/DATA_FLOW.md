@@ -166,7 +166,7 @@ Steps 1-3 above again, then:
   `data/store/fyers/<seg>/<inst>/<tf>/<day>.csv`.
 - **Snapshot:** `altair_store snapshot --cutoff <day>` merges
   `data/store/fyers` (main source) with `tape_bars` (fills gaps only) and the
-  IV. FYERS only; `dataset/` and bhavcopy are opt-in and off. Result:
+  IV. FYERS only; `dataset/` is opt-in and off. Exchange end-of-day files are banned and refused (docs/DATA_POLICY.md). Result:
   `data/store/snapshots/<day>/`, never rebuilt over; the last 10 are kept.
 - **Retrain:** `altair_forecast_curriculum --leak-check` on the snapshot →
   `data/store/runs/<day>/` (`forecast_curriculum.txt/.xlsx`, `forecast_log/`,
@@ -227,7 +227,7 @@ state, signal and reason) and appends every fill to `data/live/paper/journal.csv
 | `altair_vol_premium` | straddle variance-premium study | recorded chains (`fyers_chain`) | Not run on the server. The one lead, **unvalidated** on FYERS |
 | `altair_as_mm` + `altair_regimes` (Avellaneda-Stoikov with HMM regime) | quoting on NIFTY/BANKNIFTY futures; P(stress) | local 1-minute futures | Research only: loses even with zero costs |
 | `altair_tune` | sweeps OBI / quoter / OHL / arbitrage settings on recorded tapes, walk-forward | `data/store/tapes/` | Writes `config/model_params/*.toml`, which the engine reads at start |
-| IV/RV straddle Python study (project files `ivrv-straddle/`) | the earlier straddle backtests | NSE bhavcopy | **Not evidence** (bhavcopy is banned; FYERS has no expired options) |
+| IV/RV straddle Python study (project files `ivrv-straddle/`) | the earlier straddle backtests | a banned non-FYERS source | **Not evidence** (docs/DATA_POLICY.md; FYERS has no expired options) |
 
 ---
 

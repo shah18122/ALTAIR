@@ -10,8 +10,7 @@
 //     the model had not started. "Coin flip" is left out.
 //   * Implied and realised volatility (app/ivrv_feed.hpp) for NIFTY and
 //     BANKNIFTY: realised from the dataset's five-minute bars, INDIA VIX, the
-//     saved FYERS chains' 30-day ATM IV (the bhavcopy's only with --bhavcopy)
-//     and, once recorded long enough, the FYERS chain's minute IV. Each joins as of the decision, standardised on past steps only.
+//     saved FYERS chains' 30-day ATM IV and, once recorded long enough, the FYERS chain's minute IV. Each joins as of the decision, standardised on past steps only.
 //   * The hidden Markov model's regime (models/hmm_regime.hpp): P(stress)
 //     walk-forward on each index's daily closes, joined the same way.
 //
@@ -537,7 +536,7 @@ std::string fmt(double v, int dp = 2) {
 
 void usage(const char* exe) {
     std::printf(
-        "usage: %s [--logs DIR] [--out DIR] [--dataset DIR] [--fyers-chain DIR] [--bhavcopy DIR] [--recorded-iv DIR] [--lots N]\n"
+        "usage: %s [--logs DIR] [--out DIR] [--dataset DIR] [--fyers-chain DIR] [--recorded-iv DIR] [--lots N]\n"
         "          [--unverified-costs] [--half-life DAYS] [--min-days N] [--daily-only] [--no-ivrv] [--all-tracks]\n"
         "          [--leak-check]\n"
         "       %s combos --fyers DIR ...   the meta-trader: every model as a variable, every sell-only\n"
@@ -546,7 +545,6 @@ void usage(const char* exe) {
         "  --out         where to write (default data/verified/altair_trader)\n"
         "  --dataset     five-minute bars for realised vol, and the session after the last close (default dataset)\n"
         "  --fyers-chain FYERS chains for the 30-day ATM IV (default data/store/fyers_chain; altair_fyers_chain)\n"
-        "  --bhavcopy    the NSE F&O bhavcopy for that IV instead (opt-in, not FYERS data)\n"
         "  --recorded-iv ATM IV recorded from the FYERS chain (default data/live/iv; altair_iv_record)\n"
         "  --lots        lots per trade (default 1)\n"
         "  --daily-only  skip the intraday (hourly) arms\n"
@@ -566,7 +564,7 @@ int main(int argc, char** argv) {
     // `altair_trader combos ...`: the meta-trader's combination search
     if (argc > 1 && std::string(argv[1]) == "combos") return combos_main(argc - 1, argv + 1);
     fs::path logs = "data/verified/forecast_log", out = "data/verified/altair_trader", dataset = "dataset";
-    fs::path bhav_dir, chain_dir = "data/store/fyers_chain", recorded_dir = "data/live/iv";
+    fs::path chain_dir = "data/store/fyers_chain", recorded_dir = "data/live/iv";
     bool unverified = false, daily_only = false, ivrv_on = true, leak_check = false, all_tracks = false;
     Settings st;
     for (int i = 1; i < argc; ++i) {
@@ -575,7 +573,6 @@ int main(int argc, char** argv) {
         if (a == "--logs" && has) logs = argv[++i];
         else if (a == "--out" && has) out = argv[++i];
         else if (a == "--dataset" && has) dataset = argv[++i];
-        else if (a == "--bhavcopy" && has) bhav_dir = argv[++i];
         else if (a == "--fyers-chain" && has) chain_dir = argv[++i];
         else if (a == "--recorded-iv" && has) recorded_dir = argv[++i];
         else if (a == "--lots" && has) st.lots = std::max(1LL, std::atoll(argv[++i]));
@@ -664,18 +661,17 @@ int main(int argc, char** argv) {
                 }
             }
             std::string chain_note;
-            const bool use_bhav = !bhav_dir.empty();
-            const auto chains = altair::fyers_chain::load_source(use_bhav, chain_dir, bhav_dir, inst, chain_note);
-            const auto bhav = use_bhav ? iv::iv_from_bhavcopy(chains) : iv::iv_from_fyers_chain(chains);
-            if (!bhav.empty()) {
-                data.vol_daily.push_back(iv::iv_daily_feed(inst + (use_bhav ? " IV (bhavcopy)" : " IV (FYERS chain)"), bhav, s));
+            const auto chains = altair::fyers_chain::load_source(chain_dir, inst, chain_note);
+            const auto chain_iv = iv::iv_from_fyers_chain(chains);
+            if (!chain_iv.empty()) {
+                data.vol_daily.push_back(iv::iv_daily_feed(inst + " IV (FYERS chain)", chain_iv, s));
                 data.vol_intraday.push_back(data.vol_daily.back());
             }
             const auto rec = iv::load_recorded_iv(recorded_dir, inst);
             const std::size_t sessions = iv::sessions_covered(rec);
             if (sessions >= 60) data.vol_intraday.push_back(iv::iv_intraday_feed(inst + " IV (FYERS)", rec, s));
             vol_text += "  " + inst + ": realised from " + std::to_string(five.size()) + " five-minute bars"
-                      + (inst == "NIFTY" && !vix.empty() ? ", INDIA VIX" : "") + "; chain IV on " + std::to_string(bhav.size())
+                      + (inst == "NIFTY" && !vix.empty() ? ", INDIA VIX" : "") + "; chain IV on " + std::to_string(chain_iv.size())
                       + " days; FYERS IV on " + std::to_string(sessions) + " sessions"
                       + (sessions >= 60 ? "" : " (joins at 60)") + "\n";
         }

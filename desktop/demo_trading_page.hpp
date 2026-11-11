@@ -328,10 +328,9 @@ struct RunStep {
     if (unverified) costs << QStringLiteral("--unverified-costs");
     plan.push_back({QStringLiteral("altair_trader"), QStringLiteral("altair_trader"), {}, costs, 60 * 60 * 1000, true});
     QStringList vp = costs;
-    vp << QStringLiteral("--source") << QStringLiteral("bhavcopy");
     const QString vix_log = root + QStringLiteral("/data/verified/forecast_log/india_vix_daily.csv");
     if (QFileInfo::exists(vix_log)) vp << QStringLiteral("--vix-log") << vix_log;
-    plan.push_back({QStringLiteral("vol premium on NSE closes"), QStringLiteral("altair_vol_premium"), {}, vp,
+    plan.push_back({QStringLiteral("vol premium on FYERS chains"), QStringLiteral("altair_vol_premium"), {}, vp,
                     30 * 60 * 1000, false});
     return plan;
 }
@@ -386,8 +385,6 @@ public:
         run_choice_->addItem(QStringLiteral("Option demo (band models)"), QStringLiteral("altair_band_option_demo"));
         run_choice_->addItem(QStringLiteral("Pairs with futures"), QStringLiteral("altair_pairs_futures"));
         run_choice_->addItem(QStringLiteral("Vol premium (hedged straddle)"), QStringLiteral("altair_vol_premium"));
-        run_choice_->addItem(QStringLiteral("Vol premium on NSE closes (bhavcopy)"),
-                             QStringLiteral("altair_vol_premium --source bhavcopy"));
         run_choice_->addItem(QStringLiteral("Stat-arb (NIFTY 50 residuals)"), QStringLiteral("altair_resid_reversion"));
         run_choice_->addItem(QStringLiteral("altair_trader (one model over every model)"), QStringLiteral("altair_trader"));
         run_ = new QPushButton(QStringLiteral("Run"), this);
@@ -780,7 +777,7 @@ private:
             "<p><b>Inputs.</b> Every base model of the forecast curriculum, on every daily track (NIFTY, BANKNIFTY, NIFTY "
             "futures, INDIA VIX) and, for the intraday arms, every hourly track, says which way the next step goes and how "
             "sure it is: its conviction (2&middot;p<sub>up</sub> &minus; 1, or &plusmn;1) is one input. Beside them, implied "
-            "and realised volatility: realised from five-minute bars, INDIA VIX, the bhavcopy's 30-day ATM IV and, once "
+            "and realised volatility: realised from five-minute bars, INDIA VIX, the saved FYERS chains' 30-day ATM IV and, once "
             "recorded long enough, the FYERS chain's &mdash; each as of the decision.</p>"
             "<p><b>Four candidates, every step.</b> No change; the ridge stack (ridge regression with old days fading); a "
             "temporal CNN that mixes the models' calls into a few learned patterns and reads how they moved over the last "

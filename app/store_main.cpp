@@ -2,7 +2,7 @@
 //
 //   altair_store decode   --day YYYY-MM-DD [--tapes DIR] [--root DIR] [--ticks]
 //   altair_store snapshot --cutoff YYYY-MM-DD --source NAME=DIR [--source NAME=DIR ...]
-//                         [--fill NAME=DIR ...] [--out DIR] [--bhavcopy DIR] [--iv DIR] [--root DIR]
+//                         [--fill NAME=DIR ...] [--out DIR] [--iv DIR] [--root DIR]
 //
 // What each writes, and the merge rule, are in app/training_store.hpp. Both are
 // offline: no network, no credential. Both say what they did in the activity
@@ -34,7 +34,7 @@ void usage(const char* exe) {
         "        also trades, quotes and books), <root>/data/store/tape_bars/ and the near\n"
         "        futures' five-level depth in <root>/data/store/depth_bars/.\n\n"
         "    %s snapshot --cutoff YYYY-MM-DD --source NAME=DIR [--source ...] [--fill NAME=DIR ...]\n"
-        "        [--out DIR] [--bhavcopy DIR] [--iv DIR] [--root DIR]\n"
+        "        [--out DIR] [--iv DIR] [--root DIR]\n"
         "        one tree cut at the end of the cutoff day (IST), every source merged:\n"
         "        --source lowest priority first (beyond 1 bp the later one wins and the\n"
         "        pair is listed); --fill only adds bars nobody else has. Default --out\n"
@@ -130,7 +130,6 @@ int snapshot(const fs::path& root, int argc, char** argv) {
         }
         if (a == "--cutoff" && has) { cutoff = argv[++i]; continue; }
         if (a == "--out" && has) { o.out = argv[++i]; continue; }
-        if (a == "--bhavcopy" && has) { o.bhavcopy = argv[++i]; continue; }
         if (a == "--iv" && has) { o.iv = argv[++i]; continue; }
         if (a == "--root" && has) { ++i; continue; }   // read by main
         usage(argv[0]);
@@ -158,8 +157,8 @@ int snapshot(const fs::path& root, int argc, char** argv) {
         if (!r.empty && altair::data_audit::audit_day(r.last) < *day) behind += " " + r.key;
     }
     const std::string summary = "snapshot " + cutoff + " id " + rep.id + ": " + std::to_string(rep.series.size()) + " series, "
-        + std::to_string(rows) + " rows, " + std::to_string(rep.conflicts) + " conflict(s), " + std::to_string(rep.bhavcopy_files)
-        + " bhavcopy + " + std::to_string(rep.iv_files) + " IV file(s)" + (behind.empty() ? "" : "; ends before the cutoff:" + behind);
+        + std::to_string(rows) + " rows, " + std::to_string(rep.conflicts) + " conflict(s), "
+        + std::to_string(rep.iv_files) + " IV file(s)" + (behind.empty() ? "" : "; ends before the cutoff:" + behind);
     std::printf("  %s\n  -> %s\n", summary.c_str(), o.out.string().c_str());
     act::write(root, "store", behind.empty() ? "INFO" : "WARN", summary);
     return 0;

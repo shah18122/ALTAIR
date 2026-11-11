@@ -24,7 +24,7 @@
 // The paper has no forecast and no trading rule. Two of its claims can be
 // checked on NIFTY: the test reads dataset/'s daily closes (Figure 1's
 // distribution, and (8) against realised vol), and altair_quantum_smile tests
-// (8) as an option smile on the NSE bhavcopy. (5) is the square-root law
+// (8) as an option smile on the saved FYERS chains. (5) is the square-root law
 // oms/capacity.hpp already prices; this gives its constant a derivation.
 
 #pragma once

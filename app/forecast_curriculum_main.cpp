@@ -807,7 +807,7 @@ void usage(const char* exe) {
         "  80 %% range bands, on every timeframe, and keep the record.\n\n"
         "    %s [--dataset DIR] [--out DIR] [--first-days N] [--cap-days N] [--jobs N]\n"
         "       [--other-cost-bp X] [--only TEXT] [--skip TEXT] [--no-bands] [--no-feeds] [--no-log] [--leak-check]\n"
-        "       [--fyers-chain DIR] [--bhavcopy DIR] [--recorded-iv DIR] [--no-ivrv]\n\n"
+        "       [--fyers-chain DIR] [--recorded-iv DIR] [--no-ivrv]\n\n"
         "    --dataset DIR      default dataset\n"
         "    --out DIR          default data/verified\n"
         "    --first-days N     days learned before the first forecast (default 3)\n"
@@ -821,7 +821,6 @@ void usage(const char* exe) {
         "    --no-log           skip the per-forecast CSV logs (written for daily and hourly tracks)\n"
         "    --fyers-chain DIR  FYERS chains for the 30-day ATM IV of NIFTY and BANKNIFTY (default\n"
         "                       data/store/fyers_chain; altair_fyers_chain saves them daily)\n"
-        "    --bhavcopy DIR     the NSE F&O bhavcopy for that IV instead (opt-in, not FYERS data)\n"
         "    --recorded-iv DIR  ATM IV recorded from the FYERS chain (default data/live/iv; altair_iv_record)\n"
         "    --no-ivrv          skip the \"+ ivrv\" tracks (implied and realised volatility as inputs)\n"
         "    --leak-check       prove no forecast saw its future: rebuild every track from the bars known\n"
@@ -862,7 +861,7 @@ int main(int argc, char** argv) {
     double other_cost = 1.3;
     std::string only, skip;
     bool log = true, bands = true, feeds_on = true, leak_check = false, ivrv_on = true;
-    fs::path bhav_dir, chain_dir = "data/store/fyers_chain", recorded_iv_dir = "data/live/iv";
+    fs::path chain_dir = "data/store/fyers_chain", recorded_iv_dir = "data/live/iv";
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
         const bool has = i + 1 < argc;
@@ -876,7 +875,6 @@ int main(int argc, char** argv) {
         if (a == "--no-feeds") { feeds_on = false; continue; }
         if (a == "--leak-check") { leak_check = true; continue; }
         if (a == "--no-ivrv") { ivrv_on = false; continue; }
-        if (a == "--bhavcopy" && has) { bhav_dir = argv[++i]; continue; }
         if (a == "--fyers-chain" && has) { chain_dir = argv[++i]; continue; }
         if (a == "--recorded-iv" && has) { recorded_iv_dir = argv[++i]; continue; }
         if (a == "--first-days" && has) {
@@ -952,12 +950,10 @@ int main(int argc, char** argv) {
     };
     // IMPLIED AND REALISED VOLATILITY (app/ivrv_feed.hpp), for the "+ ivrv"
     // tracks: each index's five-minute bars (realised), INDIA VIX's daily bars,
-    // the 30-day ATM IV of the saved FYERS chains (the bhavcopy's only with
-    // --bhavcopy) and the IV recorded from the FYERS chain minute by minute.
+    // the 30-day ATM IV of the saved FYERS chains and the IV recorded from the FYERS chain minute by minute.
     struct IvInputs {
         std::vector<da::AuditBar> five, vix;
-        altair::ivrv::IvSeries bhav, recorded;   ///< bhav: the daily chain IV, FYERS unless --bhavcopy
-        std::string chain_label;
+        altair::ivrv::IvSeries chain_iv, recorded;   ///< chain_iv: the daily FYERS chain IV
         std::size_t recorded_sessions = 0;
     };
     std::map<std::string, IvInputs> iv_inputs;   // "NIFTY", "BANKNIFTY"
@@ -979,15 +975,13 @@ int main(int argc, char** argv) {
             }
             if (inst == "NIFTY") { in.vix = vix; }
             std::string chain_note;
-            const bool use_bhav = !bhav_dir.empty();
-            const auto chains = altair::fyers_chain::load_source(use_bhav, chain_dir, bhav_dir, inst, chain_note);
-            in.bhav = use_bhav ? altair::ivrv::iv_from_bhavcopy(chains) : altair::ivrv::iv_from_fyers_chain(chains);
-            in.chain_label = use_bhav ? "bhavcopy" : "FYERS chain";
+            const auto chains = altair::fyers_chain::load_source(chain_dir, inst, chain_note);
+            in.chain_iv = altair::ivrv::iv_from_fyers_chain(chains);
             in.recorded = altair::ivrv::load_recorded_iv(recorded_iv_dir, inst);
             in.recorded_sessions = altair::ivrv::sessions_covered(in.recorded);
             std::printf("  + ivrv %s: realised from %zu five-minute bars%s; chain IV on %zu days (%s);"
                         " FYERS IV on %zu sessions%s\n",
-                        inst.c_str(), in.five.size(), in.vix.empty() ? "" : ", INDIA VIX", in.bhav.size(), chain_note.c_str(),
+                        inst.c_str(), in.five.size(), in.vix.empty() ? "" : ", INDIA VIX", in.chain_iv.size(), chain_note.c_str(),
                         in.recorded_sessions,
                         in.recorded_sessions >= kRecordedIvMinSessions ? "" : (" (joins at " + std::to_string(kRecordedIvMinSessions) + ")").c_str());
             iv_inputs.emplace(inst, std::move(in));
@@ -1003,7 +997,7 @@ int main(int argc, char** argv) {
         std::vector<altair::ModelFeed> out;
         out.push_back(altair::ivrv::rv_daily_feed(inst + " RV", s, vix.empty() ? nullptr : &vix));
         if (intraday) { out.push_back(altair::ivrv::rv_intraday_feed(inst + " RV today", five, s)); }
-        if (!in.bhav.empty()) { out.push_back(altair::ivrv::iv_daily_feed(inst + " IV (" + in.chain_label + ")", x.iv(in.bhav), s)); }
+        if (!in.chain_iv.empty()) { out.push_back(altair::ivrv::iv_daily_feed(inst + " IV (FYERS chain)", x.iv(in.chain_iv), s)); }
         if (intraday && in.recorded_sessions >= kRecordedIvMinSessions) {
             out.push_back(altair::ivrv::iv_intraday_feed(inst + " IV (FYERS)", x.iv(in.recorded), s));
         }

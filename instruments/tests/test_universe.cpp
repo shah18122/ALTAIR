@@ -109,7 +109,7 @@ void underlying_allow_list()
               == UniverseReject::Admitted, "so is BANKNIFTY");
     check(f.judge(mk("ABCAPITAL", Segment::Fut, exp), kToday)
               == UniverseReject::Underlying,
-          "ABCAPITAL is not -- and the real bhavcopy carries 216 October "
+          "ABCAPITAL is not -- and a real exchange file carries 216 October "
           "futures, of which a configured universe wants a handful");
     check(f.judge(mk("", Segment::Fut, exp), kToday)
               == UniverseReject::Underlying, "an empty underlying is refused");
@@ -168,7 +168,7 @@ void expiry_horizon_and_expired()
 
     check(f.judge(mk("NIFTY", Segment::Fut, ist_date(2026, 8, 27)), kToday)
               == UniverseReject::Expired,
-          "and an ALREADY EXPIRED contract is refused: a bhavcopy is a "
+          "and an ALREADY EXPIRED contract is refused: an end-of-day file is a "
           "snapshot of a trading day and carries the contracts that expired "
           "on it");
 }

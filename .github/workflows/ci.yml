@@ -29,6 +29,16 @@ defaults:
     shell: bash
 
 jobs:
+  # docs/DATA_POLICY.md: FYERS data only. Fails on any mention of the banned source.
+  data-policy:
+    name: data policy (FYERS only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for the banned source
+        run: bash tools/check_data_policy.sh
+
   linux:
     name: linux (${{ matrix.name }})
     runs-on: ubuntu-24.04

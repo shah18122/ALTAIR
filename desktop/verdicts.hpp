@@ -35,10 +35,10 @@ struct StartVerdict {
                         "\"no change\" -- the honest answer when nothing works"),
          QStringLiteral("No edge yet; paper only"), -1, QStringLiteral("ops/demo-trading.md, 2026-10-21")},
         {QStringLiteral("Selling the monthly ATM straddle, hedged with futures (variance premium)"),
-         QStringLiteral("Real NSE closes 2015-2026: NIFTY +Rs 91,804 over 58 months (Rs 1,583 a month, t 1.5); "
-                        "BANKNIFTY +Rs 74,820 (t 0.6). Implied vol averaged 14.2 % against 12.9 % realised"),
-         QStringLiteral("A real premium, but small and not yet proven (t under 2). The best lead. Paper only"), 0,
-         QStringLiteral("altair_vol_premium --source bhavcopy, 2026-10-21")},
+         QStringLiteral("The 2015-2026 result was withdrawn: it came from a banned non-FYERS source. FYERS serves no "
+                        "expired options, so the test waits for the chains ALTAIR saves each day"),
+         QStringLiteral("Unvalidated. Paper only until the saved FYERS chains are long enough"), 0,
+         QStringLiteral("altair_vol_premium (FYERS chains), docs/DATA_POLICY.md, 2026-11-11")},
         {QStringLiteral("Selling vol-of-vol: short the wings, long the money (vanna-volga)"),
          QStringLiteral("A small premium before slippage (NIFTY Rs 3.1 lakh gross over 562 weeks); any realistic "
                         "slippage turns every variant negative"),

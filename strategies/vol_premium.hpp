@@ -32,8 +32,8 @@
 // peak. A blocked day is recorded with its reason.
 //
 // THE MARKET IS AN INTERFACE. Quotes, forwards and listed strikes come from
-// the caller: synthetic Black-76 at INDIA VIX for the dataset, or NSE
-// bhavcopy closes when the files are there (app/bhavcopy.hpp). The engine
+// the caller: synthetic Black-76 at INDIA VIX for the dataset, or the saved
+// FYERS chain closes (app/fyers_chain.hpp). The engine
 // cannot tell them apart, and the results say which one ran.
 //
 // TIME is calendar: (expiry 15:30 - today 15:30) / 365 days. Every mark is at

@@ -113,16 +113,16 @@ void test_no_lookahead() {
     check(same && compared > 0, "realised inputs up to a cut are the same from the past alone and from another future");
 }
 
-void test_bhavcopy_iv() {
+void test_chain_iv() {
     // One day, two monthly expiries priced by Black-76 at 14 % and 18 %.
     const std::int64_t day = 20100;
-    altair::bhavcopy::Day d;
+    altair::chain::Day d;
     const double F = 20000.0;
     for (const auto& [dte, vol] : {std::pair{20, 0.14}, std::pair{48, 0.18}}) {
         const std::int64_t e = day + dte;
         d.fut[e] = F;
         for (const double K : {19900.0, 20000.0, 20100.0}) {
-            altair::bhavcopy::Leg leg;
+            altair::chain::Leg leg;
             for (const bool call : {true, false}) {
                 const auto g = altair::black76(call ? altair::OptionRight::Call : altair::OptionRight::Put,
                                                altair::Price{std::llround(F * 100.0)}, altair::Price{std::llround(K * 100.0)},
@@ -134,13 +134,13 @@ void test_bhavcopy_iv() {
     }
     const double near = iv::atm_iv(d, day, day + 20, 0.065);
     check(std::fabs(near - 0.14) < 2e-4, "at-the-money IV recovers the vol the options were priced at");
-    std::map<std::int64_t, altair::bhavcopy::Day> days{{day, d}};
-    const auto s = iv::iv_from_bhavcopy(days);
+    std::map<std::int64_t, altair::chain::Day> days{{day, d}};
+    const auto s = iv::iv_from_fyers_chain(days);
     // Total variance interpolated to 30 days between 20 and 48.
     const double w = (30.0 - 20.0) / 28.0;
     const double want = std::sqrt(((1 - w) * 0.14 * 0.14 * 20 + w * 0.18 * 0.18 * 48) / 30.0);
     check(s.size() == 1 && std::fabs(s[0].iv - want) < 2e-4, "the 30-day IV interpolates total variance between expiries");
-    check(s.size() == 1 && s[0].t == day * iv::kDaySec + iv::kBhavKnownSec, "bhavcopy IV is stamped at 18:00, when NSE publishes it");
+    check(s.size() == 1 && s[0].t == day * iv::kDaySec + iv::kFyersChainKnownSec, "chain IV is stamped at 15:45, when altair_fyers_chain saves it");
     // As of that day's 15:30 decision it is not there yet; the next day's is the first to read it.
     altair::ModelFeed f;
     f.t = {s[0].t};
@@ -149,7 +149,7 @@ void test_bhavcopy_iv() {
     f.intraday = false;
     check(altair::feed_detail::as_of(f, day * iv::kDaySec + iv::kCloseSec) == f.rows()
               && altair::feed_detail::as_of(f, (day + 1) * iv::kDaySec + iv::kCloseSec) == 0,
-          "a 15:30 decision reads the previous evening's bhavcopy IV, never its own day's");
+          "a 15:30 decision reads the previous session's chain IV, never its own day's");
 }
 
 void test_recorded_iv() {
@@ -173,7 +173,7 @@ int main() {
     std::printf("IV / RV inputs\n");
     test_realised();
     test_no_lookahead();
-    test_bhavcopy_iv();
+    test_chain_iv();
     test_recorded_iv();
     std::printf("IV / RV inputs: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;

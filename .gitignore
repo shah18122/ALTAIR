@@ -139,8 +139,6 @@ data/pairs/
 # The meta-trader's FYERS history (ops/linux/fetch.py meta): broker data,
 # regenerable, not ours to publish.
 data/fyers_meta/
-# NSE F&O bhavcopy files ((bhavcopy fetch removed: FYERS data only)): bulky, fetched per machine.
-data/bhavcopy/
 # The training store (ops/linux/record_session.py, ops/linux/nightly.py): recorded FYERS
 # sessions (GBs a day), FYERS candles, snapshots and model runs. Broker data
 # pulled with a credential: it never enters this public repo. The compact part

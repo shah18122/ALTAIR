@@ -1,6 +1,6 @@
 // app/fyers_chain.hpp -- end-of-day option chains from FYERS, ALTAIR's own record.
 //
-// Smit's rule: research runs on FYERS data, never NSE bhavcopy. FYERS history
+// Smit's rule: research runs on FYERS data only (docs/DATA_POLICY.md). FYERS history
 // serves a live contract's bars from its first traded day but refuses every
 // expired option and future (HTTP 422), so the only chain history ALTAIR will
 // have is the one it saves before each contract expires. altair_fyers_chain
@@ -24,14 +24,12 @@
 // the snapshot's last traded prices, counted apart in the report: FYERS data,
 // but a 15:27 LTP, not a bar close.
 //
-// THE SAME SHAPE AS app/bhavcopy.hpp. load_dir returns bhavcopy::Day, so every
-// tool that read the bhavcopy reads FYERS chains unchanged; by default it keeps
-// what the bhavcopy loader kept (monthly expiries, strikes within +-20 % of
-// that expiry's future).
+// load_dir returns chain::Day (app/option_chain.hpp); by default it keeps
+// monthly expiries and strikes within +-20 % of that expiry's future.
 
 #pragma once
 
-#include <app/bhavcopy.hpp>
+#include <app/option_chain.hpp>
 #include <app/data_audit.hpp>
 #include <instruments/fyers_master.hpp>
 
@@ -223,7 +221,7 @@ struct Row {
 };
 
 [[nodiscard]] inline std::optional<std::int64_t> day_of_folder(const fs::path& p) {
-    return bhavcopy::detail::date(p.filename().string());
+    return chain::detail::date(p.filename().string());
 }
 
 /// <UNDERLYING>.csv rows (the tool's own format).
@@ -231,7 +229,7 @@ inline void read_closes(const fs::path& file, std::vector<Row>& rows, LoadReport
     std::ifstream in(file);
     std::string line;
     if (!in || !std::getline(in, line)) { return; }
-    const auto head = bhavcopy::detail::split(line);
+    const auto head = chain::detail::split(line);
     const auto col = [&](std::string_view n) {
         for (std::size_t k = 0; k < head.size(); ++k) { if (head[k] == n) { return static_cast<int>(k); } }
         return -1;
@@ -239,14 +237,14 @@ inline void read_closes(const fs::path& file, std::vector<Row>& rows, LoadReport
     const int c_kind = col("kind"), c_exp = col("expiry"), c_k = col("strike"), c_close = col("close");
     if (c_kind < 0 || c_exp < 0 || c_k < 0 || c_close < 0) { ++rep.skipped; return; }
     while (std::getline(in, line)) {
-        const auto f = bhavcopy::detail::split(line);
+        const auto f = chain::detail::split(line);
         const auto at = [&](int c) { return c < static_cast<int>(f.size()) ? f[static_cast<std::size_t>(c)] : std::string{}; };
         Row r;
         r.kind = at(c_kind);
         if (r.kind != "FUT" && r.kind != "CE" && r.kind != "PE") { continue; }
-        const auto e = bhavcopy::detail::date(at(c_exp));
-        const auto k = bhavcopy::detail::number(at(c_k));
-        const auto px = bhavcopy::detail::number(at(c_close));
+        const auto e = chain::detail::date(at(c_exp));
+        const auto k = chain::detail::number(at(c_k));
+        const auto px = chain::detail::number(at(c_close));
         if (!e || !k || !px || !(*px > 0.0)) { ++rep.skipped; continue; }
         r.expiry = *e;
         r.strike = *k;
@@ -260,7 +258,7 @@ inline void read_snapshot(const fs::path& file, const std::string& symbol, std::
     std::ifstream in(file);
     std::string line;
     if (!in || !std::getline(in, line)) { return; }
-    const auto head = bhavcopy::detail::split(line);
+    const auto head = chain::detail::split(line);
     const auto col = [&](std::string_view n) {
         for (std::size_t k = 0; k < head.size(); ++k) { if (head[k] == n) { return static_cast<int>(k); } }
         return -1;
@@ -268,16 +266,16 @@ inline void read_snapshot(const fs::path& file, const std::string& symbol, std::
     const int c_u = col("underlying"), c_kind = col("kind"), c_exp = col("expiry"), c_k = col("strike"), c_ltp = col("ltp");
     if (c_u < 0 || c_kind < 0 || c_exp < 0 || c_k < 0 || c_ltp < 0) { ++rep.skipped; return; }
     while (std::getline(in, line)) {
-        const auto f = bhavcopy::detail::split(line);
+        const auto f = chain::detail::split(line);
         const auto at = [&](int c) { return c < static_cast<int>(f.size()) ? f[static_cast<std::size_t>(c)] : std::string{}; };
         if (at(c_u) != symbol) { continue; }
         const std::string kind = at(c_kind);
         Row r;
         r.kind = kind == "future" ? "FUT" : kind == "call" ? "CE" : kind == "put" ? "PE" : "";
         if (r.kind.empty()) { continue; }
-        const auto e = bhavcopy::detail::date(at(c_exp));
-        const auto px = bhavcopy::detail::number(at(c_ltp));
-        const auto k = r.kind == "FUT" ? std::optional<double>{0.0} : bhavcopy::detail::number(at(c_k));
+        const auto e = chain::detail::date(at(c_exp));
+        const auto px = chain::detail::number(at(c_ltp));
+        const auto k = r.kind == "FUT" ? std::optional<double>{0.0} : chain::detail::number(at(c_k));
         if (!e || !k || !px || !(*px > 0.0)) { ++rep.skipped; continue; }
         r.expiry = *e;
         r.strike = *k;
@@ -290,8 +288,8 @@ inline void read_snapshot(const fs::path& file, const std::string& symbol, std::
 
 /// Every saved day under `dir` (data/store/fyers_chain) for `symbol`, plus the
 /// days only `snap_dir` (data/store/chain_snap) has. `monthly_only` keeps what
-/// app/bhavcopy.hpp kept; false keeps every expiry (the NIFTY weeklies).
-[[nodiscard]] inline std::map<std::int64_t, bhavcopy::Day> load_dir(const fs::path& dir, const std::string& symbol,
+/// the monthly expiries; false keeps every expiry (the NIFTY weeklies).
+[[nodiscard]] inline std::map<std::int64_t, chain::Day> load_dir(const fs::path& dir, const std::string& symbol,
                                                                      LoadReport& rep, bool monthly_only = true,
                                                                      const fs::path& snap_dir = {}) {
     std::map<std::int64_t, std::vector<detail::Row>> raw;
@@ -316,13 +314,13 @@ inline void read_snapshot(const fs::path& file, const std::string& symbol, std::
             ++rep.snapshot_days;
         }
     }
-    std::map<std::int64_t, bhavcopy::Day> days;
+    std::map<std::int64_t, chain::Day> days;
     for (const auto& [day, rows] : raw) {
         std::set<std::int64_t> listed;
         for (const auto& r : rows) { listed.insert(r.expiry); }
         const auto monthly = monthly_of(listed);
         const auto keep = [&](std::int64_t e) { return !monthly_only || monthly.contains(e); };
-        bhavcopy::Day d;
+        chain::Day d;
         for (const auto& r : rows) {
             if (r.kind == "FUT" && keep(r.expiry)) { d.fut[r.expiry] = r.close; ++rep.future_rows; }
         }
@@ -339,22 +337,12 @@ inline void read_snapshot(const fs::path& file, const std::string& symbol, std::
     return days;
 }
 
-/// A tool's chain days for `symbol`: FYERS (the saved chains under
-/// `chain_dir`, the 15:27 snapshots beside it in chain_snap/) unless the
-/// caller opted in to the bhavcopy. `note` says which and how much, for the
-/// tool to print.
-[[nodiscard]] inline std::map<std::int64_t, bhavcopy::Day> load_source(bool use_bhavcopy, const fs::path& chain_dir,
-                                                                        const fs::path& bhav_dir, const std::string& symbol,
-                                                                        std::string& note) {
+/// A tool's chain days for `symbol`: the saved FYERS chains under
+/// `chain_dir` and the 15:27 snapshots beside it in chain_snap/. There is no
+/// other source. `note` says how much, for the tool to print.
+[[nodiscard]] inline std::map<std::int64_t, chain::Day> load_source(const fs::path& chain_dir, const std::string& symbol,
+                                                                     std::string& note) {
     char b[256];
-    if (use_bhavcopy) {
-        bhavcopy::LoadReport br;
-        auto days = bhavcopy::load_dir(bhav_dir, symbol, br);
-        std::snprintf(b, sizeof b, "%s bhavcopy (opt-in, not FYERS data): %zu file(s) under %s", symbol.c_str(), br.files,
-                      bhav_dir.string().c_str());
-        note = b;
-        return days;
-    }
     LoadReport fr;
     auto days = load_dir(chain_dir, symbol, fr, true, chain_dir.parent_path() / "chain_snap");
     std::snprintf(b, sizeof b, "%s FYERS chains: %zu saved day(s), %zu from 15:27 snapshots, under %s%s", symbol.c_str(), fr.days,

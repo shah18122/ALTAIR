@@ -53,9 +53,9 @@ Carr & Wu 2009).
 
 **In ALTAIR:**
 - `strategies/vol_premium.hpp` and `altair_vol_premium` sell the delta-hedged
-  ATM straddle when implied beats a HAR forecast, on real bhavcopy closes.
+  ATM straddle when implied beats a HAR forecast, on the saved FYERS chains.
 - `app/ivrv_feed.hpp` provides realised variance from 5-minute bars, HAR, INDIA
-  VIX and bhavcopy ATM IV.
+  VIX and the FYERS chains' ATM IV.
 
 **Next step.** Gate entries on a forecast of *vol of vol*, below. The losses of
 a VRP seller come in the weeks when vol jumps.
@@ -70,7 +70,7 @@ Shaliastovich & Thimme 2018; Park 2015 on VVIX).
 **The trade.** Short the 25Δ strangle and long the ATM straddle, vega-neutral,
 delta-hedged daily. Code: `strategies/vol_of_vol.hpp`, `altair_vol_of_vol`.
 
-**Measured on NSE bhavcopy, 2015–2026, about 560 weekly rolls each**
+**WITHDRAWN (2026-11-11): measured on a banned non-FYERS source, docs/DATA_POLICY.md. About 560 weekly rolls each**
 (`altair_vol_of_vol --unverified-costs`):
 
 | | Slippage per option fill | Gross | Net of expenses | t (net/trade) |
@@ -283,8 +283,8 @@ LSTM's 67.2 on March 2025.
   the same 24-month/monthly schedule. Its inputs are the base models'
   out-of-sample calls from the previous close, and it is scored against "no
   change".
-- **Not yet measured on real data.** That needs the NSE bhavcopy, which this
-  environment cannot reach.
+- **Not yet measured on real data.** That needs FYERS chain history, which
+  ALTAIR is recording from 2026-10.
 
 ### 2i. Manhire's action-principle bound — *built, and it loses to a Gaussian*
 
@@ -455,7 +455,7 @@ its test checks two of its claims on NIFTY's daily closes from 2000 on.
   From the calmest fifth of 20-session windows, every other fifth is within
   15 %, and the largest fifth is 30.4 % predicted against 31.1 % realised.
 - **Read as an option smile, eq. 8 fails** (`altair_quantum_smile`, on 2,906
-  NIFTY and 2,881 BANKNIFTY bhavcopy days, first monthly expiry 14–60 days
+  NIFTY and 2,881 BANKNIFTY days of a since-banned source (void, docs/DATA_POLICY.md), first monthly expiry 14–60 days
   out, OTM strikes within 10 %). The market's curvature is about a quarter of
   Orrell's 1/2T (median 0.25 NIFTY, 0.23 BANKNIFTY). Anchored at ATM, the
   formula misses by 5.5 vol points (NIFTY) and 4.7 (BANKNIFTY), while a flat
@@ -478,10 +478,10 @@ decoherence), the pricer (eq. 1) and the compromise (Appendix).
 - **Its smile is the wrong shape.** For a 20 % walk, the quantum price is
   dearer at the money and cheaper in the wings. Its implied vol is 23 % at the
   money and 16–18 % at ±15 %, a frown. NIFTY's curves up (a smile) on 97.7 %
-  of bhavcopy days, and BANKNIFTY's on 93.5 % (`altair_quantum_smile`).
+  of those days, and BANKNIFTY's on 93.5 % (`altair_quantum_smile`).
 - **The compromise price slopes down, but not because of the walk.** That
   comes from the seller's 10 % margin on deep in-the-money calls.
-- Nothing to trade. It explains no NSE anomaly that the bhavcopy shows.
+- Nothing to trade. It explains no NSE anomaly.
 
 ### 2r. Moving average vs Parabolic SAR vs CNN (Fauza & Noviaty 2022) — *PSAR added, claim not supported*
 

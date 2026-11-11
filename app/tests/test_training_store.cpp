@@ -198,8 +198,6 @@ void test_snapshot(const fs::path& root) {
     spit(ds / "spot/nifty/1d/all.csv", "time,open,high,low,close,volume\n2026-10-23,1,2,0.5,1.5,\n2026-10-26,1,2,0.5,1.5,\n");
     spit(fy / "spot/nifty/1d/2026-10-23.csv", "time,open,high,low,close,volume\n2026-10-23T00:00:00+05:30,1,2,0.5,1.5,123\n");
     spit(ds / "spot/nifty/_superseded_1m/x.csv", "time,open,high,low,close\n");   // ignored: not a timeframe
-    spit(root / "bhav/fo23OCT2026bhav.csv", "x\n");
-    spit(root / "bhav/BhavCopy_NSE_FO_0_0_0_20261027_F_0000.csv", "x\n");       // after the cutoff
     spit(root / "iv/NIFTY/2026-10-23.csv", "time,iv\n");
     spit(root / "iv/NIFTY/2026-10-27.csv", "time,iv\n");
 
@@ -207,7 +205,6 @@ void test_snapshot(const fs::path& root) {
     o.sources = {{"dataset", ds, false}, {"fyers", fy, false}, {"tape", tp, true}};
     o.cutoff_day = *st::parse_day("2026-10-26");
     o.out = root / "snap";
-    o.bhavcopy = root / "bhav";
     o.iv = root / "iv";
     const auto rep = st::build_snapshot(o);
     check(rep.error.empty(), "the snapshot builds");
@@ -226,8 +223,6 @@ void test_snapshot(const fs::path& root) {
     const std::string cx = slurp(o.out / "_conflicts.csv");
     check(cx.find("spot/nifty/1m,2026-10-23T09:16:00+05:30,fyers,101,dataset,100.5,") != std::string::npos && rep.conflicts == 1,
           "the one real conflict is listed with both closes");
-    check(fs::exists(o.out / "_inputs/bhavcopy/fo23OCT2026bhav.csv") && !fs::exists(o.out / "_inputs/bhavcopy/BhavCopy_NSE_FO_0_0_0_20261027_F_0000.csv"),
-          "bhavcopy is cut at the same day");
     check(fs::exists(o.out / "_inputs/iv/NIFTY/2026-10-23.csv") && !fs::exists(o.out / "_inputs/iv/NIFTY/2026-10-27.csv"),
           "recorded IV is cut at the same day");
     check(slurp(o.out / "_snapshot.json").find("\"cutoff\": \"2026-10-26\"") != std::string::npos, "the manifest names the cutoff");
@@ -242,10 +237,13 @@ void test_snapshot(const fs::path& root) {
     o.out = root / "snap3";
     const auto changed = st::build_snapshot(o);
     check(changed.error.empty() && changed.id != rep.id, "a changed input changes the id");
-    check(st::bhavcopy_day("fo05JUL2024bhav.csv") == st::parse_day("2024-07-05")
-              && st::bhavcopy_day("BhavCopy_NSE_FO_0_0_0_20240708_F_0000.csv") == st::parse_day("2024-07-08")
-              && !st::bhavcopy_day("readme.csv"),
-          "both bhavcopy name formats are dated");
+    // docs/DATA_POLICY.md: a banned exchange file anywhere in an input stops the snapshot.
+    spit(fy / "spot/nifty/1d" / std::string(altair::data_policy::kExampleBannedNames[1]), "x\n");
+    auto banned = o;
+    banned.out = root / "snap_banned";
+    const auto refused = st::build_snapshot(banned);
+    check(!refused.error.empty() && refused.error.find("banned") != std::string::npos && !fs::exists(banned.out),
+          "a banned file in a source refuses the snapshot");
 }
 
 } // namespace

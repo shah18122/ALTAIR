@@ -44,11 +44,6 @@ if(ALTAIR_BUILD_TESTS)
         PRIVATE altair_instruments altair_flags)
     add_test(NAME nse_equity COMMAND altair_nse_equity_test)
 
-    add_executable(altair_udiff_master_test tests/test_udiff_master.cpp)
-    target_link_libraries(altair_udiff_master_test
-        PRIVATE altair_instruments altair_flags)
-    add_test(NAME udiff_master COMMAND altair_udiff_master_test)
-
     add_executable(altair_universe_test tests/test_universe.cpp)
     target_link_libraries(altair_universe_test
         PRIVATE altair_instruments altair_flags)

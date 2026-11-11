@@ -341,10 +341,10 @@ Expense figures quoted from the demos are UNVERIFIED until config/charges.toml i
 - **Horizon:** 30 days
 - **Formula:** `VRP = RV - SW (negative on average): sellers of variance earn it`
 - **Assumptions:** liquid strikes across the smile; the premium pays for crash risk.
-- **Impl:** `prototyped: strategies/vol_premium.hpp, app/vol_premium_main.cpp (synthetic VIX prices or NSE bhavcopy via app/bhavcopy.hpp)`
+- **Impl:** `prototyped: strategies/vol_premium.hpp, app/vol_premium_main.cpp (synthetic VIX prices or the saved FYERS chains via app/fyers_chain.hpp)`
 - **Status:** `unverified`
 - **Edge (bps, post-cost):** —
-- **On our data:** INDIA VIX was above NIFTY's next-21-session realised vol on 85.7 % of days, by 2.4 vol points on average (2015-2026). Selling the delta-hedged ATM monthly straddle every month at VIX-priced (SYNTHETIC) premiums nets Rs +6,295 a trade on NIFTY (t = 5.6, 136 trades) and Rs +10,366 on BANKNIFTY, UNVERIFIED expenses. Real ATM IV sits below VIX (VIX carries the put skew), so this overstates the premium: unproven until bhavcopy prices agree.
+- **On our data:** INDIA VIX was above NIFTY's next-21-session realised vol on 85.7 % of days, by 2.4 vol points on average (2015-2026). Selling the delta-hedged ATM monthly straddle every month at VIX-priced (SYNTHETIC) premiums nets Rs +6,295 a trade on NIFTY (t = 5.6, 136 trades) and Rs +10,366 on BANKNIFTY, UNVERIFIED expenses. Real ATM IV sits below VIX (VIX carries the put skew), so this overstates the premium: unproven until the saved FYERS chain prices agree.
 
 ### `bakshi-kapadia-2003-delta-hedged`
 - **Paper:** Bakshi, G. & Kapadia, N. (2003). Delta-Hedged Gains and the Negative Market Volatility Risk Premium. Review of Financial Studies 16(2), 527-566.

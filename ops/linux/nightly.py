@@ -12,7 +12,7 @@ the rest go on:
               data/store/fyers/ (laid out like dataset/), backfilling --backfill-days.
               Needs today's FYERS login; without one the step is skipped.
   4. SNAPSHOT altair_store snapshot at one IST cutoff. FYERS data only by default:
-              --with-dataset / --with-bhavcopy opt in. Snapshots are never rebuilt over.
+              --with-dataset opts in. Snapshots are never rebuilt over.
   5. RETRAIN  altair_forecast_curriculum on the snapshot with --leak-check, into
               data/store/runs/<day>/. Promoted to data/store/runs/LATEST.txt only if
               the leak check is clean.
@@ -85,7 +85,6 @@ def main() -> int:
     ap.add_argument("--backfill-days", type=int, default=7)
     ap.add_argument("--keep-snapshots", type=int, default=10)
     ap.add_argument("--with-dataset", action="store_true")
-    ap.add_argument("--with-bhavcopy", action="store_true")
     a = ap.parse_args()
 
     day_s = a.day or ist_now().date().isoformat()
@@ -178,8 +177,6 @@ def main() -> int:
             if a.with_dataset:
                 args += ["--source", "dataset=dataset"]
             args += ["--source", f"fyers={store / 'fyers'}", "--fill", f"tape={store / 'tape_bars'}", "--iv", "data/live/iv"]
-            if a.with_bhavcopy:
-                args += ["--bhavcopy", "data/bhavcopy"]
             status["snapshot"] = step("snapshot", "altair_store", args)
 
         # ---- 5. retrain --------------------------------------------------------------
@@ -193,8 +190,6 @@ def main() -> int:
             run = store / "runs" / day_s
             run.mkdir(parents=True, exist_ok=True)
             args = ["--dataset", str(snap), "--out", str(run), "--recorded-iv", str(snap / "_inputs" / "iv"), "--leak-check"]
-            if a.with_bhavcopy:
-                args += ["--bhavcopy", str(snap / "_inputs" / "bhavcopy")]
             if a.only:
                 args += ["--only", a.only]
             log("nightly", "INFO", f"retrain on snapshot {snap_id} (cutoff {day_s}): altair_forecast_curriculum {' '.join(args)}")

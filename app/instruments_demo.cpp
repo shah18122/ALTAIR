@@ -13,10 +13,8 @@
 #include "instruments_demo.hpp"
 
 #include <instruments/master_csv.hpp>
-#include <instruments/udiff_master.hpp>
 #include <instruments/reconcile.hpp>
 #include <instruments/snapshot.hpp>
-#include <instruments/universe.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -30,14 +28,6 @@ namespace {
 Reconciler g_rec;
 SpecStore g_store;
 
-// ── the universe (P1-09) ─────────────────────────────────────────────────
-// Production reads these from config [universe]. The references are real:
-// NIFTY around 24'080 and BANKNIFTY around 54'000, in paise.
-constexpr UniverseEntry kUniverseEntries[] = {
-    {"NIFTY",     Price{2'408'000}},
-    {"BANKNIFTY", Price{5'400'000}},
-};
-UniverseFilter g_universe;
 
 void rule(const char* title)
 {
@@ -254,74 +244,6 @@ bool stage_parse(const char* csv, std::size_t len, Timestamp snap, const char* o
 }
 
 // ── stage 3 ──────────────────────────────────────────────────────────────
-/// The real path: load an actual UDiFF bhavcopy as the primary source.
-void stage_reconcile_real(const char* path, Timestamp snap)
-{
-    rule("[3/4]  P1-06  three-way reconciliation (REAL exchange master)");
-
-    std::size_t n = 0;
-    char* owned = slurp(path, n);
-    if (owned == nullptr) {
-        std::printf("  cannot read %s\n", path);
-        return;
-    }
-    const auto r = load_udiff_master(owned, n, Exchange::NSE, g_rec, snap);
-    if (!r) {
-        std::printf("  parse failed: error %u\n",
-                    static_cast<unsigned>(r.error()));
-        std::free(owned);
-        return;
-    }
-    std::printf("  exchange master: %s\n", path);
-    std::printf("    added %zu   unparseable %zu   refused %zu\n",
-                r->added, r->unparseable, r->rejected_by_sink);
-    std::free(owned);
-
-    const ReconcileReport rep = g_rec.reconcile();
-    std::printf("\n  contracts %zu   agreed %zu   single %zu   BLOCKED %zu\n",
-                rep.contracts, rep.agreed, rep.single_source, rep.blocked);
-    std::printf("  primary source seen: %s\n",
-                rep.primary_source_seen ? "yes" : "no");
-    if (rep.blocked > 0) {
-        std::printf("    missing primary %zu   no broker %zu   conflicts %zu\n",
-                    rep.missing_primary, rep.no_broker, rep.conflicts);
-    }
-
-    std::printf("\n  %-26s %-16s %-9s %s\n",
-                "contract", "verdict", "lot", "tick");
-    std::size_t shown = 0;
-    for (std::size_t i = 0; i < g_rec.size() && shown < 8; ++i) {
-        const auto v = g_rec.verdict_at(i);
-        if (!v) { continue; }
-        const ContractVerdict* cv = *v;
-        if (cv->verdict != ReconcileVerdict::Agreed) { continue; }
-        std::printf("  %-26s %-16s %-9lld %lld\n", cv->merged.symbol,
-                    verdict_name(cv->verdict),
-                    static_cast<long long>(cv->merged.lot_size.raw()),
-                    static_cast<long long>(cv->merged.tick_size.raw()));
-        ++shown;
-    }
-    {
-        // This function only runs when a real master was given, which is the
-        // only case where the universe filter is installed.
-        const auto& u = g_universe.stats();
-        std::printf("\n  universe filter: admitted %llu, rejected %llu\n",
-                    static_cast<unsigned long long>(u.admitted),
-                    static_cast<unsigned long long>(u.rejected()));
-        std::printf("    underlying %llu  segment %llu  exchange %llu"
-                    "  expired %llu  horizon %llu  strike %llu\n",
-                    static_cast<unsigned long long>(u.underlying),
-                    static_cast<unsigned long long>(u.segment),
-                    static_cast<unsigned long long>(u.exchange),
-                    static_cast<unsigned long long>(u.expired),
-                    static_cast<unsigned long long>(u.too_far_out),
-                    static_cast<unsigned long long>(u.strike_band));
-    }
-    if (shown == 0) {
-        std::printf("  (no agreed contracts to show)\n");
-    }
-}
-
 void stage_reconcile(Timestamp snap)
 {
     rule("[3/4]  P1-06  three-way reconciliation");
@@ -427,6 +349,13 @@ void stage_store()
 
 int run_instruments(const char* path, const char* master_path)
 {
+    if (master_path != nullptr) {
+        // The only real exchange master this demo read was the banned exchange
+        // end-of-day file (docs/DATA_POLICY.md). The live system reconciles
+        // against FYERS' NSE_FO.csv in the price service instead.
+        std::fprintf(stderr, "altair: --instruments takes one file; the exchange-master path was removed (docs/DATA_POLICY.md)\n");
+        return 2;
+    }
     const Timestamp today = ist_date(2026, 8, 31);       // a Monday
     std::printf("\naltair -- Phase 1: the instrument master\n");
     std::printf("session date 2026-08-31 (Monday), IST\n");
@@ -443,52 +372,21 @@ int run_instruments(const char* path, const char* master_path)
             std::fprintf(stderr, "altair: cannot read '%s'\n", path);
             return 2;
         }
-        // Both real files must be filtered to the SAME universe, or the store
-        // fills from whichever is loaded first and the second is refused
-        // entirely -- which is exactly what happened the first time this ran
-        // against 106'150 broker-master rows and 30'488 exchange rows.
-        if (master_path != nullptr) {
-                }
         csv = owned;
         len = n;
         origin = path;
     }
 
-    // P1-09: install the universe BEFORE anything is parsed. With real files
-    // this is not optional -- 106'150 broker-master rows and 30'488 exchange rows
-    // against a store of 8'192 means the first file loaded fills it and the
-    // second is refused entirely.
-    if (master_path != nullptr) {
-        UniverseConfig uc{};
-        uc.entries = kUniverseEntries;
-        uc.entry_count = sizeof(kUniverseEntries) / sizeof(kUniverseEntries[0]);
-        uc.segments = static_cast<std::uint8_t>(seg_bit(Segment::Cash)
-                                                | seg_bit(Segment::Fut)
-                                                | seg_bit(Segment::Opt));
-        uc.exchanges = ex_bit(Exchange::NSE);
-        uc.max_expiry_days = 45;
-        uc.strike_band = 100'000;          // Rs 1000 either side
-        g_universe = UniverseFilter{uc};
-        g_rec.set_universe(&g_universe, today);
-    }
-
     stage_snapshot_policy(today);
     const bool ok = stage_parse(csv, len, today, origin);
     if (ok) {
-        if (master_path != nullptr) {
-            stage_reconcile_real(master_path, today);
-        } else {
-            stage_reconcile(today);
-        }
+        stage_reconcile(today);
         stage_store();
     }
 
     std::free(owned);
 
-    std::printf("\nThat is every Phase 1 card, end to end.\n"
-                "Give it data/instruments.csv AND a real UDiFF bhavcopy and it\n"
-                "reconciles them: two file formats, one contract, one lot size.\n"
-                "  altair --instruments data/instruments.csv <BhavCopy_NSE_FO_*.csv>\n\n");
+    std::printf("\nThat is every Phase 1 card, end to end.\n\n");
     return ok ? 0 : 1;
 }
 

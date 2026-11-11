@@ -110,7 +110,7 @@ Every bar in a snapshot is `time,open,high,low,close,volume,oi,source`:
 
 By default the snapshot is FYERS data only: `fyers` (official candles), with
 `tape` (bars built from the recording) filling gaps. `nightly.py --with-dataset`
-adds your `dataset/` files under FYERS, and `--with-bhavcopy` the NSE bhavcopy.
+adds your `dataset/` files under FYERS. A banned exchange end-of-day file in any input stops the snapshot (docs/DATA_POLICY.md).
 With more than one source they go lowest priority first: `dataset`, then `fyers`.
 For the same bar time:
 
@@ -126,7 +126,7 @@ A row is never stitched together from two sources. `_provenance.csv` lists
 which source each stretch of bars came from. Your `dataset/` files are never
 modified: the snapshot is a separate tree.
 
-Every series, plus the bhavcopy and recorded IV beside them, stops at the end
+Every series, plus the recorded IV beside them, stops at the end
 of the same IST day. A snapshot gets an id, a hash of its inputs and the rule,
 and it is never rebuilt over. The run records the id it trained on, so any run
 can be traced back to the exact data it saw. The curriculum's `--leak-check`

@@ -436,7 +436,7 @@ parse_master_row(const char* row, std::size_t len,
     // SYMBOL rather than the `name` column.
     //
     // For derivatives the two agree: a NIFTY future has name "NIFTY", which is
-    // exactly what fo_mktlots' SYMBOL and UDiFF's TckrSymb carry. For cash they
+    // exactly what fo_mktlots' SYMBOL carries. For cash they
     // do not. The master's RELIANCE row has tradingsymbol RELIANCE and name
     // "RELIANCE INDUSTRIES", while EQUITY_L has SYMBOL RELIANCE and NAME OF
     // COMPANY "Reliance Industries Limited". Only the trading symbol agrees, so

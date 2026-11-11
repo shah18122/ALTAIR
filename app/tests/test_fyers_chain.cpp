@@ -140,7 +140,7 @@ void test_load() {
     if (d1 != days.end()) {
         const auto& legs = d1->second.opt.at(e);
         check(legs.size() == 1 && legs.at(25100.0).call == 210.5 && legs.at(25100.0).put == 190.25,
-              "the ATM straddle; a strike 27 % away is outside the bhavcopy's +-20 %");
+              "the ATM straddle; a strike 27 % away is outside the +-20 % band");
         check(!d1->second.opt.contains(day(2026, 10, 20)), "monthly only: the weekly is left out");
     }
     const auto d2 = days.find(day(2026, 10, 19));

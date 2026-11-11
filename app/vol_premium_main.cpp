@@ -7,7 +7,7 @@
 // that day); sell one lot when implied is rich, hedge its delta with whole
 // futures lots, buy it back before expiry.
 //
-// THREE SOURCES OF OPTION PRICES, NAMED ON EVERY OUTPUT:
+// TWO SOURCES OF OPTION PRICES, NAMED ON EVERY OUTPUT:
 //   fyers      (default) FYERS chain closes ALTAIR saved itself
 //              (app/fyers_chain.hpp; altair_fyers_chain saves them daily into
 //              data/store/fyers_chain, ops/linux/chain_snapshot.py's 15:27 snapshot
@@ -17,8 +17,7 @@
 //              ratio), flat across strikes, NIFTY's monthly calendar. Then
 //              implied IS VIX by construction, and the test is whether VIX
 //              over-prices what the index then does.
-//   bhavcopy   opt-in only: NSE F&O bhavcopy closes from data/bhavcopy/
-//              (app/bhavcopy.hpp). Not FYERS data; research does not use it.
+// No exchange end-of-day file is ever read (docs/DATA_POLICY.md).
 //
 // Several variants run side by side, so the forecast's contribution can be
 // read off against a control that sells every month regardless:
@@ -40,7 +39,6 @@
 #include <analytics/inr_rate.hpp>
 #include <analytics/greeks.hpp>
 #include <analytics/har_rv.hpp>
-#include <app/bhavcopy.hpp>
 #include <app/demo_costs.hpp>
 #include <app/fyers_chain.hpp>
 #include <app/forecast_tracks.hpp>
@@ -72,16 +70,14 @@ void usage(const char* exe) {
     std::printf(
         "  Sell the at-the-money monthly straddle when implied vol beats a HAR forecast; delta hedged.\n\n"
         "    %s [--dataset DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
-        "       [--source fyers|synthetic|bhavcopy] [--fyers-chain DIR] [--chain-snap DIR] [--bhavcopy-dir DIR]\n"
+        "       [--source fyers|synthetic] [--fyers-chain DIR] [--chain-snap DIR]\n"
         "       [--min-sessions N] [--exit-sessions N]\n"
         "       [--slippage-pts P] [--rate R] [--vix-log FILE] [--vix-model NAME] [--events FILE]\n"
         "       [--monthly-halt RS] [--max-risk RS] [--unverified-costs] [--weeklies]\n"
         "       [--rv-ceiling V] [--max-drawdown RS] [--max-vega RS]\n\n"
-        "    --source S            fyers (default: the chains altair_fyers_chain saved), synthetic (VIX-priced),\n"
-        "                          or bhavcopy (NSE closes; opt-in, not FYERS data)\n"
+        "    --source S            fyers (default: the chains altair_fyers_chain saved) or synthetic (VIX-priced)\n"
         "    --fyers-chain DIR     default data/store/fyers_chain\n"
         "    --chain-snap DIR      default data/store/chain_snap (15:27 snapshots, for days with no saved bars)\n"
-        "    --bhavcopy-dir DIR    default data/bhavcopy\n"
         "    --min-sessions N      sessions to expiry at entry (default 10)\n"
         "    --exit-sessions N     buy back once this many or fewer remain (default 1)\n"
         "    --slippage-pts P      premium points given up per option fill (default 1.0)\n"
@@ -165,7 +161,7 @@ struct Priced {
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path root = "dataset", out = "data/verified", bhav_dir = "data/bhavcopy";
+    fs::path root = "dataset", out = "data/verified";
     fs::path chain_dir = "data/store/fyers_chain", snap_dir = "data/store/chain_snap";
     std::string which = "both", source = "fyers", vix_log, vix_model = "Hedge", events_file;
     double rate = altair::kInrRiskFreeRate, slip = 1.0, min_s = 10, exit_s = 1, month_halt = 0.0, max_risk = 0.0;
@@ -179,7 +175,6 @@ int main(int argc, char** argv) {
         if (a == "--out" && has) { out = argv[++i]; continue; }
         if (a == "--instrument" && has) { which = argv[++i]; continue; }
         if (a == "--source" && has) { source = argv[++i]; continue; }
-        if (a == "--bhavcopy-dir" && has) { bhav_dir = argv[++i]; continue; }
         if (a == "--fyers-chain" && has) { chain_dir = argv[++i]; continue; }
         if (a == "--chain-snap" && has) { snap_dir = argv[++i]; continue; }
         if (a == "--vix-log" && has) { vix_log = argv[++i]; continue; }
@@ -199,7 +194,7 @@ int main(int argc, char** argv) {
         usage(argv[0]);
         return 2;
     }
-    if (source != "fyers" && source != "synthetic" && source != "bhavcopy") { usage(argv[0]); return 2; }
+    if (source != "fyers" && source != "synthetic") { usage(argv[0]); return 2; }
 
     std::vector<altair::ChargeSchedule> schedules;
     const auto rep = altair::load_charges_file("config/charges.toml", schedules);
@@ -250,7 +245,7 @@ int main(int argc, char** argv) {
             for (std::string c; std::getline(ss, c, ',');) { f.push_back(c); }
             // after the model: last_price,next_price,forecast_price,p_up,call,...
             if (f.size() < 5) { continue; }
-            const auto day = altair::bhavcopy::detail::date(line.substr(0, 10));
+            const auto day = altair::chain::detail::date(line.substr(0, 10));
             if (day && f[4] == "UP") { vix_up.insert(*day); }
             ++rows;
         }
@@ -267,7 +262,7 @@ int main(int argc, char** argv) {
         if (!in) { std::printf("  --events %s: cannot open\n", events_file.c_str()); return 2; }
         for (std::string line; std::getline(in, line);) {
             if (line.size() < 10 || line[0] == '#' || line.rfind("date", 0) == 0) { continue; }
-            const auto day = altair::bhavcopy::detail::date(line.substr(0, 10));
+            const auto day = altair::chain::detail::date(line.substr(0, 10));
             if (!day) { std::printf("  --events %s: bad date in \"%s\"\n", events_file.c_str(), line.c_str()); return 2; }
             events.insert(*day);
         }
@@ -368,9 +363,7 @@ int main(int argc, char** argv) {
     meta << "key,value\nsource," << source << "\ncosts," << cost_tag << "\ncost_note,\"" << cost_note << "\"\n";
     meta << "prices,\"" << (source == "synthetic"
                                 ? "SYNTHETIC: Black-76 at INDIA VIX (BANKNIFTY: VIX x 20-day realised-vol ratio), flat across strikes; NIFTY's monthly expiry calendar for both"
-                                : source == "fyers"
-                                ? "FYERS chain closes saved by altair_fyers_chain (last 1m bar to 15:29; 15:27 REST snapshot LTP where no bars); same-expiry futures for the forward and the hedge"
-                                : "NSE F&O bhavcopy closes (opt-in, not FYERS data); traded strikes only; same-expiry futures for the forward and the hedge")
+                                : "FYERS chain closes saved by altair_fyers_chain (last 1m bar to 15:29; 15:27 REST snapshot LTP where no bars); same-expiry futures for the forward and the hedge")
          << "\"\n";
     meta << "forecast,\"HAR (Corsi 2009) in logs on 5-minute realised variance incl. the overnight gap, refitted each day on the 1000 days before it\"\n";
     meta << "rate," << rate << "\nslippage_pts," << slip << "\nmin_sessions," << min_s << "\nexit_sessions," << exit_s << "\n";
@@ -457,7 +450,7 @@ int main(int argc, char** argv) {
 
         // The market, from either source.
         altair::VrpMarket m;
-        std::shared_ptr<std::map<std::int64_t, altair::bhavcopy::Day>> bhav;
+        std::shared_ptr<std::map<std::int64_t, altair::chain::Day>> chains;
         std::vector<std::size_t> d_index;   // market index -> D index
         if (source == "synthetic") {
             std::map<std::int64_t, double> vix_at;
@@ -515,31 +508,20 @@ int main(int argc, char** argv) {
                 return q;
             };
         } else {
-            if (source == "fyers") {
+            {
                 altair::fyers_chain::LoadReport fr;
-                bhav = std::make_shared<std::map<std::int64_t, altair::bhavcopy::Day>>(
+                chains = std::make_shared<std::map<std::int64_t, altair::chain::Day>>(
                     altair::fyers_chain::load_dir(chain_dir, in.name, fr, !(weeklies && in.name == "NIFTY"), snap_dir));
                 std::printf("  %s FYERS chains: %zu saved day(s), %zu from 15:27 snapshots, %zu option and %zu futures rows\n",
                             in.name.c_str(), fr.days, fr.snapshot_days, fr.option_rows, fr.future_rows);
-                if (bhav->empty()) {
+                if (chains->empty()) {
                     std::printf("  %s: no FYERS chains under %s -- altair_fyers_chain --go saves them daily\n", in.name.c_str(),
                                 chain_dir.string().c_str());
                     continue;
                 }
                 meta << in.name << "_fyers_chain_days," << fr.days << "\n" << in.name << "_snapshot_days," << fr.snapshot_days << "\n";
-            } else {
-                altair::bhavcopy::LoadReport br;
-                bhav = std::make_shared<std::map<std::int64_t, altair::bhavcopy::Day>>(
-                    altair::bhavcopy::load_dir(bhav_dir, in.name, br));
-                std::printf("  %s bhavcopy (opt-in, not FYERS data): %zu files (%zu legacy, %zu UDiFF, %zu other), %zu option and %zu futures rows, %zu untraded skipped\n",
-                            in.name.c_str(), br.files, br.legacy, br.udiff, br.unknown, br.option_rows, br.future_rows, br.untraded);
-                if (bhav->empty()) {
-                    std::printf("  %s: no bhavcopy under %s\n", in.name.c_str(), bhav_dir.string().c_str());
-                    continue;
-                }
-                meta << in.name << "_bhavcopy_files," << br.files << "\n";
             }
-            for (const auto& [day, bd] : *bhav) {
+            for (const auto& [day, bd] : *chains) {
                 const auto k = at.find(day);
                 if (k == at.end()) { continue; }
                 m.day.push_back(day);
@@ -550,7 +532,7 @@ int main(int argc, char** argv) {
             }
             const auto days = m.day;
             const auto spots = m.spot;
-            const auto B = bhav;
+            const auto B = chains;
             m.forward = [days, spots, B, rate](std::size_t i, std::int64_t e) {
                 const auto& d = B->at(days[i]);
                 const auto f = d.fut.find(e);

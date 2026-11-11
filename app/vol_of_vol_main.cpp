@@ -6,7 +6,7 @@
 // measures the premium, and every report it writes says so.
 //
 // strategies/vol_of_vol.hpp on the FYERS chains altair_fyers_chain saves
-// (app/fyers_chain.hpp; the NSE bhavcopy only with --bhavcopy): each week, short the 25-delta strangle of the
+// (app/fyers_chain.hpp, the only option source): each week, short the 25-delta strangle of the
 // first monthly expiry at least 10 sessions out, long the ATM straddle lots
 // that cancel its vega, delta hedged with futures at every close. Three
 // variants side by side, so the result can be read against its own controls:
@@ -22,7 +22,6 @@
 // Writes <out>/vol_of_vol/: trades_<instrument>_<variant>.csv, summary.csv.
 
 #include <analytics/inr_rate.hpp>
-#include <app/bhavcopy.hpp>
 #include <app/fyers_chain.hpp>
 #include <app/demo_costs.hpp>
 #include <app/spec_today.hpp>
@@ -50,10 +49,9 @@ void usage(const char* exe) {
     std::printf(
         "  Sell vol-of-vol: short the 25-delta strangle, long the ATM straddle, vega-neutral, delta hedged.\n"
         "  RESEARCH ONLY: it buys options, which ALTAIR never does in a trading model.\n\n"
-        "    %s [--fyers-chain DIR] [--bhavcopy] [--bhavcopy-dir DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
+        "    %s [--fyers-chain DIR] [--out DIR] [--instrument NIFTY|BANKNIFTY|both]\n"
         "       [--strangle-lots N] [--hold N] [--slippage-pts P] [--rate R] [--unverified-costs]\n\n"
         "    --fyers-chain DIR     FYERS chains saved by altair_fyers_chain (default data/store/fyers_chain)\n"
-        "    --bhavcopy            NSE bhavcopy instead (opt-in, not FYERS data); --bhavcopy-dir, default data/bhavcopy\n"
         "    --out DIR             default data/verified\n"
         "    --strangle-lots N     lots of the short strangle (default 5); the straddle is sized to its vega\n"
         "    --hold N              closes each position is held before it is rolled (default 5)\n"
@@ -91,9 +89,8 @@ struct Variant { std::string id; vov::VovGate gate; int side; };
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path out = "data/verified", bhav_dir = "data/bhavcopy", chain_dir = "data/store/fyers_chain";
+    fs::path out = "data/verified", chain_dir = "data/store/fyers_chain";
     std::string which = "both";
-    bool use_bhavcopy = false;
     std::printf("altair_vol_of_vol: RESEARCH ONLY -- every variant buys options, which no ALTAIR trading model may do.\n");
     double rate = altair::kInrRiskFreeRate, slip = 1.0, lots = 5, hold = 5;
     bool unverified = false;
@@ -103,9 +100,7 @@ int main(int argc, char** argv) {
         if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         if (a == "--out" && has) { out = argv[++i]; continue; }
         if (a == "--instrument" && has) { which = argv[++i]; continue; }
-        if (a == "--bhavcopy-dir" && has) { bhav_dir = argv[++i]; continue; }
         if (a == "--fyers-chain" && has) { chain_dir = argv[++i]; continue; }
-        if (a == "--bhavcopy") { use_bhavcopy = true; continue; }
         if (a == "--rate" && has) { if (!parse_double(argv[++i], rate) || std::fabs(rate) > 1.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--slippage-pts" && has) { if (!parse_double(argv[++i], slip) || slip < 0.0) { usage(argv[0]); return 2; } continue; }
         if (a == "--strangle-lots" && has) { if (!parse_double(argv[++i], lots) || lots < 1 || lots > 100) { usage(argv[0]); return 2; } continue; }
@@ -150,25 +145,25 @@ int main(int argc, char** argv) {
         const auto lot = altair::spec_today::lot_size("config/lot_size_history.csv", name);
         if (!lot) { std::printf("  %s: no verified lot size -- not run\n", name.c_str()); continue; }
         std::string note;
-        const auto bhav = std::make_shared<std::map<std::int64_t, altair::bhavcopy::Day>>(
-            altair::fyers_chain::load_source(use_bhavcopy, chain_dir, bhav_dir, name, note));
+        const auto chains = std::make_shared<std::map<std::int64_t, altair::chain::Day>>(
+            altair::fyers_chain::load_source(chain_dir, name, note));
         std::printf("  %s\n", note.c_str());
-        if (bhav->empty()) { continue; }
+        if (chains->empty()) { continue; }
         vov::VovMarket m;
-        for (const auto& [day, bd] : *bhav) {
+        for (const auto& [day, bd] : *chains) {
             if (bd.fut.empty()) continue;
             m.day.push_back(day);
             for (const auto& [e, f] : bd.fut) m.expiries.insert(e);
         }
         const auto days = m.day;
-        m.forward = [days, bhav](std::size_t i, std::int64_t e) {
-            const auto& d = bhav->at(days[i]);
+        m.forward = [days, chains](std::size_t i, std::int64_t e) {
+            const auto& d = chains->at(days[i]);
             const auto f = d.fut.find(e);
             return f == d.fut.end() ? std::nan("") : f->second;
         };
-        m.chain = [days, bhav](std::size_t i, std::int64_t e) {
+        m.chain = [days, chains](std::size_t i, std::int64_t e) {
             std::vector<vov::VovStrike> outv;
-            const auto& d = bhav->at(days[i]);
+            const auto& d = chains->at(days[i]);
             const auto o = d.opt.find(e);
             if (o == d.opt.end()) return outv;
             for (const auto& [k, leg] : o->second) outv.push_back({k, leg.call, leg.put});

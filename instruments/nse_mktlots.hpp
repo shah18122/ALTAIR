@@ -16,8 +16,8 @@
 //     exactly one month. Months are resolved from the HEADER.
 //   * Padded to fixed width on every field, header included.
 //   * UNDERLYING and SYMBOL are DIFFERENT: "NIFTY 50" vs "NIFTY". SYMBOL is
-//     the one that matches the instrument master's `name` and UDiFF's TckrSymb, so SYMBOL is
-//     the join key. Checked against all three real files.
+//     the one that matches the instrument master's `name`, so SYMBOL is
+//     the join key. Checked against the real files.
 //   * A blank cell means the underlying does not trade that month. It is not
 //     a lot size of zero.
 //

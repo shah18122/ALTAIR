@@ -46,7 +46,7 @@ VERIFIED `config/charges.toml` (an UNVERIFIED run is not evidence):
 - 120 sessions or more, and a t-statistic of 2 or more on the daily net;
 - the deflated Sharpe ratio (Bailey & Lopez de Prado) at 95 % or more,
   counting every variant tried on that index as a trial: these four, plus the
-  ones tried before (bhavcopy studies, the combos search), at least 20;
+  ones tried before (the withdrawn end-of-day studies, the combos search), at least 20;
 - its worst day within the per-trade loss limit Smit sets for real money
   (the 4 % gap loss each entry logs is the yardstick);
 - a variant beats the control on the paired difference (t >= 2); otherwise
@@ -58,9 +58,9 @@ alone.
 
 ## What does not count
 
-- The NSE bhavcopy results (Rs 5.12 L monthly, Rs 8.5 L intraday weekly, the
-  IV > RV variants): bhavcopy is not used any more, and they priced fills at
-  closes or opening prints.
+- The withdrawn end-of-day results (Rs 5.12 L monthly, Rs 8.5 L intraday weekly,
+  the IV > RV variants): their source is banned (docs/DATA_POLICY.md), and they
+  priced fills at closes or opening prints.
 - Their rupee figures were per lot of NIFTY 75 / BANKNIFTY 35; the lots are
   65 / 30 now (config/lot_size_history.csv), so in today's lots they read
   about 13-14 % high even before the data question.

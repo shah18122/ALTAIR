@@ -14,12 +14,11 @@
 //                  b > 0 is a smile, b < 0 the frown research/models/quantum_walk.hpp implies)
 // RMSE in vol points against the market, averaged over days.
 //
-// Read-only; writes nothing. The chains are altair_fyers_chain's (app/fyers_chain.hpp);
-// --bhavcopy reads the NSE bhavcopy instead (opt-in, not FYERS data).
+// Read-only; writes nothing. The chains are altair_fyers_chain's (app/fyers_chain.hpp),
+// the only option source (docs/DATA_POLICY.md).
 
 #include <analytics/iv.hpp>
 #include <research/models/quantum_oscillator.hpp>
-#include <app/bhavcopy.hpp>
 #include <app/fyers_chain.hpp>
 
 #include <algorithm>
@@ -33,22 +32,19 @@
 namespace fs = std::filesystem;
 
 int main(int argc, char** argv) {
-    fs::path dir = "data/bhavcopy", chain_dir = "data/store/fyers_chain";
-    bool use_bhavcopy = false;
+    fs::path chain_dir = "data/store/fyers_chain";
     for (int i = 1; i < argc; ++i) {
         const std::string_view a{argv[i]};
         if (a == "--fyers-chain" && i + 1 < argc) { chain_dir = argv[++i]; continue; }
-        if (a == "--bhavcopy") { use_bhavcopy = true; continue; }
-        if (a == "--bhavcopy-dir" && i + 1 < argc) { dir = argv[++i]; continue; }
-        std::printf("usage: %s [--fyers-chain DIR] [--bhavcopy] [--bhavcopy-dir DIR]\n"
-                    "  (default the FYERS chains in data/store/fyers_chain; --bhavcopy is opt-in, not FYERS data)\n", argv[0]);
+        std::printf("usage: %s [--fyers-chain DIR]\n"
+                    "  (default the FYERS chains in data/store/fyers_chain)\n", argv[0]);
         return a == "--help" || a == "-h" ? 0 : 2;
     }
     constexpr double kRate = 0.065;
-    std::printf("Orrell eq. 8 smile on real option closes (%s)\n", use_bhavcopy ? "NSE bhavcopy, opt-in" : "FYERS chains");
+    std::printf("Orrell eq. 8 smile on real option closes (FYERS chains)\n");
     for (const std::string sym : {"NIFTY", "BANKNIFTY"}) {
         std::string note;
-        const auto days = altair::fyers_chain::load_source(use_bhavcopy, chain_dir, dir, sym, note);
+        const auto days = altair::fyers_chain::load_source(chain_dir, sym, note);
         std::printf("  %s\n", note.c_str());
         if (days.empty()) { continue; }
         std::size_t n = 0, beats_flat = 0, atm_beats_flat = 0;

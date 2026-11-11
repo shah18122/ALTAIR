@@ -776,9 +776,9 @@ Results (ops/demo-trading.md):
   - strategies/vol_premium.hpp: sell the ATM monthly straddle when implied
     vol beats the forecast by N vol points. Hedge with whole futures lots
     reset at every close; buy back one session before expiry (test_vol_premium).
-  - app/bhavcopy.hpp: NSE F&O bhavcopy, legacy and UDiFF formats, columns by
-    name, monthly expiries, traded strikes only (test_bhavcopy).
-    ops/fetch_bhavcopy.ps1 fetches the files into data/bhavcopy/ (git-ignored).
+  - app/[banned exchange EOD file].hpp: NSE F&O [banned exchange EOD file], legacy and [exchange format] formats, columns by
+    name, monthly expiries, traded strikes only (test_[banned exchange EOD file]).
+    ops/(removed fetch script) fetches the files into data/[banned exchange EOD file]/ (git-ignored).
   - altair_vol_premium runs the variants always, har-0/2/4, stop2x, unhedged
     and vixveto. The desktop Demo Trading page gains "Run vol premium" and
     two tabs.
@@ -787,7 +787,7 @@ Results (ops/demo-trading.md):
     trade on NIFTY (t = 5.6) and +Rs 10,400 on BANKNIFTY (t = 5.3). The HAR
     filter adds nothing over selling every month; the hedge halves the risk.
     Real ATM IV is below VIX, so this overstates the premium: unproven until
-    bhavcopy prices agree.
+    [banned exchange EOD file] prices agree.
   Cross-sectional stat-arb (Avellaneda & Lee 2010).
   - strategies/residual_reversion.hpp: per stock and close, OLS on the market
     and the leave-one-out sector mean. The cumulative residual's AR(1) gives
@@ -1190,7 +1190,7 @@ SEARCH
     Rs 3.06 lakh over 562 weeks); not significant even with no slippage;
     every variant negative at 0.5-1 point a fill. NOT TRADABLE AS BUILT.
 
-  THE VARIANCE PREMIUM ON REAL CLOSES (altair_vol_premium --source bhavcopy)
+  THE VARIANCE PREMIUM ON REAL CLOSES (altair_vol_premium --source [banned exchange EOD file])
     Selling the monthly ATM straddle, hedged: NIFTY +Rs 91,804 over 58 months
     after costs (Rs 1,583 a month, t 1.5); BANKNIFTY +Rs 74,820 (t 0.6).
     About a quarter of the synthetic result. Real, the best lead, not proven.

@@ -483,7 +483,7 @@ if(TARGET altair_charges_toml)
     target_include_directories(altair_pairs_futures PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
     # The variance premium, sold delta hedged: HAR forecast against implied
-    # vol, on VIX-priced options or NSE bhavcopy closes.
+    # vol, on VIX-priced options or the saved FYERS chain closes.
     add_executable(altair_vol_premium vol_premium_main.cpp)
     target_link_libraries(altair_vol_premium PRIVATE altair_instruments altair_analytics altair_strategies altair_charges_toml altair_flags)
     target_include_directories(altair_vol_premium PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -536,11 +536,17 @@ if(ALTAIR_BUILD_TESTS)
     target_link_libraries(altair_live_real_orders_test PRIVATE altair_live altair_oms altair_flags)
     target_include_directories(altair_live_real_orders_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     add_test(NAME live_real_orders COMMAND altair_live_real_orders_test)
-    # NSE F&O bhavcopy, both formats, from fixtures written to a temp dir.
-    add_executable(altair_bhavcopy_test tests/test_bhavcopy.cpp)
-    target_link_libraries(altair_bhavcopy_test PRIVATE altair_flags)
-    target_include_directories(altair_bhavcopy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    add_test(NAME bhavcopy COMMAND altair_bhavcopy_test)
+    # docs/DATA_POLICY.md, both locks: the run-time file check, and the source
+    # scan that fails on any mention of the banned exchange file.
+    add_executable(altair_data_policy_test tests/test_data_policy.cpp)
+    target_link_libraries(altair_data_policy_test PRIVATE altair_flags)
+    target_include_directories(altair_data_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_test(NAME data_policy COMMAND altair_data_policy_test)
+    find_program(ALTAIR_BASH bash)
+    if(ALTAIR_BASH)
+        add_test(NAME data_policy_scan COMMAND ${ALTAIR_BASH} ${PROJECT_SOURCE_DIR}/tools/check_data_policy.sh
+                 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
     add_executable(altair_fyers_chain_test tests/test_fyers_chain.cpp)
     target_link_libraries(altair_fyers_chain_test PRIVATE altair_instruments altair_flags)
     target_include_directories(altair_fyers_chain_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)

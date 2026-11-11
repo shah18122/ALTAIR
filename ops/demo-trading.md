@@ -1,8 +1,9 @@
 # Demo trading: band-fade short options and futures pairs
 
-> **2026-11-02.** The tables below came from NSE bhavcopy closes, NIFTY lots
-> of 75 and BANKNIFTY lots of 35. ALTAIR uses FYERS data only now, and the lots
-> are 65 / 30, so read them as history, not evidence. The current state is in
+> **2026-11-11.** Every result that came from exchange end-of-day files was
+> deleted from this page: that source is banned (docs/DATA_POLICY.md). The
+> remaining tables use NIFTY lots of 75 and BANKNIFTY 35; the lots are now
+> 65 / 30, so read them as history, not evidence. The current state is in
 > docs/STATUS.md; how the paper sellers are judged, docs/research/paper-evaluation.md.
 
 Paper trades only. Nothing here reaches a broker (real orders go only through
@@ -15,7 +16,7 @@ desktop's **Strategies → Demo Trading** page runs them and shows the results.
 | Pairs hedged with futures | `strategies/pairs_futures.hpp` | `altair_pairs_futures` | `data/verified/pairs_futures/{trades,windows,summary,ratio}.csv` |
 | Stock legs for the pairs | `ops/linux/fetch.py pairs` | `altair_fyers_history` | `data/pairs/<name>/1d/fyers.csv` (git-ignored: broker data) |
 | Volatility premium, delta hedged | `strategies/vol_premium.hpp`, `analytics/har_rv.hpp` | `altair_vol_premium` | `data/verified/vol_premium/{trades_<variant>,summary,signals,forecast_eval,meta}.csv` |
-| Real option prices | `app/bhavcopy.hpp` | `(bhavcopy fetch removed: FYERS data only)` | `data/bhavcopy/<YYYY>/*.csv` (git-ignored) |
+| Real option prices | `app/fyers_chain.hpp` | `altair_fyers_chain --go` (daily, 15:45 IST) | `data/store/fyers_chain/<day>/` (git-ignored) |
 | Cross-sectional stat-arb | `strategies/residual_reversion.hpp` | `altair_resid_reversion` | `data/verified/resid_reversion/{trades,daily}_<variant>.csv`, `summary.csv`, `meta.csv` |
 | Stock universe | `config/universe_nifty50.csv` | `ops/linux/fetch.py universe` | `data/pairs/<symbol>/1d/fyers.csv` (git-ignored, shared with the pairs) |
 | Order-book study | `book/depth_study.hpp` | `altair_depth_study` (record with `ops/linux/fetch.py depth`) | `data/verified/depth_study/summary.csv`; recordings in `data/ticks/` (git-ignored) |
@@ -25,30 +26,23 @@ Every CLI here needs tomlplusplus, which provides the charges schedule.
 Without it they are not built. On the desktop page, pick one in the Run
 selector and press **Run**.
 
-### Refresh daily call, and the bhavcopy, from the page
+### Refresh daily call from the page
 
-Two buttons beside **Run** chain the CLIs above, one after another
+A button beside **Run** chains the CLIs above, one after another
 (`desktop/demo_trading_page.hpp`, `demo_detail::daily_call_plan`):
 
 - **Refresh daily call**, after the 15:30 close:
   1. `dataset/` brought current, merged, from FYERS:
      `altair_dataset_update --go` when `data/fyers_session.json` exists; no
      session means the stored bars are used as they are;
-  2. the last two weeks of NSE bhavcopy (`(bhavcopy fetch removed: FYERS data only) --go -From ...`);
-  3. `altair_forecast_curriculum --only daily`, then `--only hourly`;
-  4. `altair_trader` (tick **Price UNVERIFIED expenses** until
+  2. `altair_forecast_curriculum --only daily`, then `--only hourly`;
+  3. `altair_trader` (tick **Price UNVERIFIED expenses** until
      `config/charges.toml` is verified, or it refuses to decide);
-  5. `altair_vol_premium --source bhavcopy`.
-  Steps 1, 2 and 5 are optional: a failure is noted on the status line and the
-  chain goes on. 3 and 4 are required. The last NIFTY row of
+  4. `altair_vol_premium` on the saved FYERS chains.
+  Steps 1 and 4 are optional: a failure is noted on the status line and the
+  chain goes on. 2 and 3 are required. The last NIFTY row of
   `altair_trader/days.csv` is then the call the Terminal's **Desk trader**
   (ops/live-terminal.md) acts on the next session, on paper.
-- **Fetch NSE bhavcopy** runs `(bhavcopy fetch removed: FYERS data only) --go -From 2015-01-01`.
-  Days already in `data/bhavcopy/` are kept, so only the first run is long.
-
-The Run selector also has **Vol premium on NSE closes (bhavcopy)**: the same
-strategy on real at-the-money straddles and futures instead of synthetic
-prices.
 
 ## Expenses are refused until the charges are verified
 
@@ -168,8 +162,7 @@ a lot of delta, so whole-lot hedging seldom trades and mostly adds charges.
 - no skew (real out-of-the-money puts are dearer than VIX, and calls cheaper);
 - the bid-ask spread, assumed to be 0.5 point.
 
-Daily NSE bhavcopy files give end-of-day prices only, so they test multi-day
-selling, not intraday decay. Checking the clock needs intraday option
+End-of-day closes test multi-day selling, not intraday decay. Checking the clock needs intraday option
 candles. FYERS serves these for contracts that are still listed, so a few
 months of current-month strikes would calibrate it.
 
@@ -250,41 +243,17 @@ What the numbers say:
 at VIX. Real at-the-money IV usually sits below VIX, because VIX carries the
 put skew. Synthetic pricing therefore overstates the premium a straddle
 seller collects, possibly by most of the 2.4 points. The real test is the
-same engine on NSE's own closes:
+same engine on real closes, which only the FYERS chains ALTAIR saves each day
+can give (FYERS serves no expired options):
 
 ```bash
-# bhavcopy files are no longer fetched (FYERS data only); this reads ones already on disk
-build/linux/app/altair_vol_premium --source bhavcopy --unverified-costs \
+build/linux/app/altair_vol_premium --unverified-costs \
     --vix-log data/verified/forecast_log/india_vix_daily.csv
 ```
 
-`app/bhavcopy.hpp` reads both NSE formats: the legacy `fo…bhav.csv` through
-2024-07-05, and the UDiFF `BhavCopy_NSE_FO_…` files from 2024-07-08. It finds
-columns by name, keeps monthly expiries within ±20 % of the future, and
-prices only strikes that traded.
-
-**On NSE's own closes (2015–2026, 2,896 bhavcopy days, measured 2026-10-21).**
-One lot, slippage 1 point a fill, expenses from `config/charges.toml`:
-
-| Variant | NIFTY trades | NIFTY net | net/trade | t | BANKNIFTY net | net/trade | t |
-|---|---|---|---|---|---|---|---|
-| always | 58 | +₹91,804 | +₹1,583 | 1.49 | +₹74,820 | +₹1,268 | 0.62 |
-| har-0 | 51 | +₹78,872 | +₹1,547 | 1.18 | +₹1,28,811 | +₹2,862 | 1.45 |
-| har-2 | 32 | +₹56,160 | +₹1,755 | 1.11 | +₹6,495 | +₹232 | 0.07 |
-| har-4 | 12 | +₹64,465 | +₹5,372 | 2.06 | +₹98,114 | +₹8,919 | 2.56 |
-| har-2-stop2x | 76 | +₹1,19,384 | +₹1,571 | 0.70 | −₹47,485 | −₹719 | −0.23 |
-| har-2-unhedged | 32 | +₹4,628 | +₹145 | 0.06 | +₹1,52,753 | +₹5,455 | 1.40 |
-
-What the real closes say:
-- **The premium is real but about a quarter of the synthetic one.** NIFTY's
-  ATM straddle averaged 14.2 % implied against 12.9 % realised (synthetic:
-  priced at VIX). Selling every month made ₹1,583 a month after costs, not
-  ₹6,295.
-- **Nothing is significant yet.** The control's t is 1.5. `har-4` reaches
-  t 2.1–2.6, but on 11–12 trades and as the best of seven variants; corrected
-  for that choice it is not evidence.
-- **Still the best lead in the repository**, and the first on real prices.
-  The next test is the variant set run forward on paper, untouched.
+The 2015–2026 table that used to be here is withdrawn: it was not FYERS
+data (docs/DATA_POLICY.md). The variance premium is **unvalidated** until the
+saved FYERS chains are long enough to test it.
 
 ## Vol of vol: short the wings, long the money
 
@@ -309,18 +278,8 @@ The variants:
 | `short-rich-wings` | Only when the 25-delta butterfly is above its median of the previous 60 closes. |
 | `long-always` | The mirror. With no slippage it loses exactly what `short-always` makes, which checks the engine. |
 
-**Measured on the same bhavcopy (2026-10-21), net of expenses:**
-
-| Run | NIFTY | t | BANKNIFTY | t |
-|---|---|---|---|---|
-| short-always, no slippage | −₹3,558 (gross +₹3.06 lakh) | −0.03 | −₹3.17 lakh | −1.25 |
-| short-rich-wings, no slippage | +₹1.01 lakh | 1.09 | +₹3.57 lakh | 1.84 |
-| short-always, 1 pt a fill | −₹13.2 lakh | −9.6 | −₹9.0 lakh | −3.5 |
-| short-always, monthly hold, no slippage | −₹1.86 lakh | −1.2 | −₹2.72 lakh | −1.2 |
-
-**Verdict.** There is a small gross premium, concentrated in weeks when the
-wings are dear. It is not significant even before slippage, and four legs
-crossed at the touch cost more than it pays.
+**Measured results withdrawn** (non-FYERS source, docs/DATA_POLICY.md). The
+earlier run found any realistic slippage turns every variant negative.
 
 **Not tradable as built.** It would need passive fills at mid, which only
 recorded 50-level tapes can test. `docs/research/research-ideas.md` sets out that

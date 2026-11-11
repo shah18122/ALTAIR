@@ -1,7 +1,7 @@
 // app/fyers_source.hpp -- is this folder FYERS data?
 //
-// Smit's standing rule: research and paper trading run on FYERS data, never
-// NSE bhavcopy, and a tool that cannot tell where its bars came from must not
+// Smit's standing rule: research and paper trading run on FYERS data only
+// (docs/DATA_POLICY.md), and a tool that cannot tell where its bars came from must not
 // guess. A folder counts as FYERS when it carries a SOURCE.txt naming FYERS
 // (written by the fetch scripts), or when it sits under a folder named
 // `fyers` -- the layout of ops/linux/fetch.py audit

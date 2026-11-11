@@ -32,7 +32,7 @@
 //      data/store/snapshots/<cutoff>/_snapshot.json    id, cutoff, rule, inputs, per-series counts
 //      data/store/snapshots/<cutoff>/_conflicts.csv    every bar two sources disagreed on
 //      data/store/snapshots/<cutoff>/_provenance.csv   which source each run of bars came from
-//      data/store/snapshots/<cutoff>/_inputs/{bhavcopy,iv}/   the option inputs, same cutoff
+//      data/store/snapshots/<cutoff>/_inputs/iv/      the recorded FYERS IV, same cutoff
 //
 // THE CANONICAL BAR. Time is the bar START in IST, written
 // "YYYY-MM-DDTHH:MM:SS+05:30" (a daily bar: "YYYY-MM-DD"); stamps in any
@@ -67,6 +67,7 @@
 #include <analytics/iv.hpp>
 #include <analytics/vix.hpp>
 #include <app/data_audit.hpp>
+#include <app/data_policy.hpp>
 #include <app/price_text.hpp>
 #include <live/tape.hpp>
 #include <models/depth_features.hpp>
@@ -857,35 +858,15 @@ struct SnapshotOptions {
     std::vector<Source> sources;      ///< lowest priority first; fill-only ones anywhere
     std::int64_t cutoff_day = 0;      ///< days since epoch: the last IST day included
     fs::path out;                     ///< the snapshot folder (must not exist)
-    fs::path bhavcopy, iv;            ///< optional option inputs, cut at the same day
+    fs::path iv;                      ///< optional recorded FYERS IV, cut at the same day
     std::size_t max_conflicts = 200'000;
 };
 
 struct SnapshotReport {
     std::vector<SeriesResult> series;
-    std::size_t conflicts = 0, bhavcopy_files = 0, iv_files = 0;
+    std::size_t conflicts = 0, iv_files = 0;
     std::string id, error;
 };
-
-/// The date in an NSE F&O bhavcopy file name, or nullopt.
-[[nodiscard]] inline std::optional<std::int64_t> bhavcopy_day(const std::string& name) {
-    static const char* mon[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
-    std::string up = name;
-    for (char& c : up) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    if (up.rfind("FO", 0) == 0 && up.size() >= 11) {   // foDDMONYYYYbhav.csv
-        for (int m = 0; m < 12; ++m)
-            if (up.compare(4, 3, mon[m]) == 0) {
-                const std::string s = up.substr(7, 4) + "-" + (m < 9 ? "0" : "") + std::to_string(m + 1) + "-" + up.substr(2, 2);
-                return parse_day(s);
-            }
-    }
-    const auto at = up.find("_FO_0_0_0_");
-    if (at != std::string::npos && up.size() >= at + 18) {   // BhavCopy_NSE_FO_0_0_0_YYYYMMDD_F_0000.csv
-        const std::string d = up.substr(at + 10, 8);
-        return parse_day(d.substr(0, 4) + "-" + d.substr(4, 2) + "-" + d.substr(6, 2));
-    }
-    return std::nullopt;
-}
 
 /// Every <seg>/<inst>/<tf> under the sources, in order.
 [[nodiscard]] inline std::vector<std::string> discover(const std::vector<Source>& sources) {
@@ -944,6 +925,17 @@ inline void fingerprint_dir(const fs::path& dir, Fnv& f, std::size_t& files) {
     std::error_code ec;
     if (fs::exists(o.out, ec)) { rep.error = o.out.string() + " exists: a snapshot is never rebuilt over"; return rep; }
     if (o.sources.empty()) { rep.error = "no sources"; return rep; }
+    // docs/DATA_POLICY.md: a banned file anywhere in the inputs stops the snapshot.
+    for (const auto& src : o.sources) {
+        if (const auto bad = altair::data_policy::find_banned(src.dir); !bad.empty()) {
+            rep.error = "banned data source in input " + src.name + ": " + bad.string() + " (docs/DATA_POLICY.md)";
+            return rep;
+        }
+    }
+    if (const auto bad = altair::data_policy::find_banned(o.iv); !bad.empty()) {
+        rep.error = "banned data source in --iv: " + bad.string() + " (docs/DATA_POLICY.md)";
+        return rep;
+    }
     const fs::path tmp = o.out.string() + ".building";
     fs::remove_all(tmp, ec);
     fs::create_directories(tmp, ec);
@@ -1020,20 +1012,6 @@ inline void fingerprint_dir(const fs::path& dir, Fnv& f, std::size_t& files) {
         if (e) { e.clear(); fs::copy_file(from, to, fs::copy_options::overwrite_existing, e); }
         return !e;
     };
-    if (!o.bhavcopy.empty() && fs::is_directory(o.bhavcopy, ec)) {
-        Fnv f;
-        for (auto it = fs::recursive_directory_iterator(o.bhavcopy, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (!it->is_regular_file()) continue;
-            const std::string n = it->path().filename().string();
-            const auto d = bhavcopy_day(n);
-            if (!d || *d > o.cutoff_day) continue;
-            if (link_or_copy(it->path(), tmp / "_inputs" / "bhavcopy" / n)) {
-                ++rep.bhavcopy_files;
-                f.add(n + ":" + std::to_string(it->file_size()) + ";");
-            }
-        }
-        id.add("bhavcopy|" + f.hex() + ";");
-    }
     if (!o.iv.empty() && fs::is_directory(o.iv, ec)) {
         Fnv f;
         for (const auto& sym : fs::directory_iterator(o.iv, ec)) {
@@ -1064,7 +1042,7 @@ inline void fingerprint_dir(const fs::path& dir, Fnv& f, std::size_t& files) {
         j += std::string(i ? ", " : "") + "{\"name\": " + json_str(o.sources[i].name) + ", \"dir\": "
              + json_str(fs::absolute(o.sources[i].dir, ec).generic_string()) + ", \"fill_only\": " + (o.sources[i].fill_only ? "true" : "false") + "}";
     j += "],\n  \"conflicts\": " + std::to_string(rep.conflicts) + ",\n  \"conflicts_listed\": " + std::to_string(conflicts.size())
-         + ",\n  \"bhavcopy_files\": " + std::to_string(rep.bhavcopy_files) + ",\n  \"iv_files\": " + std::to_string(rep.iv_files)
+         + ",\n  \"iv_files\": " + std::to_string(rep.iv_files)
          + ",\n  \"series\": [";
     for (std::size_t i = 0; i < rep.series.size(); ++i) {
         const auto& r = rep.series[i];

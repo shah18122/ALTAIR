@@ -39,7 +39,7 @@ Options:
 - `--jobs N`: how many tracks run in parallel. The default is the machine's core count.
 - `--other-cost-bp X`.
 - `--only TEXT`: run only tracks whose name contains it, e.g. `--only 5m`; `--skip TEXT` leaves them out, e.g. `--skip 1m`.
-- `--bhavcopy DIR` (default `data/bhavcopy`, fetched by `(bhavcopy fetch removed: FYERS data only) --go`) and `--recorded-iv DIR`
+- `--fyers-chain DIR` (default `data/store/fyers_chain`, saved by `altair_fyers_chain`) and `--recorded-iv DIR`
   (default `data/live/iv`, written by `altair_iv_record`): the implied vol of the "+ ivrv" tracks. `--no-ivrv`
   leaves those tracks out.
 - `--no-bands`, `--no-log`.
@@ -182,7 +182,7 @@ What a volatility desk watches, as inputs, all as logs of annualised vol
 | RV session, RV 5d, RV 22d | each session's realised variance: squared five-minute returns plus the overnight gap | the 15:30 close |
 | HAR next session | the HAR model's forecast of the next session's (Corsi 2009), fitted on past sessions | the 15:30 close |
 | VIX vs RV 22d, VIX vs HAR (NIFTY) | INDIA VIX, NSE's 30-day IV of NIFTY options, over realised: the variance risk premium | the 15:30 close |
-| IV 30d, its change, IV vs RV 22d, IV vs HAR, term slope | the at-the-money IV of the index's monthly options in the NSE F&O bhavcopy, total variance interpolated to 30 days (NIFTY and BANKNIFTY) | 18:00, when NSE publishes the file: a 15:30 decision reads the previous evening's |
+| IV 30d, its change, IV vs RV 22d, IV vs HAR, term slope | the at-the-money IV of the index's monthly options in the saved FYERS chains, total variance interpolated to 30 days (NIFTY and BANKNIFTY) | 15:45, when altair_fyers_chain saves them: a 15:30 decision reads the previous session's |
 | RV today so far, RV today vs 22d (intraday tracks) | today's five-minute bars up to the decision, scaled to a whole session | each bar's close |
 | IV now, IV now vs RV 22d (intraday tracks) | the FYERS chain the terminal recorded (`altair_iv_record`) | each minute's end |
 
@@ -200,8 +200,8 @@ borrow the monthly future's carry; a minute without a fresh call and put at
 one strike, or with under a day to the expiry, gives no reading. Tapes rotate
 (`--keep-tapes`, 5 days by default): run it after the close at least that often.
 
-**Measured 2026-10-21** (all timeframes but 1 minute; 2,891 bhavcopy days; no
-recorded FYERS IV yet). The leak check covered 64 tracks, each cut twice:
+**Measured 2026-10-21** (all timeframes but 1 minute; the IV inputs then came
+from a source since banned, so the IV tracks of this run are void). The leak check covered 64 tracks, each cut twice:
 1.84 million rebuilt rows and 59.6 million rerun calls, every one identical.
 
 The best full-coverage skill against "no change" (RMSE), base inputs against

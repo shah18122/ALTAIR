@@ -1,7 +1,7 @@
 // instruments/universe.hpp — which contracts are allowed to exist at all.
 //
 // P1-09. The filter that the capacity debt made unavoidable: the live
-// instrument master is 106'150 rows and the NSE bhavcopy 30'488, against a SpecStore of
+// instrument master is 106'150 rows and an exchange F&O file 30'488, against a SpecStore of
 // 8'192. Without a filter the first file loaded fills the store and the second
 // is refused entirely -- which is exactly what happened the first time both
 // real files were run through the pipeline.
@@ -118,7 +118,7 @@ public:
             const std::int64_t days =
                 ist_days_between(today, s.expiry);
             if (days < 0) {
-                // Already expired. A bhavcopy is a snapshot of a trading day
+                // Already expired. An end-of-day file is a snapshot of a trading day
                 // and can carry the contracts that expired on it.
                 return UniverseReject::Expired;
             }

@@ -408,7 +408,7 @@ private:
             //
             // D2 already said exactly this about freeze_qty and the bands and
             // then failed to apply it to the three compared fields. Real data
-            // made the gap obvious: the NSE UDiFF bhavcopy has no tick-size
+            // made the gap obvious: an exchange end-of-day file has no tick-size
             // column at all, so it reports 0, and comparing that against
             // the master's 5 made every single NSE contract a ValueConflict -- the
             // reconciler blocking the entire universe because its most

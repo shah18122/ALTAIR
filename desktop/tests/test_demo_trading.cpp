@@ -241,8 +241,8 @@ void test_daily_call(const QString& root) {
               && order[2].startsWith(QStringLiteral("altair_trader")) && order[3].startsWith(QStringLiteral("altair_vol_premium")),
           "daily call: curriculum daily, then hourly, then altair_trader, then the vol premium");
     const auto* vp = find(plan, QStringLiteral("altair_vol_premium"));
-    check(vp != nullptr && vp->args.contains(QStringLiteral("bhavcopy")) && !vp->required,
-          "daily call: the vol premium prices real NSE closes, and its failure does not stop the call");
+    check(vp != nullptr && !vp->args.contains(QStringLiteral("--source")) && !vp->required,
+          "daily call: the vol premium runs on its default FYERS chains, and its failure does not stop the call");
     check(find(plan, QStringLiteral("altair_trader"))->required
               && !find(plan, QStringLiteral("altair_trader"))->args.contains(QStringLiteral("--unverified-costs")),
           "daily call: altair_trader is required, and costs are only priced unverified when ticked");
@@ -258,11 +258,12 @@ void test_daily_call(const QString& root) {
     DemoTradingPage page(root);
     auto* button = page.findChild<QPushButton*>(QStringLiteral("refreshDailyCall"));
     auto* combo = page.findChildren<QComboBox*>().value(0);
-    bool bhav_entry = false;
+    bool non_fyers_entry = false;
     for (auto* c : page.findChildren<QComboBox*>())
-        bhav_entry = bhav_entry || c->findData(QStringLiteral("altair_vol_premium --source bhavcopy")) >= 0;
-    check(button != nullptr && combo != nullptr && bhav_entry,
-          "page: a Refresh daily call button and a vol premium run on NSE closes");
+        for (int k = 0; k < c->count(); ++k)
+            non_fyers_entry = non_fyers_entry || c->itemData(k).toString().contains(QStringLiteral("--source"));
+    check(button != nullptr && combo != nullptr && !non_fyers_entry,
+          "page: a Refresh daily call button, and no run that picks a non-FYERS price source");
 }
 
 int main(int argc, char** argv) {
