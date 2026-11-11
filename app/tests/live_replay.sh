@@ -57,7 +57,9 @@ cp "$work/feed/universe.csv" "$work/root/data/live/universe.csv"
 # restart mid-morning -- it resumes A's positions from the journal -- and runs
 # on to 09:25 while the feed carries on.
 record() {   # record <log> <until>
-    "$engine" --root "$work/root" --port "$port" --date "$day" --unverified-costs --record --until "$2" --seconds 240 > "$1" 2>&1
+    # A SIM day: the history is dataset/, named explicitly (the engine never
+    # falls back to it on its own; docs/DATA_POLICY.md), so no straddle sells.
+    "$engine" --root "$work/root" --history "$work/root/dataset" --port "$port" --date "$day" --unverified-costs --record --until "$2" --seconds 240 > "$1" 2>&1
 }
 record "$work/recordA.log" 09:21 &
 engine_pid=$!
@@ -119,7 +121,7 @@ same() {   # same <replay A dir> <replay B dir>
 # Replayed twice into the same directories: the second clears the first.
 for round in 1 2; do
     for k in 0 1; do
-        "$engine" --root "$work/root" --replay "${tapes[$k]}" --replay-out "$work/replay$k" > "$work/replay$k-$round.log" 2>&1 \
+        "$engine" --root "$work/root" --history "$work/root/dataset" --replay "${tapes[$k]}" --replay-out "$work/replay$k" > "$work/replay$k-$round.log" 2>&1 \
             || { echo "replay $k ($round) failed"; cat "$work/replay$k-$round.log"; exit 1; }
         grep -q "the inputs are the recorded session's" "$work/replay$k-$round.log" \
             || { echo "replay $k ($round): bundle"; cat "$work/replay$k-$round.log"; exit 1; }
@@ -137,7 +139,7 @@ tape=${tapes[0]}
 
 # A directory that is not a replay's is never cleared.
 mkdir -p "$work/keep" && echo keep > "$work/keep/file.txt"
-if "$engine" --root "$work/root" --replay "$tape" --replay-out "$work/keep" > "$work/keep.log" 2>&1; then
+if "$engine" --root "$work/root" --history "$work/root/dataset" --replay "$tape" --replay-out "$work/keep" > "$work/keep.log" 2>&1; then
     echo "a replay cleared a directory it did not make"; exit 1
 fi
 [ -f "$work/keep/file.txt" ] || { echo "a replay removed a file it did not write"; exit 1; }
@@ -163,11 +165,11 @@ with open(dst, "wb") as f:
     f.write(magic + struct.pack("<BqI", 8, wall, len(packed)) + packed)
 PY
     set +e
-    "$engine" --root "$work/root" --replay "$work/bad.tape" --replay-out "$work/bad" > "$work/bad.log" 2>&1
+    "$engine" --root "$work/root" --history "$work/root/dataset" --replay "$work/bad.tape" --replay-out "$work/bad" > "$work/bad.log" 2>&1
     rc=$?
     set -e
     [ "$rc" -eq 5 ] || { echo "a mismatched bundle was not refused (exit $rc)"; cat "$work/bad.log"; exit 1; }
-    "$engine" --root "$work/root" --replay "$work/bad.tape" --replay-out "$work/bad" --force-replay > "$work/bad.log" 2>&1 \
+    "$engine" --root "$work/root" --history "$work/root/dataset" --replay "$work/bad.tape" --replay-out "$work/bad" --force-replay > "$work/bad.log" 2>&1 \
         || { echo "--force-replay failed"; cat "$work/bad.log"; exit 1; }
     echo "a mismatched bundle is refused, and runs with --force-replay"
 fi

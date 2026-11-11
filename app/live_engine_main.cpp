@@ -44,10 +44,10 @@
 // HISTORY (NSE review, 2026-11-02). HAR, the previous close and the book
 // rules read FYERS history: --history DIR, else the newest snapshot in
 // data/store/snapshots/ (the nightly's FYERS-only merge), else
-// data/store/fyers/. Only when none exists does it fall back to dataset/,
-// and then -- as when the newest session in the history is older than the
-// previous trading day -- the straddle sellers do not sell, and every day
-// says why. A month-old previous close makes "realised so far" a month's
+// data/store/fyers/. It never falls back to dataset/ (2026-11-11,
+// docs/DATA_POLICY.md): with no FYERS history -- or when the newest session
+// in it is older than the previous trading day -- the straddle sellers do not
+// sell, and every day says why. A month-old previous close makes "realised so far" a month's
 // move; non-FYERS bars break Smit's FYERS-only rule.
 //
 // IT CANNOT TRADE. It reads a loopback socket and writes files. It links no
@@ -266,7 +266,9 @@ bool write_atomic(const fs::path& path, const std::string& body) {
 }
 
 /// Where the engine's history comes from: --history, else the newest
-/// snapshot before `today`, else the FYERS store, else dataset/ (not FYERS).
+/// snapshot before `today`, else the FYERS store. Never dataset/: with no
+/// FYERS history the history-fed models get none and say why
+/// (docs/DATA_POLICY.md: no fallback to another source).
 struct HistorySource { fs::path dir; std::string what; bool fyers = false; };
 
 [[nodiscard]] HistorySource find_history(const fs::path& root, const fs::path& asked, std::int64_t today) {
@@ -280,7 +282,7 @@ struct HistorySource { fs::path dir; std::string what; bool fyers = false; };
     }
     if (!best.empty()) return {root / "data/store/snapshots" / best, "snapshot " + best + " (FYERS)", true};
     if (fs::exists(root / "data/store/fyers/spot", ec)) return {root / "data/store/fyers", "data/store/fyers (FYERS)", true};
-    return {root / "dataset", "dataset/ (NOT FYERS)", false};
+    return {root / "data/store/fyers", "no FYERS history (no snapshot, no data/store/fyers): run the nightly or ops/linux/fetch.py history", false};
 }
 
 /// Why the history cannot price today, or empty: more than one weekday (a
@@ -314,7 +316,7 @@ void usage(const char* exe) {
         "    --seconds  stop after N seconds (tests)\n"
         "    --root     the tree holding dataset/, config/ and data/ (default: the source tree)\n"
         "    --history DIR  FYERS history laid out like dataset/ (default: the newest data/store/snapshots/<day>,\n"
-        "               else data/store/fyers; dataset/ only as a last resort, and then no straddle sells)\n"
+        "               else data/store/fyers; never dataset/: with no FYERS history, no straddle sells)\n"
         "    --unverified-costs  price expenses from config/charges.toml although it is UNVERIFIED;\n"
         "               every expense and net figure is then marked UNVERIFIED\n"
         "    --date     the day being traded, for a simulated past day (--sim --date): history\n"
