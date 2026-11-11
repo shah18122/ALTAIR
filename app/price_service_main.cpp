@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <deque>
 #include <mutex>
 #include <chrono>
@@ -65,6 +66,7 @@
 #include <live/obi_underlyings.hpp>
 #include <live/instrument_master.hpp>
 #include <live/universe.hpp>
+#include <models/tick_forecast.hpp>
 
 #include <atomic>
 #include <csignal>
@@ -88,7 +90,8 @@ void usage(const char* exe) {
         "      [--no-stocks] [--atm-nifty X] [--atm-banknifty X] [--depth50 N|off]\n"
         "      [--expiries N] [--monthly]\n"
         "  %s --live [--go] [same options as --fyers]\n"
-        "  %s --sim [--date YYYY-MM-DD] [--speed N] [--from HH:MM] [--seed N]\n\n"
+        "  %s --sim [--date YYYY-MM-DD] [--speed N] [--from HH:MM] [--seed N]\n"
+        "  %s --replay-ticks FILE [--date YYYY-MM-DD] [--speed N] [--from HH:MM]\n\n"
         "  --fyers             the LIVE TERMINAL feed from FYERS: NIFTY, BANKNIFTY,\n"
         "                      INDIA VIX, the near futures, both option chains\n"
         "                      (ATM +/- --strikes, default 20; the nearest --expiries\n"
@@ -118,6 +121,12 @@ void usage(const char* exe) {
         "                      dataset/ holds that day's 1-minute bars, NIFTY,\n"
         "                      BANKNIFTY and INDIA VIX follow them.\n"
         "  --replay nifty 1m   serve bars from dataset/spot/<symbol>/<iv>/\n"
+        "  --replay-ticks FILE replay a tick file trade by trade at its own clock\n"
+        "                      (Smit's Drive ticks, NOT FYERS: rows\n"
+        "                      YYYYMMDD,HH:MM:SS,price,qty[,oi]). --speed: session\n"
+        "                      seconds per second (default 1); --date: that day only;\n"
+        "                      --from: start time. Published under the index token\n"
+        "                      (NIFTY / BANKNIFTY from the file name), flagged REPLAY.\n"
         "  --go                serve LIVE (alone, the same as --live --go)\n"
         "  --port N            loopback port to publish on (default 7421)\n"
         "  --seconds N         stop after N seconds (default: run until\n"
@@ -139,7 +148,7 @@ void usage(const char* exe) {
         "It binds 127.0.0.1 only. This carries live market data derived from\n"
         "a trading credential and protocol.hpp's session layer does not exist\n"
         "yet, so there is nothing to authenticate a remote reader with.\n",
-        exe, exe, exe, exe, exe);
+        exe, exe, exe, exe, exe, exe);
 }
 
 /// Bars from a dataset partition, oldest first.
@@ -1137,6 +1146,9 @@ int main(int argc, char** argv) {
             sym = argv[i + 1];
             iv = argv[i + 2];
             i += 2;
+        } else if (a == "--replay-ticks" && i + 1 < argc) {
+            mode = "ticks";
+            sym = argv[++i];
         } else if (a == "--go") {
             mode = "live";
         } else if (a == "--bypass" && i + 1 < argc) {
@@ -1213,8 +1225,8 @@ int main(int argc, char** argv) {
     if (fyers) { mode = mode == "live" ? "fyers" : "fyers-dry"; }
     else if (live_auto || mode == "live") { mode = mode == "live" ? "auto" : "auto-dry"; }
     if (sim) { mode = "sim"; }
-    if (!sim_date.empty() && (altair::live::parse_day(sim_date) == 0 || mode != "sim")) {
-        std::printf("--date YYYY-MM-DD goes with --sim\n");
+    if (!sim_date.empty() && (altair::live::parse_day(sim_date) == 0 || (mode != "sim" && mode != "ticks"))) {
+        std::printf("--date YYYY-MM-DD goes with --sim or --replay-ticks\n");
         return 2;
     }
     if (until_min < 0 || from_min < 0 || !(speed > 0.0 && speed <= 1000.0) || strikes < 0 || strikes > 60
@@ -1488,6 +1500,62 @@ int main(int argc, char** argv) {
         return std::chrono::steady_clock::now() - started
                >= std::chrono::seconds(seconds);
     };
+
+    if (mode == "ticks") {
+        // A Drive tick file, trade by trade, at its own clock scaled by --speed.
+        namespace tkf = altair::tick_forecast;
+        const std::string name = std::filesystem::path(sym).filename().string();
+        std::string up = name;
+        for (auto& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        const std::uint32_t token = up.rfind("BANKNIFTY", 0) == 0 ? 260105u : up.rfind("NIFTY", 0) == 0 ? 256265u : 0u;
+        int only_day = 0;
+        if (!sim_date.empty()) only_day = tkf::tk_parse_day(sim_date);
+        const std::int32_t from_sec = from_min * 60;
+        std::vector<tkf::TkTick> ticks;
+        tkf::tk_read_file(sym, [&](const tkf::TkTick& t) {
+            if ((only_day == 0 || t.day == only_day) && t.sec >= from_sec) ticks.push_back(t);
+        });
+        std::stable_sort(ticks.begin(), ticks.end(), [](const tkf::TkTick& a, const tkf::TkTick& b) {
+            return a.day != b.day ? a.day < b.day : a.sec < b.sec;
+        });
+        if (ticks.empty()) { std::printf("no ticks in %s%s\n", sym.c_str(), only_day ? " on that day" : ""); return 1; }
+        std::printf("replaying %zu ticks of %s (drive-ticks, NOT FYERS) at %gx, token %u\n", ticks.size(), name.c_str(), speed, token);
+        std::fflush(stdout);
+        const double spd = speed > 0.0 ? speed : 1.0;
+        const auto wall0 = std::chrono::steady_clock::now();
+        std::int64_t base = -1;   // session seconds of the first tick, counted across days without the nights
+        std::size_t sent = 0;
+        int day = 0;
+        std::int64_t day_offset = 0;
+        for (const auto& t : ticks) {
+            if (expired() || g_stop.load()) break;
+            if (t.day != day) {
+                if (day != 0) day_offset += 6 * 3600 + 15 * 60 + 60;   // one session plus a minute between days
+                day = t.day;
+            }
+            const std::int64_t clock = day_offset + (t.sec - tkf::kTkOpen);
+            if (base < 0) base = clock;
+            const auto due = wall0 + std::chrono::microseconds(static_cast<std::int64_t>(static_cast<double>(clock - base) * 1e6 / spd));
+            std::this_thread::sleep_until(due);
+            // Exchange time of the trade: that day, that second, IST.
+            const std::int64_t y = t.day / 10000, mo = t.day / 100 % 100, dd = t.day % 100;
+            const std::int64_t yy = y - (mo <= 2), era = yy / 400, yoe = yy - era * 400;
+            const std::int64_t doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + dd - 1, doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+            const std::int64_t days = era * 146097 + doe - 719468;
+            altair::PricePayload p;
+            p.token = token;
+            p.last_paise = static_cast<std::int64_t>(t.px * 100.0 + 0.5);
+            p.exchange_ts_ns = (days * 86400 + t.sec - 19800) * 1'000'000'000LL;
+            p.flags = altair::kPriceReplay | altair::kPriceHasVolume;
+            p.volume = static_cast<std::int64_t>(t.qty);
+            bus.publish(altair::kTopicTrades, p, nullptr, nullptr, p.exchange_ts_ns);
+            ++sent;
+            bus.poll();
+        }
+        std::printf("tick replay done: %zu trades published, %llu delivered, %zu subscriber(s)\n", sent,
+                    static_cast<unsigned long long>(bus.frames_sent()), bus.clients());
+        return 0;
+    }
 
     if (mode == "replay") {
         const std::string dir =

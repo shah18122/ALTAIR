@@ -86,8 +86,17 @@ marks them "too few forecasts to judge". Ignore them until they have 60+ days.
    Next: the 5-level depth features on 1m-15m, and feeding the forecast to
    the straddle sellers' RV side.
 3. **The Google Drive tick data** (NIFTY / BANKNIFTY futures trades and NIFTY
-   spot ticks, 2020, 2022, 2023) as a separate `drive-ticks` source: tick-level
-   realised vol and trade-flow features for the years before ALTAIR's own
-   recording. It has no options and no bid/ask.
+   spot ticks, 2020, 2022, 2023) as a separate `drive-ticks` source, NOT
+   FYERS. **Built 2026-11-11:** `altair_tick_forecast --ticks DIR`
+   (`models/tick_forecast.hpp`) forecasts trade by trade on the raw ticks, no
+   bars: the next trade's return, the direction of the next price change, the
+   seconds to the next trade, and the realised vol of the next 60 s and 300 s
+   from every tick. Walk-forward, ridge fits on past rows only, batch-means
+   Diebold-Mariano, Bonferroni, thirds, in-sample vs out-of-sample on the same
+   rows. The simulator replays a tick file: `altair_price_service
+   --replay-ticks FILE [--date D] [--speed N]`. `tools/drive_ticks_to_bars.py`
+   also makes bars for the bar models. Waiting on the files themselves: the
+   folder must be shared "Anyone with the link" to be downloaded.
+   It has no options and no bid/ask, so no depth features.
 4. The variance premium waits for FYERS chain history; nothing else can
    validate it.

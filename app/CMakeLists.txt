@@ -139,7 +139,7 @@ if(ALTAIR_HAVE_NET)
         add_executable(altair_price_service price_service_main.cpp)
         target_link_libraries(altair_price_service PRIVATE
             altair_server altair_broker_net altair_feed altair_instruments
-            altair_live altair_lockfree altair_credential_store altair_affinity altair_flags Boost::headers)
+            altair_live altair_lockfree altair_credential_store altair_affinity altair_models altair_flags Boost::headers)
         if(TARGET altair_bypass_ws_link AND TARGET altair_dpdk_port)   # --dpdk-port: the HSM feed on a DPDK port
             target_link_libraries(altair_price_service PRIVATE altair_bypass_ws_link altair_dpdk_port)
             target_compile_definitions(altair_price_service PRIVATE ALTAIR_DPDK_FEED)
@@ -302,6 +302,11 @@ endif()
 add_executable(altair_vol_forecast vol_forecast_main.cpp)
 target_link_libraries(altair_vol_forecast PRIVATE altair_models altair_analytics altair_flags)
 target_include_directories(altair_vol_forecast PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+# Forecasts trade by trade on raw tick files (Drive ticks; models/tick_forecast.hpp).
+add_executable(altair_tick_forecast tick_forecast_main.cpp)
+target_link_libraries(altair_tick_forecast PRIVATE altair_models altair_flags)
+target_include_directories(altair_tick_forecast PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 add_executable(altair_magnitude magnitude_main.cpp)
 target_link_libraries(altair_magnitude PRIVATE altair_models altair_analytics altair_flags)
