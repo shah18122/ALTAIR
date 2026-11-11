@@ -95,8 +95,28 @@ marks them "too few forecasts to judge". Ignore them until they have 60+ days.
    Diebold-Mariano, Bonferroni, thirds, in-sample vs out-of-sample on the same
    rows. The simulator replays a tick file: `altair_price_service
    --replay-ticks FILE [--date D] [--speed N]`. `tools/drive_ticks_to_bars.py`
-   also makes bars for the bar models. Waiting on the files themselves: the
-   folder must be shared "Anyone with the link" to be downloaded.
-   It has no options and no bid/ask, so no depth features.
+   also makes bars for the bar models. No options and no bid/ask in it, so
+   no depth features.
+
+   **First run, 2026-11-11** (on Smit's PC with `tools/tick_forecast.py`, the
+   Python twin; 72 NIFTY/BANKNIFTY futures contract files 2020/2022/2023
+   stitched front-month, 823 sessions; NIFTY spot 740 sessions; 39 M ticks;
+   full table `docs/research/drive_ticks_tick_forecast_2026-11-11.csv`).
+   Bonferroni bar |t| >= 3.24 over 42 tests, plus better in every third:
+
+   | Stream | Next-trade return: AR vs RW RMSE | Next change reverses | Gap: best vs mean | Vol next 60 s: HAR vs last | Vol next 300 s |
+   |---|---|---|---|---|---|
+   | NIFTY FUT (12.6 M ticks) | +4.3 % (t -7.4) | 59.9 % | EWMA +14.4 % (t -5.8) | +19.0 % (t -1.9) | +20.7 % (t -1.5) |
+   | BANKNIFTY FUT (9.9 M) | +2.4 % (t -8.4) | 58.2 % | EWMA +16.2 % (t -4.6) | +17.6 % (t -4.5, significant) | +16.0 % (t -2.2) |
+   | NIFTY spot (16.7 M) | +1.1 % (t -23.7) | 58.0 % | none | +19.1 % (t -2.2) | +19.6 % (t -1.7) |
+
+   In-sample and out-of-sample RMSE are equal to 3-4 digits for every ridge:
+   nothing is overfitted. Read plainly: the trade-by-trade price "edge" is the
+   bid-ask bounce (a print at the ask tends to be followed by one at the bid),
+   which a taker cannot capture; it is not a trading signal. What is usable is
+   the volatility of the next minute to five minutes (HAR lowest RMSE on every
+   stream, ~16-21 % below "same as last window" in every third; the block DM
+   t-stats fall short of the strict bar outside BANKNIFTY 60 s because of the
+   fat tails), and the arrival-rate model for execution timing.
 4. The variance premium waits for FYERS chain history; nothing else can
    validate it.
