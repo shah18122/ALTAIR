@@ -32,7 +32,7 @@ struct AtlasInfo {
 namespace atlas_info_detail {
 
 inline constexpr const char* kBars =
-    "dataset/: NIFTY, BANKNIFTY and NIFTY 50 stock bars (1-minute to daily) from FYERS history, with INDIA VIX.";
+    "FYERS history only (the newest FYERS snapshot): NIFTY, BANKNIFTY and NIFTY 50 stock bars, 1-minute to daily, with INDIA VIX. Never NSE exchange files; dataset/ only when named, and then marked NOT FYERS.";
 inline constexpr const char* kResearch =
     "Research only: run from its page on history. The live models engine does not trade it.";
 inline constexpr const char* kWalkForward =
@@ -57,19 +57,19 @@ inline constexpr Entry kByModel[] = {
     {"ARMA / ARIMA / SARIMA", {"Conditional maximum likelihood on every finished session; ARMA(1,1) is refitted before each session.",
         kBars, "Live: ARMA(1,1) is a direction model in the engine (demo by default)."}},
     {"Ornstein-Uhlenbeck", {"AR(1) regression on the spread gives the mean, speed and half-life.",
-        "Daily closes of the pair (BANKNIFTY/NIFTY and stock pairs) from dataset/.",
+        "Daily closes of the pair (BANKNIFTY/NIFTY and stock pairs) from FYERS history.",
         "Live: sets the half-life the 'Pairs BANKNIFTY/NIFTY' model uses for its exits (demo)."}},
     {"Gradient boosting (GBDT / LightGBM)", {kWalkForward, kBars,
         "Live: GBDT is one of the five direction models (demo by default)."}},
     {"Decision tree", {kWalkForward, kBars, "Inside the GBDT direction model (its weak learner); not traded on its own."}},
     {"Cointegration", {"Engle-Granger: OLS hedge ratio on a rolling window, ADF test on the residual.",
-        "Daily closes of index and stock futures from dataset/.",
+        "Daily closes of index and stock futures from FYERS history.",
         "Live: the pairs model trades the BANKNIFTY/NIFTY ratio when its z-score is stretched (demo)."}},
     {"Pairs trading", {"Hedge ratio and z-score from a rolling window; entry, stop and time exits are fixed rules.",
         "Daily and minute closes of the two futures.",
         "Live: 'Pairs BANKNIFTY/NIFTY' in the models engine, futures legs, demo by default."}},
     {"Statistical arbitrage", {"Avellaneda-Lee: factors estimated on a rolling window, an OU process fitted to each residual.",
-        "NIFTY 50 stocks' bars from dataset/ and the live stream.",
+        "NIFTY 50 stocks' bars from FYERS history and the live stream.",
         "Live: 'Stat-arb NIFTY 50' in the models engine, dollar-neutral, demo by default."}},
     {"Spread / calendar trading", {"Not trained: a mispricing rule — the gap must beat every leg's expenses, spreads and a margin.",
         "Live quotes: NSE and BSE listings of the same stock; option strikes and the future for parity.",
@@ -115,6 +115,17 @@ inline constexpr Entry kByFile[] = {
         "Research (Neural page): not run live — out of sample it did not beat costs."}},
     {"models/attention.hpp", {"Convolution kernels trained by back-propagation on walk-forward folds.", kBars,
         "Research (Neural page): not run live — out of sample it did not beat costs."}},
+    {"models/vol_forecast.hpp", {"Ridge (HAR + time of day + INDIA VIX) refitted walk-forward on past sessions only; Diebold-Mariano, Bonferroni and every-third checks; in-sample vs out-of-sample compared.",
+        kBars, "Nightly on the server (runs/<day>/vol_forecast.txt). Next: the straddle sellers' RV side."}},
+    {"models/tick_forecast.hpp", {"Ridge refitted on past trades only, trade by trade; batch-means Diebold-Mariano, Bonferroni, every third; in-sample equals out-of-sample.",
+        "Smit's Google Drive ticks (NIFTY/BANKNIFTY futures and NIFTY spot, 2020/22/23). Source drive-ticks, NOT FYERS, kept separate.",
+        "Research. The simulator replays a tick file (altair_price_service --replay-ticks)."}},
+    {"live/basket_alpha.hpp", {"Ridge on a 1-second grid, refitted before each day on earlier days (research/signals/fit.py).",
+        "Fitted on Drive ticks (drive-ticks, NOT FYERS); runs on the live FYERS feed.",
+        "Live engine, paper only: about 1 bp edge, below a 6 bp round trip. Also times the straddle's timed copy."}},
+    {"live/straddle.hpp", {"Not trained: a rule (sell when forecast IV >= forecast RV); the forecasts come from the vol models.",
+        "Live FYERS option chain; FYERS history for RV. Refuses stale or non-FYERS history.",
+        "Live engine: NIFTY weekly and BANKNIFTY monthly, sell only, PAPER/LIVE switch. Unvalidated: FYERS chain history is weeks old."}},
     {"models/horizon_eval.hpp", {"Least squares on every finished session.", kBars, kResearch}},
     {"models/time_series.hpp", {"Conditional maximum likelihood on history.", kBars, kResearch}},
     {"analytics/kalman.hpp", {"Filter recursion; noise variances by maximum likelihood.", kBars, kResearch}},
@@ -155,7 +166,7 @@ inline constexpr Entry kByFile[] = {
     {"book/trade_flow.hpp", {"Estimated on volume buckets and a regression of price change on signed volume.", "Trades and quotes recorded from the live feed.", kResearch}},
     {"risk/slippage.hpp", {"Impact coefficients fitted to recorded fills.", "Recorded live quotes and paper fills.",
         "Execution page; demo fills are priced at the touch with size and latency, not with this model."}},
-    {"oms/execution.hpp", {"Not trained: scheduling rules.", "Volume profile from dataset/.", "Execution page; the router sends single limit/IOC orders."}},
+    {"oms/execution.hpp", {"Not trained: scheduling rules.", "Volume profile from FYERS history.", "Execution page; the router sends single limit/IOC orders."}},
     {"oms/shortfall.hpp", {"Not trained: the Almgren-Chriss solution for given risk aversion and impact.", "Volatility and impact estimates.", kResearch}},
     {"research/execution/hjb_execution.hpp", {"Not trained: Forsyth's HJB solved for given impact parameters and gamma.", "Volatility and impact estimates.", kResearch}},
     {"research/execution/alpha_execution.hpp", {"Not trained: closed form; the signal's mean reversion and the impact coefficient are inputs.", "A live signal (e.g. order-flow imbalance) and impact estimates.", kResearch}},

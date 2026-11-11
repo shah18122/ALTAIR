@@ -178,7 +178,9 @@ inline constexpr std::array kAtlasRows{
              "models/attention.hpp", 29,
              "The requested one-dimensional dilated causal convolution is "
              "implemented with explicit left padding, receptive-field proof "
-             "and a refusal when causality is unspecified."},
+             "and a refusal when causality is unspecified. Tested for profit "
+             "on Drive tick bars 2020-23 (research/cnn): no direction edge "
+             "after costs; on move size it ties HAR at 1-5 minutes."},
     AtlasRow{"2. Machine learning", "Neuro-fuzzy (ANFIS)",
              AtlasStatus::Implemented, "research/models/anfis.hpp", 17,
              "Fuzzy if-then rules whose shapes are learned from data "
@@ -270,6 +272,18 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "analytics/ewma.hpp", 13,
              "How much the price has been moving, with recent days weighted "
              "more heavily. Decayed in TIME, not in ticks."},
+    AtlasRow{"3. Time series & volatility", "HAR vol forecast, every timeframe",
+             AtlasStatus::Implemented, "models/vol_forecast.hpp", 13,
+             "How big the next move will be, 1 minute to 1 day, NIFTY and "
+             "BANKNIFTY: HAR with time of day and INDIA VIX, walked forward "
+             "on FYERS history. The one forecast that beats the plain guess "
+             "(about a third below a random walk intraday)."},
+    AtlasRow{"3. Time series & volatility", "Tick-by-tick forecasts",
+             AtlasStatus::Implemented, "models/tick_forecast.hpp", -1,
+             "Trade by trade on 39 M Drive ticks: next minute's and next five "
+             "minutes' volatility about 16-21% better than 'same as last "
+             "window'. The next-trade price edge is bid-ask bounce, not "
+             "tradable."},
     AtlasRow{"3. Time series & volatility", "GARCH / GJR-GARCH",
              AtlasStatus::Implemented, "analytics/garch.hpp", 13,
              "Volatility clusters: calm follows calm and violence follows "
@@ -331,6 +345,11 @@ inline constexpr std::array kAtlasRows{
              "Sells the option whose quote has not caught up with the future, "
              "or trades the future behind its stocks, only where the lead is "
              "longer than the feed's jitter. Paper only."},
+    AtlasRow{"4. Microstructure & execution", "Basket alpha (BANKNIFTY vs banks)",
+             AtlasStatus::Implemented, "live/basket_alpha.hpp", -1,
+             "Forecasts the BANKNIFTY future's next 10-60 s from its 12 bank "
+             "stocks (mispricing, lead, breadth, flow), fitted on Drive ticks. "
+             "Real but about 1 bp, below a round trip's cost. Paper only."},
     AtlasRow{"4. Microstructure & execution", "OBI option quoter",
              AtlasStatus::Implemented, "live/obi_quoter.hpp", -1,
              "Sell-side quoting: a sale rests at the ask of the put and the "
@@ -476,6 +495,12 @@ inline constexpr std::array kAtlasRows{
              AtlasStatus::Implemented, "analytics/vix.hpp", 13,
              "Rebuilds the volatility index from the option chain, which is "
              "how you learn what it is actually measuring."},
+    AtlasRow{"6. Options & derivatives", "Straddle seller IV >= RV",
+             AtlasStatus::Implemented, "live/straddle.hpp", -1,
+             "Sells the NIFTY weekly / BANKNIFTY monthly ATM straddle when "
+             "forecast IV is at or above forecast RV, never buys. A timed copy "
+             "sells each leg resting at the ask on the basket 60 s forecast. "
+             "Unvalidated until FYERS chain history builds up."},
     AtlasRow{"6. Options & derivatives", "Binomial / trinomial tree",
              AtlasStatus::Implemented, "analytics/advanced_pricers.hpp", 21,
              "Bounded CRR binomial and recombining Boyle trinomial lattices "
