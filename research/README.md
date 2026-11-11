@@ -11,6 +11,7 @@ in this folder sends an order.
 | `execution/` | Execution papers, checked against their own examples but not yet against our fills: Forsyth HJB, Lai alpha-signal execution, Verma VRC execution state |
 | `tests/` | One test per replication; `ctest -R` by its name |
 | `tools/` | Python helpers (bar ingest, feature cards, threshold workbook extract) |
+| `strategy/` | Pre-registered futures rules (intraday momentum, shock reversal, opening range breakout, gap fade, overnight drift) on the Drive ticks: all fail dev and 2023 holdout; S1 straddle forward-test plan ([strategy/README.md](strategy/README.md)) |
 
 Each replication's result, and why it is here and not in production, is in
 [../docs/research/research-ideas.md](../docs/research/research-ideas.md).

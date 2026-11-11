@@ -132,3 +132,13 @@ marks them "too few forecasts to judge". Ignore them until they have 60+ days.
    (`desktop/atlas_retrain.hpp`, checked by `altair_atlas_test`).
    `app/fyers_source.hpp` no longer labels a SOURCE.txt saying "NOT FYERS"
    as FYERS.
+5. **Rule-based strategies, pre-registered** (Smit, 2026-11-11: "a proper
+   quant strategy with study and hypothesis"). `research/strategy/`: six
+   literature rules (intraday momentum, shock reversal, opening range
+   breakout plain and high-vol, gap fade, overnight drift) fixed in
+   `HYPOTHESES.md` before the run, tested on Drive BANKNIFTY/NIFTY futures
+   with 7 bp round trip, placebo, delay and leak checks. All fail in dev
+   (2019-2022) and in the sealed 2023 holdout (`RESULTS.md`). The only
+   strategy left is the IV >= RV straddle seller; its forward test on the
+   recorded FYERS chains is fixed in `research/strategy/README.md` (judge
+   after 60 sessions).
