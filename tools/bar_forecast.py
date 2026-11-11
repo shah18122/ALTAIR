@@ -26,7 +26,7 @@ target from the day before). "Significant" = |DM t| >= the Bonferroni bar
 for every test made AND the model beats the baseline in each third of the
 data. Output: <out>/summary.csv and <out>/summary.md.
 
-    python tools/bar_forecast.py --bars data/drive_ticks --out data/verified/bar_forecast
+    python tools/bar_forecast.py --bars data/drive_ticks --out data/verified/bar_forecast [--logs] [--cost-bp 0]
 """
 from __future__ import annotations
 
@@ -151,24 +151,30 @@ def returns(bars: list[tuple[str, str, float]], daily: bool) -> list[tuple[str, 
 
 
 def run(name: str, tf: str, rets: list[tuple[str, str, float]], lead: dict[tuple[str, str], tuple[float, float]] | None,
-        cost: float) -> list[dict]:
+        cost: float, log_path: Path | None = None) -> list[dict]:
     daily = tf == "1d"
     rm = ["rw", "mean", "ar5"] + (["fut_lead"] if lead else [])
     sm = ["mean_abs", "last", "ewma", "har"] + ([] if daily else ["har_tod"])
     R, S = Score(rm, "rw"), Score(sm, "mean_abs")
     ar, fl, har, hart = Ridge(5), Ridge(7), Ridge(3), Ridge(4)
     tod: dict[str, list[float]] = {}
-    hist: list[float] = []          # this session's returns (intraday) or all (daily)
+    hist: list[float] = []          # every in-session return so far (overnight gaps left out)
     absh: list[float] = []          # every |r| so far, for HAR
     s_mean = s_abs = 0.0
     n_all = 0
     ew = None
     pnl = {m: [] for m in rm}
+    logf = logw = None
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        logf = open(log_path, "w", newline="")
+        logw = csv.writer(logf)
+        logw.writerow(["day", "bar", "actual_bp"] + [f"{m}_bp" for m in rm[1:]] + [f"{m}_call" for m in rm[1:]]
+                      + [f"{m}_right" for m in rm[1:]] + [f"size_{m}_bp" for m in sm])
     for i in range(len(rets) - 1):
         d, t, r = rets[i]
         if math.isnan(r):
-            hist = []
-            continue
+            continue   # overnight gap: not a return; lags carry over, targets stay in-session
         hist.append(r)
         absh.append(abs(r))
         n_all += 1
@@ -196,6 +202,11 @@ def run(name: str, tf: str, rets: list[tuple[str, str, float]], lead: dict[tuple
             fs["har_tod"] = hart.predict(h + [tp])
         ready = all(v is not None for v in fr.values()) and all(v is not None for v in fs.values())
         if ready and n_all > 200:
+            if logw is not None:
+                logw.writerow([nd, nt, round(y, 3)] + [round(fr[m], 4) for m in rm[1:]]
+                              + [("UP" if fr[m] > 0 else "DOWN" if fr[m] < 0 else "") for m in rm[1:]]
+                              + [int(fr[m] * y > 0) if fr[m] and y else "" for m in rm[1:]]
+                              + [round(fs[m], 3) for m in sm])
             R.add(fr, y)
             S.add(fs, abs(y))
             for m in rm:
@@ -207,6 +218,8 @@ def run(name: str, tf: str, rets: list[tuple[str, str, float]], lead: dict[tuple
         har.update(h, abs(y))
         if not daily:
             hart.update(h + [tp], abs(y))
+    if logf is not None:
+        logf.close()
     rows = []
     for kind, sc, ms in (("return", R, rm), ("size", S, sm)):
         if len(sc.y) < 100:
@@ -221,6 +234,12 @@ def run(name: str, tf: str, rets: list[tuple[str, str, float]], lead: dict[tuple
             if kind == "return":
                 hits = [f * y > 0 for f, y in zip(sc.f[m], sc.y) if f != 0 and y != 0]
                 row["hit_pct"] = round(100 * sum(hits) / len(hits), 2) if hits else ""
+                big = sorted(abs(f) for f in sc.f[m] if f)
+                if big:   # the most confident tenth of the calls
+                    cut = big[int(0.9 * (len(big) - 1))]
+                    top = [(f * y > 0, math.copysign(1, f) * y) for f, y in zip(sc.f[m], sc.y) if f and abs(f) >= cut and y]
+                    row["top10_hit_pct"] = round(100 * sum(h for h, _ in top) / len(top), 2) if top else ""
+                    row["top10_gross_bp"] = round(sum(g for _, g in top) / len(top), 3) if top else ""
                 p = pnl[m]
                 row["gross_bp_per_trade"] = round(sum(p) / len(p), 3) if p else ""
                 row["net_bp_after_cost"] = round(sum(p) / len(p) - cost, 3) if p else ""
@@ -233,7 +252,8 @@ def main() -> int:
     ap.add_argument("--bars", required=True, help="tree with fut/<x>/<tf>/ and spot/nifty/<tf>/")
     ap.add_argument("--out", required=True)
     ap.add_argument("--tfs", default=",".join(TFS))
-    ap.add_argument("--cost-bp", type=float, default=2.0, help="round-trip cost per trade in bp (futures; default 2)")
+    ap.add_argument("--cost-bp", type=float, default=0.0, help="round-trip cost per trade in bp (default 0: before expenses)")
+    ap.add_argument("--logs", action="store_true", help="every forecast, one CSV per series and timeframe, in <out>/logs/")
     a = ap.parse_args()
     root, out = Path(a.bars), Path(a.out)
     src = (root / "SOURCE.txt").read_text(errors="replace").strip() if (root / "SOURCE.txt").is_file() else "unknown"
@@ -260,7 +280,8 @@ def main() -> int:
                         lead[(d, t)] = (1e4 * math.log(c / prev[2]), 1e4 * (math.log(c / s) - math.log(prev[2] / prev[3])))
                     prev = (d, t, c, s)
                 del fmap
-            got = run(name, tf, rets, lead, a.cost_bp)
+            got = run(name, tf, rets, lead, a.cost_bp,
+                      out / "logs" / f"{name.replace('/', '_')}_{tf}.csv" if a.logs else None)
             rows += got
             print(f"  {name} {tf}: {len(bars)} bars, {len(got)} scores", flush=True)
     tests = sum(1 for r in rows if r["dm_t"] != "")
@@ -269,20 +290,22 @@ def main() -> int:
         r["significant"] = "" if r["dm_t"] == "" else bool(r["dm_t"] <= -bar and r["thirds"])
     out.mkdir(parents=True, exist_ok=True)
     keys = ["series", "tf", "task", "model", "n", "rmse_bp", "base_rmse_bp", "skill_pct", "dm_t", "thirds",
-            "significant", "hit_pct", "gross_bp_per_trade", "net_bp_after_cost"]
+            "significant", "hit_pct", "gross_bp_per_trade", "net_bp_after_cost", "top10_hit_pct", "top10_gross_bp"]
     with open(out / "summary.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
         for r in rows:
             w.writerow({k: r.get(k, "") for k in keys})
     md = [f"# Bar forecasts ({src})", "", f"{tests} tests; significant = DM t <= -{bar:.2f} and better in every third.",
-          f"Trading cost assumed {a.cost_bp} bp round trip.", "",
-          "| series | tf | task | model | n | skill % | DM t | sig | hit % | net bp/trade |", "|---|---|---|---|---|---|---|---|---|---|"]
+          f"Expenses: {a.cost_bp} bp a round trip (0 = before expenses).", "",
+          "Direction: hit % = calls right when the bar moved; gross = bp a bar earned trading the call, before expenses.", "",
+          "| series | tf | task | model | n | skill % | DM t | sig | direction hit % | gross bp/call | net bp/call | top-10% hit % | top-10% gross bp |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         if r["dm_t"] == "":
             continue
         md.append(f"| {r['series']} | {r['tf']} | {r['task']} | {r['model']} | {r['n']} | {r['skill_pct']} | {r['dm_t']} | "
-                  f"{'YES' if r['significant'] else ''} | {r.get('hit_pct', '')} | {r.get('net_bp_after_cost', '')} |")
+                  f"{'YES' if r['significant'] else ''} | {r.get('hit_pct', '')} | {r.get('gross_bp_per_trade', '')} | {r.get('net_bp_after_cost', '')} | {r.get('top10_hit_pct', '')} | {r.get('top10_gross_bp', '')} |")
     (out / "summary.md").write_text("\n".join(md) + "\n")
     print(f"wrote {out / 'summary.csv'} and summary.md ({len(rows)} rows)")
     return 0
