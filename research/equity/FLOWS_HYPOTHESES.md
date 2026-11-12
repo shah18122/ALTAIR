@@ -57,3 +57,11 @@ max over W of |log AV_A - log AV_B|. Predicted slope < 0 with t >= 2 (month-clus
 Reported, no pass bar (too few trades to promise one).
 
 Every result is reported, including failures. The FPI and new-years runs happen once each.
+
+## Amendment (2026-11-12, data alignment only, committed before F1/F2b were run)
+
+The NSDL file (altair-data b9a0b13, `research/flows/fpi_daily.csv`) dates each figure by its
+**reporting** date, about one trading day after the trades. FPI flow day d is therefore the
+session *before* the reporting date: each row's value is moved to the previous row's date. The
+top-10 % threshold and everything else are unchanged. FYERS's TATAMOTORS file is the TMPV
+listing; F1 is banks only and does not use it.
