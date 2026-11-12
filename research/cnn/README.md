@@ -85,3 +85,28 @@ Tables: `results/combo_summary_spot_quarter.csv`, `results/combo_ic_spot_quarter
 | VIX rising since the open -> NIFTY lower into the close (10 of 12 years) | -0.057 |
 
 The CNN does carry a real but tiny next-5-minute signal (12 of 12 years), worth well under 1 bp.
+
+# Rerun on the full FYERS merge: tradable futures 2019-2026 (2026-11-12)
+
+Data: altair-data `merged/` 272406c: NIFTY and BANKNIFTY front futures 5-minute bars, FYERS, 2019-01 to
+2026-11 (77 drive-tick bars fill gaps), NIFTY spot for the basis, India VIX. Quarterly walk-forward, 6 bp.
+`python research/cnn/combo.py --bars <altair-data>/merged --segment fut --fold quarter`.
+Tables: `results/combo_summary_fut_quarter.csv`, `results/combo_ic_fut_quarter.csv`.
+
+## Verdict: all 90 lose or are noise
+
+- Best price-forecast RMSE skill vs "no change": +0.04% (NIFTY 5 min). Most negative.
+- Best rules: BANKNIFTY 5-min ridge on high-vol bars +9 bp/trade, 114 trades in 8 years, t 1.6;
+  NIFTY rest-of-day ridge top 10% +0.2 bp. None near t 3.2, none positive in most years.
+
+## Stable in all 8 years (futures)
+
+| Effect | median IC |
+|---|---|
+| NIFTY move since the open continues to the close | +0.090 |
+| BANKNIFTY follows NIFTY's day move to the close | +0.066 |
+| NIFTY overnight gap continues into the close (may include roll days) | +0.065 |
+| Spot leads futures: spot up more than futures in the last 5 min -> futures catch up | +0.053 |
+| Last 5-min move and close location reverse next 5 min | -0.03 to -0.04 |
+
+Same picture as the index and the Drive ticks: real, stable effects of 1-6 bp, all smaller than costs.
