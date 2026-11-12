@@ -77,6 +77,7 @@
 #include <QLabel>
 #include <QHash>
 #include <QLockFile>
+#include <QSysInfo>
 #include <QMessageBox>
 #include <QProcess>
 #include <QDir>
@@ -93,9 +94,13 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <cerrno>
 #include <cstdint>
 #include <expected>
 #include <memory>
+#if !defined(_WIN32)
+#include <signal.h>
+#endif
 
 #if ALTAIR_HAVE_CHARGES_TOML
 #include <app/demo_costs.hpp>
@@ -1017,6 +1022,16 @@ public:
         live_orders_->raise();
     }
 
+    /// Whether the process that wrote a lock file is still running.
+    [[nodiscard]] static bool paper_lock_owner_alive(qint64 pid) {
+#if defined(_WIN32)
+        (void)pid;
+        return true;   // Windows: Qt's own stale check decides
+#else
+        return !(::kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH);
+#endif
+    }
+
     /// Empty when this window may write the paper book; else why not.
     [[nodiscard]] QString paper_writer() {
         if (!paper_write_error_.isEmpty()) return paper_write_error_;
@@ -1026,7 +1041,23 @@ public:
             paper_lock_ = std::make_unique<QLockFile>(lock_path);
             paper_lock_->setStaleLockTime(0);   // stale only when its owner is gone, never by age
             paper_lock_path_ = lock_path;
+            paper_locked_ = false;
+        }
+        // Tried again on every order, not once: a window that held the book
+        // and has since closed (or died, leaving its lock file) must not keep
+        // refusing this one's orders for the rest of the day (2026-11-12: a
+        // dead 9 Nov desktop's lock did exactly that).
+        if (!paper_locked_) {
             paper_locked_ = paper_lock_->tryLock(0);
+            if (!paper_locked_ && paper_lock_->error() == QLockFile::LockFailedError) {
+                qint64 pid = 0; QString host, app;
+                if (paper_lock_->getLockInfo(&pid, &host, &app) && pid > 0 && host == QSysInfo::machineHostName()
+                    && !paper_lock_owner_alive(pid)) {
+                    // Its owner is gone: the lock file is stale whatever Qt thinks.
+                    paper_lock_->removeStaleLockFile();
+                    paper_locked_ = paper_lock_->tryLock(0);
+                }
+            }
         }
         return paper_locked_ ? QString()
                              : QStringLiteral("Another Altair window holds the paper book (%1); orders are placed in that one.")
@@ -1578,11 +1609,18 @@ private:
         if (w.exec() != QDialog::Accepted) return;
         if (live) {
             const auto sent = place_live(w.order(), true);
-            if (!sent) toast(sent.error(), false);
+            if (!sent) {
+                log_line(QStringLiteral("%1  LIVE ORDER NOT SENT: %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), sent.error()));
+                toast(sent.error(), false);
+            }
             return;
         }
         const auto placed = place_paper(w.order());
-        if (!placed) toast(placed.error(), false);
+        if (!placed) {
+            // In the message log (F10) as well: a toast alone is gone in seconds.
+            log_line(QStringLiteral("%1  ORDER NOT PLACED: %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), placed.error()));
+            toast(placed.error(), false);
+        }
     }
     void cancel_order(int id) {
         if (id <= 0) { toast(QStringLiteral("Select a pending order in the order book (F3)"), false); return; }
