@@ -81,9 +81,8 @@ done
 if [ "$go" = 1 ]; then
     systemctl daemon-reload
     for t in "${timers[@]}"; do systemctl enable --now "$t.timer"; done
-    # Boot-time oneshots: enabled for the next boot; the cpuset is applied now too.
-    for b in "${boot_units[@]}"; do systemctl enable "$b.service"; done
-    systemctl restart altair-cpuset-boot.service || true
+    # Boot-time oneshots: enabled for the next boot and applied now (none resets a link or stops a job).
+    for b in "${boot_units[@]}"; do systemctl enable "$b.service"; systemctl restart "$b.service" || echo "$b did not apply: journalctl -u $b"; done
     # time-sync.target only means "synced" when something waits for the clock.
     systemctl enable chrony-wait.service 2>/dev/null || true
     # The FYERS redirect URL on 127.0.0.1:80 (a browser login ends there; the
