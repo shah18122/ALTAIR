@@ -42,3 +42,24 @@ offline. It is checked when the server is reachable.
    have 15:30-15:39 bars (post-close), real.
 7. **No overlap yet with FYERS:** dataset ends 2026-09-25 and the FYERS
    candles here start 2026-11-04.
+
+## Update: FYERS history checked (same day)
+
+The server sent the full FYERS history (altair-data e565af8). `report.md` and
+`conflicts.csv.gz` (in the private altair-data repo, merged_check/, because it holds FYERS prices) now cover all three sources.
+
+8. **FYERS vs dataset, spot NIFTY and BANKNIFTY 1m (808k bars each): median
+   0.05 bp and 0.01 bp, under 0.03% of bars more than 10 bp apart.** Daily
+   NIFTY bars agree exactly. They are the same prices.
+9. **FYERS vs Drive futures 1m: median 0.02-0.04 bp, but ~10% of bars are
+   10-100 bp apart. Nearly all of them fall on ~100 whole days around expiry**,
+   when Drive's highest-volume contract is already the next month and FYERS'
+   continuous series is still on the near month. It's a contract choice, not a
+   bad price. The merge picks one source per day, so it never mixes contracts.
+10. **dataset's NIFTY futures intraday (Jul-Aug 2026) is a different contract
+    from FYERS: ~56 bp apart on every bar, with a tenth of the volume.** FYERS
+    wins there.
+11. **India VIX: the dataset rounds to 0.05 and FYERS to 0.0025**, so most
+    bars sit 1-10 bp apart. VIX is exempt from the spike rule, because its real
+    1-minute wicks are often more than 50 bp.
+12. **FYERS gaps:** 2026-11-10 is missing from every FYERS series.

@@ -68,7 +68,8 @@ def flag_rows(df: pd.DataFrame, tf: str, day_range: pd.DataFrame | None, a) -> p
     wick = np.maximum(up, dn)
     ret = (c / c.shift(1) - 1).abs() * 1e4
     thr = np.maximum(a.spike_min_bp, a.spike_k * ret.rolling(375, min_periods=30).median().fillna(ret.median()))
-    flag[(wick > thr) & (flag == "ok")] = "spike"
+    if not a._no_spike_now:
+        flag[(wick > thr) & (flag == "ok")] = "spike"
     if day_range is not None:
         r = day_range.reindex(day.values)
         tol = 1 + a.day_tol_bp / 1e4
@@ -115,6 +116,8 @@ def main() -> int:
     ap.add_argument("--spike-min-bp", type=float, default=50.0)
     ap.add_argument("--spike-k", type=float, default=15.0)
     ap.add_argument("--day-tol-bp", type=float, default=5.0)
+    ap.add_argument("--no-spike", action="append", default=["indiavix"],
+                    help="symbols exempt from the spike rule (VIX wicks are real: a 0.1-point move is ~70 bp)")
     a = ap.parse_args()
     prio, srcs = [], {}
     for s in a.source:
@@ -125,7 +128,7 @@ def main() -> int:
     keys = sorted(set().union(*[set(v) for v in srcs.values()]))
     manifest = dict(created=pd.Timestamp.now(tz="Asia/Kolkata").isoformat(), priority_low_to_high=prio,
                     tick_built=sorted(tick_built), sources={n: s.split("=", 1)[1] for n, s in zip(prio, a.source)},
-                    rules=dict(spike_min_bp=a.spike_min_bp, spike_k=a.spike_k, day_tol_bp=a.day_tol_bp,
+                    rules=dict(no_spike=a.no_spike, spike_min_bp=a.spike_min_bp, spike_k=a.spike_k, day_tol_bp=a.day_tol_bp,
                                day_pick="highest priority with >=90% of the day's best bar count",
                                daily="official sources first; tick-built only where no official bar"),
                     series={})
@@ -139,6 +142,7 @@ def main() -> int:
             if d1:
                 d1 = pd.concat(d1).sort_values(["time", "_r"]).drop_duplicates("time", keep="last")
                 rng = d1.set_index("time")[["high", "low"]]
+        a._no_spike_now = sym in a.no_spike
         parts = []
         for n in prio:
             if k not in srcs[n]:
