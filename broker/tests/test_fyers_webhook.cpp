@@ -31,6 +31,15 @@ int main() {
               && validate("strong-secret", "strong-secret", oversized).error()
                      == WebhookError::BodyTooLarge,
           "oversized body refuses");
+    const auto t = split_target("/fyers/callback?x=1&key=abc123");
+    check(t.path == "/fyers/callback" && t.key == "abc123", "the URL's key is found");
+    check(split_target("/fyers/callback").key.empty(), "no query: no key");
+    check(authorised("abc123", "abc123", "", "{}") && authorised("abc123", "", "abc123", "{}")
+              && authorised("abc123", "", "", R"({"secret":"abc123"})") && !authorised("abc123", "abc12", "x", "{}")
+              && !authorised("", "", "", "{}"),
+          "the secret in the URL, the header or the body; anything else refuses");
+    check(order_id_of(R"({"id":"2511120\"x"})") == "2511120" && order_id_of(R"({"order_id":"A-1_b"})") == "A-1_b",
+          "the order id keeps only safe characters");
     check(failures == 0 ? (std::puts("FYERS webhook: PASS"), true) : false,
           "all webhook checks pass");
     return failures == 0 ? 0 : 1;

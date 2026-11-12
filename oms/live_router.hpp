@@ -892,6 +892,16 @@ public:
         status_.session = generation_ != 0;
     }
 
+    /// FYERS said an order changed (its webhook): read the order book on the
+    /// next pass instead of waiting for the 2-second poll. The webhook is only
+    /// a nudge -- what the book says is what is believed. At most one early
+    /// read every 200 ms, so a flood of posts cannot hammer FYERS.
+    void poke_book(std::int64_t now_ns) {
+        if (now_ns - last_poke_ns_ < 200'000'000LL) return;
+        last_poke_ns_ = now_ns;
+        next_book_ns_ = std::min(next_book_ns_, now_ns);
+    }
+
     /// One pass: switches, kill, requests, cancels, the order book, the P&L,
     /// then the file the Terminal reads.
     void tick(std::int64_t now_ns) {
@@ -1325,6 +1335,7 @@ private:
     std::int64_t pnl_ns_ = std::numeric_limits<std::int64_t>::min() / 2;
     std::int64_t auth_ok_ns_ = 0, account_ok_ns_ = 0;
     std::int64_t next_book_ns_ = 0;
+    std::int64_t last_poke_ns_ = 0;
     bool dirty_ = true;
     RouterStatus status_;
 };

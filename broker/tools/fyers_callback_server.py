@@ -185,7 +185,10 @@ def make_handler(root: Path):
             if n < 0 or n > MAX_BODY:
                 return self.send(413, b"too large\n", "text/plain")
             data = self.rfile.read(n)
-            req = urllib.request.Request(WEBHOOK_UPSTREAM, data=data, method="POST")
+            # The query carries the webhook key (?key=...), so it goes along.
+            query = urllib.parse.urlsplit(self.path).query
+            upstream = WEBHOOK_UPSTREAM + ("?" + query if query else "")
+            req = urllib.request.Request(upstream, data=data, method="POST")
             for h in ("Content-Type", "X-Fyers-Webhook-Secret"):
                 if self.headers.get(h):
                     req.add_header(h, self.headers[h])

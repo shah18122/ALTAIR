@@ -1,0 +1,21 @@
+[Unit]
+Description=ALTAIR: FYERS order-update webhook (127.0.0.1:8787; nudges the order router to read the order book)
+After=network-online.target altair-fyers-callback.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@ROOT@
+# ALTAIR_FYERS_WEBHOOK_SECRET comes from here, else data/fyers_webhook_secret.txt.
+EnvironmentFile=-/etc/altair/altair.env
+ExecStart=@ROOT@/build/linux/app/altair_fyers_webhook 8787
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

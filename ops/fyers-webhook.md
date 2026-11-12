@@ -1,5 +1,15 @@
 # FYERS webhook deployment
 
+**Now (2026-11-12):** `sudo ops/install.sh --go` makes the secret
+(`data/fyers_webhook_secret.txt`, 0600) and runs `altair-fyers-webhook.service`.
+`ops/linux/fyers_webhook_url.sh` prints the URL to paste into the FYERS API
+dashboard; the secret rides in its `?key=` (FYERS's own Secret field can hold
+the same value; the header and a body `secret` are accepted too). Each post
+appends `{at_ms,status,id}` to `data/fyers_webhook_events.jsonl`, and the order
+router reads FYERS's order book at once when it changes (the post is only a
+nudge; the book is what is believed). Without the webhook the router still
+reads the book every 2 s.
+
 The Altair receiver intentionally listens only on `127.0.0.1`; it is not a
 public TLS server. Put nginx, Caddy, IIS or an equivalent TLS reverse proxy in
 front of it.

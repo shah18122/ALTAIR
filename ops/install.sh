@@ -47,7 +47,7 @@ if [ "$remove" = 1 ]; then
     for t in "${timers[@]}"; do
         if [ "$go" = 1 ]; then systemctl disable --now "$t.timer" 2>/dev/null || true; else echo "would disable $t.timer"; fi
     done
-    if [ "$go" = 1 ]; then systemctl disable --now altair-fyers-callback.service 2>/dev/null || true; fi
+    if [ "$go" = 1 ]; then systemctl disable --now altair-fyers-callback.service altair-fyers-webhook.service 2>/dev/null || true; fi
     for u in "${units[@]}"; do
         n="$(basename "$u")"
         if [ "$go" = 1 ]; then rm -f "$dest/$n"; else echo "would remove $dest/$n"; fi
@@ -73,6 +73,16 @@ if [ "$go" = 1 ]; then
     # tunnel from ops/linux/fyers_tunnel.sh brings https to it).
     systemctl enable altair-fyers-callback.service
     systemctl restart altair-fyers-callback.service || echo "altair-fyers-callback did not start: journalctl -u altair-fyers-callback"
+    # FYERS's order webhook on 127.0.0.1:8787 (behind the callback above). Its
+    # secret is made once, here, and never printed: register the URL with
+    # ops/linux/fyers_webhook_url.sh.
+    sec="$root/data/fyers_webhook_secret.txt"
+    if [ ! -s "$sec" ]; then
+        install -d -o "$user" -g "$user" "$root/data"
+        ( umask 077; openssl rand -hex 24 > "$sec" ); chown "$user:$user" "$sec"
+    fi
+    systemctl enable altair-fyers-webhook.service
+    systemctl restart altair-fyers-webhook.service || echo "altair-fyers-webhook did not start: journalctl -u altair-fyers-webhook"
     # The DPDK binding at boot, once ops/linux/dpdk_bind.sh --at-boot chose an ENI.
     [ -f /etc/altair/dpdk.conf ] && systemctl enable altair-dpdk-bind.service
     systemctl list-timers 'altair-*' --no-pager

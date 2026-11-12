@@ -113,6 +113,9 @@ public:
         pollfd p{fd_, POLLIN, 0};
         return ::poll(&p, 1, 0) > 0 && relevant();
     }
+    /// FYERS's webhook wrote an order update (data/fyers_webhook_events.jsonl)
+    /// since the last call.
+    [[nodiscard]] bool take_order_update() noexcept { const bool u = order_update_; order_update_ = false; return u; }
 
     /// Returns when a request file changed, or after `timeout_ms`.
     void wait(int timeout_ms) {
@@ -139,6 +142,7 @@ private:
                 if ((e->mask & IN_Q_OVERFLOW) != 0) hit = true;
                 if (e->len > 0) {
                     const std::string name = e->name;
+                    if (e->wd == data_wd_ && name == "fyers_webhook_events.jsonl") { order_update_ = true; hit = true; }
                     if ((e->wd == data_wd_ && (name == "order_intents.jsonl" || name == "live_trading.json" || name == "kill_request.json"))
                         || (e->wd == router_wd_ && name == "cancels.jsonl"))
                         hit = true;
@@ -149,6 +153,7 @@ private:
         return hit;
     }
     int fd_ = -1, data_wd_ = -1, router_wd_ = -1;
+    bool order_update_ = false;
 };
 
 /// Atomic write of the connection numbers the Terminal and the latency report read.
@@ -365,6 +370,7 @@ int main(int argc, char** argv) {
             query_conn.close();
             warm_orders();
         }
+        if (wake.take_order_update()) router.poke_book(now_ns());   // FYERS's webhook: read the book now
         router.tick(now_ns());
         if (router.status().why != last_why) {
             last_why = router.status().why;

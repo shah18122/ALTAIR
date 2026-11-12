@@ -5,11 +5,13 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <string_view>
 
 namespace net = boost::asio;
 namespace beast = boost::beast;
@@ -50,32 +52,43 @@ int main(int argc, char** argv) {
                                                     request.version()};
         response.set(http::field::server, "altair-fyers-webhook");
         response.keep_alive(false);
+        const auto target = altair::fyers_webhook::split_target(
+            std::string_view{request.target().data(), request.target().size()});
         if (!ec && (request.method() == http::verb::get
                     || request.method() == http::verb::head)
-            && request.target() == "/fyers/callback") {
+            && target.path == "/fyers/callback") {
             response.result(http::status::ok);
             response.body() = request.method() == http::verb::head ? "" : "ok\n";
         } else if (!ec && request.method() == http::verb::post
-                   && request.target() == "/fyers/callback") {
-            const auto supplied = request["X-Fyers-Webhook-Secret"];
-            const auto event = altair::fyers_webhook::validate(
-                configured, std::string_view{supplied.data(), supplied.size()}, request.body());
-            if (event) {
+                   && target.path == "/fyers/callback") {
+            const auto header = request["X-Fyers-Webhook-Secret"];
+            const std::string& body = request.body();
+            if (body.empty() || body.size() > altair::fyers_webhook::kMaxBodyBytes) {
+                response.result(http::status::bad_request);
+                response.body() = "rejected\n";
+            } else if (!altair::fyers_webhook::authorised(configured, target.key,
+                                                         std::string_view{header.data(), header.size()}, body)) {
+                response.result(http::status::unauthorized);
+                response.body() = "rejected\n";
+            } else {
+                // A nudge for the order router (it watches this file and reads
+                // FYERS's order book at once); the book, not this post, is what
+                // the router believes. Only the order id and a status word are
+                // kept -- never the body.
+                const auto st = altair::fyers_webhook::parse_status(altair::fyers_webhook::json_value(body, "status"));
+                const char* word = st == altair::fyers_webhook::Status::Pending ? "pending"
+                                 : st == altair::fyers_webhook::Status::Rejected ? "rejected"
+                                 : st == altair::fyers_webhook::Status::Cancelled ? "cancelled"
+                                 : st == altair::fyers_webhook::Status::Traded ? "traded" : "other";
+                const auto at = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
                 std::ofstream audit{"data/fyers_webhook_events.jsonl", std::ios::app};
                 if (audit) {
-                    audit << "{\"status\":\"" << request.body().substr(
-                        request.body().find("\"status\"") + 10,
-                        request.body().find('"', request.body().find("\"status\"") + 11)
-                          - (request.body().find("\"status\"") + 10))
-                          << "\",\"order_id_present\":"
-                          << (event->order_id.empty() ? "false" : "true") << "}\n";
+                    audit << "{\"at_ms\":" << at << ",\"status\":\"" << word << "\",\"id\":\""
+                          << altair::fyers_webhook::order_id_of(body) << "\"}\n";
                 }
                 response.result(http::status::ok);
                 response.body() = "ok\n";
-            } else {
-                response.result(event.error() == altair::fyers_webhook::WebhookError::SecretMismatch
-                                    ? http::status::unauthorized : http::status::bad_request);
-                response.body() = "rejected\n";
             }
         } else {
             response.body() = "not found\n";

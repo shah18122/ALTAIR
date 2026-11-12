@@ -94,4 +94,47 @@ validate(std::string_view secret, std::string_view supplied_secret,
     return Event{status, json_value(body, "order_id"), body};
 }
 
+/// The request target split: "/fyers/callback?key=abc" -> path
+/// "/fyers/callback", key "abc". The key in the URL is how the secret reaches
+/// us whatever FYERS does with its own Secret field: the URL registered in the
+/// FYERS dashboard carries it.
+struct Target {
+    std::string_view path{};
+    std::string_view key{};
+};
+[[nodiscard]] inline Target split_target(std::string_view target) noexcept {
+    Target t;
+    const auto q = target.find('?');
+    t.path = target.substr(0, q);
+    if (q == std::string_view::npos) return t;
+    std::string_view query = target.substr(q + 1);
+    while (!query.empty()) {
+        const auto amp = query.find('&');
+        const std::string_view kv = query.substr(0, amp);
+        if (kv.substr(0, 4) == "key=") t.key = kv.substr(4);
+        if (amp == std::string_view::npos) break;
+        query = query.substr(amp + 1);
+    }
+    return t;
+}
+
+/// Whether a post is ours: the secret in the URL's key, in the
+/// X-Fyers-Webhook-Secret header, or in the body's "secret" field.
+[[nodiscard]] inline bool authorised(std::string_view secret, std::string_view url_key, std::string_view header,
+                                     std::string_view body) noexcept {
+    if (secret.empty() || secret.size() > kMaxSecretBytes) return false;
+    return equal_secret(secret, url_key) || equal_secret(secret, header) || equal_secret(secret, json_value(body, "secret"));
+}
+
+/// The order id in a FYERS post ("id", else "order_id"); only [A-Za-z0-9-_]
+/// is kept, so it can be written into a log line as it is.
+[[nodiscard]] inline std::string order_id_of(std::string_view body) {
+    std::string_view v = json_value(body, "id");
+    if (v.empty()) v = json_value(body, "order_id");
+    std::string out;
+    for (const char c : v.substr(0, 64))
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_') out.push_back(c);
+    return out;
+}
+
 } // namespace altair::fyers_webhook
