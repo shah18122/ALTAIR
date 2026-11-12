@@ -2,13 +2,19 @@
 Description=ALTAIR: hand the second ENI to DPDK at boot (ops/linux/dpdk_bind.sh)
 # Only once ops/linux/dpdk_bind.sh --at-boot IFACE has chosen the interface.
 ConditionPathExists=/etc/altair/dpdk.conf
-After=network-online.target
-Wants=network-online.target
+# BEFORE the network comes up: once DHCP gives the spare a default route,
+# dpdk_bind.sh refuses it (it could cut SSH off). Early boot, so no default deps.
+DefaultDependencies=no
+After=systemd-udev-trigger.service systemd-modules-load.service local-fs.target
+Before=network-pre.target systemd-networkd.service NetworkManager.service
+Wants=network-pre.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=/etc/altair/dpdk.conf
+# udev may still be naming the interface: wait up to 10 s for it.
+ExecStartPre=/bin/sh -c 'for i in $(seq 50); do [ -e /sys/class/net/${DPDK_IFACE} ] && exit 0; sleep 0.2; done; exit 0'
 ExecStart=@ROOT@/ops/linux/dpdk_bind.sh ${DPDK_IFACE}
 
 [Install]

@@ -10,11 +10,23 @@
 # Nothing here resets the link (no ring or channel change), so it is safe at
 # any time, but altair-nic-tune.service only runs it at boot.
 #
-#   sudo ops/linux/nic_tune.sh [IFACE] [--housekeeping 0-1]   (IFACE: the default route's)
+#   sudo ops/linux/nic_tune.sh [IFACE] [--housekeeping 0-1]
+#
+# Without IFACE: every kernel ENA interface except the DPDK one
+# (/etc/altair/dpdk.conf). Not "the default route's": at boot the spare can DHCP
+# first and hold the only default route.
 
 set -euo pipefail
-ifc="${1:-$(ip -o route show default | awk '{print $5; exit}')}"
-hk="0-1"; [ "${2:-}" = "--housekeeping" ] && hk="${3:?}"
+ifc=""; hk="0-1"
+while [ $# -gt 0 ]; do case "$1" in --housekeeping) hk="$2"; shift ;; *) ifc="$1" ;; esac; shift; done
+if [ -z "$ifc" ]; then
+    skip=""; [ -r /etc/altair/dpdk.conf ] && skip="$(. /etc/altair/dpdk.conf; echo "${DPDK_IFACE:-}")"
+    for d in /sys/class/net/*; do
+        n="$(basename "$d")"
+        [ "$(basename "$(readlink -f "$d/device/driver" 2>/dev/null)")" = ena ] && [ "$n" != "$skip" ] && "$0" "$n" --housekeeping "$hk"
+    done
+    exit 0
+fi
 [ -e "/sys/class/net/$ifc" ] || { echo "no interface $ifc" >&2; exit 2; }
 
 if command -v ethtool >/dev/null; then

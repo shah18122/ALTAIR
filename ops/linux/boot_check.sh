@@ -19,5 +19,7 @@ mkdir -p "$root/data/logs"
     echo "== isolated: $(cat /sys/devices/system/cpu/isolated) nohz_full: $(cat /sys/devices/system/cpu/nohz_full 2>/dev/null)"
     echo "== memory"; free -h
 } > "$out" 2>&1
-grep -q "failed" <(systemctl list-units 'altair-*' --failed --no-legend) && echo "boot check: FAILED units, see $out" && exit 1
+if systemctl list-units 'altair-*' --failed --no-legend | grep -v altair-boot-check | grep -q .; then
+    echo "boot check: FAILED units, see $out"; exit 1
+fi
 echo "boot check: ok ($out)"
