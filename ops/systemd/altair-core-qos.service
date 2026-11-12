@@ -1,0 +1,12 @@
+[Unit]
+Description=ALTAIR: isolated cores out of deep C-states (ops/linux/core_qos.sh)
+Before=altair-recorder.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=@ROOT@/ops/linux/core_qos.sh
+ExecStop=@ROOT@/ops/linux/core_qos.sh --undo
+
+[Install]
+WantedBy=multi-user.target

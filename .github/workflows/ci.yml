@@ -164,7 +164,7 @@ jobs:
       - name: Ops jobs (Python), install script and timers
         run: |
           python3 -m unittest discover -s ops/linux/tests -v
-          bash -n ops/build.sh ops/install.sh ops/setup.sh ops/tune_host.sh ops/linux/host_trim.sh ops/linux/cpuset.sh ops/linux/nic_tune.sh ops/linux/s3_sync.sh ops/linux/boot_check.sh ops/linux/session_window.sh
+          bash -n ops/build.sh ops/install.sh ops/setup.sh ops/tune_host.sh ops/linux/host_trim.sh ops/linux/cpuset.sh ops/linux/nic_tune.sh ops/linux/s3_sync.sh ops/linux/boot_check.sh ops/linux/session_window.sh ops/linux/core_qos.sh
           ops/tune_host.sh --user "$(id -un)" > /dev/null    # the dry run: changes nothing
           for t in ops/systemd/*.timer; do
             systemd-analyze calendar "$(sed -n 's/^OnCalendar=//p' "$t")" > /dev/null

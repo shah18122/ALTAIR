@@ -4,14 +4,16 @@
 # What it sets, and where (every file is ALTAIR's own, so --undo removes
 # exactly what this added and nothing else):
 #
-#   /etc/default/grub.d/99-altair.cfg     isolcpus=managed_irq,<cores> nohz_full=<cores>
+#   /etc/default/grub.d/99-altair.cfg     isolcpus=managed_irq,domain,<cores> nohz_full=<cores>
 #                                         rcu_nocbs=<cores> transparent_hugepage=madvise
 #                                         (needs a REBOOT; then update-grub has run)
-#                                         (--static-isolation: isolcpus=managed_irq,domain,<cores>:
-#                                         the scheduler never balances onto them, not even after
-#                                         hours. Default: the cores stay schedulable and
+#                                         (default: the scheduler never balances onto them, not even
+#                                         after hours. --dynamic-isolation drops "domain": the cores stay
+#                                         schedulable and
 #                                         ops/linux/cpuset.sh keeps every non-ALTAIR service off
-#                                         them 08:45-15:50, so the nightly retrain gets every core.)
+#                                         them 08:45-15:50, so the nightly retrain gets every core.
+#                                         NOT yet safe: the DCV desktop (user.slice) can still roam
+#                                         onto 2-7 in the session.)
 #   /etc/sysctl.d/90-altair.conf          vm.nr_hugepages, net.core.busy_poll/busy_read 50 us,
 #                                         vm.swappiness 1, kernel.numa_balancing 0, no KSM-style
 #                                         reclaim, TCP: no autocorking, no slow start after idle
@@ -68,7 +70,7 @@
 
 set -euo pipefail
 go=0; undo=0; user="${SUDO_USER:-$(id -un)}"; isolate=""; hugepages=512
-deep=0; mitig=0; trim=0; headless=0; static_iso=0
+deep=0; mitig=0; trim=0; headless=0; static_iso=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --go) go=1 ;;
@@ -81,6 +83,7 @@ while [ $# -gt 0 ]; do
         --trim) trim=1 ;;
         --headless) headless=1 ;;
         --static-isolation) static_iso=1 ;;
+        --dynamic-isolation) static_iso=0 ;;
         -h|--help) sed -n '2,68p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
@@ -115,7 +118,7 @@ if [ "$undo" = 1 ]; then
         else echo "would set the default boot target back to $(cat "$target_file")"; fi
     fi
     if [ "$go" = 1 ]; then
-        [ -f "$irq" ] && sed -i '/^IRQBALANCE_BANNED_CPULIST=.*# altair$/d' "$irq"
+        [ -f "$irq" ] && sed -i -e '/^IRQBALANCE_BANNED_CPULIST=.*# altair$/d' -e '/^# altair: next line$/{N;d}' "$irq"
         command -v update-grub >/dev/null && update-grub
         sysctl --system >/dev/null
         systemctl try-restart irqbalance 2>/dev/null || true
@@ -184,8 +187,9 @@ $user hard nice -10"
 if [ -n "$isolate" ]; then
     if [ "$go" = 1 ]; then
         touch "$irq"
-        sed -i '/^IRQBALANCE_BANNED_CPULIST=.*# altair$/d' "$irq"
-        echo "IRQBALANCE_BANNED_CPULIST=$isolate  # altair" >> "$irq"
+        sed -i -e '/^IRQBALANCE_BANNED_CPULIST=.*# altair$/d' -e '/^# altair: next line$/{N;d}' "$irq"
+        # The comment on its own line: systemd EnvironmentFile keeps an inline "# ..." as part of the value.
+        printf '# altair: next line\nIRQBALANCE_BANNED_CPULIST=%s\n' "$isolate" >> "$irq"
         echo "irqbalance: interrupts kept off $isolate"
     else
         echo "  would add IRQBALANCE_BANNED_CPULIST=$isolate to $irq"

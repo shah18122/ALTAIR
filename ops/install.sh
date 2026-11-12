@@ -52,7 +52,7 @@ done
 dest=/etc/systemd/system
 timers=(altair-fyers-login altair-recorder altair-chain-open altair-chain-close altair-fyers-chain altair-push altair-nightly
         altair-engine altair-s3-sync altair-cpuset-hours altair-cpuset-open altair-boot-check)
-boot_units=(altair-nic-tune altair-cpuset-boot)
+boot_units=(altair-nic-tune altair-cpuset-boot altair-core-qos)
 units=("$here"/systemd/*.service "$here"/systemd/*.timer "$here"/systemd/*.slice)
 
 if [ "$remove" = 1 ]; then
