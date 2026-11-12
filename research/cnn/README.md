@@ -110,3 +110,6 @@ Tables: `results/combo_summary_fut_quarter.csv`, `results/combo_ic_fut_quarter.c
 | Last 5-min move and close location reverse next 5 min | -0.03 to -0.04 |
 
 Same picture as the index and the Drive ticks: real, stable effects of 1-6 bp, all smaller than costs.
+
+Index rerun on the FYERS merge (272406c, FYERS 2018+, TradingView fills 2015-2017) replaced
+`results/combo_*_spot_quarter.csv`: best RMSE skill +0.1%, no rule with daily t above 1.5. Unchanged verdict.
