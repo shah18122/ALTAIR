@@ -103,7 +103,7 @@ void usage(const char* exe) {
         "                      by the desktop), else the near futures: --depth50 N\n"
         "                      slots, default 1 (FYERS Standard; Prime allows 5 a\n"
         "                      connection on up to three connections: --depth50 15\n"
-        "                      fills the BANKNIFTY and NYKAA futures and their strikes\n"
+        "                      fills the BANKNIFTY and NIFTY futures and their strikes\n"
         "                      nearest the money); off: the 5-level book only. NSE equity\n"
         "                      and F&O only. Needs data/fyers_session.json\n"
         "                      (altair_fyers_login) or ALTAIR_FYERS_CLIENT_ID and\n"
@@ -258,7 +258,7 @@ std::string g_dpdk_port, g_dpdk_ip, g_dpdk_gw, g_dpdk_eal;
 /// 0 = off). FYERS allows 1 on a Standard plan and 5 a connection, three
 /// connections, on Prime: up to 15, one socket and thread a connection.
 std::size_t g_depth50 = altair::fyers_tbt::kTbtStandardSlots;
-/// The OBI trader's underlyings (BANKNIFTY and config/obi_underlyings.csv)
+/// The OBI trader's underlyings (BANKNIFTY, NIFTY and config/obi_underlyings.csv)
 /// and the level each chain was centred on: their near futures, then their
 /// strikes nearest the money, are the 50-level defaults.
 std::vector<std::string> g_obi_unders;
@@ -1327,8 +1327,9 @@ int main(int argc, char** argv) {
                 else { std::printf("OBI stock %s: no FYERS quote, so its futures stream without a chain\n", uo.fo_stocks[k].c_str()); }
             }
         }
-        g_obi_unders = {"BANKNIFTY"};
+        g_obi_unders = {"BANKNIFTY", "NIFTY"};
         g_obi_spot["BANKNIFTY"] = bnf;
+        g_obi_spot["NIFTY"] = nifty;
         for (std::size_t k = 0; k < uo.fo_stocks.size(); ++k) {
             g_obi_unders.push_back(uo.fo_stocks[k]);
             if (k < uo.fo_spots.size() && uo.fo_spots[k] > 0.0) g_obi_spot[uo.fo_stocks[k]] = uo.fo_spots[k];

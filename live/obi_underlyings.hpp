@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdlib>
 #include <fstream>
 #include <string>
@@ -25,6 +26,20 @@ struct ObiUnderlying {
     double stop_pts = 0.0;
     double safety_pts = 0.0;
 };
+
+/// The indices the OBI trader always runs on, in index points: BANKNIFTY (the
+/// main subscription, first: it gets the 50-level slot) and NIFTY (its
+/// numbers scaled from BANKNIFTY's by the index level, about 2.2 to 1; a
+/// starting point the paper record tests, as the csv's are).
+inline const std::array<ObiUnderlying, 2> kObiIndices{{
+    {"BANKNIFTY", 25.0, 15.0, 2.0},
+    {"NIFTY", 11.0, 7.0, 1.0},
+}};
+
+[[nodiscard]] inline bool obi_is_index(const std::string& symbol) {
+    for (const auto& u : kObiIndices) if (u.symbol == symbol) return true;
+    return false;
+}
 
 /// The stocks of `path` ("symbol,target,stop,safety" after a header; '#'
 /// comments). A line without a positive target and stop is skipped, as is a
@@ -57,6 +72,13 @@ struct ObiUnderlying {
         if (dup || u.symbol == "NIFTY" || u.symbol == "BANKNIFTY") continue;
         out.push_back(std::move(u));
     }
+    return out;
+}
+
+/// Everything the OBI trader runs on: the indices, then the stocks of `path`.
+[[nodiscard]] inline std::vector<ObiUnderlying> obi_trade_underlyings(const std::string& path) {
+    std::vector<ObiUnderlying> out(kObiIndices.begin(), kObiIndices.end());
+    for (auto& u : read_obi_underlyings(path)) out.push_back(std::move(u));
     return out;
 }
 

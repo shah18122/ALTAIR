@@ -310,11 +310,9 @@ inline void apply_quoter_params(live::ObiQuoterRules& r, const Params& p) {
     return out;
 }
 
-/// BANKNIFTY (the built-in heavy book) and the stocks of config/obi_underlyings.csv.
+/// BANKNIFTY and NIFTY (live/obi_underlyings.hpp) and the stocks of config/obi_underlyings.csv.
 [[nodiscard]] inline std::vector<live::ObiUnderlying> obi_underlyings(const fs::path& root) {
-    std::vector<live::ObiUnderlying> v{{"BANKNIFTY", 25.0, 15.0, 2.0}};
-    for (auto& u : live::read_obi_underlyings((root / "config/obi_underlyings.csv").string())) v.push_back(std::move(u));
-    return v;
+    return live::obi_trade_underlyings((root / "config/obi_underlyings.csv").string());
 }
 
 // ---- config/model_params/<key>.toml ------------------------------------------------

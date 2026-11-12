@@ -759,15 +759,14 @@ int main(int argc, char** argv) {
     engine.add_model(std::make_unique<lv::LivePairsModel>(pf));
     engine.add_model(std::make_unique<lv::LiveStatArbModel>(std::move(sa)));
     // Order-book imbalance (book/flow.hpp, live/obi_trader.hpp): tick by tick
-    // on every book and print, BANKNIFTY (the heavy book) and the F&O stocks of
-    // config/obi_underlyings.csv (NYKAA, the thin one). The hub keeps one flow
+    // on every book and print, BANKNIFTY and NIFTY (live/obi_underlyings.hpp)
+    // and any F&O stock of config/obi_underlyings.csv (none at present). The hub keeps one flow
     // engine per instrument and is added FIRST: the engine calls the models in
     // order, so every trader reads the book the hub has just applied. Then the
     // four trade types (A bid pressure, B ask pressure, C absorption,
     // D withdrawal), each on the near future and as a SOLD put or call. Paper
     // only. The watch file is not on the tape, so a replay runs without it.
-    std::vector<lv::ObiUnderlying> obi_unders{{"BANKNIFTY", 25.0, 15.0, 2.0}};
-    for (auto& u : lv::read_obi_underlyings((root / "config/obi_underlyings.csv").string())) obi_unders.push_back(std::move(u));
+    const std::vector<lv::ObiUnderlying> obi_unders = lv::obi_trade_underlyings((root / "config/obi_underlyings.csv").string());
     lv::ObiHub::Config hub_cfg;
     hub_cfg.unders.clear();
     for (const auto& u : obi_unders) hub_cfg.unders.push_back(u.symbol);
@@ -828,7 +827,7 @@ int main(int argc, char** argv) {
             r.mode = mode;
             r.stop_pts = u.stop_pts;
             r.safety_pts = u.safety_pts;
-            if (u.symbol != "BANKNIFTY") r.option_safety = u.safety_pts;   // a stock's premiums are rupees a share
+            if (!lv::obi_is_index(u.symbol)) r.option_safety = u.safety_pts;   // a stock's premiums are rupees a share
             r.log_file = (live_dir / "diffusion" / "trades.csv").string();
             engine.add_model(std::make_unique<lv::LiveDiffusionTraderModel>(r, dhub, hub));
         }

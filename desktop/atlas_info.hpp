@@ -165,7 +165,7 @@ inline constexpr Entry kByFile[] = {
     {"book/diffusion.hpp", {"Not trained: Hayashi-Yoshida lead-lag, a Hasbrouck / Gonzalo-Granger error-correction fit and an AR(1) half-life, refitted every second on the last 5 minutes.",
         kLiveBook, "Live: the Diffusion engine's pairs (future -> index and options, bank stocks -> future); the daily report is data/live/diffusion/."}},
     {"live/diffusion.hpp", {"Not trained: the gate (lag over the jitter floor, lead-lag ratio, correlation) and the edge over costs are a starting framework.",
-        kLiveBook, "Live, paper only: sells the stale put or call, or trades the future behind its stocks, on BANKNIFTY and NYKAA. "
+        kLiveBook, "Live, paper only: sells the stale put or call, or trades the future behind its stocks, on BANKNIFTY and NIFTY. "
         "Never buys an option; Rs 2,000 a trade and Rs 5,000 a day loss limits."}},
     {"book/trade_flow.hpp", {"Estimated on volume buckets and a regression of price change on signed volume.", "Trades and quotes recorded from the live feed.", kResearch}},
     {"risk/slippage.hpp", {"Impact coefficients fitted to recorded fills.", "Recorded live quotes and paper fills.",

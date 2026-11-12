@@ -41,15 +41,15 @@ void registry_contract() {
               "label and stable ID resolve to the same legacy page");
     }
     for (const int i : kNavigationOrder) order.insert(i);
-    check(ids.size() == 45 && order.size() == 26 && !ids.contains(QString{}),
-          "45 identities and 26 sidebar destinations");
+    check(ids.size() == 45 && order.size() == 25 && !ids.contains(QString{}),
+          "45 identities and 25 sidebar destinations");
     check(kNavigationOrder.front() == 38, "Start here heads the sidebar");
     // The model pages open from the Model Atlas, not the sidebar.
     for (const int model_page : {9, 10, 16, 17, 18, 27, 29, 30, 13, 7, 24, 26, 25, 23})
         check(!nav_listed(model_page) && nav_visible(model_page), "a model page is off the sidebar but still a route");
-    for (const int kept : {2, 42, 34, 12, 21, 35, 36, 31, 32, 15, 14, 4, 37, 39, 40, 41, 43, 44})
+    for (const int kept : {2, 42, 34, 12, 21, 36, 31, 32, 15, 14, 4, 37, 39, 40, 41, 43, 44})
         check(nav_listed(kept), "trading, Order Book Imbalance, risk, Atlas, Threshold, About, Backtests, Daily findings and Work log stay in the sidebar");
-    for (const int hidden : {0, 1, 5, 28, 33})
+    for (const int hidden : {0, 1, 5, 28, 33, 35})
         check(!order.contains(hidden) && !nav_visible(hidden), "removed routes never appear in traversal");
     check(nav_page_index(QStringLiteral("  MODEL   ATLAS ")) == 32 &&
           nav_page_index(QStringLiteral("market.terminal")) == 2 &&
@@ -91,7 +91,7 @@ void tree_and_menu() {
     nav.populate_menu(&menu);
     QList<QAction*> actions;
     routes(&menu, actions);
-    check(actions.size() == 26 + nav.recent_pages().size(), "seven native submenus and recent routes expose sidebar pages");
+    check(actions.size() == 25 + nav.recent_pages().size(), "seven native submenus and recent routes expose sidebar pages");
     int checked = 0;
     for (auto* action : actions) checked += action->isChecked() ? 1 : 0;
     check(checked >= 1, "workspace menus visibly mark the current route");
@@ -114,7 +114,7 @@ void tree_and_menu() {
             check(invoked == entry->data().toInt(), "compact popup retains page mapping");
         }
     }
-    check(compact_routes == 26, "all sidebar pages reachable in compact mode");
+    check(compact_routes == 25, "all sidebar pages reachable in compact mode");
     int compact_checked = 0;
     for (auto* button : buttons)
         for (auto* entry : button->menu()->actions())
@@ -212,7 +212,7 @@ void search_keyboard() {
     search.show();
     auto* query = search.findChild<QLineEdit*>();
     auto* results = search.findChild<QListWidget*>();
-    check(results->count() == 40, "search exposes every canonical destination, model pages included");
+    check(results->count() == 39, "search exposes every canonical destination, model pages included");
     for (const auto& alias : {QStringLiteral("Broker Account"), QStringLiteral("FYERS"), QStringLiteral("Link Broker")}) {
         query->setText(alias);
         check(results->count() == 1 && results->item(0)->data(Qt::UserRole).toInt() == 34,
@@ -287,14 +287,14 @@ void recent_route_order() {
     nav.select_page(2);
     nav.select_page(32);
     const auto recent = nav.recent_pages();
-    check(recent.size() == 37 && recent[0] == "models.atlas" && recent[1] == "market.terminal",
-          "recent history contains 37 canonical identities without duplicates");
+    check(recent.size() == 36 && recent[0] == "models.atlas" && recent[1] == "market.terminal",
+          "recent history contains 36 canonical identities without duplicates");
     QMenu menu;
     nav.populate_menu(&menu);
     QMenu* recent_menu = nullptr;
     for (auto* action : menu.actions())
         if (action->text() == "Recent pages") recent_menu = action->menu();
-    check(recent_menu && recent_menu->actions().size() == 37, "recent submenu contains full bounded visible history");
+    check(recent_menu && recent_menu->actions().size() == 36, "recent submenu contains full bounded visible history");
     int activated = -1;
     nav.activate = [&](int index) { activated = index; };
     if (recent_menu) for (auto* action : recent_menu->actions()) {

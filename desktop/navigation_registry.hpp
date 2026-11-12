@@ -83,10 +83,10 @@ inline constexpr std::array<NavigationPage, 45> kNavigationPages{{
 // Neural, Features, Volatility, Analytics, Microstructure, Cointegration,
 // Sizing, Flagging) are not listed: they open from the Model Atlas, which has
 // the way back. Their routes stay so saved links and the Atlas still work.
-inline constexpr std::array<int, 26> kNavigationOrder{{
+inline constexpr std::array<int, 25> kNavigationOrder{{
     38, 2, 42, 21,
     40, 32, 3,
-    39, 35, 36, 31, 19, 8, 22, 20,
+    39, 36, 31, 19, 8, 22, 20,
     12, 41, 11,
     15, 14, 6,
     44, 4,
@@ -103,6 +103,7 @@ inline constexpr std::array<int, 26> kNavigationOrder{{
     switch (index) {
     case 0: case 1: return 2;
     case 5: case 28: case 33: return 34;
+    case 35: return 39;   // Demo Trading, retired 2026-11-12: Backtests
     default: return index;
     }
 }

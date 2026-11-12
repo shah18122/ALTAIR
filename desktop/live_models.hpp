@@ -30,6 +30,7 @@
 #include "theme.hpp"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -47,7 +48,9 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <vector>
 
@@ -96,6 +99,13 @@ namespace live_models_detail {
 }
 
 } // namespace live_models_detail
+
+/// Models with a page of their own, left off the Terminal's Models view: the
+/// OBI trader (Market > Order Book Imbalance) and the bank pairs
+/// (Strategies > Pair Trading).
+[[nodiscard]] inline bool terminal_hides_model(const QString& model) {
+    return model.startsWith(QLatin1String("OBI ")) || model.startsWith(QLatin1String("Pair trading"));
+}
 
 [[nodiscard]] inline std::vector<LivePaperRow> load_live_trades(const QString& path) {
     std::vector<LivePaperRow> rows;
@@ -153,15 +163,6 @@ public:
         status_->setTextFormat(Qt::RichText);
         status_->setWordWrap(true);
         v->addWidget(status_);
-        // Simple view: what this page is, in one line (desktop/simple_mode.hpp).
-        simple_intro_ = new QLabel(QStringLiteral(
-            "<span style='color:#8FA3AE'>The models trade <b>on paper</b> by themselves while the market is open. Each row "
-            "is one model: what it is doing now and why. Below: what they hold and what they made, <b>after expenses</b>. "
-            "Advanced view shows every reading and column.</span>"), this);
-        simple_intro_->setObjectName(QStringLiteral("modelsSimpleIntro"));
-        simple_intro_->setTextFormat(Qt::RichText);
-        simple_intro_->setWordWrap(true);
-        v->addWidget(simple_intro_);
 
         totals_ = new QLabel(this);
         totals_->setTextFormat(Qt::RichText);
@@ -207,7 +208,25 @@ public:
         trades_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
         trades_->setColumnWidth(1, 200);
         trades_->setColumnWidth(2, 190);
-        tabs_->addTab(trades_, QStringLiteral("Paper trades"));
+        // Today's trades by default (a fresh list each day); every past day
+        // stays in trades.csv and is one pick away.
+        trades_page_ = new QWidget(tabs_);
+        auto* tv = new QVBoxLayout(trades_page_);
+        tv->setContentsMargins(0, 4, 0, 0);
+        auto* tbar = new QHBoxLayout;
+        day_pick_ = new QComboBox(trades_page_);
+        day_pick_->setObjectName(QStringLiteral("tradesDay"));
+        model_pick_ = new QComboBox(trades_page_);
+        model_pick_->setObjectName(QStringLiteral("tradesModel"));
+        model_pick_->setMinimumContentsLength(24);
+        tbar->addWidget(new QLabel(QStringLiteral("Day"), trades_page_));
+        tbar->addWidget(day_pick_);
+        tbar->addWidget(new QLabel(QStringLiteral("Model"), trades_page_));
+        tbar->addWidget(model_pick_);
+        tbar->addStretch();
+        tv->addLayout(tbar);
+        tv->addWidget(trades_, 1);
+        tabs_->addTab(trades_page_, QStringLiteral("Paper trades"));
 
         by_model_ = make_live_table(7, {QStringLiteral("Model"), QStringLiteral("Trades"), QStringLiteral("Gross ₹"),
                                         QStringLiteral("Expenses ₹"), QStringLiteral("Net ₹"), QStringLiteral("Open P&L ₹"),
@@ -231,6 +250,12 @@ public:
             stop_engine();
         });
         connect(models_, &QTableWidget::currentCellChanged, this, [this](int r, int, int, int) { show_fields(r); });
+        connect(day_pick_, &QComboBox::currentIndexChanged, this, [this] { if (!filling_) fill_trades(); });
+        connect(model_pick_, &QComboBox::currentIndexChanged, this, [this] { if (!filling_) fill_trades(); });
+        // A click on a model's P&L opens its paper trades.
+        connect(by_model_, &QTableWidget::cellClicked, this, [this](int r, int) {
+            if (const auto* it = by_model_->item(r, 0)) open_trades(it->text());
+        });
         file_timer_.setInterval(1000);
         connect(&file_timer_, &QTimer::timeout, this, [this] {
             reload();
@@ -259,7 +284,6 @@ public:
         for (const int c : {7, 8}) positions_->setColumnHidden(c, simple);           // Entry exp, Held
         for (const int c : {5, 7, 9, 10, 13}) trades_->setColumnHidden(c, simple);   // In, Out, Gross, Expenses, Costs
         for (const int c : {2, 3}) by_model_->setColumnHidden(c, simple);            // Gross, Expenses
-        simple_intro_->setVisible(simple);
     }
     LiveModelsPanel(const LiveModelsPanel&) = delete;
     LiveModelsPanel& operator=(const LiveModelsPanel&) = delete;
@@ -287,6 +311,23 @@ public:
     [[nodiscard]] QTableWidget* trades_table() const noexcept { return trades_; }
     [[nodiscard]] QTableWidget* by_model_table() const noexcept { return by_model_; }
     [[nodiscard]] QString status_text() const { return status_->text(); }
+    /// The engine's margin and latency: on hover, not on the page.
+    [[nodiscard]] QString status_tip() const { return status_->toolTip(); }
+    [[nodiscard]] QComboBox* trades_day() const noexcept { return day_pick_; }
+    [[nodiscard]] QComboBox* trades_model() const noexcept { return model_pick_; }
+    [[nodiscard]] QTabWidget* tabs() const noexcept { return tabs_; }
+    /// The Paper trades tab for `model`: today's if it traded today, else every day.
+    void open_trades(const QString& model) {
+        bool today = false;
+        for (const auto& t : trades_cache_) today = today || (t.model == model && t.date == trades_today());
+        filling_ = true;
+        const int m = model_pick_->findData(model);
+        model_pick_->setCurrentIndex(m < 0 ? 0 : m);
+        day_pick_->setCurrentIndex(today ? 0 : std::max(0, day_pick_->findData(QStringLiteral("*"))));
+        filling_ = false;
+        fill_trades();
+        tabs_->setCurrentWidget(trades_page_);
+    }
 
 private:
     struct Pos {
@@ -341,8 +382,8 @@ private:
         const bool sim = o.value(QStringLiteral("source")).toString() == QLatin1String("SIM");
         const bool stale = o.value(QStringLiteral("stale")).toBool();
         const qint64 eng = static_cast<qint64>(o.value(QStringLiteral("engine_ns")).toDouble());
-        const QString tag = sim ? QStringLiteral("<span style='color:#F4C95D'>● SIM — paper trades on a simulated market</span>")
-                                : QStringLiteral("<span style='color:#7FD17F'>● LIVE market data — paper trades only</span>");
+        const QString tag = sim ? QStringLiteral("<span style='color:#F4C95D'>● SIM</span>")
+                                : QStringLiteral("<span style='color:#7FD17F'>● LIVE data · paper</span>");
         // Why entries are refused right now, from the engine's one risk check.
         const QString halt = o.value(QStringLiteral("halt")).toString();
         const QString paused = o.value(QStringLiteral("paused")).toString();
@@ -351,13 +392,14 @@ private:
         if (!paused.isEmpty()) gate += QStringLiteral(" · <b style='color:#F4C95D'>%1</b>").arg(paused.toHtmlEscaped());
         const int working = o.value(QStringLiteral("working_orders")).toInt();
         if (working > 0) gate += QStringLiteral(" · %1 order(s) working").arg(working);
+        QStringList tip;
         // The capital the book ties up (an estimate, not SPAN) and how fast the engine keeps up.
         const QJsonObject mg = o.value(QStringLiteral("margin")).toObject();
         if (!mg.isEmpty()) {
             const auto r = [](const QJsonValue& v) {
                 return v.isDouble() ? live_models_detail::rupees(v.toDouble()) : QStringLiteral("unknown");
             };
-            gate += QStringLiteral(" · margin est. %1 of %2 (peak today %3; not SPAN)")
+            tip << QStringLiteral("margin est. %1 of %2 (peak today %3; not SPAN)")
                         .arg(r(mg.value(QStringLiteral("estimate"))), r(mg.value(QStringLiteral("limit"))),
                              r(mg.value(QStringLiteral("peak_today"))));
         }
@@ -366,14 +408,18 @@ private:
             const double fp = lat.value(QStringLiteral("frame_us")).toObject().value(QStringLiteral("p99")).toDouble(-1.0);
             const double dp = lat.value(QStringLiteral("decision_us")).toObject().value(QStringLiteral("p99")).toDouble(-1.0);
             if (fp >= 0.0 && dp >= 0.0)
-                gate += QStringLiteral(" · p99 frame %1 µs, decision %2 µs").arg(fp, 0, 'f', 0).arg(dp, 0, 'f', 0);
+                tip << QStringLiteral("p99 frame %1 µs, decision %2 µs").arg(fp, 0, 'f', 0).arg(dp, 0, 'f', 0);
         }
-        status_->setText(QStringLiteral("%1 &nbsp;<span style='color:%2'>engine %3 IST%4%5 · %6</span>")
+        const QString note = o.value(QStringLiteral("note")).toString();
+        if (!note.isEmpty()) tip << note;
+        status_->setToolTip(tip.join(QLatin1Char('\n')));
+        status_->setText(QStringLiteral("%1 &nbsp;<span style='color:%2'>engine %3 IST%4%5</span>")
                              .arg(tag, muted, live_detail::ist(eng, false))
                              .arg((stale ? QStringLiteral(" · <b style='color:#F07A6A'>FEED STALE: no new entries</b>") : QString()) + gate)
-                             .arg(age > 5 ? QStringLiteral(" · state %1 s old (engine stopped?)").arg(age) : QString())
-                             .arg(o.value(QStringLiteral("note")).toString().toHtmlEscaped()));
-        const QJsonArray ms = o.value(QStringLiteral("models")).toArray();
+                             .arg(age > 5 ? QStringLiteral(" · state %1 s old (engine stopped?)").arg(age) : QString()));
+        QJsonArray ms;
+        for (const auto& x : o.value(QStringLiteral("models")).toArray())
+            if (!terminal_hides_model(x.toObject().value(QStringLiteral("name")).toString())) ms.append(x);
         models_->setRowCount(static_cast<int>(ms.size()));
         fields_by_row_.clear();
         for (int r = 0; r < ms.size(); ++r) {
@@ -401,6 +447,7 @@ private:
             const QJsonObject p = x.toObject();
             Pos q;
             q.model = p.value(QStringLiteral("model")).toString();
+            if (terminal_hides_model(q.model)) continue;
             q.symbol = p.value(QStringLiteral("symbol")).toString();
             q.token = static_cast<quint32>(p.value(QStringLiteral("token")).toDouble());
             q.side = p.value(QStringLiteral("side")).toInt();
@@ -432,13 +479,51 @@ private:
         const QString path = root_ + QStringLiteral("/data/live/paper/trades.csv");
         const QFileInfo fi(path);
         const qint64 stamp = fi.exists() ? fi.lastModified().toMSecsSinceEpoch() + fi.size() : 0;
-        if (stamp == trades_stamp_) return;
+        const QString today = trades_today();
+        if (stamp == trades_stamp_ && today == trades_day_) return;
+        const bool new_day = today != trades_day_;
         trades_stamp_ = stamp;
-        trades_cache_ = load_live_trades(path);
-        const int n = static_cast<int>(trades_cache_.size());
+        trades_day_ = today;
+        trades_cache_.clear();
+        for (auto& t : load_live_trades(path))
+            if (!terminal_hides_model(t.model)) trades_cache_.push_back(std::move(t));
+        // The pickers: Today, every past day newest first, All days; All models, then each.
+        QStringList days, models;
+        for (const auto& t : trades_cache_) {
+            if (t.date != today && !days.contains(t.date)) days << t.date;
+            if (!models.contains(t.model)) models << t.model;
+        }
+        std::sort(days.begin(), days.end(), std::greater<>());
+        models.sort();
+        filling_ = true;
+        const QVariant day_was = day_pick_->currentData(), model_was = model_pick_->currentData();
+        day_pick_->clear();
+        day_pick_->addItem(QStringLiteral("Today"), today);
+        for (const QString& d : days) day_pick_->addItem(d, d);
+        day_pick_->addItem(QStringLiteral("All days"), QStringLiteral("*"));
+        model_pick_->clear();
+        model_pick_->addItem(QStringLiteral("All models"), QString());
+        for (const QString& m : models) model_pick_->addItem(m, m);
+        // A new day starts on Today; otherwise the pick stays.
+        const int d = new_day || !day_was.isValid() ? 0 : day_pick_->findData(day_was);
+        day_pick_->setCurrentIndex(d < 0 ? 0 : d);
+        const int m = model_was.isValid() ? model_pick_->findData(model_was) : 0;
+        model_pick_->setCurrentIndex(m < 0 ? 0 : m);
+        filling_ = false;
+        fill_trades();
+    }
+
+    /// The trades table: the picked day (or all) and model (or all), newest first.
+    void fill_trades() {
+        const QString day = day_pick_->currentData().toString();
+        const QString model = model_pick_->currentData().toString();
+        std::vector<const LivePaperRow*> shown;
+        for (const auto& t : trades_cache_)
+            if ((day == QLatin1String("*") || t.date == day) && (model.isEmpty() || t.model == model)) shown.push_back(&t);
+        const int n = static_cast<int>(shown.size());
         trades_->setRowCount(n);
         for (int i = 0; i < n; ++i) {
-            const LivePaperRow& t = trades_cache_[static_cast<std::size_t>(n - 1 - i)];   // newest first
+            const LivePaperRow& t = *shown[static_cast<std::size_t>(n - 1 - i)];   // newest first
             live_set(trades_, i, 0, t.date);
             live_set(trades_, i, 1, t.model);
             live_set(trades_, i, 2, t.symbol);
@@ -454,6 +539,12 @@ private:
             live_set(trades_, i, 12, t.why_out);
             live_set(trades_, i, 13, t.source + QStringLiteral(" · ") + t.costs);
         }
+    }
+
+    /// Today for the trades list: the engine's day, else the IST date.
+    [[nodiscard]] QString trades_today() const {
+        if (!engine_day_.isEmpty()) return engine_day_;
+        return QDateTime::currentDateTimeUtc().addSecs(19800).date().toString(Qt::ISODate);
     }
 
     /// Mark every open position from the stream, and total by model.
@@ -526,18 +617,19 @@ private:
             ++r;
         }
         const QString muted = QString::fromLatin1(theme_token::kTextMuted);
-        totals_->setText(QStringLiteral("<span style='color:%1'>All paper trades:</span> %2 round trips · gross <b>%3</b> · "
-                                        "expenses <b>%4</b> · net <b style='color:%5'>%6</b> &nbsp; "
-                                        "<span style='color:%1'>today net</span> <b>%7</b> &nbsp; "
-                                        "<span style='color:%1'>open, marked live</span> <b style='color:%8'>%9</b>%10")
+        totals_->setText(QStringLiteral("<span style='color:%1'>%2 trips · gross</span> <b>%3</b> "
+                                        "<span style='color:%1'>· expenses</span> <b>%4</b> "
+                                        "<span style='color:%1'>· net</span> <b style='color:%5'>%6</b> &nbsp; "
+                                        "<span style='color:%1'>today</span> <b>%7</b> &nbsp; "
+                                        "<span style='color:%1'>open</span> <b style='color:%8'>%9</b>%10")
                              .arg(muted).arg(trades_cache_.size()).arg(live_models_detail::rupees(gross))
                              .arg(any_unpriced ? QStringLiteral("unpriced") : live_models_detail::rupees(exp))
                              .arg(live_models_detail::pnl_color(gross - exp).name())
-                             .arg(any_unpriced ? QStringLiteral("— (expenses refused)") : live_models_detail::rupees(gross - exp))
+                             .arg(any_unpriced ? QStringLiteral("—") : live_models_detail::rupees(gross - exp))
                              .arg(any_unpriced ? QStringLiteral("—") : live_models_detail::rupees(net_today))
                              .arg(live_models_detail::pnl_color(open_total).name())
                              .arg(live_models_detail::rupees(open_total))
-                             .arg(open_complete ? QString() : QStringLiteral(" <span style='color:%1'>(some positions have no fresh quote and are left out of this total)</span>").arg(muted)));
+                             .arg(open_complete ? QString() : QStringLiteral(" <span style='color:%1'>(some unquoted)</span>").arg(muted)));
     }
 
     void start_engine() {
@@ -572,12 +664,9 @@ private:
     void show_running() {
         if (running_ == nullptr) return;
         running_->setText(engine_ != nullptr
-                              ? QStringLiteral("<span style='color:#7EE787'>\u25CF Models running</span> \u2014 every model "
-                                               "trades its own signals in demo, all session; ticks are recorded for "
-                                               "altair_tune (last 5 days)")
+                              ? QStringLiteral("<span style='color:#7EE787'>\u25CF Models running</span>")
                           : !auto_ ? QStringLiteral("<span style='color:#8A93A2'>\u25CB Models off</span>")
-                                   : QStringLiteral("<span style='color:#F0B429'>\u25CB Models waiting for the feed</span> "
-                                                    "\u2014 they start by themselves"));
+                                   : QStringLiteral("<span style='color:#F0B429'>\u25CB Waiting for the feed</span>"));
     }
 
     void stop_engine() {
@@ -595,12 +684,16 @@ private:
     qint64 restart_after_ms_ = 0;   ///< epoch ms the engine may start again; -1 while it runs
     QLabel* status_ = nullptr;
     QLabel* totals_ = nullptr;
-    QLabel* simple_intro_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QTableWidget* models_ = nullptr;
     QTableWidget* fields_ = nullptr;
     QTableWidget* positions_ = nullptr;
     QTableWidget* trades_ = nullptr;
+    QWidget* trades_page_ = nullptr;
+    QComboBox* day_pick_ = nullptr;
+    QComboBox* model_pick_ = nullptr;
+    bool filling_ = false;
+    QString trades_day_;
     QTableWidget* by_model_ = nullptr;
     QProcess* engine_ = nullptr;
     QTimer file_timer_, mark_timer_;

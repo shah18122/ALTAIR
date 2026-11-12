@@ -68,6 +68,7 @@ qt_add_executable(altair_desktop
     study_trades.hpp
     trade_reason.hpp
     trade_log_tabs.hpp
+    bank_pairs_panel.hpp
     command_palette.hpp
     saved_layouts.hpp
     daily_findings_page.hpp

@@ -36,6 +36,7 @@
 #include "news_ticker.hpp"
 #include "backtests_page.hpp"
 #include "trade_log_tabs.hpp"
+#include "bank_pairs_panel.hpp"
 #include "daily_findings_page.hpp"
 #include "work_log_page.hpp"
 #include "server_page.hpp"
@@ -1287,13 +1288,18 @@ private:
         pages_->addWidget(new CostPanel);
         pages_->addWidget(new AnalyticsPanel);
 
-        // Pair Trading, with the engine's pair trades and the saved pairs runs
-        // beside it (desktop/trade_log_tabs.hpp).
-        pages_->addWidget(with_trade_logs(new ChainPanel,
-            {{}, {QStringLiteral("Pairs BANKNIFTY/NIFTY")}, {QStringLiteral("pairs")},
-             QStringLiteral("The models engine's BANKNIFTY/NIFTY futures pair: every paper round trip, and real fills when "
-                            "LIVE is on. Double-click one for why it was taken.")},
-            QStringLiteral(ALTAIR_DATASET_DIR), source_root()));
+        // Pair Trading: the bank pairs paper model first (desktop/bank_pairs_panel.hpp),
+        // then the BANKNIFTY/NIFTY pair with its trades and saved runs (desktop/trade_log_tabs.hpp).
+        {
+            auto* pair_tabs = with_trade_logs(new ChainPanel,
+                {{}, {QStringLiteral("Pairs BANKNIFTY/NIFTY")}, {QStringLiteral("pairs")},
+                 QStringLiteral("BANKNIFTY/NIFTY futures pair: paper round trips, and real fills when LIVE is on.")},
+                QStringLiteral(ALTAIR_DATASET_DIR), source_root());
+            pair_tabs->insertTab(0, new BankPairsPanel(source_root()), QStringLiteral("Bank pairs"));
+            pair_tabs->setTabText(1, QStringLiteral("BANKNIFTY/NIFTY"));
+            pair_tabs->setCurrentIndex(0);
+            pages_->addWidget(pair_tabs);
+        }
 
         // P25-02. Was a blocked_page. Still true that no filings are
         // ingested, and the page says so first — but leaving the arithmetic
@@ -1726,10 +1732,10 @@ private:
         });
         pages_->addWidget(broker_page_);
 
-        // Paper trades from the band-fade option demo and the futures pairs.
-        // It runs the two research CLIs and reads what they wrote; it never
-        // reaches a broker.
-        pages_->addWidget(new DemoTradingPage);
+        // Slot 35, the retired Demo Trading page (Smit, 2026-11-12). It
+        // redirects to Backtests (navigation_registry.hpp: nav_destination);
+        // the placeholder keeps every later page index stable.
+        pages_->addWidget(new QWidget);
 
         // Threshold strategies: the OHL rule's live record, and the owner's
         // threshold_strategy/ demos and TradingView results (paper only).
@@ -1748,14 +1754,6 @@ private:
 #else
             auto* start = new StartPage(QDir::currentPath());
 #endif
-            start->open = [this](const QString& target) {
-                if (target == QLatin1String("terminal.models")) {
-                    show_page(QStringLiteral("market.terminal"));
-                    (void)show_terminal_view(QStringLiteral("models"));
-                    return;
-                }
-                (void)show_page(target);
-            };
             pages_->addWidget(start);
         }
         // Every backtest's trades in one place (desktop/backtests_page.hpp).

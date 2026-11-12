@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     QDir(root.path()).mkpath(QStringLiteral("config"));
     write(root.path() + QStringLiteral("/config/obi_underlyings.csv"), "symbol,target,stop,safety\nNYKAA,0.80,0.40,0.05\n");
     // BANKNIFTY: the future at 52,000 and 13 strikes a side of 100 (the page keeps 11);
-    // a later expiry that must not appear; NIFTY, which the page no longer offers; NYKAA's future.
+    // a later expiry that must not appear; NIFTY's future; NYKAA's future (a csv stock).
     QByteArray uni = "token,fyers,symbol,underlying,kind,expiry,strike,lot,tick,group,depth\n"
                      "1,NSE:NIFTY50-INDEX,NIFTY 50,NIFTY,index,,0,1,0.05,Indices,0\n"
                      "13,NSE:NIFTY26NOVFUT,NIFTY26NOVFUT,NIFTY,future,2026-11-24,0,75,0.05,Futures,5\n"
@@ -122,12 +122,14 @@ int main(int argc, char** argv) {
     page.show();
     QCoreApplication::processEvents();
 
-    // Two instruments, nothing else.
+    // The OBI trader's instruments, nothing else.
     {
         const auto buttons = page.findChildren<QPushButton*>();
         QStringList unders;
         for (auto* b : buttons) if (b->objectName().startsWith(QStringLiteral("obiUnder_"))) unders << b->text();
-        check(unders == QStringList({QStringLiteral("BANKNIFTY"), QStringLiteral("NYKAA")}), "only BANKNIFTY and the csv stock (NYKAA) are offered");
+        check(unders == QStringList({QStringLiteral("BANKNIFTY"), QStringLiteral("NIFTY"), QStringLiteral("NYKAA")}),
+              "BANKNIFTY, NIFTY and a csv stock are offered, nothing else");
+        check(order_flow_detail::rules_for(QStringLiteral("NIFTY")).target_pts == 11.0, "NIFTY's own index-point target");
     }
     check(page.underlying() == QStringLiteral("BANKNIFTY") && page.future_token() == 14 && page.token() == 14,
           "BANKNIFTY opens on its nearest future");

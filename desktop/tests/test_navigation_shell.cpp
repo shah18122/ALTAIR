@@ -304,7 +304,12 @@ int main(int argc, char** argv) {
         for (const char* page : {"strategies.overview", "strategies.overnight", "strategies.pair-trading", "strategies.basis"}) {
             window.show_page(QString::fromLatin1(page));
             auto* tabs = qobject_cast<QTabWidget*>(stack->currentWidget());
-            check(tabs != nullptr && tabs->objectName() == QStringLiteral("tradeLogTabs") && tabs->tabText(0) == QStringLiteral("Study")
+            const bool pairs = QLatin1String(page) == QLatin1String("strategies.pair-trading");
+            check(pairs ? tabs != nullptr && tabs->tabText(0) == QStringLiteral("Bank pairs") && tabs->currentIndex() == 0
+                              && tabs->widget(0)->findChild<QWidget*>(QStringLiteral("strategyRecord")) != nullptr
+                        : true,
+                  "Pair Trading opens on the bank pairs: decisions and paper record");
+            check(tabs != nullptr && tabs->objectName() == QStringLiteral("tradeLogTabs") && tabs->tabText(pairs ? 1 : 0) == (pairs ? QStringLiteral("BANKNIFTY/NIFTY") : QStringLiteral("Study"))
                       && tabs->tabText(tabs->count() - 1) == QStringLiteral("Saved runs"),
                   "a strategy page opens on its study with its trades in tabs beside it");
         }

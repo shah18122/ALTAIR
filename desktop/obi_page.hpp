@@ -1,10 +1,10 @@
-// desktop/obi_page.hpp -- Order Book Imbalance: BANKNIFTY (the heavy book) and
-// NYKAA (the thin one), every book and every print, the four trade types live,
+// desktop/obi_page.hpp -- Order Book Imbalance: BANKNIFTY and NIFTY, every
+// book and every print, the four trade types live,
 // and a paper BUY / SELL one click away.
 //
 // WHAT IS ON IT (Smit, 2026-11-02: "purely order book")
-//   * Two buttons: BANKNIFTY and the F&O stocks of config/obi_underlyings.csv
-//     (NYKAA). Nothing else -- the OBI trader trades only these.
+//   * Buttons: BANKNIFTY, NIFTY and any F&O stock of config/obi_underlyings.csv
+//     (none now). Nothing else -- the OBI trader trades only these.
 //   * The ladder of the selected contract: up to 50 levels a side (the FYERS
 //     50-level book while it holds a TBT slot, else 5), size bars, the sweep
 //     total, the change at each level, touch, mid and microprice.
@@ -250,7 +250,7 @@ struct LevelRow {
 }
 
 /// The OBI trader's numbers for one underlying (app/live_engine_main.cpp):
-/// BANKNIFTY in index points, a stock of config/obi_underlyings.csv in rupees
+/// BANKNIFTY and NIFTY in index points, a stock of config/obi_underlyings.csv in rupees
 /// a share. Shown on the page; the trader decides.
 struct ObiRules {
     double obi_entry = 0.30;
@@ -261,6 +261,8 @@ struct ObiRules {
 /// `root`, when given, is read for config/obi_underlyings.csv.
 [[nodiscard]] inline ObiRules rules_for(const QString& underlying, const QString& root = {}) {
     ObiRules r;
+    for (const auto& u : altair::live::kObiIndices)
+        if (QString::fromStdString(u.symbol) == underlying) { r.target_pts = u.target_pts; r.stop_pts = u.stop_pts; r.safety_pts = u.safety_pts; }
     if (!root.isEmpty())
         for (const auto& u : altair::live::read_obi_underlyings((root + QStringLiteral("/config/obi_underlyings.csv")).toStdString()))
             if (QString::fromStdString(u.symbol) == underlying) { r.target_pts = u.target_pts; r.stop_pts = u.stop_pts; r.safety_pts = u.safety_pts; }
@@ -268,9 +270,10 @@ struct ObiRules {
 }
 [[nodiscard]] inline live::ObiSignalRules signal_rules(const ObiRules& r) { return {r.obi_entry, r.min_persist, r.min_persist_ns}; }
 
-/// The underlyings the page offers: BANKNIFTY, then config/obi_underlyings.csv.
+/// The underlyings the page offers: BANKNIFTY, NIFTY, then config/obi_underlyings.csv.
 [[nodiscard]] inline QStringList obi_underlyings(const QString& root) {
-    QStringList out{QStringLiteral("BANKNIFTY")};
+    QStringList out;
+    for (const auto& u : altair::live::kObiIndices) out << QString::fromStdString(u.symbol);
     for (const auto& u : altair::live::read_obi_underlyings((root + QStringLiteral("/config/obi_underlyings.csv")).toStdString()))
         if (!out.contains(QString::fromStdString(u.symbol))) out << QString::fromStdString(u.symbol);
     return out;
@@ -1247,7 +1250,7 @@ private:
     void fill_how(const flow::FlowSignals* fs, const LiveRow* fr) {
         using namespace order_flow_detail;
         const QString acc = QString::fromLatin1(theme_token::kAccent), muted = QString::fromLatin1(theme_token::kTextMuted);
-        const bool stock = under_ != QLatin1String("BANKNIFTY");
+        const bool stock = !altair::live::obi_is_index(under_.toStdString());
         const QString unit = stock ? QStringLiteral("rupees a share") : QStringLiteral("index points");
         const qint64 lot = fr != nullptr ? fr->lot : 1;
         const QString fsym = fr != nullptr ? fr->symbol : QStringLiteral("the near future");

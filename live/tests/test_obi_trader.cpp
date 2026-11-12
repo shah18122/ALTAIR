@@ -285,14 +285,17 @@ int main() {
               "the defaults: BANKNIFTY's 25 / 15 points, a 30 s cooldown, 40 trades a day");
     }
     {
-        // An F&O stock from config/obi_underlyings.csv: NYKAA's own future
-        // (lot 3,125, around Rs 347) with its per-share target and stop.
-        const auto list = read_obi_underlyings(std::string(ALTAIR_SOURCE_DIR) + "/config/obi_underlyings.csv");
-        const auto it = std::find_if(list.begin(), list.end(), [](const ObiUnderlying& x) { return x.symbol == "NYKAA"; });
-        check(it != list.end() && it->target_pts > it->stop_pts && it->stop_pts * 3125 < 2'000.0,
-              "the shipped list has NYKAA, its stop inside the Rs 2,000 a trade limit for one lot");
+        // The shipped list: BANKNIFTY and NIFTY, no stocks (Smit, 2026-11-12).
+        const auto all = obi_trade_underlyings(std::string(ALTAIR_SOURCE_DIR) + "/config/obi_underlyings.csv");
+        check(all.size() == 2 && all[0].symbol == "BANKNIFTY" && all[1].symbol == "NIFTY"
+                  && all[1].target_pts > all[1].stop_pts && all[1].stop_pts * 75 < 2'000.0,
+              "the OBI trader runs on BANKNIFTY then NIFTY, NIFTY's stop inside the Rs 2,000 a trade limit for one lot");
+        // An F&O stock the csv could add: NYKAA's own future (lot 3,125,
+        // around Rs 347) with its per-share target and stop.
+        const ObiUnderlying nykaa{"NYKAA", 0.80, 0.40, 0.05};
+        const auto* it = &nykaa;
         ObiTraderRules r = nifty_rules();
-        if (it != list.end()) { r.target_pts = it->target_pts; r.stop_pts = it->stop_pts; r.safety_pts = it->safety_pts; }
+        r.target_pts = it->target_pts; r.stop_pts = it->stop_pts; r.safety_pts = it->safety_pts;
         Spec sp;
         sp.under = "NYKAA"; sp.lot = 3125; sp.shift = 34'700 - 2'400'000; sp.qmul = 12; sp.cost_per_unit = 0.01;
         Rig g(ObiMode::Futures, r, sp);

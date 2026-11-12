@@ -72,7 +72,9 @@ int main(int argc, char** argv) {
     {"name": "Direction 10:15 AR(2)", "family": "direction + magnitude gate", "state": "done today", "signal": "UP to the close",
      "reason": "Gate shut: the call is worth -2.4 bp after costs.", "fields": [["calibrated q", "51.0 %"]]},
     {"name": "Stat-arb NIFTY 50", "family": "stat-arb", "state": "abstaining", "signal": "",
-     "reason": "No history: 0 of 50 stocks have daily closes in data/pairs/", "fields": []}
+     "reason": "No history: 0 of 50 stocks have daily closes in data/pairs/", "fields": []},
+    {"name": "OBI A futures BANKNIFTY", "family": "Order flow", "state": "watching", "signal": "", "reason": "x", "fields": []},
+    {"name": "Pair trading ICICIBANK/SBIN", "family": "pairs", "state": "watching", "signal": "", "reason": "x", "fields": []}
   ],
   "positions": [
     {"model": "Strangle 80% NIFTY", "symbol": "NIFTY26O0623250CE", "token": 1001, "side": -1, "qty": 65, "lot": 65,
@@ -86,7 +88,8 @@ int main(int argc, char** argv) {
           "date,model,symbol,token,side,qty,entry_time,entry,exit_time,exit,gross,expenses,net,why_in,why_out,source,costs\n"
           "2026-09-30,\"Strangle 80% NIFTY\",NIFTY26O0623300CE,9,short,65,2026-09-30 09:20:00,70.00,2026-09-30 15:20:00,50.00,1300.00,60.00,1240.00,\"09:20 band\",\"15:20 square-off\",SIM,UNVERIFIED\n"
           "2026-10-01,\"Strangle 80% NIFTY\",NIFTY26O0622900PE,8,short,65,2026-10-01 09:20:00,61.20,2026-10-01 10:40:00,122.40,-3978.00,55.96,-4033.96,\"09:20 band, a, comma\",\"premium doubled: stop at 10:40\",SIM,UNVERIFIED\n"
-          "2026-10-01,\"Direction 10:15 AR(2)\",NIFTY26OCTFUT,1002,long,65,2026-10-01 10:15:00,23100.00,2026-10-01 15:20:00,23150.00,3250.00,,,\"q 56 %\",\"15:20 square-off\",SIM,UNPRICED\n");
+          "2026-10-01,\"Direction 10:15 AR(2)\",NIFTY26OCTFUT,1002,long,65,2026-10-01 10:15:00,23100.00,2026-10-01 15:20:00,23150.00,3250.00,,,\"q 56 %\",\"15:20 square-off\",SIM,UNPRICED\n"
+          "2026-10-01,\"Pair trading ICICIBANK/SBIN\",SBIN26OCTFUT,7,long,750,2026-10-01 09:20:00,800.00,2026-10-01 15:20:00,801.00,750.00,40.00,710.00,\"z 2.1\",\"z 0.4\",SIM,UNVERIFIED\n");
 
     boost::asio::io_context io;
     PriceBus bus(io, 0);
@@ -119,17 +122,16 @@ int main(int argc, char** argv) {
 
     auto* m = panel.models_table();
     check(m->rowCount() == 3 && cell(m, 0, 0) == QStringLiteral("Strangle 80% NIFTY") && cell(m, 0, 2) == QStringLiteral("in position"),
-          "every model has a row with its state");
+          "every model has a row with its state; the OBI trader and the bank pairs have their own pages");
     check(cell(m, 1, 4) == QStringLiteral("Gate shut: the call is worth -2.4 bp after costs."), "and says why it is not acting");
     {
         simple_mode::set(true);
-        auto* intro = panel.findChild<QLabel*>(QStringLiteral("modelsSimpleIntro"));
         check(m->isColumnHidden(1) && m->isColumnHidden(3) && !m->isColumnHidden(2) && !m->isColumnHidden(4)
                   && panel.trades_table()->isColumnHidden(10) && !panel.trades_table()->isColumnHidden(11)
-                  && intro != nullptr && intro->isVisible(),
-              "Simple: model, state and why; trades with the net; a line saying what the page is");
+                  && panel.findChild<QLabel*>(QStringLiteral("modelsSimpleIntro")) == nullptr,
+              "Simple: model, state and why; trades with the net; no paragraph of text");
         simple_mode::set(false);
-        check(!m->isColumnHidden(1) && !panel.trades_table()->isColumnHidden(10) && intro != nullptr && !intro->isVisible(),
+        check(!m->isColumnHidden(1) && !panel.trades_table()->isColumnHidden(10),
               "Advanced: family, signal and every expense column back");
     }
     check(cell(m, 2, 2) == QStringLiteral("abstaining") && cell(m, 2, 4).startsWith(QStringLiteral("No history")),
@@ -151,11 +153,20 @@ int main(int argc, char** argv) {
     check(cell(p, 1, 6) == QStringLiteral("3,900"), "the next tick re-marks the position (23130 - 23100) x 130");
 
     auto* t = panel.trades_table();
-    check(t->rowCount() == 3 && cell(t, 0, 1) == QStringLiteral("Direction 10:15 AR(2)"), "trades newest first");
+    check(t->rowCount() == 2 && cell(t, 0, 1) == QStringLiteral("Direction 10:15 AR(2)"),
+          "Paper trades: today's only (the pair trade is on its own page), newest first");
     check(cell(t, 1, 12) == QStringLiteral("premium doubled: stop at 10:40") && cell(t, 1, 11) == QStringLiteral("−⁠4,034"),
           "a quoted reason with a comma survives, and net is shown");
     check(cell(t, 0, 10) == QStringLiteral("—") && cell(t, 0, 13) == QStringLiteral("SIM · UNPRICED"),
           "an unpriced trade shows no expense and says UNPRICED");
+
+    check(panel.trades_day()->count() == 3 && panel.trades_day()->itemText(1) == QStringLiteral("2026-09-30"),
+          "the day picker: Today, each past day, All days");
+    panel.trades_day()->setCurrentIndex(panel.trades_day()->count() - 1);
+    check(t->rowCount() == 3, "All days: the whole history");
+    panel.trades_day()->setCurrentIndex(1);
+    check(t->rowCount() == 1 && cell(t, 0, 0) == QStringLiteral("2026-09-30"), "a past day: that day's trades");
+    panel.trades_day()->setCurrentIndex(0);
 
     auto* b = panel.by_model_table();
     int strangle_row = -1;
@@ -163,11 +174,19 @@ int main(int argc, char** argv) {
     check(strangle_row >= 0 && cell(b, strangle_row, 1) == QStringLiteral("2")
               && cell(b, strangle_row, 4) == QStringLiteral("−⁠2,794") && cell(b, strangle_row, 6) == QStringLiteral("−⁠4,034"),
           "P&L by model: all days net (1,240 - 4,034) and today's net");
+    bool pair_row = false;
+    for (int r = 0; r < b->rowCount(); ++r) pair_row = pair_row || cell(b, r, 0).startsWith(QStringLiteral("Pair trading"));
+    check(b->rowCount() == 3 && !pair_row, "P&L by model leaves out the bank pairs too");
+    b->cellClicked(strangle_row, 4);
+    check(panel.tabs()->currentIndex() == 1 && t->rowCount() == 1 && cell(t, 0, 1) == QStringLiteral("Strangle 80% NIFTY")
+              && panel.trades_model()->currentText() == QStringLiteral("Strangle 80% NIFTY"),
+          "a click on a model's P&L opens its paper trades, today's");
     check(panel.status_text().contains(QStringLiteral("SIM")) && panel.status_text().contains(QStringLiteral("11:00:00")),
           "the status says SIM and the engine's clock");
-    check(panel.status_text().contains(QStringLiteral("margin est. 4,12,345 of 1,00,00,000 (peak today 6,92,828; not SPAN)")),
-          "and the margin estimate against its limit, labelled not SPAN");
-    check(panel.status_text().contains(QStringLiteral("p99 frame 587 µs, decision 1147 µs")), "and the engine's p99 latencies");
+    check(panel.status_tip().contains(QStringLiteral("margin est. 4,12,345 of 1,00,00,000 (peak today 6,92,828; not SPAN)"))
+              && !panel.status_text().contains(QStringLiteral("margin")),
+          "the margin estimate, labelled not SPAN, is on hover, not on the page");
+    check(panel.status_tip().contains(QStringLiteral("p99 frame 587 µs, decision 1147 µs")), "and the engine's p99 latencies");
 
     std::printf("%s\n", failures == 0 ? "all live models checks passed" : "live models checks did not pass");
     return failures == 0 ? 0 : 1;
