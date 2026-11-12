@@ -57,3 +57,31 @@ not help. Adding the CNN changes nothing: its p(up) has IC under 0.01 and p(big)
 These are real but small: each is worth about 1-5 bp a trade, below the 6 bp a futures round trip
 costs. They are more useful as risk filters for the option-selling strategy (S1, `research/strategy/`):
 a day with a big move since the open and rising OI is a trend day, the day a short straddle loses most.
+
+# Rerun on the merged dataset: 11.8 years (2026-11-12)
+
+Data: altair-data `merged/` first build (c72aa19, `tools/merge_bars.py`): NIFTY and BANKNIFTY index
+plus India VIX, 5-minute bars 2015-01 to 2026-11 (TradingView `dataset` + FYERS since 2026-11-04;
+flagged bars dropped). Index, not futures: this measures whether price can be forecast, not tradable P&L.
+Added VIX features (level, move since open, 5/30-min change, VIX minus HAR realised). Refit every
+quarter on the past only. `python research/cnn/combo.py --bars <altair-data>/merged --segment spot --fold quarter`.
+Tables: `results/combo_summary_spot_quarter.csv`, `results/combo_ic_spot_quarter.csv`.
+
+## Price forecast: still no usable skill
+
+- Best RMSE skill vs "no change": +0.1% (NIFTY, 15 min, ridge+GBM average). Most are negative.
+- No trading rule passes after 6 bp. The best, NIFTY 30-min ridge on high-vol bars: +6.7 bp/trade net,
+  215 trades in 11 years, t 1.2, positive in 9 of 11 years. That is not significant after 90 tests
+  (needs t >= 3.2), and it trades once every ~3 weeks.
+
+## What 12 years confirm (same sign every year, 12/12)
+
+| Effect | median IC |
+|---|---|
+| NIFTY move since the open continues to the close | +0.076 |
+| BANKNIFTY follows NIFTY's day move to the close (and NIFTY follows BANKNIFTY) | +0.056 / +0.075 |
+| Last 5-15 min BANKNIFTY move and close location reverse next 5-15 min | -0.024 to -0.035 |
+| The CNN's p(up) for BANKNIFTY next 5 min | +0.026 |
+| VIX rising since the open -> NIFTY lower into the close (10 of 12 years) | -0.057 |
+
+The CNN does carry a real but tiny next-5-minute signal (12 of 12 years), worth well under 1 bp.

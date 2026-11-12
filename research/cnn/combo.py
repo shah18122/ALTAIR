@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
 import math
 import sys
 from pathlib import Path
@@ -43,9 +44,14 @@ HORIZONS = {"5m": 1, "15m": 3, "30m": 6, "60m": 12, "close": 0}
 
 
 def load(path: Path) -> dict[str, tuple]:
+    """all.csv (drive bar tree) or clean.csv.gz (altair-data merged/, flagged bars skipped)."""
     out = {}
-    with path.open() as f:
+    if not path.exists() and path.name == "all.csv":
+        path = path.with_name("clean.csv.gz")
+    with (gzip.open(path, "rt") if path.suffix == ".gz" else path.open()) as f:
         for r in csv.DictReader(f):
+            if r.get("flag", "ok") != "ok":
+                continue
             out[r["time"]] = (float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"]),
                               float(r.get("volume") or 0), float(r.get("oi") or 0))
     return out
@@ -58,10 +64,12 @@ def trail(x: np.ndarray, k: int) -> np.ndarray:
     return (cs[i + 1] - cs[lo]) / (i + 1 - lo)
 
 
-def build(bars: Path):
-    nf = load(bars / "fut/nifty/5m/all.csv")
-    bf = load(bars / "fut/banknifty/5m/all.csv")
+def build(bars: Path, segment: str = "fut"):
+    nf = load(bars / segment / "nifty/5m/all.csv")
+    bf = load(bars / segment / "banknifty/5m/all.csv")
     sp = load(bars / "spot/nifty/5m/all.csv")
+    vix_path = bars / "spot/indiavix/5m/clean.csv.gz"
+    vx = load(vix_path) if vix_path.exists() else {}
     times = sorted(set(nf) & set(bf))
     n = len(times)
     day = np.array([t[:10] for t in times])
@@ -84,6 +92,7 @@ def build(bars: Path):
         a = np.array([src[t] for t in times])
         S[name] = dict(o=a[:, 0], h=a[:, 1], l=a[:, 2], c=a[:, 3], v=a[:, 4], oi=a[:, 5])
     spot_c = np.array([sp[t][3] if t in sp else np.nan for t in times])
+    S["vix"] = np.array([vx[t][3] if t in vx else np.nan for t in times]) if vx else None
     # session open close index per bar
     day_start = np.maximum.accumulate(np.where(new_day, np.arange(n), 0))
     day_end = np.empty(n, int)
@@ -138,6 +147,19 @@ def feats_for(S, me: str, other: str, spot_c, mins, dow, dexp, new_day, day_star
     F["mins"] = mins
     F["dow"] = dow.astype(float)
     F["days_to_expiry"] = dexp
+    vix = S.get("vix")
+    if vix is not None:   # India VIX: level, move since open, last 5 and 30 min (forward-filled gaps)
+        v = vix.copy()
+        for i in range(1, n):
+            if np.isnan(v[i]):
+                v[i] = v[i - 1]
+        v = np.nan_to_num(v, nan=np.nanmedian(vix))
+        lv = np.log(v)
+        F["vix"] = v
+        F["vix_since_open"] = 1e4 * (lv - lv[day_start])
+        F["vix_r1"] = ret(lv, 1)
+        F["vix_r6"] = ret(lv, 6)
+        F["vix_minus_har"] = v - F["har22"] * 1.2533 * math.sqrt(75 * 252) / 100   # implied minus realised, vol pts
     return F
 
 
@@ -153,15 +175,21 @@ def main() -> int:
     ap.add_argument("--out", default="research/cnn/results")
     ap.add_argument("--cost-bp", type=float, default=6.0)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--segment", default="fut", help="fut or spot (spot: index, not tradable; forecastability only)")
+    ap.add_argument("--fold", default="month", choices=("month", "quarter"))
     a = ap.parse_args()
     bars, out = Path(a.bars), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    times, day, month, mins, dow, dexp, new_day, day_start, day_end, S, spot_c = build(bars)
+    times, day, month, mins, dow, dexp, new_day, day_start, day_end, S, spot_c = build(bars, a.segment)
     n = len(times)
     year = np.array([t[:4] for t in times])
-    months = sorted(set(month))
+    fold = month if a.fold == "month" else np.array([f"{t[:4]}Q{(int(t[5:7]) - 1) // 3 + 1}" for t in times])
+    months = sorted(set(fold))
+    skip_cnn, skip_combo = (3, 6) if a.fold == "month" else (1, 2)
+    years = sorted(set(year))
     ic_rows, res_rows = [], []
-    for me, other, label in (("n", "b", "NIFTY fut"), ("b", "n", "BANKNIFTY fut")):
+    seg = "fut" if a.segment == "fut" else "spot"
+    for me, other, label in (("n", "b", f"NIFTY {seg}"), ("b", "n", f"BANKNIFTY {seg}")):
         F = feats_for(S, me, other, spot_c, mins, dow, dexp, new_day, day_start)
         lc = np.log(S[me]["c"])
         # walk-forward CNN p(up), p(big) on this series' own 5m bars (monthly refit)
@@ -171,10 +199,10 @@ def main() -> int:
         ok1 = np.zeros(n, bool)
         ok1[T:n - 1] = day[T + 1:] == day[T:n - 1]   # next bar in the same session
         cnn_up, cnn_big = np.full(n, 0.5), np.full(n, 0.5)
-        for m in months[3:]:
-            te = np.where((month == m) & (np.arange(n) >= T))[0]
-            tr = np.where((month < m) & ok1)[0]
-            tr = tr[month[np.minimum(tr + 1, n - 1)] < m][-60000:]
+        for m in months[skip_cnn:]:
+            te = np.where((fold == m) & (np.arange(n) >= T))[0]
+            tr = np.where((fold < m) & ok1)[0]
+            tr = tr[fold[np.minimum(tr + 1, n - 1)] < m][-60000:]
             if len(tr) < 2000 or len(te) == 0:
                 continue
             mu, sd = f4[tr].mean(0), f4[tr].std(0) + 1e-12
@@ -200,7 +228,7 @@ def main() -> int:
             # ---- part 1: IC per feature per year
             for k, col in zip(names, X.T):
                 row = dict(series=label, horizon=hname, feature=k)
-                for yr in ("2020", "2022", "2023"):
+                for yr in years:
                     sel = valid & (year == yr) & (F["cnn_p_up"] != 0 if k.startswith("cnn") else True)
                     row[f"ic_{yr}"] = round(spearman(col[sel], y[sel]), 4) if sel.sum() > 100 else ""
                 ic_rows.append(row)
@@ -210,10 +238,10 @@ def main() -> int:
             grid = valid & (((np.arange(n) - day_start) % step) == 0)
             pred = {m_: np.full(n, np.nan) for m_ in ("ridge", "gbm", "avg")}
             thr = {m_: np.full(n, np.nan) for m_ in pred}
-            for m in months[6:]:
-                te = np.where((month == m) & grid)[0]
-                tr = np.where((month < m) & valid)[0]
-                tr = tr[month[tgt[tr]] < m]
+            for m in months[skip_combo:]:
+                te = np.where((fold == m) & grid)[0]
+                tr = np.where((fold < m) & valid)[0]
+                tr = tr[fold[tgt[tr]] < m]
                 if len(tr) < 3000 or len(te) == 0:
                     continue
                 tr = tr[-80000:]
@@ -238,6 +266,7 @@ def main() -> int:
                 p_, yv, dv, yr_ = pred[m_][sel], y[sel], day[sel], year[sel]
                 hv = har[sel] >= np.quantile(har[valid], 0.75)
                 ic = spearman(p_, yv)
+                rmse_skill = 100 * (1 - math.sqrt(np.mean((p_ - yv) ** 2)) / math.sqrt(np.mean(yv ** 2)))
                 for mode, use in (("edge", np.abs(p_) > a.cost_bp), ("top10", np.abs(p_) >= thr[m_][sel]),
                                   ("hivol", (np.abs(p_) > a.cost_bp) & hv)):
                     net = np.sign(p_[use]) * yv[use] - a.cost_bp
@@ -247,16 +276,18 @@ def main() -> int:
                         days[d_] = days.get(d_, 0.0) + x_
                     dn = np.array(list(days.values()))
                     r = dict(series=label, horizon=hname, model=m_, mode=mode, ic=round(ic, 4),
+                             rmse_skill_pct=round(rmse_skill, 3),
                              trades=int(use.sum()), gross_bp=round(float(gross.mean()), 2) if use.any() else 0,
                              net_bp=round(float(net.mean()), 2) if use.any() else 0,
                              hit=round(float((gross > 0).mean()), 3) if use.any() else "",
                              daily_t=round(nw_t(dn), 2) if len(dn) > 30 else "")
-                    for y_ in ("2020", "2022", "2023"):
+                    for y_ in years:
                         u = yr_[use] == y_
                         r[f"net_{y_}"] = round(float(net[u].mean()), 2) if u.any() else ""
                     res_rows.append(r)
                     print(r, flush=True)
-    for fn, rows in (("combo_ic.csv", ic_rows), ("combo_summary.csv", res_rows)):
+    tag = "" if a.segment == "fut" and a.fold == "month" else f"_{a.segment}_{a.fold}"
+    for fn, rows in ((f"combo_ic{tag}.csv", ic_rows), (f"combo_summary{tag}.csv", res_rows)):
         with (out / fn).open("w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=list(rows[0]))
             w.writeheader()
