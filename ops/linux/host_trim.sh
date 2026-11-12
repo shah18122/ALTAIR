@@ -29,6 +29,7 @@
 #   chrony-wait.service enabled               time-sync.target means the clock IS synced at boot
 #   snap refresh window                       Saturday 02:00-04:00 only
 #   motd-news, apt news, ESM ads              off
+#   networkd-wait-online --any                boot no longer waits 2 min for the DPDK ENI
 #
 # Refused in market hours (08:45-15:50 IST weekdays) unless --force: a purge can
 # trigger triggers and services restarts.
@@ -61,6 +62,7 @@ d_upg=/etc/systemd/system/apt-daily-upgrade.timer.d
 f_nr=/etc/needrestart/conf.d/altair.conf
 f_jd=/etc/systemd/journald.conf.d/altair.conf
 f_chrony=/etc/chrony/sources.d/altair-aws.sources
+f_wo=/etc/systemd/system/systemd-networkd-wait-online.service.d/altair.conf
 
 say() { echo "$*"; }
 run() { if [ "$go" = 1 ]; then "$@"; else echo "  would run: $*"; fi; }
@@ -70,7 +72,7 @@ write() {
 }
 
 if [ "$undo" = 1 ]; then
-    for f in "$f_apt" "$d_daily/altair.conf" "$d_upg/altair.conf" "$f_nr" "$f_jd" "$f_chrony"; do run rm -f "$f"; done
+    for f in "$f_apt" "$d_daily/altair.conf" "$d_upg/altair.conf" "$f_nr" "$f_jd" "$f_chrony" "$f_wo"; do run rm -f "$f"; done
     if [ -f "$masked_list" ]; then
         # shellcheck disable=SC2046
         run systemctl unmask $(cat "$masked_list")
@@ -143,6 +145,10 @@ RateLimitIntervalSec=0
 RateLimitBurst=0'
 write "$f_chrony" '# ALTAIR: the Amazon Time Sync Service (link-local, every EC2 instance), preferred.
 server 169.254.169.123 prefer iburst minpoll 4 maxpoll 4'
+write "$f_wo" '# ALTAIR: the spare ENI belongs to DPDK and never comes up; one interface online is enough
+[Service]
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any --timeout=30'
 run systemctl daemon-reload
 run systemctl enable chrony-wait.service
 run systemctl restart systemd-journald
