@@ -1,0 +1,9 @@
+split,cls,trades,net_bp
+dev,FLOW,104,-62.5707
+dev,NEWS,217,26.0587
+dev,OTHER,615,45.1739
+dev,SECTOR,171,33.9787
+holdout,FLOW,67,17.7225
+holdout,NEWS,121,58.1639
+holdout,OTHER,322,-10.1596
+holdout,SECTOR,124,11.9596
