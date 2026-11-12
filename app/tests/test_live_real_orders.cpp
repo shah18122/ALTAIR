@@ -3,11 +3,11 @@
 // strategy's own switch is on; the arbitrage's two legs become two IOC
 // requests at the touch, by "strategy.arbitrage", sized together to the caps
 // (the demo's 100 shares a leg, the router's ceiling of 50 lots an order: 50
-// real shares a leg); once both fill at FYERS the pair is the clearing
-// corporation's to net -- no exit is sent -- and it is written as ONE round
-// trip with gross, the two fills' expenses and net; a pair whose second leg
-// did not fill is flattened, once; a part-filled pair nets what matched and
-// sends the rest back out; with a halt requested nothing new is sent.
+// real shares a leg); once both fill at FYERS they are HELD -- FYERS keeps an
+// intraday long on one exchange and a short on the other apart -- until the
+// demo closes the pair, when both exits are sent and each leg is written as
+// its own round trip; a pair whose second leg did not fill (or filled less)
+// is flattened, once; with a halt requested nothing new is sent.
 //
 // No check description here may contain the substring "F" "AIL" joined.
 
@@ -97,7 +97,9 @@ int main() {
     instant.latency_ns = 0;
     const LiveCostFn cost = [](const LiveInstrument&, bool, double qty, double px, std::int64_t) { return 0.00015 * qty * px; };
     LiveEngine e(u, cost, instant);
-    e.add_model(std::make_unique<LiveCrossArbModel>());
+    LiveCrossArbRule visible;
+    visible.fixed_qty = 0;   // the demo trades the lower visible size (100), so the caps are what size the real legs
+    e.add_model(std::make_unique<LiveCrossArbModel>(visible));
     live_real::RealOrderBridge bridge(root, cost);
     bridge.attach(e);
     bridge.set_wall_clock([t0] { return t0; });
@@ -117,9 +119,12 @@ int main() {
     write_arm(root, now_unix, false);
     bridge.poll(t0);
     quote(1, 100000, 100010, t0 + kSec);
-    quote(2, 99850, 99860, t0 + kSec);   // 14 bp across: the arbitrage enters in paper, two legs, netted at once
-    check(e.book().trades().size() == 1 && e.book().flat("Cross-exchange arbitrage") && !fs::exists(intents),
-          "with its switch off the arbitrage demo-trades (one netted pair) and asks for nothing real");
+    quote(2, 99850, 99860, t0 + kSec);   // 14 bp across: the arbitrage enters in paper, two legs, held
+    check(e.book().trades().empty() && !e.book().flat("Cross-exchange arbitrage") && !fs::exists(intents),
+          "with its switch off the arbitrage demo-trades (a pair held) and asks for nothing real");
+    quote(2, 99995, 100005, t0 + 2 * kSec);   // the prices meet: the demo closes both legs
+    check(e.book().trades().size() == 2 && e.book().flat("Cross-exchange arbitrage") && !fs::exists(intents),
+          "the demo closes both legs when the prices meet; still nothing real");
 
     // Switch on: the next pair becomes two IOC requests at the touch -- and nothing more.
     write_arm(root, now_unix, true);
@@ -127,8 +132,8 @@ int main() {
     quote(1, 100000, 100010, t0 + 10 * kSec);
     quote(2, 99850, 99860, t0 + 10 * kSec);
     auto ls = lines(intents);
-    check(e.book().trades().size() == 2 && e.book().trades().back().qty == 100,
-          "the demo trades its own 100 shares a leg (the lower visible size)");
+    const LivePosition* demo_leg = e.book().position("Cross-exchange arbitrage", 2);
+    check(demo_leg != nullptr && demo_leg->qty == 100, "the demo trades its own 100 shares a leg (the lower visible size)");
     check(ls.size() == 2, "LIVE armed and Auto: Arbitrage on: two requests, one per leg");
     {
         const auto why = lines(root / "data" / "live_orders" / "strategy_orders.jsonl");
@@ -163,76 +168,73 @@ int main() {
         check(field(b, "side") == "SELL" && field(b, "exchange") == "NSE" && field(b, "limit_paise") == "100000"
                   && field(b, "lots") == "50",
               "NSE: sell the same 50 at the bid 1000.00");
-        // Both fill at FYERS: the clearing corporation nets the pair; no exit is sent.
+        // Both fill at FYERS: held, nothing sent until the demo closes the pair.
         all.emplace_back(field(a, "id"), "FILLED", 50, 99860);
         all.emplace_back(field(b, "id"), "FILLED", 50, 100000);
         write_orders(root, all);
         bridge.poll(t0);
         bridge.poll(t0);
-        check(lines(intents).size() == 2, "both legs filled: no exit order -- the pair is the clearing corporation's to settle");
-        const auto rec = lines(root / "data/live_orders/strategy_trades.csv");
-        check(rec.size() == 2 && rec[0].rfind("date,model,symbol", 0) == 0, "one row for the pair, not one per leg");
-        if (rec.size() == 2) {
-            const auto c = csv(rec[1]);
-            check(c[2] == "RELIANCE BSE->NSE" && c[4] == "long" && c[5] == "50" && c[7] == "998.60" && c[9] == "1000.00"
-                      && c[14] == "netted by the clearing corporation" && c[15] == "REAL",
-                  "the pair: bought 50 on BSE at FYERS's 998.60, sold on NSE at 1000.00, netted, REAL");
-            check(std::fabs(std::stod(c[10]) - 70.0) < 1e-6, "gross: the gap locked at entry, 1.40 x 50 = 70");
-            check(std::fabs(std::stod(c[11]) - 0.00015 * 50 * (998.60 + 1000.00)) < 0.006
-                      && std::fabs(std::stod(c[12]) - (std::stod(c[10]) - std::stod(c[11]))) < 0.011,
-                  "expenses: the two fills' only; net = gross - expenses");
+        check(lines(intents).size() == 2 && bridge.holdings().at({"Cross-exchange arbitrage", 2}).qty == 50
+                  && bridge.holdings().at({"Cross-exchange arbitrage", 1}).qty == -50,
+              "both legs filled: held (long 50 on BSE, short 50 on NSE), no exit yet");
+        // The prices meet: the demo closes both legs, and both real exits go.
+        quote(2, 99995, 100005, t0 + 11 * kSec);
+        ls = lines(intents);
+        check(ls.size() == 4, "the prices met: two exit requests");
+        if (ls.size() == 4) {
+            const std::string xa = field(ls[2], "token") == "2" ? ls[2] : ls[3];
+            const std::string xb = field(ls[2], "token") == "1" ? ls[2] : ls[3];
+            check(field(xa, "side") == "SELL" && field(xa, "lots") == "50" && field(xa, "by") == "strategy.arbitrage.exit"
+                      && field(xa, "validity") == "DAY" && field(xb, "side") == "BUY" && field(xb, "lots") == "50",
+                  "sell the 50 held on BSE, buy back the 50 short on NSE, DAY limits, by the strategy's exit");
+            all.emplace_back(field(xa, "id"), "FILLED", 50, 99995);
+            all.emplace_back(field(xb, "id"), "FILLED", 50, 100000);
+            write_orders(root, all);
+            bridge.poll(t0);
+            const auto rec = lines(root / "data/live_orders/strategy_trades.csv");
+            check(rec.size() == 3 && rec[0].rfind("date,model,symbol", 0) == 0, "one row a leg");
+            double gross = 0.0;
+            for (std::size_t i = 1; i < rec.size(); ++i) {
+                const auto c = csv(rec[i]);
+                gross += std::stod(c[10]);
+                check(c[15] == "REAL", "each leg is written as REAL");
+            }
+            check(std::fabs(gross - (999.95 - 998.60) * 50) < 1e-6, "gross over both legs: 1.35 x 50 = 67.50");
+            check(bridge.holdings().at({"Cross-exchange arbitrage", 2}).qty == 0
+                      && bridge.holdings().at({"Cross-exchange arbitrage", 1}).qty == 0,
+                  "nothing is left held");
         }
-        check(bridge.holdings().at({"Cross-exchange arbitrage", 2}).qty == 0
-                  && bridge.holdings().at({"Cross-exchange arbitrage", 1}).qty == 0,
-              "nothing is left held");
     }
 
     // Legging: the BSE leg fills, the NSE leg does not: the BSE leg is sent back out.
     quote(1, 100000, 100010, t0 + 20 * kSec);
     quote(2, 99850, 99860, t0 + 20 * kSec);
     ls = lines(intents);
-    check(ls.size() == 4, "a new pair: two more requests");
-    if (ls.size() == 4) {
-        const std::string a = field(ls[2], "token") == "2" ? ls[2] : ls[3];
-        const std::string b = field(ls[2], "token") == "1" ? ls[2] : ls[3];
+    check(ls.size() == 6, "a new pair: two more requests");
+    if (ls.size() == 6) {
+        const std::string a = field(ls[4], "token") == "2" ? ls[4] : ls[5];
+        const std::string b = field(ls[4], "token") == "1" ? ls[4] : ls[5];
         all.emplace_back(field(a, "id"), "FILLED", 50, 99860);
         all.emplace_back(field(b, "id"), "CANCELLED", 0, 0);   // IOC: nothing at the NSE bid any more
         write_orders(root, all);
         bridge.poll(t0);
         ls = lines(intents);
-        check(ls.size() == 5 && field(ls[4], "token") == "2" && field(ls[4], "side") == "SELL" && field(ls[4], "lots") == "50"
-                  && field(ls[4], "by") == "strategy.arbitrage.exit",
+        check(ls.size() == 7 && field(ls[6], "token") == "2" && field(ls[6], "side") == "SELL" && field(ls[6], "lots") == "50"
+                  && field(ls[6], "by") == "strategy.arbitrage.exit",
               "the leg that filled is flattened at once: sell the 50 bought on BSE");
         bridge.poll(t0);
-        check(lines(intents).size() == 5, "and it is not sent out a second time");
-        all.emplace_back(field(ls[4], "id"), "FILLED", 50, 99840);
+        check(lines(intents).size() == 7, "and it is not sent out a second time");
+        all.emplace_back(field(ls[6], "id"), "FILLED", 50, 99840);
         write_orders(root, all);
         bridge.poll(t0);
         const auto rec = lines(root / "data/live_orders/strategy_trades.csv");
-        check(bridge.holdings().at({"Cross-exchange arbitrage", 2}).qty == 0 && rec.size() == 3
+        check(bridge.holdings().at({"Cross-exchange arbitrage", 2}).qty == 0 && rec.size() == 4
                   && rec.back().find("legging") != std::string::npos,
               "the flattened leg is recorded as a legging loss and nothing is left held");
-    }
-
-    // A part fill: BSE 50, NSE 30: 30 are netted, the other 20 bought on BSE go back out.
-    quote(1, 100000, 100010, t0 + 30 * kSec);
-    quote(2, 99850, 99860, t0 + 30 * kSec);
-    ls = lines(intents);
-    if (ls.size() == 7) {
-        const std::string a = field(ls[5], "token") == "2" ? ls[5] : ls[6];
-        const std::string b = field(ls[5], "token") == "1" ? ls[5] : ls[6];
-        all.emplace_back(field(a, "id"), "FILLED", 50, 99860);
-        all.emplace_back(field(b, "id"), "CANCELLED", 30, 100000);   // IOC: 30 filled, the rest cancelled
-        write_orders(root, all);
-        bridge.poll(t0);
-        ls = lines(intents);
-        const auto rec = lines(root / "data/live_orders/strategy_trades.csv");
-        check(rec.size() == 4 && csv(rec.back())[5] == "30" && csv(rec.back())[14] == "netted by the clearing corporation",
-              "30 matched: one netted pair of 30");
-        check(ls.size() == 8 && field(ls[7], "token") == "2" && field(ls[7], "side") == "SELL" && field(ls[7], "lots") == "20",
-              "and the 20 the NSE leg did not match go back out on BSE");
-    } else {
-        check(false, "a third pair: two more requests");
+        // The demo still holds its pair; when it closes, nothing real is left to send.
+        quote(2, 99995, 100005, t0 + 21 * kSec);
+        check(e.book().flat("Cross-exchange arbitrage") && lines(intents).size() == 7,
+              "the demo's own exit sends nothing for legs no longer held");
     }
 
     // A halt: nothing new is asked for.
@@ -242,7 +244,7 @@ int main() {
     const std::size_t demo_before = e.book().trades().size();
     quote(1, 100000, 100010, t0 + 50 * kSec);
     quote(2, 99850, 99860, t0 + 50 * kSec);
-    check(e.book().trades().size() == demo_before + 1 && lines(intents).size() == before,
+    check(e.book().trades().size() == demo_before && !e.book().flat("Cross-exchange arbitrage") && lines(intents).size() == before,
           "with a halt requested the demo still trades, but no real entry is asked for");
 
     // The SIM: the same switch on, the same gap, but simulated prices: nothing real.
@@ -265,7 +267,7 @@ int main() {
             q.token = tok; q.flags = kQuoteHasTop | kQuoteSimulated; q.bid = bid; q.ask = ask; q.bid_qty = 100; q.ask_qty = 100;
             es.on_quote(q, t0 + kSec);
         }
-        check(es.book().trades().size() == 1 && !fs::exists(sroot / "data/order_intents.jsonl"),
+        check(!es.book().flat("Cross-exchange arbitrage") && !fs::exists(sroot / "data/order_intents.jsonl"),
               "on the SIM the arbitrage demo-trades, and no real order is ever asked for");
     }
 

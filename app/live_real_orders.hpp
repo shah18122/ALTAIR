@@ -34,7 +34,9 @@
 // whose legs did not all fill is flattened at once: what filled is sent back
 // out, and the round trip is recorded as a legging loss.
 //
-// NETTED PAIRS. The cross-exchange arbitrage is TWO legs: once both have
+// NETTED PAIRS (a model whose paper book nets two legs; since 2026-11-12 the
+// cross-exchange arbitrage does NOT: FYERS keeps its two intraday legs apart,
+// so it closes both itself). Once both have
 // filled at FYERS, the long in one listing and the short in the other are the
 // clearing corporation's to settle against each other -- no exit order is
 // sent. The pair is recorded as ONE round trip: FYERS's average buy price,

@@ -1,12 +1,13 @@
 // The cross-exchange arbitrage (live/arbitrage.hpp) on quotes whose answers
 // are known: NSE and BSE listings pair up by symbol; a gap that does not cover
-// the two fills' expenses and the margin is left alone; one that does is
-// entered as TWO legs -- sold at the dear bid, bought at the cheap ask -- sized
-// to the lower of the two visible quantities, and netted at once (the
-// clearing corporation settles the pair: no exit, no exit expenses), one
-// round trip; the same gap is not taken twice on the same quotes; nothing is
-// entered after 15:10 or on a stale quote; and the SIM's BSE twins follow
-// their NSE twin.
+// the FOUR fills' expenses and the margin is left alone; one that does is
+// entered as TWO legs -- sold at the dear bid, bought at the cheap ask -- one
+// share a leg by default (the lower visible size when fixed_qty is 0), and
+// HELD: no netting, because FYERS keeps the two intraday legs apart. Both
+// legs close when the prices meet again (after all four fills' expenses),
+// or at 15:10 whatever; the same gap is not taken twice on the same quotes;
+// nothing is entered after 15:00 or on a stale quote; and the SIM's BSE twins
+// follow their NSE twin.
 //
 // No check description here may contain the substring "F" "AIL" joined.
 
@@ -92,49 +93,81 @@ int main() {
     f.trade(1, 100000, t0);
     f.trade(2, 100000, t0);
 
-    // 4 bp across: under the two fills' expenses (3) + margin (2).
+    // 4 bp across: under the four fills' expenses (6) + margin (2).
     f.quote(1, 100000, 100010, t0 + kSec);
     f.quote(2, 99950, 99960, t0 + kSec);
-    check(e.book().flat("Cross-exchange arbitrage") && e.book().trades().empty(), "a 4 bp gap under the 5 bp needed is left alone");
+    check(e.book().flat("Cross-exchange arbitrage") && e.book().trades().empty(), "a 4 bp gap under the 8 bp needed is left alone");
 
-    // 14 bp across: NSE bid 1000.00 over BSE ask 998.60. NSE shows 300 at its
-    // bid, BSE 70 at its ask: the lower, 70, so both legs fill.
+    // 14 bp across: NSE bid 1000.00 over BSE ask 998.60. Entered, one share a
+    // leg, and held: nothing is netted.
     f.quote(1, 100000, 100010, t0 + 2 * kSec, 300);
     f.quote(2, 99850, 99860, t0 + 2 * kSec, 500, 70);
+    const LivePosition* ln = e.book().position("Cross-exchange arbitrage", 1);
+    const LivePosition* lb = e.book().position("Cross-exchange arbitrage", 2);
+    check(ln != nullptr && lb != nullptr && ln->side < 0 && lb->side > 0 && ln->qty == 1 && lb->qty == 1
+              && std::fabs(ln->entry - 1000.00) < 1e-9 && std::fabs(lb->entry - 998.60) < 1e-9,
+          "14 bp: sold 1 on NSE at its bid 1000.00, bought 1 on BSE at its ask 998.60");
+    check(e.book().trades().empty(), "both legs are held: no netting, no round trip yet");
+
+    // Still apart (NSE 999.90/1000.00, BSE 998.70/998.80): closing now loses, so it holds.
+    f.quote(1, 99990, 100000, t0 + 3 * kSec);
+    f.quote(2, 99870, 99880, t0 + 3 * kSec);
+    check(e.book().trades().empty(), "while the prices are still apart the pair is held");
+
+    // The prices meet (NSE 999.90/1000.00, BSE 999.95/1000.05): buy NSE back at
+    // 1000.00, sell BSE at 999.95: 1.35 gross, over the four fills' 0.60.
+    f.quote(2, 99995, 100005, t0 + 4 * kSec);
     const auto& trades = e.book().trades();
-    check(e.book().flat("Cross-exchange arbitrage") && trades.size() == 1,
-          "14 bp: bought on BSE, sold on NSE, and netted at once: one round trip, nothing left held");
-    std::size_t entries = 0, netted = 0;
-    double fill_expenses = 0.0;
-    for (const auto& fl : e.book().fills()) {
-        if (fl.role == LiveFillRole::Open) { ++entries; fill_expenses += fl.expenses; }
-        else if (fl.reason.rfind("netted", 0) == 0 && fl.expenses == 0.0) ++netted;
-    }
-    check(entries == 2 && netted == 2, "two fills at the market (the legs) and two netted by the clearing corporation, at no cost");
-    if (trades.size() == 1) {
-        const auto& t = trades[0];
-        check(t.qty == 70 && t.symbol == "RELIANCE BSE->NSE" && std::fabs(t.entry - 998.60) < 1e-9 && std::fabs(t.exit - 1000.00) < 1e-9,
-              "the pair: 70 (the lower visible size), bought at BSE's ask 998.60, sold at NSE's bid 1000.00");
-        check(std::fabs(t.gross - (1000.00 - 998.60) * 70) < 1e-6, "gross: the gap locked at entry, 1.40 x 70 = 98");
-        check(std::fabs(t.expenses - 0.00015 * 70 * (998.60 + 1000.00)) < 1e-6 && std::fabs(t.expenses - fill_expenses) < 1e-9
-                  && std::fabs(t.net - (t.gross - t.expenses)) < 1e-9,
-              "expenses: the two fills' only; net = gross - expenses");
+    check(e.book().flat("Cross-exchange arbitrage") && trades.size() == 2, "the prices met: both legs closed, two round trips");
+    double gross = 0.0, net = 0.0, expenses = 0.0;
+    for (const auto& t : trades) { gross += t.gross; net += t.net; expenses += t.expenses; }
+    check(std::fabs(gross - 1.35) < 1e-6, "gross: the gap at entry less the gap at exit, 1.40 - 0.05 = 1.35 a share");
+    check(std::fabs(expenses - 0.00015 * (1000.00 + 998.60 + 1000.00 + 999.95)) < 1e-6 && std::fabs(net - (gross - expenses)) < 1e-9,
+          "expenses: all four fills; net = gross - expenses");
+
+    // The same quotes inside the cooldown are not taken again; fresh ones after it are.
+    f.quote(2, 99850, 99860, t0 + 5 * kSec);
+    f.quote(1, 100000, 100010, t0 + 5 * kSec);
+    check(e.book().flat("Cross-exchange arbitrage"), "inside the 5 s cooldown the gap is not taken again");
+    f.quote(1, 100000, 100010, t0 + 12 * kSec);
+    f.quote(2, 99850, 99860, t0 + 12 * kSec);
+    check(!e.book().flat("Cross-exchange arbitrage"), "after it, on fresh quotes both sides, the gap is a new pair");
+
+    // Never met by 15:10: both legs closed anyway, before FYERS squares off.
+    const std::int64_t t1510 = (day * 86400 + 15 * 3600 + 10 * 60 - 19800) * kSec;
+    f.trade(1, 100000, t1510 - 60 * kSec);
+    f.trade(1, 100000, t1510 + kSec);
+    f.trade(2, 99855, t1510 + 2 * kSec);
+    f.quote(1, 100000, 100010, t1510 + 50 * kSec);
+    f.quote(2, 99850, 99860, t1510 + 50 * kSec);
+    f.trade(1, 100000, t1510 + 61 * kSec);
+    check(e.book().flat("Cross-exchange arbitrage") && e.book().trades().size() == 4, "at 15:10 a pair still held is closed, both legs");
+
+    // fixed_qty 0: the lower of the two visible sizes.
+    {
+        LiveCrossArbRule r;
+        r.fixed_qty = 0;
+        LiveEngine ev(u, cost, instant);
+        ev.add_model(std::make_unique<LiveCrossArbModel>(r));
+        Feed fv{ev};
+        fv.trade(1, 100000, t0);
+        fv.trade(2, 100000, t0);
+        fv.quote(1, 100000, 100010, t0 + 2 * kSec, 300);
+        fv.quote(2, 99850, 99860, t0 + 2 * kSec, 500, 70);
+        const LivePosition* vb = ev.book().position("Cross-exchange arbitrage", 2);
+        check(vb != nullptr && vb->qty == 70, "fixed_qty 0: 70, the lower visible size");
     }
 
-    // The same gap on quotes that have not changed, or inside the cooldown, is not taken twice.
-    f.quote(2, 99850, 99860, t0 + 3 * kSec);
-    f.quote(1, 100000, 100010, t0 + 3 * kSec);
-    check(e.book().trades().size() == 1, "inside the 5 s cooldown the same gap is not taken again");
-    f.quote(1, 100000, 100010, t0 + 9 * kSec);
-    f.quote(2, 99850, 99860, t0 + 9 * kSec);
-    check(e.book().trades().size() == 2, "after it, on fresh quotes both sides, the gap is a new pair");
-
-    // Nothing after 15:10, and nothing on a stale quote.
-    const std::int64_t late = (day * 86400 + 15 * 3600 + 11 * 60 - 19800) * kSec;
-    f.trade(1, 100000, late);
-    f.quote(1, 100000, 100010, late);
-    f.quote(2, 99850, 99860, late);
-    check(e.book().flat("Cross-exchange arbitrage"), "no entry after 15:10");
+    // Nothing after 15:00, and nothing on a stale quote.
+    const std::int64_t late = (day * 86400 + 15 * 3600 + 1 * 60 - 19800) * kSec;
+    LiveEngine e3(u, cost, instant);
+    e3.add_model(std::make_unique<LiveCrossArbModel>());
+    Feed f3{e3};
+    f3.trade(1, 100000, late);
+    f3.trade(2, 100000, late);
+    f3.quote(1, 100000, 100010, late);
+    f3.quote(2, 99850, 99860, late);
+    check(e3.book().flat("Cross-exchange arbitrage"), "no entry after 15:00");
     const std::int64_t mid = t0 + 600 * kSec;
     LiveEngine e2(u, cost, instant);
     e2.add_model(std::make_unique<LiveCrossArbModel>());
