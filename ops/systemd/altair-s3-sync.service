@@ -1,0 +1,20 @@
+[Unit]
+Description=ALTAIR: mirror data/ to S3 (throttled in market hours, never today's tapes)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@USER@
+WorkingDirectory=@ROOT@
+# Bucket and (only without an instance role) keys; read by systemd as root.
+EnvironmentFile=-/etc/altair/s3.env
+ExecStart=@ROOT@/ops/linux/s3_sync.sh --go
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+TimeoutStartSec=4h
+NoNewPrivileges=yes
+PrivateTmp=no
+ProtectSystem=full

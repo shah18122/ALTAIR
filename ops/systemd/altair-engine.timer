@@ -1,0 +1,11 @@
+[Unit]
+Description=ALTAIR: start the models engine for the session
+
+[Timer]
+OnCalendar=Mon..Fri 09:05 Asia/Kolkata
+# A reboot in the session brings it back (ExecCondition skips it outside).
+OnBootSec=2min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

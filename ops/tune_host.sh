@@ -4,11 +4,19 @@
 # What it sets, and where (every file is ALTAIR's own, so --undo removes
 # exactly what this added and nothing else):
 #
-#   /etc/default/grub.d/99-altair.cfg     isolcpus=managed_irq,domain,<cores> nohz_full=<cores>
+#   /etc/default/grub.d/99-altair.cfg     isolcpus=managed_irq,<cores> nohz_full=<cores>
 #                                         rcu_nocbs=<cores> transparent_hugepage=madvise
 #                                         (needs a REBOOT; then update-grub has run)
+#                                         (--static-isolation: isolcpus=managed_irq,domain,<cores>:
+#                                         the scheduler never balances onto them, not even after
+#                                         hours. Default: the cores stay schedulable and
+#                                         ops/linux/cpuset.sh keeps every non-ALTAIR service off
+#                                         them 08:45-15:50, so the nightly retrain gets every core.)
 #   /etc/sysctl.d/90-altair.conf          vm.nr_hugepages, net.core.busy_poll/busy_read 50 us,
-#                                         vm.swappiness 1, kernel.numa_balancing 0
+#                                         vm.swappiness 1, kernel.numa_balancing 0, no KSM-style
+#                                         reclaim, TCP: no autocorking, no slow start after idle
+#                                         (the order line), small notsent queue, bigger socket
+#                                         buffers and backlog for the feed
 #   /etc/security/limits.d/altair.conf    memlock unlimited, rtprio 50, nice -10 for --user
 #                                         (a new login picks it up; the systemd jobs carry
 #                                         the same limits in their units)
@@ -60,7 +68,7 @@
 
 set -euo pipefail
 go=0; undo=0; user="${SUDO_USER:-$(id -un)}"; isolate=""; hugepages=512
-deep=0; mitig=0; trim=0; headless=0
+deep=0; mitig=0; trim=0; headless=0; static_iso=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --go) go=1 ;;
@@ -72,7 +80,8 @@ while [ $# -gt 0 ]; do
         --mitigations-off) mitig=1 ;;
         --trim) trim=1 ;;
         --headless) headless=1 ;;
-        -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
+        --static-isolation) static_iso=1 ;;
+        -h|--help) sed -n '2,68p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
     shift
@@ -126,7 +135,8 @@ fi
 id "$user" >/dev/null 2>&1 || { echo "no such user: $user" >&2; exit 2; }
 
 cmdline="transparent_hugepage=madvise"
-[ -n "$isolate" ] && cmdline="isolcpus=managed_irq,domain,$isolate nohz_full=$isolate rcu_nocbs=$isolate $cmdline"
+iso_flags="managed_irq"; [ "$static_iso" = 1 ] && iso_flags="managed_irq,domain"
+[ -n "$isolate" ] && cmdline="isolcpus=$iso_flags,$isolate nohz_full=$isolate rcu_nocbs=$isolate $cmdline"
 
 write() {   # write <file> <content>
     if [ "$go" = 1 ]; then
@@ -149,7 +159,19 @@ vm.nr_hugepages = $hugepages
 net.core.busy_poll = 50
 net.core.busy_read = 50
 vm.swappiness = 1
-kernel.numa_balancing = 0"
+kernel.numa_balancing = 0
+vm.zone_reclaim_mode = 0
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.core.netdev_max_backlog = 16384
+net.core.netdev_budget = 600
+net.ipv4.tcp_rmem = 4096 262144 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.ipv4.tcp_autocorking = 0
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_notsent_lowat = 16384
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_fastopen = 3"
 
 write "$limits" "# ALTAIR (ops/tune_host.sh): mlockall and SCHED_FIFO for $user's ALTAIR services.
 $user soft memlock unlimited

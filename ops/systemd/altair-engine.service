@@ -1,0 +1,31 @@
+[Unit]
+Description=ALTAIR: the models engine (paper/live per model) on the session's bus
+# Only once /etc/altair/engine.conf exists (ENGINE_ARGS=...), so the desktop
+# keeps starting it until the server is set up for this.
+ConditionPathExists=/etc/altair/engine.conf
+After=altair-recorder.service network-online.target time-sync.target
+Wants=time-sync.target
+
+[Service]
+Type=exec
+Slice=altair.slice
+User=@USER@
+Group=@USER@
+WorkingDirectory=@ROOT@
+EnvironmentFile=/etc/altair/engine.conf
+EnvironmentFile=-/etc/altair/altair.env
+# Only in the session; the engine stops itself after 15:30.
+ExecCondition=@ROOT@/ops/linux/session_window.sh 08:45 15:30
+# The engine holds a lock on data/live: a second copy (the desktop's) is refused.
+ExecStart=@ROOT@/build/linux/app/altair_live_engine --root @ROOT@ $ENGINE_ARGS
+Restart=on-failure
+RestartSec=10
+TimerSlackNSec=1
+TimeoutStopSec=60
+RuntimeMaxSec=8h
+LimitMEMLOCK=infinity
+LimitRTPRIO=50
+LimitNICE=-10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

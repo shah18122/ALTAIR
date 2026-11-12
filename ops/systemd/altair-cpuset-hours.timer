@@ -1,0 +1,10 @@
+[Unit]
+Description=ALTAIR: housekeeping cores only for the system in market hours
+
+[Timer]
+OnCalendar=Mon..Fri 08:45 Asia/Kolkata
+AccuracySec=1s
+Unit=altair-cpuset@hours.service
+
+[Install]
+WantedBy=timers.target

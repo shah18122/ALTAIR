@@ -1,0 +1,10 @@
+[Unit]
+Description=ALTAIR: every core for everything after the session (nightly retrain)
+
+[Timer]
+OnCalendar=Mon..Fri 15:50 Asia/Kolkata
+AccuracySec=1s
+Unit=altair-cpuset@open.service
+
+[Install]
+WantedBy=timers.target

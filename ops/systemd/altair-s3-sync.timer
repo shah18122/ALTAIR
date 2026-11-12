@@ -1,0 +1,10 @@
+[Unit]
+Description=ALTAIR: S3 mirror every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

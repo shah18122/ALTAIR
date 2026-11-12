@@ -3,11 +3,13 @@ Description=ALTAIR: record the FYERS session (ticks, quotes, books) to data/stor
 After=network-online.target time-sync.target
 # Ordering only: wait for a login or a DPDK bind that is still running at boot
 # or at 08:50 (both are oneshot), never pull them in.
-After=altair-fyers-login.service altair-dpdk-bind.service
-Wants=network-online.target
+After=altair-fyers-login.service altair-dpdk-bind.service altair-nic-tune.service
+Wants=network-online.target time-sync.target
 
 [Service]
 Type=exec
+Slice=altair.slice
+TimerSlackNSec=1
 User=@USER@
 Group=@USER@
 WorkingDirectory=@ROOT@

@@ -1,0 +1,13 @@
+[Unit]
+Description=ALTAIR: feed NIC at boot (no interrupt moderation, IRQs on housekeeping cores)
+After=network-online.target irqbalance.service
+Wants=network-online.target
+Before=altair-recorder.service altair-dpdk-bind.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=@ROOT@/ops/linux/nic_tune.sh
+
+[Install]
+WantedBy=multi-user.target

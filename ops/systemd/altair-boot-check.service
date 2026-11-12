@@ -1,0 +1,8 @@
+[Unit]
+Description=ALTAIR: record what came up after the boot (data/logs/boot-*.txt)
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@USER@
+ExecStart=@ROOT@/ops/linux/boot_check.sh

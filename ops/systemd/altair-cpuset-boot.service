@@ -1,0 +1,11 @@
+[Unit]
+Description=ALTAIR: apply the right cpuset at boot (hours or open)
+After=altair.slice systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=@ROOT@/ops/linux/cpuset.sh auto
+
+[Install]
+WantedBy=multi-user.target

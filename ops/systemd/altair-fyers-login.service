@@ -1,7 +1,7 @@
 [Unit]
 Description=ALTAIR: today's FYERS login (TOTP + PIN, no browser)
 After=network-online.target time-sync.target
-Wants=network-online.target
+Wants=network-online.target time-sync.target
 
 [Service]
 # oneshot: the start job lasts until the login is done, so the recorder

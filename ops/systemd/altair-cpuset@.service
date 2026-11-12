@@ -1,0 +1,7 @@
+[Unit]
+Description=ALTAIR: cores for the rest of the box (%i)
+After=altair.slice
+
+[Service]
+Type=oneshot
+ExecStart=@ROOT@/ops/linux/cpuset.sh %i

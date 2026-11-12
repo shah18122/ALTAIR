@@ -10,6 +10,16 @@
 #   altair-push.timer          Mon-Fri 15:47 IST  ops/linux/nightly.py --go --quick (the data, pushed by 16:00)
 #   altair-nightly.timer       Mon-Fri 20:00 IST  ops/linux/nightly.py --go (store, retrain, push)
 #   altair-fyers-callback      always             broker/tools/fyers_callback_server.py (FYERS redirect URL, 127.0.0.1:80)
+#   altair-engine.timer        Mon-Fri 09:05 IST  altair_live_engine in altair.slice (only with /etc/altair/engine.conf)
+#   altair-s3-sync.timer       every 5 min        ops/linux/s3_sync.sh (only with ALTAIR_S3_BUCKET in /etc/altair/s3.env)
+#   altair-cpuset-*.timer      08:45 / 15:50 IST  ops/linux/cpuset.sh hours / open (and at boot)
+#   altair-nic-tune            at boot            ops/linux/nic_tune.sh, before the recorder
+#   altair-boot-check.timer    3 min after boot   ops/linux/boot_check.sh -> data/logs/boot-*.txt
+#
+# BOOT ORDER: network-online -> chrony-wait (time-sync.target) -> nic-tune ->
+# dpdk-bind -> callback -> webhook; then the timers: login (catch-up at boot),
+# recorder (boot + 90 s, after login), engine (boot + 2 min, after recorder),
+# cpuset (boot), boot check (boot + 3 min), S3 (boot + 5 min).
 #
 # Times are IST whatever the server's clock zone is (OnCalendar ... Asia/Kolkata).
 # Persistent=true runs a job missed while the server was off as soon as it boots.
@@ -40,14 +50,16 @@ while [ $# -gt 0 ]; do
 done
 
 dest=/etc/systemd/system
-timers=(altair-fyers-login altair-recorder altair-chain-open altair-chain-close altair-fyers-chain altair-push altair-nightly)
-units=("$here"/systemd/*.service "$here"/systemd/*.timer)
+timers=(altair-fyers-login altair-recorder altair-chain-open altair-chain-close altair-fyers-chain altair-push altair-nightly
+        altair-engine altair-s3-sync altair-cpuset-hours altair-cpuset-open altair-boot-check)
+boot_units=(altair-nic-tune altair-cpuset-boot)
+units=("$here"/systemd/*.service "$here"/systemd/*.timer "$here"/systemd/*.slice)
 
 if [ "$remove" = 1 ]; then
     for t in "${timers[@]}"; do
         if [ "$go" = 1 ]; then systemctl disable --now "$t.timer" 2>/dev/null || true; else echo "would disable $t.timer"; fi
     done
-    if [ "$go" = 1 ]; then systemctl disable --now altair-fyers-callback.service altair-fyers-webhook.service 2>/dev/null || true; fi
+    if [ "$go" = 1 ]; then systemctl disable --now altair-fyers-callback.service altair-fyers-webhook.service "${boot_units[@]/%/.service}" 2>/dev/null || true; fi
     for u in "${units[@]}"; do
         n="$(basename "$u")"
         if [ "$go" = 1 ]; then rm -f "$dest/$n"; else echo "would remove $dest/$n"; fi
@@ -69,6 +81,11 @@ done
 if [ "$go" = 1 ]; then
     systemctl daemon-reload
     for t in "${timers[@]}"; do systemctl enable --now "$t.timer"; done
+    # Boot-time oneshots: enabled for the next boot; the cpuset is applied now too.
+    for b in "${boot_units[@]}"; do systemctl enable "$b.service"; done
+    systemctl restart altair-cpuset-boot.service || true
+    # time-sync.target only means "synced" when something waits for the clock.
+    systemctl enable chrony-wait.service 2>/dev/null || true
     # The FYERS redirect URL on 127.0.0.1:80 (a browser login ends there; the
     # tunnel from ops/linux/fyers_tunnel.sh brings https to it).
     systemctl enable altair-fyers-callback.service

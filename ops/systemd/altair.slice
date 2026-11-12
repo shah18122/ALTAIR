@@ -1,0 +1,10 @@
+[Unit]
+Description=ALTAIR: the trading hot path (recorder, price service, engine, webhook)
+Before=slices.target
+
+[Slice]
+# Every core, always: the threads pin themselves (config/latency.toml).
+# altair-cpuset holds everything else on the housekeeping cores in market hours.
+CPUWeight=1000
+IOWeight=1000
+MemoryLow=4G
