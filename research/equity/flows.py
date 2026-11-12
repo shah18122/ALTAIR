@@ -35,7 +35,9 @@ def calendar_days(days):
 
 def fpi_days(days, path):
     f = pd.read_csv(path, parse_dates=["date"])
-    s = f.set_index(f.date.dt.date).fpi_equity_net_cr.abs().sort_index()
+    f = f.sort_values("date")
+    # reporting date -> trade date: each value belongs to the previous row's session (amendment)
+    s = pd.Series(f.fpi_equity_net_cr.abs().to_numpy()[1:], index=f.date.dt.date.to_numpy()[:-1])
     thr = s.rolling(250, min_periods=250).quantile(FPI_Q).shift(1)
     hot = set(s.index[(s > thr).to_numpy()])
     return np.array([d in hot for d in days])

@@ -1,0 +1,6 @@
+set,trades,months,net_bp,t_monthly,win,f1_pass
+banks both periods (F1),770,93,13.3767,0.9713,0.6377,False
+banks 2015-2019,502,59,39.4637,2.8722,0.6773,False
+all pairs 2015-2019,2916,59,23.0343,4.1888,0.6406,False
+banks 2024-2026,268,34,-35.4876,-1.8695,0.5634,False
+all pairs 2024-2026,1661,35,-3.8186,-0.6739,0.5978,False

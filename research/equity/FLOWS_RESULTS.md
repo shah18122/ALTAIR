@@ -29,7 +29,54 @@ one-stock volume spikes (results, ratings) revert more, which looks like overrea
 news rather than a fee for absorbing fund flows. Index-review days are a crude flow proxy;
 F2b (daily FPI flows) is the direct test and still runs once, as registered.
 
-## Pending
+## F2b: daily FPI flows (run once, 2026-11-12) - FAIL
 
-- **F2b** (FPI flow days): waits for `fpi_daily.csv` from the server.
-- **F1** (bank pairs on unseen FYERS years 2015-2019, 2024-2026): waits for FYERS daily candles.
+    python research/equity/flows.py --eq "<Drive>/NSE Equities (5min)" --fpi <altair-data>/research/flows/fpi_daily.csv
+
+FPI from NSDL (altair-data b9a0b13), shifted to trade date (amendment 22ef325).
+
+| Divergence | Trades | Net bp | Dev | 2023 | Banks (F4) |
+|---|---|---|---|---|---|
+| FLOW (index review or top-10 % FPI day) | 566 | +34.1 | +34.0 (394) | +34.3 (172) | **+118.8** (82) |
+| NEWS | 338 | +37.6 | +26.1 | +58.2 | +15.1 (44) |
+| SECTOR | 163 | +1.5 | +9.3 | -7.3 | +27.2 (25) |
+| OTHER | 674 | +10.3 | +31.4 | -22.5 | +36.5 (119) |
+
+FLOW minus NEWS = **-3.5 bp, t -0.17**. News-gap trades are still above the average
+(+37.6 vs +22.5). **F2b fails.** F3 is unchanged (FPI does not enter it).
+
+## F1: bank pairs on unseen FYERS years (run once, 2026-11-12) - FAIL
+
+    python research/equity/flows_oos.py --daily <altair-data>/research/flows/fyers_daily --fpi <...>/fpi_daily.csv
+
+Source FYERS daily candles only. TATAMOTORS left out (the FYERS file is the TMPV listing).
+
+| Set | Trades | Months | Net bp/trade | t (monthly) | Win |
+|---|---|---|---|---|---|
+| **Banks, both periods (F1)** | 770 | 93 | **+13.4** | **0.97** | 64 % |
+| Banks 2015-2019 | 502 | 59 | +39.5 | 2.87 | 68 % |
+| Banks 2024-2026 | 268 | 34 | **-35.5** | -1.87 | 56 % |
+| All 62 pairs 2015-2019 | 2,916 | 59 | +23.0 | 4.19 | 64 % |
+| All 62 pairs 2024-2026 | 1,661 | 35 | -3.8 | -0.67 | 60 % |
+
+Net by group: 2015-2019 every group positive (+15 to +39); 2024-2026 banks -35, autos -27,
+pharma -11, FMCG -5, IT +16, energy +22, metals +33.
+
+Flow split in the new years (F4, reported, no bar): all pairs FLOW +18.7 (1,182) vs NEWS -12.7
+(903), difference +31.4 bp, t 2.35; banks FLOW -12.2 (204) vs NEWS +36.8 (141). The sign of the
+flow-vs-news gap changes between samples and between banks and the rest, so it is not a stable
+effect.
+
+## Verdict
+
+- The flow story (**F2a, F2b, F3**) is not supported: gaps that open on fund-flow days do not
+  close better than gaps opened by firm news.
+- The bank-pairs edge (**F1**) does not survive unseen years. It was strong in 2015-2019
+  (+39 bp, t 2.9), and pair reversion then worked in every sector (+23 bp, t 4.2), but it fell
+  over time: 2020 +50 (crash), 2022 +3.5, 2023 +10, 2024-2026 -4 overall and -35 for banks.
+- What the data does show, consistently, is **a same-sector pairs premium that was large and
+  broad in 2015-2019 and has since disappeared**, the pattern Do and Faff (2010) report for US
+  pairs trading. That, not fund flows, is the defensible paper, and it can rest entirely on
+  FYERS daily data plus NSDL flows.
+- The live "Pair trading" paper model trades exactly the bank rule that lost 35 bp a trade in
+  2024-2026. It should stay paper.
