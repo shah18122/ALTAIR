@@ -261,7 +261,10 @@ public:
             reload();
             // Always on: the models start once the feed streams, and again
             // 15 s after they exit (a crash is not retried every second).
-            if (auto_ && engine_ == nullptr && client_ != nullptr && client_->connected()
+            // On the server the engine is a systemd service (altair-engine, in
+            // altair.slice with real-time limits) once /etc/altair/engine.conf
+            // exists: the desktop then only shows it, never starts a second copy.
+            if (auto_ && engine_ == nullptr && !server_engine() && client_ != nullptr && client_->connected()
                 && QDateTime::currentMSecsSinceEpoch() >= restart_after_ms_)
                 start_engine();
             show_running();
@@ -661,8 +664,16 @@ private:
         show_running();
     }
 
+    [[nodiscard]] static bool server_engine() {
+        return QFile::exists(QStringLiteral("/etc/altair/engine.conf"));
+    }
+
     void show_running() {
         if (running_ == nullptr) return;
+        if (engine_ == nullptr && server_engine()) {
+            running_->setText(QStringLiteral("<span style='color:#7EE787'>\u25CF Models: server service (altair-engine)</span>"));
+            return;
+        }
         running_->setText(engine_ != nullptr
                               ? QStringLiteral("<span style='color:#7EE787'>\u25CF Models running</span>")
                           : !auto_ ? QStringLiteral("<span style='color:#8A93A2'>\u25CB Models off</span>")

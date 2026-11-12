@@ -19,7 +19,7 @@
 
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-mode="${1:-show}"; hk="0-1"
+mode="${1:-show}"; hk="$("$here/housekeeping.sh")"
 [ "${2:-}" = "--housekeeping" ] && hk="${3:?}"
 all="0-$(( $(nproc --all) - 1 ))"
 [ "$mode" = auto ] && { if "$here/session_window.sh" 08:45 15:50; then mode=hours; else mode=open; fi; }

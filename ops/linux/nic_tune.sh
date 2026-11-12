@@ -10,14 +10,14 @@
 # Nothing here resets the link (no ring or channel change), so it is safe at
 # any time, but altair-nic-tune.service only runs it at boot.
 #
-#   sudo ops/linux/nic_tune.sh [IFACE] [--housekeeping 0-1]
+#   sudo ops/linux/nic_tune.sh [IFACE] [--housekeeping 0,4]   (default: ops/linux/housekeeping.sh)
 #
 # Without IFACE: every kernel ENA interface except the DPDK one
 # (/etc/altair/dpdk.conf). Not "the default route's": at boot the spare can DHCP
 # first and hold the only default route.
 
 set -euo pipefail
-ifc=""; hk="0-1"
+ifc=""; hk="$("$(dirname "$0")/housekeeping.sh")"
 while [ $# -gt 0 ]; do case "$1" in --housekeeping) hk="$2"; shift ;; *) ifc="$1" ;; esac; shift; done
 if [ -z "$ifc" ]; then
     skip=""; [ -r /etc/altair/dpdk.conf ] && skip="$(. /etc/altair/dpdk.conf; echo "${DPDK_IFACE:-}")"

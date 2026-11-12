@@ -41,13 +41,18 @@ reserve = 2
 # reader 3, engine 7, router 4, tbt 5. "spread": one role a core, in order.
 layout = "siblings"
 
+# c7i.2xlarge (2026-11-12): hyperthread twins are (0,4) (1,5) (2,6) (3,7).
+# Housekeeping = physical core 0 (cpus 0,4: kernel, DCV, desktop, S3); ALTAIR
+# gets three whole physical cores (ops/tune_host.sh isolates 1-3,5-7):
+# feed 2 + bus 6, reader 3 + engine 7, router 1 + tbt 5. Each pair hands
+# ticks to its twin through a shared L1/L2; no system thread shares a core.
 [cores]          # "auto", a core number (0 is the first), or "off"
-bus = "auto"     # the price bus's owner thread: every tick to every client
-feed = "auto"    # the FYERS socket and decoder
-engine = "auto"  # the models engine
-router = "auto"  # the order router
-tbt = "auto"     # the FYERS 50-level book
-reader = "auto"  # the engine's feed reader (it spins on its socket with spin = true)
+bus = 6          # the price bus's owner thread: every tick to every client
+feed = 2         # the FYERS socket and decoder
+engine = 7       # the models engine
+router = 1       # the order router
+tbt = 5          # the FYERS 50-level book
+reader = 3       # the engine's feed reader (it spins on its socket with spin = true)
 
 [priority]       # normal | above_normal | highest | time_critical
 bus = "highest"

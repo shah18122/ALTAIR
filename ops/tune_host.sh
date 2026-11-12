@@ -130,7 +130,17 @@ if [ "$undo" = 1 ]; then
 fi
 
 cores="$(nproc --all)"
-if [ -z "$isolate" ] && [ "$cores" -ge 8 ]; then isolate="2-$((cores - 1))"; fi
+if [ -z "$isolate" ] && [ "$cores" -ge 8 ]; then
+    # Housekeeping = cpu0's whole physical core (0 and its hyperthread twin);
+    # ALTAIR gets every other physical core whole, so no system noise shares
+    # an L1/L2 with a pinned thread. c7i.2xlarge: housekeeping 0,4; isolated 1-3,5-7.
+    twin="$(cut -d, -f2 /sys/devices/system/cpu/cpu0/topology/thread_siblings_list 2>/dev/null | cut -d- -f2)"
+    if [[ "$twin" =~ ^[0-9]+$ ]] && [ "$twin" -gt 1 ] && [ "$twin" -lt $((cores - 1)) ]; then
+        isolate="1-$((twin - 1)),$((twin + 1))-$((cores - 1))"
+    else
+        isolate="2-$((cores - 1))"
+    fi
+fi
 if [ -n "$isolate" ] && ! [[ "$isolate" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]]; then
     echo "--isolate takes a CPU list such as 2-7 or 2,3,6-7" >&2; exit 2
 fi
@@ -206,8 +216,12 @@ fi
 
 if [ "$deep" = 1 ]; then
     housekeeping="0-1"
-    if [ -n "$isolate" ] && [[ "$isolate" =~ ^([0-9]+)- ]] && [ "${BASH_REMATCH[1]}" -gt 0 ]; then
-        housekeeping="0-$((BASH_REMATCH[1] - 1))"
+    if [ -n "$isolate" ]; then   # the complement of $isolate
+        hk=""; for c in $(seq 0 $((cores - 1))); do
+            in=0; IFS=, read -ra parts <<< "$isolate"
+            for r in "${parts[@]}"; do lo="${r%-*}"; hi="${r#*-}"; [ "$c" -ge "$lo" ] && [ "$c" -le "$hi" ] && in=1; done
+            [ "$in" = 0 ] && hk="$hk,$c"; done
+        [ -n "$hk" ] && housekeeping="${hk#,}"
     fi
     dcmd="irqaffinity=$housekeeping kthread_cpus=$housekeeping idle=poll processor.max_cstate=1 intel_idle.max_cstate=0"
     dcmd="$dcmd nosoftlockup nowatchdog nmi_watchdog=0 tsc=reliable skew_tick=1 rcu_nocb_poll preempt=full audit=0"
