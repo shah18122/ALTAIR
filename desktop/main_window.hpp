@@ -284,7 +284,8 @@ public:
                 if (t < 0) break;
                 const int i = screen_tabs_->addTab(t == screen->page
                     ? QString::fromUtf8(screen->first_tab)
-                    : QString::fromUtf8(kNavigationPages[static_cast<std::size_t>(t)].label));
+                    : QString::fromUtf8(kNavigationPages[static_cast<std::size_t>(t)].label)
+                        .replace(QLatin1Char('&'), QStringLiteral("&&")));
                 screen_tabs_->setTabData(i, t);
                 if (t == index) screen_tabs_->setCurrentIndex(i);
                 ++shown;
