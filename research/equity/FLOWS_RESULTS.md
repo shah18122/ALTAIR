@@ -56,8 +56,8 @@ Source FYERS daily candles only. TATAMOTORS left out (the FYERS file is the TMPV
 | **Banks, both periods (F1)** | 770 | 93 | **+13.4** | **0.97** | 64 % |
 | Banks 2015-2019 | 502 | 59 | +39.5 | 2.87 | 68 % |
 | Banks 2024-2026 | 268 | 34 | **-35.5** | -1.87 | 56 % |
-| All 62 pairs 2015-2019 | 2,916 | 59 | +23.0 | 4.19 | 64 % |
-| All 62 pairs 2024-2026 | 1,661 | 35 | -3.8 | -0.67 | 60 % |
+| All 58 pairs 2015-2019 | 2,916 | 59 | +23.0 | 4.19 | 64 % |
+| All 58 pairs 2024-2026 | 1,661 | 35 | -3.8 | -0.67 | 60 % |
 
 Net by group: 2015-2019 every group positive (+15 to +39); 2024-2026 banks -35, autos -27,
 pharma -11, FMCG -5, IT +16, energy +22, metals +33.

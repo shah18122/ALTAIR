@@ -3,7 +3,7 @@
 
     python research/equity/decay.py --daily <altair-data>/research/flows/fyers_daily
 
-Rule P6 (PAIRS_HYPOTHESES.md) on 62 same-sector pairs (TATAMOTORS left out: FYERS's file is the
+Rule P6 (PAIRS_HYPOTHESES.md) on 58 same-sector pairs (TATAMOTORS left out: FYERS's file is the
 post-demerger TMPV listing): z of log(A/B) over 20 closes, |z| > ENTRY -> enter at next open,
 exit at the next open after |z| < 0.5 or 10 sessions. Year-by-year net, robustness (cost,
 entry delay, entry threshold), sector splits, trend tests and spread half-lives.
