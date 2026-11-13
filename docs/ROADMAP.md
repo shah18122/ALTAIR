@@ -253,10 +253,12 @@ days (move since open plus rising OI), skip event days.
 Done when the 60-session verdict is committed.
 
 **3B. OBI BANKNIFTY, tick by tick, tested on recorded option sessions.**
-- Data: the recorder's FYERS tapes (BANKNIFTY future 5/50-level depth, prints, and the ATM ±5 option quotes). The Drive ticks have no bid/ask or book, so they can train only the trade-flow features (signed volume, arrival rate, HAR), not the order book itself.
+- Data, two layers:
+  1. **Drive ticks, about 820 sessions of NIFTY and BANKNIFTY futures trades (2020, 2022, 2023; date, time, price, qty, OI).** These are enough to pre-train the trade-flow part now: signed volume (tick rule), trade arrival rate, trade size, OI change, HAR vol, on 1-60 s horizons. They have no bid/ask, no book and no options, so they cannot train the order-book imbalance itself or price an option fill. The earlier tick study found the next-trade "edge" is bid-ask bounce (`docs/MODEL_AUDIT.md` §3), so the pre-registered target is the mid-free move over 5-60 s, never the next trade.
+  2. **Recorder FYERS tapes** (BANKNIFTY future 5/50-level depth, prints, ATM ±5 option quotes). These fine-tune the model with the book features and are the only test set for the option-sell leg.
 - Model: label every book update with the future's mid move over 1, 5, 30 and 60 s. Train on the OBI5/OFI/microprice/queue features (`models/depth_features.hpp`, `book/flow.hpp`) with ridge and gradient-boosted trees, walk-forward by session. The CNN can be added as one more input.
 - Test: replay each held-out recorded session through the engine (`altair_live_engine --replay`). Trade the option-sell leg on the recorded option bid/ask with the queue fill model (`book/queue_fill.hpp`) and option costs.
-- Data limit: the first verdict needs at least 40 complete sessions (train on the first 25, test on the next 15, then roll). Until then, report results per session as "too few to judge".
+- Data limit: the trade-flow model can be trained and tested on Drive ticks now (dev 2020 + 2022, holdout 2023, as in `research/strategy/`). The book features and the option-sell verdict need at least 40 complete recorded sessions (train on the first 25, test on the next 15, then roll). Until then, report the recorded-session results as "too few to judge".
 - Done when the 40-session report is committed and the live model uses the trained thresholds instead of the hand-set ones.
 
 **3C. Pair trading, rebuilt for frequent trades.**
@@ -320,15 +322,19 @@ than our path, measured by markouts at 10 ms, 100 ms and 1 s. Then cost a
 broker with co-lo racks and DMA, the TBT feed and an NNF gateway
 (`docs/NSE_NNF_TBT.md`). Until then, no new latency work.
 
-## 9. Compute: no GPU needed now
+## 9. Compute: when a GPU helps
 
-- The curriculum CNN is small (`TrainableTcn<4,8,3,3,16>`). The full Drive tick run (39 M ticks, walk-forward) took about 20 minutes on 4 CPU cores. Ridge and gradient-boosted trees on order-book features are CPU work too.
-- The recorded OBI data is small (days of tapes), so a GPU would sit idle. The limit is sessions, not compute.
-- Where to run:
-  - Research runs and backtests: in the cloud (as for the CNN and combination tests).
-  - Nightly training: on the server.
-  - Drive tick runs: on Smit's PC (`S:\tick_data`) or the cloud, after staging.
-- **A GPU becomes worth it** when a deep sequence model (LSTM or transformer) trains on 50-level books from more than about 100 recorded sessions, or on all Drive ticks with many epochs. At that point a single cloud GPU (one A10 or L4 class instance, rented by the hour) is enough. That is after Phase 3B has 100+ sessions, around April 2027 at the earliest.
+| Work | Data | Compute | When |
+|---|---|---|---|
+| Ridge, gradient-boosted trees, HAR, the curriculum CNN (`TrainableTcn<4,8,3,3,16>`) | Drive ticks and bars, FYERS bars | CPU. The full Drive tick run (39 M ticks, walk-forward) took about 20 minutes on 4 cores | Now, in the cloud or on the server nightly |
+| Deep sequence models (LSTM, TCN, transformer) on raw trade sequences, walk-forward with a monthly refit and many epochs | Drive ticks, about 820 sessions (Smit, 2026-11-13: equal to well over 100 recorded sessions for trade flow) | **One rented cloud GPU** (A10 or L4 class, by the hour). On CPU each walk-forward run would take days | **Now**, as part of 3B layer 1 |
+| Deep models on the 50-level order book | Recorder tapes only (Drive has no book) | GPU | After about 100 complete recorded sessions |
+
+Smit's PC (`S:\tick_data`) holds the raw Drive tick zips. Stage them to the
+cloud GPU run, or run there if the PC has a GPU. Deep models get the same
+walk-forward, costs, placebo and holdout as everything else. The earlier CNN
+and tick studies found no direction edge after costs, so a bigger model has
+to beat them on the 2023 holdout before it counts.
 
 ## 10. Decisions only Smit can make
 
