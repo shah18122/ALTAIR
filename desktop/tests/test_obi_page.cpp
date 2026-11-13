@@ -228,8 +228,9 @@ int main(int argc, char** argv) {
     {
         const auto& s = page.engine()->signals();
         const QString t = page.imbalance_text();
-        check(page.tabs()->tabText(0) == QStringLiteral("How a trade happens") && page.tabs()->tabText(1) == QStringLiteral("Formulas, live"),
-              "the tabs: how a trade happens, then the formulas");
+        check(page.tabs()->tabText(0) == QStringLiteral("Order-book tape") && page.tabs()->tabText(1) == QStringLiteral("Formulas, live")
+                  && page.tabs()->tabText(2) == QStringLiteral("How a trade happens") && page.tabs()->currentIndex() == 0,
+              "the tabs: the tape opens, then the formulas, the explanation last");
         check(t.contains(QStringLiteral("(3,000 − 1,000) / (3,000 + 1,000)")) && std::fabs(s.obi1 - 0.5) < 1e-12, "OBI at the touch is worked");
         check(t.contains(QStringLiteral("(15,000 − 5,000) / (15,000 + 5,000)")), "the five-level sums are shown");
         check(t.contains(QStringLiteral("λ = 0.25")) && t.contains(QStringLiteral("above")), "the weights are stated, the microprice is above the mid");

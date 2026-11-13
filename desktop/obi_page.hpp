@@ -72,6 +72,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QTableWidget>
 #include <QTextStream>
 #include <QTimer>
@@ -663,6 +664,11 @@ public:
             iv->addWidget(tape_, 1);
             tabs_->addTab(w, QStringLiteral("Order-book tape"));
         }
+        // Numbers first (roadmap section 7): the tape opens, the explanation
+        // is the last tab.
+        tabs_->tabBar()->moveTab(2, 0);
+        tabs_->tabBar()->moveTab(1, 2);
+        tabs_->setCurrentIndex(0);
         mv->addWidget(tabs_, 4);
         split->addWidget(mid);
 
