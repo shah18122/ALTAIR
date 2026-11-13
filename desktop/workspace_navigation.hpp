@@ -376,8 +376,8 @@ private:
     QLabel* notice_ = nullptr;
     QWidget* footer_ = nullptr;
     NavigationResizeHandle* resize_handle_ = nullptr;
-    std::array<QTreeWidgetItem*, 7> groups_{};
+    std::array<QTreeWidgetItem*, kNavigationGroups.size()> groups_{};
     std::array<QTreeWidgetItem*, kNavigationPages.size()> pages_{};
-    std::array<QToolButton*, 7> rail_buttons_{};
+    std::array<QToolButton*, kNavigationGroups.size()> rail_buttons_{};
 };
 } // namespace altair::ui

@@ -26,13 +26,17 @@ void registry_contract() {
     const QStringList expected{
         "Live Grid", "Chart", "Terminal", "Models", "Data Flow", "Broker Account",
         "Cost", "Analytics", "Pair Trading", "Value — DCF", "Aggregator", "Audit Trail",
-        "Execution", "Volatility", "Risk — VaR", "Portfolio", "ML — Trees", "Regimes",
-        "Forecast", "Strategies", "Overnight Gap", "Options", "Basis", "Flagging",
+        "Execution", "Vol Forecasts", "Risk — VaR", "Risk", "ML — Trees", "Regimes",
+        "Forecast", "Strategies", "Overnight Gap", "Option Chain", "Basis", "Flagging",
         "Microstructure", "Sizing & Limits", "Cointegration", "Memory", "Link Broker",
-        "Neural", "Features", "Arbitrage", "Model Atlas", "FYERS Primary", "Brokers",
-        "Demo Trading", "Threshold", "About", "Start here", "Backtests", "Daily findings", "Work log", "Order Book Imbalance", "Server", "Who Does What"};
-    check(nav_page_names() == expected,
-          "all legacy labels plus Brokers, Demo Trading, Threshold, About, Start here, Backtests, Daily findings, Work log, Order Book Imbalance, Server and Who Does What are registered");
+        "Neural", "Features", "Arbitrage", "Scoreboard", "FYERS Primary", "Broker",
+        "Demo Trading", "Threshold", "About", "Today", "Trades", "Daily findings", "Work log", "Order Book", "Server", "Data & Recorder"};
+    check(nav_page_names() == expected, "45 stable pages with the 2026-11-13 screen names");
+    // Old labels still resolve (CLI, saved links).
+    const std::pair<const char*, int> legacy[]{{"Start here", 38}, {"Options", 21}, {"Order Book Imbalance", 42},
+        {"Model Atlas", 32}, {"Backtests", 39}, {"Volatility", 13}, {"Portfolio", 15}, {"Who Does What", 44}, {"Brokers", 34}};
+    for (const auto& [label, index] : legacy)
+        check(nav_page_index(QString::fromUtf8(label)) == index, "every old label opens its renamed screen");
     QSet<QString> ids;
     QSet<int> order;
     for (int i = 0; i < expected.size(); ++i) {
@@ -41,17 +45,21 @@ void registry_contract() {
               "label and stable ID resolve to the same legacy page");
     }
     for (const int i : kNavigationOrder) order.insert(i);
-    check(ids.size() == 45 && order.size() == 25 && !ids.contains(QString{}),
-          "45 identities and 25 sidebar destinations");
-    check(kNavigationOrder.front() == 38, "Start here heads the sidebar");
-    // The model pages open from the Model Atlas, not the sidebar.
-    for (const int model_page : {9, 10, 16, 17, 18, 27, 29, 30, 13, 7, 24, 26, 25, 23})
-        check(!nav_listed(model_page) && nav_visible(model_page), "a model page is off the sidebar but still a route");
-    for (const int kept : {2, 42, 34, 12, 21, 36, 31, 32, 15, 14, 4, 37, 39, 40, 41, 43, 44})
-        check(nav_listed(kept), "trading, Order Book Imbalance, risk, Atlas, Threshold, About, Backtests, Daily findings and Work log stay in the sidebar");
+    check(ids.size() == 45 && order.size() == 39 && !ids.contains(QString{}),
+          "45 identities and 39 sidebar destinations (11 main + 28 Lab)");
+    check(kNavigationOrder.front() == 38, "Today heads the sidebar");
+    int main_screens = 0;
+    for (const int i : kNavigationOrder)
+        main_screens += kNavigationPages[static_cast<std::size_t>(i)].group != static_cast<int>(kLabGroup) ? 1 : 0;
+    check(main_screens == 11, "eleven main screens; everything else is in the Lab");
+    for (const int kept : {38, 2, 21, 42, 32, 39, 13, 15, 44, 34, 41})
+        check(nav_listed(kept) && kNavigationPages[static_cast<std::size_t>(kept)].group < 5, "a roadmap screen is in a main group");
+    for (int i = 0; i < 45; ++i)
+        if (nav_visible(i)) check(nav_listed(i), "nothing is lost: every live page is in the sidebar");
     for (const int hidden : {0, 1, 5, 28, 33, 35})
         check(!order.contains(hidden) && !nav_visible(hidden), "removed routes never appear in traversal");
     check(nav_page_index(QStringLiteral("  MODEL   ATLAS ")) == 32 &&
+          nav_page_index(QStringLiteral("scoreboard")) == 32 &&
           nav_page_index(QStringLiteral("market.terminal")) == 2 &&
           nav_page_index(QStringLiteral("strategies.ratio-spread")) == 8 &&
           nav_page_index(QStringLiteral("Ratio Spread")) == 8 &&
@@ -91,7 +99,7 @@ void tree_and_menu() {
     nav.populate_menu(&menu);
     QList<QAction*> actions;
     routes(&menu, actions);
-    check(actions.size() == 25 + nav.recent_pages().size(), "seven native submenus and recent routes expose sidebar pages");
+    check(actions.size() == 39 + nav.recent_pages().size(), "six native submenus and recent routes expose sidebar pages");
     int checked = 0;
     for (auto* action : actions) checked += action->isChecked() ? 1 : 0;
     check(checked >= 1, "workspace menus visibly mark the current route");
@@ -100,10 +108,10 @@ void tree_and_menu() {
         check(invoked == action->data().toInt(), "submenu action routes to its page");
     }
     for (int i = 0; i < 50; ++i) nav.populate_menu(&menu);
-    check(menu.findChildren<QMenu*>(QString{}, Qt::FindDirectChildrenOnly).size() == 9,
+    check(menu.findChildren<QMenu*>(QString{}, Qt::FindDirectChildrenOnly).size() == 8,
           "reopening workspace menu does not accumulate submenu objects");
     const auto buttons = nav.findChildren<QToolButton*>();
-    check(buttons.size() == 7, "compact rail has seven groups");
+    check(buttons.size() == 6, "compact rail has six groups");
     int compact_routes = 0;
     for (auto* button : buttons) {
         QList<QAction*> entries;
@@ -114,7 +122,7 @@ void tree_and_menu() {
             check(invoked == entry->data().toInt(), "compact popup retains page mapping");
         }
     }
-    check(compact_routes == 25, "all sidebar pages reachable in compact mode");
+    check(compact_routes == 39, "all sidebar pages reachable in compact mode");
     int compact_checked = 0;
     for (auto* button : buttons)
         for (auto* entry : button->menu()->actions())
@@ -183,10 +191,13 @@ void settings_contract() {
     restored.save_state(settings);
     restored.select_page(32);
     restored.save_state(settings);
-    settings.setValue(QStringLiteral("expanded"), QStringList{"options", "accounts", "models"});
+    settings.setValue(QStringLiteral("expanded"), QStringList{"options", "accounts", "models", "market", "data"});
     restored.restore_state(settings);
-    check(restored.recovery_notice().isEmpty() && restored.current_page() == 32,
-          "group IDs retired by the workflow regroup are dropped without losing the saved page");
+    restored.save_state(settings);
+    check(restored.recovery_notice().isEmpty() && restored.current_page() == 32
+              && settings.value(QStringLiteral("expanded")).toStringList()
+                     == QStringList({"today", "models", "trade", "system"}),
+          "retired group IDs map to their new groups without losing the saved page");
     restored.save_state(settings);
     settings.setValue(QStringLiteral("expanded"), 123);
     restored.restore_state(settings);
@@ -378,9 +389,19 @@ void atlas_catalogue_routes() {
         for (int j = 0; j < it->childCount(); ++j) stack << it->child(j);
     }
     check(entries == 0 && tree_models == 0, "no Atlas model is listed in the sidebar or its menus");
-    nav.select_page(18);   // Forecast, opened from the Atlas
-    check(tree->currentItem() != nullptr && tree->currentItem()->data(0, Qt::UserRole).toInt() == 32,
-          "a model page opened from the Atlas highlights the Model Atlas");
+    nav.select_page(18);   // Forecast, opened from the Atlas, sits in the Lab
+    check(tree->currentItem() != nullptr && tree->currentItem()->data(0, Qt::UserRole).toInt() == 18
+              && tree->currentItem()->parent()->data(0, Qt::UserRole + 1).toString() == QStringLiteral("lab")
+              && tree->currentItem()->parent()->isExpanded(),
+          "a Lab page opens the collapsed Lab group and highlights itself");
+}
+void lab_collapsed_by_default() {
+    WorkspaceNavigation nav;
+    auto* tree = nav.findChild<QTreeWidget*>();
+    auto* lab = tree->topLevelItem(tree->topLevelItemCount() - 1);
+    check(lab->data(0, Qt::UserRole + 1).toString() == QStringLiteral("lab") && !lab->isExpanded()
+              && lab->childCount() == 28 && tree->topLevelItem(0)->isExpanded(),
+          "Lab is last, collapsed and holds 28 pages; Today is open");
 }
 } // namespace
 int main(int argc, char** argv) {
@@ -396,6 +417,7 @@ int main(int argc, char** argv) {
     legacy_route_migration();
     mouse_resize();
     atlas_catalogue_routes();
+    lab_collapsed_by_default();
     if (argc == 2) {
         WorkspaceNavigation nav;
         nav.select_page(32);

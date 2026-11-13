@@ -2,95 +2,102 @@
 #pragma once
 #include <QStringList>
 #include <array>
+#include <utility>
 
 namespace altair::ui {
 struct NavigationPage { const char* id; const char* label; int group; };
 struct NavigationGroup { const char* id; const char* label; const char* short_label; const char* glyph; };
 // The group ID is stable (saved state uses it); its label, glyph and place in
-// the sidebar are presentation.
-inline constexpr std::array<NavigationGroup, 7> kNavigationGroups{{
-    {"market", "Live Market", "LIV", "\u25B2"},
-    {"trades", "Trades & Logs", "LOG", "\u2261"},
-    {"strategies", "Strategies & Tests", "STR", "\u265E"},
-    {"models", "Models & Signals", "MDL", "\u25C6"},
-    {"risk", "Risk & Portfolio", "RSK", "\u25CE"},
-    {"data", "Data & Recorder", "DAT", "\u21C4"},
-    {"system", "System & Broker", "SYS", "\u2699"},
+// the sidebar are presentation. Roadmap section 7 (2026-11-13): five main
+// groups holding eleven screens, and one Lab group, collapsed by default, with
+// every other page so nothing is lost.
+inline constexpr std::array<NavigationGroup, 6> kNavigationGroups{{
+    {"today", "Today", "DAY", "\u25B2"},
+    {"trade", "Trade", "TRD", "\u21C5"},
+    {"models", "Models", "MDL", "\u25C6"},
+    {"risk", "Risk", "RSK", "\u25CE"},
+    {"system", "System", "SYS", "\u2699"},
+    {"lab", "Lab", "LAB", "\u2697"},
 }};
-/// Group IDs saved by builds before 2026-11-05; read back as nothing rather
-/// than as a corrupt preference (navigation_state.hpp drops them).
-inline constexpr std::array<const char*, 2> kRetiredNavigationGroups{{"options", "accounts"}};
-/// The order groups appear in, the order of a trading day: the live market,
-/// what the models say, the strategies, the trades they made, risk, the data
-/// behind them, and the system and broker underneath.
-inline constexpr std::array<int, 7> kNavigationGroupOrder{{0, 3, 2, 1, 4, 5, 6}};
+inline constexpr std::size_t kLabGroup = 5;
+/// Group IDs saved by older builds. navigation_state.hpp maps each to the
+/// group that now holds its pages (nullptr: dropped) instead of treating the
+/// saved preference as corrupt.
+struct RetiredNavigationGroup { const char* id; const char* now; };
+inline constexpr std::array<RetiredNavigationGroup, 6> kRetiredNavigationGroups{{
+    {"options", nullptr}, {"accounts", nullptr},
+    {"market", "trade"}, {"trades", "models"}, {"strategies", "models"}, {"data", "system"},
+}};
+inline constexpr std::array<int, 6> kNavigationGroupOrder{{0, 1, 2, 3, 4, 5}};
 inline constexpr std::array<NavigationPage, 45> kNavigationPages{{
-    {"market.grid", "Live Grid", 0},
-    {"market.chart", "Chart", 0},
-    {"market.terminal", "Terminal", 0},
-    {"models.overview", "Models", 3},
+    {"market.grid", "Live Grid", 5},
+    {"market.chart", "Chart", 5},
+    {"market.terminal", "Terminal", 1},
+    {"models.overview", "Models", 5},
     {"system.data-flow", "Data Flow", 5},
-    {"accounts.account", "Broker Account", 6},
-    {"risk.cost", "Cost", 4},
-    {"options.analytics", "Analytics", 3},
-    {"strategies.pair-trading", "Pair Trading", 2},
-    {"models.dcf", "Value — DCF", 3},
-    {"models.aggregator", "Aggregator", 3},
-    {"system.audit", "Audit Trail", 1},
-    {"accounts.execution", "Execution", 1},
-    {"options.volatility", "Volatility", 3},
-    {"risk.var", "Risk — VaR", 4},
-    {"risk.portfolio", "Portfolio", 4},
-    {"models.trees", "ML — Trees", 3},
-    {"models.regimes", "Regimes", 3},
-    {"models.forecast", "Forecast", 3},
-    {"strategies.overview", "Strategies", 2},
-    {"strategies.overnight", "Overnight Gap", 2},
-    {"options.chain", "Options", 0},
-    {"strategies.basis", "Basis", 2},
-    {"system.flagging", "Flagging", 6},
-    {"market.microstructure", "Microstructure", 0},
-    {"risk.sizing", "Sizing & Limits", 4},
-    {"strategies.cointegration", "Cointegration", 2},
-    {"models.memory", "Memory", 3},
-    {"accounts.connections", "Link Broker", 6},
-    {"models.neural", "Neural", 3},
-    {"models.features", "Features", 3},
-    {"strategies.parity-calendar", "Arbitrage", 2},
-    {"models.atlas", "Model Atlas", 3},
-    {"accounts.fyers", "FYERS Primary", 6},
-    {"accounts.brokers", "Brokers", 6},
-    {"strategies.demo-trading", "Demo Trading", 2},
-    {"strategies.threshold", "Threshold", 2},
-    {"system.about", "About", 6},
-    {"market.start", "Start here", 0},
-    {"strategies.backtests", "Backtests", 2},
-    {"models.findings", "Daily findings", 3},
-    {"system.work-log", "Work log", 1},
-    {"market.order-book-imbalance", "Order Book Imbalance", 0},
-    {"system.server", "Server", 6},
-    {"data.pipeline", "Who Does What", 5},
+    {"accounts.account", "Broker Account", 5},
+    {"risk.cost", "Cost", 5},
+    {"options.analytics", "Analytics", 5},
+    {"strategies.pair-trading", "Pair Trading", 5},
+    {"models.dcf", "Value — DCF", 5},
+    {"models.aggregator", "Aggregator", 5},
+    {"system.audit", "Audit Trail", 5},
+    {"accounts.execution", "Execution", 5},
+    {"options.volatility", "Vol Forecasts", 2},
+    {"risk.var", "Risk — VaR", 5},
+    {"risk.portfolio", "Risk", 3},
+    {"models.trees", "ML — Trees", 5},
+    {"models.regimes", "Regimes", 5},
+    {"models.forecast", "Forecast", 5},
+    {"strategies.overview", "Strategies", 5},
+    {"strategies.overnight", "Overnight Gap", 5},
+    {"options.chain", "Option Chain", 1},
+    {"strategies.basis", "Basis", 5},
+    {"system.flagging", "Flagging", 5},
+    {"market.microstructure", "Microstructure", 5},
+    {"risk.sizing", "Sizing & Limits", 5},
+    {"strategies.cointegration", "Cointegration", 5},
+    {"models.memory", "Memory", 5},
+    {"accounts.connections", "Link Broker", 5},
+    {"models.neural", "Neural", 5},
+    {"models.features", "Features", 5},
+    {"strategies.parity-calendar", "Arbitrage", 5},
+    {"models.atlas", "Scoreboard", 2},
+    {"accounts.fyers", "FYERS Primary", 5},
+    {"accounts.brokers", "Broker", 4},
+    {"strategies.demo-trading", "Demo Trading", 5},
+    {"strategies.threshold", "Threshold", 5},
+    {"system.about", "About", 5},
+    {"market.start", "Today", 0},
+    {"strategies.backtests", "Trades", 2},
+    {"models.findings", "Daily findings", 5},
+    {"system.work-log", "Work log", 4},
+    {"market.order-book-imbalance", "Order Book", 1},
+    {"system.server", "Server", 5},
+    {"data.pipeline", "Data & Recorder", 4},
 }};
-// Traversal order is NOT a legacy page index. Groups by workflow (2026-11-05):
-//   Live Market         Start here, Terminal, Order Book Imbalance, Options
-//   Models & Signals    Daily findings, Model Atlas, Models
-//   Strategies & Tests  Backtests (every trade log) first, then the strategies
-//   Trades & Logs       Execution, Work log, Audit Trail
-//   Risk & Portfolio    Portfolio, VaR, Cost
-//   Data & Recorder     Who Does What (desktop/pipeline_page.hpp), Data Flow
-//   System & Broker     Brokers (login), Server (jobs, latency), About
-// The model pages (DCF, Aggregator, ML Trees, Regimes, Forecast, Memory,
-// Neural, Features, Volatility, Analytics, Microstructure, Cointegration,
-// Sizing, Flagging) are not listed: they open from the Model Atlas, which has
-// the way back. Their routes stay so saved links and the Atlas still work.
-inline constexpr std::array<int, 25> kNavigationOrder{{
-    38, 2, 42, 21,
-    40, 32, 3,
-    39, 36, 31, 19, 8, 22, 20,
-    12, 41, 11,
-    15, 14, 6,
-    44, 4,
-    34, 43, 37
+/// Labels before the 2026-11-13 tidy; the CLI and saved links still accept them.
+inline constexpr std::array<std::pair<const char*, int>, 9> kLegacyNavigationLabels{{
+    {"Volatility", 13},
+    {"Portfolio", 15},
+    {"Options", 21},
+    {"Model Atlas", 32},
+    {"Brokers", 34},
+    {"Start here", 38},
+    {"Backtests", 39},
+    {"Order Book Imbalance", 42},
+    {"Who Does What", 44},
+}};
+// Traversal order is NOT a legacy page index. The eleven main screens in
+// workflow order, then the Lab in alphabetical order. Retired routes (Live
+// Grid, Chart, the three old broker pages, Demo Trading) redirect instead.
+inline constexpr std::array<int, 39> kNavigationOrder{{
+    38,
+    2, 21, 42,
+    32, 39, 13,
+    15,
+    44, 34, 41,
+    37, 10, 7, 31, 11, 22, 26, 6, 40, 4, 12, 30, 23, 18, 27, 24, 16, 3, 29, 20, 8, 17, 14, 43, 25, 19, 36, 9
 }};
 /// A page the sidebar lists (the rest open from the Model Atlas or search).
 [[nodiscard]] constexpr bool nav_listed(int index) noexcept {
@@ -132,6 +139,8 @@ inline constexpr std::array<int, 25> kNavigationOrder{{
     if (want == QLatin1String("parity & calendar")) return 31;
     // The page's first name, for a day: Order Flow.
     if (want == QLatin1String("market.order-flow") || want == QLatin1String("order flow")) return 42;
+    for (const auto& [label, index] : kLegacyNavigationLabels)
+        if (want == QString::fromUtf8(label).simplified().toCaseFolded()) return index;
     for (int i = 0; i < static_cast<int>(kNavigationPages.size()); ++i) {
         const auto& page = kNavigationPages[static_cast<std::size_t>(i)];
         if (want == QString::fromUtf8(page.id) ||

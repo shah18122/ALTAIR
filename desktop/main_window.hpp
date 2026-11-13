@@ -820,7 +820,7 @@ private:
             "#atlasBackBar QPushButton:hover{border-color:#E3A34A;}"));
         auto* bar = new QHBoxLayout(atlas_bar_);
         bar->setContentsMargins(10, 4, 10, 4);
-        auto* back = new QPushButton(QStringLiteral("\u2190  Model Atlas"), atlas_bar_);
+        auto* back = new QPushButton(QStringLiteral("\u2190  Scoreboard"), atlas_bar_);
         back->setObjectName(QStringLiteral("atlasBackButton"));
         back->setToolTip(QStringLiteral("Back to the Model Atlas  ·  Backspace"));
         bar->addWidget(back);

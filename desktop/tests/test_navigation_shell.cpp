@@ -137,9 +137,9 @@ void workstation(altair::ui::MainWindow& window, QStackedWidget* stack) {
     check(palette != nullptr, "Ctrl+K has a command palette");
     if (palette == nullptr) return;
     window.open_palette();
-    palette->type(QStringLiteral("model atl"));
-    check(palette->first_title() == QStringLiteral("Model Atlas") && palette->run_first() && stack->currentIndex() == 32,
-          "typing a few letters finds the Model Atlas; Enter opens it");
+    palette->type(QStringLiteral("scoreb"));
+    check(palette->first_title() == QStringLiteral("Scoreboard") && palette->run_first() && stack->currentIndex() == 32,
+          "typing a few letters finds the Scoreboard; Enter opens it");
     window.open_palette();
     palette->type(QStringLiteral("daily find"));
     check(palette->run_first() && stack->currentIndex() == 40, "the palette reaches Daily findings");

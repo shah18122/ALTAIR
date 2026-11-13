@@ -9,7 +9,8 @@ struct NavigationState {
     int page = 2;
     NavigationMode mode = NavigationMode::Expanded;
     NavigationMode last_visible = NavigationMode::Expanded;
-    QStringList expanded{QStringLiteral("market"), QStringLiteral("models")};
+    QStringList expanded{QStringLiteral("today"), QStringLiteral("trade"), QStringLiteral("models"),
+                         QStringLiteral("risk"), QStringLiteral("system")};   // Lab collapsed
     QStringList favourites;
     int expanded_width = 258; // Logical pixels; only220..360 are accepted.
     QStringList recent{QStringLiteral("market.terminal")};
@@ -41,13 +42,21 @@ struct NavigationState {
     const QString page = settings.value(QStringLiteral("page")).toString();
     const auto raw_expanded = settings.value(QStringLiteral("expanded"));
     const auto raw_favourites = settings.value(QStringLiteral("favourites"));
-    // A group retired by the 2026-11-05 regroup is dropped, not treated as a
-    // corrupt preference: everything else the user saved is kept.
-    auto expanded = raw_expanded.toStringList();
-    expanded.removeIf([](const QString& id) {
-        for (const char* old : kRetiredNavigationGroups) if (id == QLatin1String(old)) return true;
-        return false;
-    });
+    // A retired group is mapped to the group that now holds its pages (or
+    // dropped), not treated as a corrupt preference: everything else the user
+    // saved is kept. Today is always open after a regroup.
+    QStringList expanded;
+    bool regrouped = false;
+    for (const auto& id : raw_expanded.toStringList()) {
+        QString now = id;
+        for (const auto& old : kRetiredNavigationGroups) {
+            if (id != QLatin1String(old.id)) continue;
+            regrouped = true;
+            now = old.now ? QString::fromUtf8(old.now) : QString{};
+        }
+        if (!now.isEmpty() && !expanded.contains(now)) expanded.append(now);
+    }
+    if (regrouped && !expanded.contains(QStringLiteral("today"))) expanded.prepend(QStringLiteral("today"));
     auto favourites = raw_favourites.toStringList();
     // QSettings writes an EMPTY list as @Invalid() and reads it back as an
     // invalid QVariant. A present key holding nothing is an empty list, not
@@ -59,7 +68,7 @@ struct NavigationState {
                  last_ok && last >= 0 && last <= 1 && nav_known_id(page) &&
                  list_ok(QStringLiteral("expanded"), raw_expanded) &&
                  list_ok(QStringLiteral("favourites"), raw_favourites) &&
-                 expanded.size() <= 7 && favourites.size() <= static_cast<qsizetype>(kNavigationPages.size());
+                 expanded.size() <= static_cast<qsizetype>(kNavigationGroups.size()) && favourites.size() <= static_cast<qsizetype>(kNavigationPages.size());
     for (const auto& id : expanded) valid = valid && nav_known_group(id);
     for (const auto& id : favourites) valid = valid && nav_known_id(id);
     if (schema == 2) {
