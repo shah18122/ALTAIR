@@ -1,327 +1,345 @@
 # ALTAIR roadmap
 
-Written 2026-11-13 from the repo at main `11048c9` and the studies in
-`docs/` and `research/`. It plans only. An implementer with no other context
-should be able to follow it phase by phase. Every number below comes from a
-file in this repo, named next to it.
+Version 2, 2026-11-13. It replaces version 1 (b358f3d) after Smit's answers:
+keep every model (no archiving), trade frequently with purely model-based
+rules, sell options only, use HAR volatility to drive the other models, make
+OBI BANKNIFTY and pair trading work and prove them with backtests, get real
+FYERS orders working, capital Rs 1 crore with 1 lot compulsory, colocation
+later.
+
+This document is a plan. An implementer with no other context should be able
+to follow it phase by phase. Every number comes from a file in this repo,
+named next to it.
 
 ---
 
-## 1. What ALTAIR is today (summary)
+## 1. What ALTAIR is today
 
-ALTAIR is a C++/Qt trading workstation for NSE index derivatives, about
-230,000 lines of C++ plus Python research, run on an EC2 c7i.2xlarge in
-Mumbai with FYERS as the only broker.
+ALTAIR is a C++/Qt trading workstation for NSE index derivatives: about
+230,000 lines of C++ plus Python research. It runs on an EC2 c7i.2xlarge in
+Mumbai, and FYERS is the only broker.
 
 | Part | What exists | State |
 |---|---|---|
-| Broker and data | FYERS login with daily TOTP auto-login, history, live socket (5-level and 50-level depth), order router with PAPER/LIVE switch, caps, day-loss stop, kill switch | Works |
-| Recorder | Records every session (ticks, OI, bid/ask, books, 3 expiries per index, option chains at 15:45), stores it, pushes compact data to `altair-data` | Works, but sessions are often incomplete (see 2) |
-| Nightly | 20:00 retrain of every model on a FYERS snapshot with a leak check (`ops/linux/nightly.py`, `ops/linux/train_all.py`) | Works |
-| Models | About 33 forecasters x 20 tracks (curriculum), 108 rows in the Model Atlas, about 25 live paper models in `app/live_engine_main.cpp` | Runs, almost none has an edge |
-| Desktop | 45 pages in 7 sidebar groups (`desktop/navigation_registry.hpp`) | Too many, mostly for models that failed |
-| Low latency | AF_XDP feed, DPDK order line, kept-alive TLS, isolated cores, host tuning (`docs/LATENCY.md`, `net/`, `ops/linux/`) | Built; internal path is tens of µs |
-| Research | Pre-registered studies with dev and sealed holdout (`research/strategy`, `research/equity`, `research/cnn`, `research/signals`) | Honest and complete; nearly all FAIL |
+| Broker and data | FYERS login with daily TOTP auto-login, history, live socket (5- and 50-level depth), order router, per-model PAPER/LIVE switches, caps, day-loss stop, kill switch | Paper works. **Real orders have never reached FYERS** (section 2) |
+| Recorder | Every session: ticks, OI, bid/ask, books, 3 expiries per index, chains at 15:45. Data is pushed to `altair-data` | Works, but sessions are often incomplete |
+| Nightly | 20:00 retrain of the models on a FYERS snapshot with a leak check (`ops/linux/nightly.py`, `ops/linux/train_all.py`) | Works |
+| Models | About 33 forecasters x 20 tracks, 108 Model Atlas rows, about 25 live paper models (`app/live_engine_main.cpp` lines ~725-870) | Run. None is proven profitable yet |
+| Desktop | 45 pages in 7 sidebar groups (`desktop/navigation_registry.hpp`) | Cluttered, too much text |
+| Low latency | AF_XDP feed, DPDK order line, kept-alive TLS, isolated cores (`docs/LATENCY.md`) | Internal path in the tens of µs |
+| Research | Pre-registered studies with dev data and a sealed holdout (`research/strategy`, `research/equity`, `research/cnn`, `research/signals`) | Honest; nearly every test FAILs after costs |
 
-Real money traded so far: none. Validated strategies: none.
+So far ALTAIR has traded no real money and has no validated strategy.
 
 ## 2. Where we are stuck
 
-1. **No goal was ever written down**, so every idea was built: forecasting
-   papers, quantum models, OBI, diffusion, market making, pairs, arbitrage,
-   DPDK. The infrastructure is far ahead of the evidence.
-2. **The one live lead cannot be tested yet.** The short straddle (sell when
-   IV >= forecast RV) needs option history. FYERS serves no expired option
-   contracts, and the NSE file is banned (`docs/DATA_POLICY.md`), so the only
-   test is forward, on chains the recorder saves itself. That takes 60 full
-   sessions (`research/strategy/README.md`, about mid-February 2027).
-3. **The recorder loses sessions.** Of the first five recorded sessions
-   (4-11 Nov) only 6 Nov and 11 Nov are complete; 10 Nov has no chain
-   (`research/strategy/RESULTS.md`). Every incomplete session pushes the
-   verdict further out.
-4. **CI fails within seconds on every push since 2026-11-09**, so nothing
-   checks main automatically.
+1. **Real orders do not work.** The server check on 2026-11-12
+   (`/mnt/project-files/terminal-orders/diag-2026-11-12.txt`) found these causes:
+   - LIVE was never armed (`data/live_trading.json` missing).
+   - `altair_order_router` was not running.
+   - The desktop running on the server was the 9 Nov build, so it lacked the newer switches.
+   - The webhook tunnel was down: cloudflared is not installed on EC2, and the public callback returns HTTP 530.
+   - FYERS still has to whitelist the server's static IP (a SEBI rule since 2026-04-01).
+   - The order must come from an app of the new type.
 
-## 3. Why there is no profit after so many models
+   The PAPER/LIVE switch exists in code (`desktop/live_trading.hpp`, Terminal top strip and the Models table "Mode" button). It is not visible enough, and it was not in the build Smit was running.
+2. **OBI BANKNIFTY takes no trades live.** The cause is not yet diagnosed
+   (Phase 0).
+3. **No model has passed a test after costs.** Section 3 explains why.
+4. **The recorder loses sessions.** Only 2 of the first 5 recorded sessions
+   are complete (`research/strategy/RESULTS.md`). Every model that learns
+   from the recorder (OBI, straddle, depth features) is limited by this.
+5. **CI has failed within seconds on every push since 2026-11-09.**
 
-Plainly: the models were aimed at something that cannot be predicted, and the
-one thing that can be predicted has not been traded yet.
+## 3. Why there is no profit yet, and what changes now
 
-1. **Index price direction is not forecastable here.** No model beats "no
-   change" on NIFTY or BANKNIFTY at 1m, 5m, 15m, 1h or daily
-   (`docs/MODEL_AUDIT.md`: best RMSE skill 0.00 % to +0.13 %, direction
-   51-54 %). The CNN, its 29-feature combination (90 tests), six
-   pre-registered futures rules and seven stock rules all fail after costs in
-   dev and in the 2023 holdout (`research/cnn/README.md`,
-   `research/strategy/RESULTS.md`, `research/equity/RESULTS.md`).
-2. **Costs are bigger than the edges.** The best gross edges found are 0-5 bp
-   a trade; a futures round trip costs 6-10 bp. Real effects exist (trend
-   since the open continues, basis jumps revert) but each is worth 1-5 bp.
-3. **More models is not more edge.** Testing hundreds of model x track x rule
-   combinations on two correlated indices guarantees some look good by luck.
-   The pre-registered studies were the right fix, and they say "no".
-4. **Speed cannot be the edge on a retail API.** The microstructure models
-   (OBI A-D, OBI quoter, diffusion, Avellaneda-Stoikov quoting, cross-exchange
-   arbitrage) need to act before others. Our orders go over the internet to
-   FYERS and then to NSE: milliseconds, against colocated firms at
-   microseconds. Avellaneda-Stoikov loses even at zero cost because its fills
-   are adversely selected (`docs/STATUS.md`).
-5. **The one positive stock lead decayed.** Bank pairs earned +39.5 bp a trade
-   in 2015-2019 and **-35.5 bp in 2024-2026** (`research/equity/FLOWS_RESULTS.md`).
-   The live "Pair trading" paper model trades exactly that losing rule.
-6. **What does work has not been turned into a trade yet.** Volatility is
-   forecastable: HAR is 16-35 % below a random walk from 1 minute to 1 hour,
-   stable in every third of the data (`docs/MODEL_AUDIT.md`). The strategy
-   that is paid for being right about volatility is selling options, and that
-   one is waiting on data (2 above).
-7. **Short volatility has a fat left tail, and nothing caps it yet.** On the
-   recorded sessions, quiet days earn Rs 300-1,800 a lot and one trend day
-   (6 Nov) cost Rs 16,000 a lot (`research/strategy/RESULTS.md`). With
-   "never buy options", the tail can only be limited by size, stops, timing,
-   skipping days and futures hedges. A 1-lot BANKNIFTY straddle cannot be
-   delta-hedged at all (the futures lot equals the option lot).
+| Cause | Evidence | What this roadmap does about it |
+|---|---|---|
+| Index price direction did not beat "no change" at any timeframe, on spot or futures | `docs/MODEL_AUDIT.md`: best RMSE skill 0.00-0.13 %, direction 51-54 % | Keep forecasting futures and spot for both indices, but trade the parts that do forecast (size of move, range, volatility) and score direction only through option sales (3D) |
+| Gross edges of 0-5 bp a trade against 6-10 bp of futures costs | `research/cnn/README.md` (90 combination tests), `research/strategy/RESULTS.md` | Express signals by **selling options**. Costs are charged on premium, not notional, so they are far smaller in rupees (below). Each signal is re-scored this way |
+| Many models tested on two correlated indices find winners by luck | hundreds of model x track x rule tests | Keep every model training, but one scoreboard with the same costs, holdout and placebo decides what may go LIVE (Phase 2) |
+| Speed strategies cannot win on a retail API | Avellaneda-Stoikov loses even at zero cost (`docs/STATUS.md`) | Aim for MFT (seconds to minutes), not HFT (section 4) |
+| Bank pairs decayed: +39.5 bp a trade 2015-2019, **-35.5 bp 2024-2026** | `research/equity/FLOWS_RESULTS.md` | Rebuild pairs as intraday, with an index link and a vol gate, and backtest it before any paper or live run (3C) |
+| The one forecastable thing, volatility, is not traded yet | HAR 16-35 % below a random walk from 1 min to 1 hour (`docs/MODEL_AUDIT.md`) | HAR becomes the gate and sizing input for **every** model (3E) and the core of S1 (3A) |
+| The short-vol tail is uncapped | One trend day (6 Nov) cost Rs 16,000 a lot, about ten quiet days of profit (`research/strategy/RESULTS.md`) | Tail controls within sell-only (Phase 4) |
 
-## 4. Latency: what is physically possible
+**On point 2 (option selling to cut costs).** It does cut costs. Option STT
+and exchange fees are charged on the premium (`config/charges.toml`, schedule
+for options), so one lot of an ATM BANKNIFTY option costs tens of rupees plus
+the spread, while a futures round trip is about 6 bp of notional (around
+Rs 1,000 a lot). The catch is that a sold option earns at most its premium,
+and the spread (Rs 1-2 a unit on BANKNIFTY ATM) is a large share of a small
+intraday move. Cheaper costs help a real signal. They do not create one. So
+every signal is backtested as an option sale with these costs before it is
+believed (Phase 2).
+
+**On point 3 (the CNN combination).** It was built and run. All 90 tests lost
+after costs on FYERS merged futures 2019-2026, with the best gross edge at
+2-5 bp (`research/cnn/README.md`). It did find stable effects: the move since
+the open continues to the close, NIFTY trend plus rising OI continues,
+BANKNIFTY follows NIFTY, 5-15 minute moves revert, and basis jumps revert.
+These are now inputs for the option-sale and gate tests (3D, 3E), not traded
+alone.
+
+## 4. Latency: MFT from our end, HFT later with colocation
 
 | Hop | Measured | Can code cut it? |
 |---|---|---|
-| Inside our server, tick in to decision | tens of µs (`docs/LATENCY.md`) | Yes, already done |
-| EC2 Mumbai to FYERS edge, one round trip | 1.4-1.55 ms | No: it is the network path |
-| FYERS OMS and risk checks, then NSE | unknown, several ms | No: it belongs to FYERS |
+| Inside our server, tick to decision | tens of µs (`docs/LATENCY.md`) | Already done |
+| EC2 Mumbai to the FYERS edge, one round trip | 1.4-1.55 ms | No: it is the network path |
+| FYERS OMS and RMS, then NSE | several ms, unknown | No |
+| FYERS order rate limit | **10 requests a second** for place, modify and cancel (`/mnt/project-files/terminal-orders/fyers-docs/`) | No |
 | FYERS exchange timestamps | 1 second resolution | No |
 
-- **Nanoseconds end to end is not possible on this setup.** Being in Mumbai
-  is not colocation: NSE's colo racks are inside NSE's data centre, and our
-  path goes over the internet through FYERS, which offers no colo, no direct
-  market access and no exchange multicast feed to retail clients.
-- **Real colo means**: a trading member (or a broker that offers co-lo racks
-  with DMA), NSE colocation space, the TBT multicast feed, an NNF/direct order
-  gateway, exchange approval of the algo, and a budget of lakhs a month. That
-  is a different business, not a code change (`docs/NSE_NNF_TBT.md`).
-- **It does not pay now.** S1 (section 5) trades once a session. A
-  millisecond, even a second, changes nothing for it. Latency only matters to
-  a strategy whose edge disappears within milliseconds, and none of ours has
-  an edge to protect.
-
-**Decision in this roadmap: latency work is frozen.** Keep what is built, keep
-the kernel path as the safe default, and add nothing until a validated
-strategy shows, in its own fills, that its edge decays faster than our path.
+- **HFT from our end is not possible on FYERS.** HFT needs microsecond
+  tick-to-trade and hundreds of orders a second. FYERS allows 10 a second
+  over a millisecond internet path. Being in Mumbai is not colocation.
+- **MFT is the right target, and we are already fast enough for it.** For
+  holds of seconds to minutes, the only latency work still useful is
+  measurement: per-hop numbers in `feed_status.json` and
+  `data/live_orders/latency.json`, so slippage is known.
+- **Colocation later** (Smit's plan) means a trading member or broker with
+  co-lo racks and DMA, NSE colocation, the TBT multicast feed and an NNF
+  gateway (`docs/NSE_NNF_TBT.md`). The trigger to start it is in Phase 7.
+- **New latency work stays frozen** until then.
 
 ## 5. Vision and goal
 
-**Vision.** ALTAIR is a one-person volatility-selling desk for NIFTY weekly
-and BANKNIFTY monthly options: it forecasts volatility, sells premium only
-when the market pays more than the forecast, limits the tail, and logs why
-every trade happened. Its edge is its own recorded option-chain history and a
-strict go/kill process, not speed and not price prediction.
+**Vision.** ALTAIR is a model-driven MFT desk for NIFTY and BANKNIFTY. Every
+model trains every night. Every signal is expressed by selling options (or by
+futures for pairs) and gated and sized by the HAR volatility forecast. No
+model trades real money until it passes one common scoreboard, and then it
+trades 1 lot with hard limits.
 
-**Goal (measurable).**
+**Goals (measurable).**
 
-1. **By the 60th complete recorded session** (target late February 2027):
-   S1, the BANKNIFTY IV >= forecast-RV short straddle, gets a written PASS or
-   FAIL under the rules already fixed in `research/strategy/README.md` (mean
-   net P&L per lot > 0 with t >= 2, positive in each third, beats the
-   sell-every-day shadow, beats 95 % of random day sets, worst session within
-   the drawdown provision).
-2. **If PASS:** LIVE with 1 lot and hard limits for 20 sessions; live fills
-   within the paper model's slippage assumption; then scale by the sizing
-   rule in Phase 6.
-3. **12-month target from first live trade:** positive net P&L after all
-   costs, max drawdown within the limit Smit sets, every trade with its
-   reason logged.
-4. **Kill rule:** if S1 FAILS and the pre-registered variants (Phase 3) also
-   FAIL by session 120, stop strategy development. ALTAIR then stays a
-   recording and analysis tool, and no money is traded. This is a real
-   possible outcome and should be accepted as one.
+1. **Real orders work this week:** a 1-lot LIVE sell order placed from ALTAIR
+   shows in FYERS and comes back through the order socket or webhook
+   (Phase 0).
+2. **Every model is on one scoreboard by end of December 2026:** the same
+   costs, walk-forward, holdout and placebo, expressed as an option sale, with
+   a status per model: FAILED, TESTING, PAPER-PASS or LIVE (Phase 2).
+3. **First LIVE model:** the first one that passes paper (section 8) goes LIVE
+   at 1 lot. The likeliest candidates are S1 (judged at 60 complete sessions,
+   about late February 2027) and OBI BANKNIFTY option-sell (judged at 40
+   complete recorded sessions).
+4. **Frequency:** at least one passing model that trades several times a
+   session (OBI, pairs or an intraday option-sale signal), so the result is
+   judged on hundreds of trades, not dozens.
+5. **Capital:** Rs 1 crore allotted, 1 lot per model compulsory. A model may
+   add a lot only under the scaling rule in Phase 6.
+6. **Kill rule per model:** a model that FAILS its pre-registered test stays
+   training and visible as FAILED, but it never goes LIVE until a new,
+   pre-registered version passes.
 
-One strategy at a time. A second strategy is studied only after S1 has a
-verdict (Phase 6).
+## 6. Every model stays (no archiving)
 
-## 6. What is irrelevant and should go
+Smit's choice: nothing is archived. Instead every model gets a **status**
+shown on the scoreboard and in the UI:
 
-"Archive" = move to `research/archive/` (or `docs/archive/`), drop from the
-build's default targets, the live engine, the nightly and the desktop. Git
-keeps everything, so nothing is lost. "Delete" only for code that is already
-dead.
-
-### Live paper models (`app/live_engine_main.cpp`, about lines 725-870)
-
-| Model | Verdict | Action |
+| Status | Meaning | Can trade |
 |---|---|---|
-| Straddle IV>=RV BANKNIFTY | S1, the only lead | **Keep** |
-| Straddle IV>=RV NIFTY (weekly) | Same rule, NIFTY weekly | **Keep** |
-| "Sell every day" shadow of each | Needed by the S1 pass test | **Keep** (add if missing) |
-| Straddle IV>=RV timed BANKNIFTY | Pre-registered variant only if written in Phase 3 | Keep if registered, else archive |
-| Strangle 80 % (x4), books straddle rules | Not safer intraday (`research/strategy/RESULTS.md`) | Archive |
-| Vol band (HAR) | Overlaps S1 | Archive |
-| Direction 10:15-14:15, Desk trader, altair_trader (daily) | No direction edge | Archive |
-| Pairs BANKNIFTY/NIFTY, Stat-arb NIFTY 50, Bank pairs / Pair trading | Pairs edge gone in 2024-2026 (-35.5 bp banks) | Archive |
-| Basket alpha | ~1 bp vs 6 bp cost (`research/signals/`) | Archive |
-| OBI engine, OBI A-D, OBI quoter, OBI stocks, Order flow, OBI punch | Speed-dependent, unvalidated, retail path too slow | Archive |
-| Diffusion engine and traders | Speed-dependent, unvalidated | Archive |
-| Cross-exchange arbitrage, OHL | Speed-dependent; can send real orders | Archive (removes a real-order path) |
-| Option arbitrage | Buys options: breaks the sell-only rule | Delete from engine, archive code |
+| FAILED | Failed its pre-registered test after costs | Paper only |
+| TESTING | Test running or not enough data yet | Paper only |
+| PAPER-PASS | Passed backtest and forward paper test | Paper; LIVE on Smit's switch |
+| LIVE | Switched LIVE by Smit, 1 lot | Yes |
 
-### Tools, models and code
+Starting statuses, from the studies:
 
-| Area | Files | Action |
+| Model | Start status | Source |
 |---|---|---|
-| Direction forecasting zoo | `models/` except the vol models: arima_hybrid, aro, attention, deep_rl, regime_rl, gbdt, mlp, recurrent, trainable_cnn, trainable_recurrent, meta_learners, meta_trader, combo_search, aggregator, sentiment, dcf, named_factors, markov, markov_eval, event_study, spot_forecast, band_curriculum | Archive. Keep `models/vol_forecast.hpp`, HAR (`analytics/har_rv.hpp`), EWMA, GARCH, VIX, tick_forecast's vol part, forecast metrics |
-| Curriculum price tracks | `altair_forecast_curriculum` | Keep only vol, VIX and IV tracks |
-| Nightly jobs | `ops/linux/train_all.py`: trader, combos, magnitude, as_mm, band_demo, tune, obi_select | Remove. Keep vol_forecast, vol_premium, regimes (as a candidate S1 input), paper_report |
-| Market making | `strategies/as_market_maker.hpp`, `app/as_mm_main.cpp` | Archive |
-| Other strategies | basis, calendar, band_option_fade, threshold (`threshold_strategy/`, `live/threshold.hpp`), overnight gap, cointegration | Archive |
-| Vol of vol | `app/vol_of_vol_main.cpp` (buys straddles) | Archive |
-| Quantum, paper replications | `research/models/`, `app/quantum_smile_main.cpp` | Already in research; drop from default build |
-| Retired web client | `client/` | Delete |
-| Legacy scripts | `scripts/legacy/` | Delete |
-| macOS build | parked | Drop from CMake presets and docs |
-| News ticker | `desktop/news/`, `altair_news` | Delete (not part of the goal) |
-| Low latency | `net/`, `ops/linux/nic_swap.sh`, `dpdk_*`, `feed_bypass.sh` | **Freeze**, do not delete. Kernel path stays default |
+| Straddle IV>=RV BANKNIFTY / NIFTY (S1) | TESTING (forward, 60 sessions) | `research/strategy/README.md` |
+| OBI A-D BANKNIFTY futures and option-sell, OBI quoter | TESTING (no tick-level test yet) | `docs/MODEL_AUDIT.md` |
+| Pair trading / Bank pairs | FAILED in 2024-2026 | `research/equity/FLOWS_RESULTS.md` |
+| Pairs BANKNIFTY/NIFTY, Stat-arb NIFTY 50, Basket alpha | FAILED (gross ~1-2 bp vs 6-10 bp) | `research/equity/RESULTS.md`, `research/signals/` |
+| Direction 10:15-14:15, Desk trader, altair_trader, curriculum price tracks, CNN | FAILED as futures trades; re-test as option sales (3D) | `docs/MODEL_AUDIT.md`, `research/cnn/` |
+| Strangle 80 %, vol band | TESTING | `research/strategy/RESULTS.md` |
+| Diffusion, order flow | TESTING | `docs/STATUS.md` |
+| Avellaneda-Stoikov | FAILED (adverse selection) | `docs/STATUS.md` |
+| Cross-exchange arbitrage, OHL | TESTING (1 share a leg) | `live/arbitrage.hpp`, `live/threshold.hpp` |
+| Option arbitrage, vol of vol | Never LIVE (they buy options) | `docs/MODEL_AUDIT.md` |
+| Quantum and paper replications | FAILED (research only) | `research/README.md` |
 
-### Keep (the core)
+Only real dead code is removed: `client/` (retired, unbuilt),
+`scripts/legacy/`, and the parked macOS preset. Ask Smit before removing
+even these.
 
-FYERS login, recorder and chain saver, `altair-data` push, nightly vol
-retrain, data-policy locks, `live/straddle.hpp`, paper OMS, order router
-(kernel line), risk gate, kill switch, trade-reason logging, terminal,
-option chain, charges (`config/charges.toml`).
+## 7. UI plan: organised, short text, nothing lost
 
-## 7. UI plan: from 45 pages to 11
+Rules for every screen: no paragraph visible by default (details behind
+"? Help", `desktop/help_text.hpp`); numbers and status chips instead of
+sentences; at most one table and one action strip per screen.
 
-Rule for every screen: one line of text per idea, numbers over sentences,
-details behind the existing "? Help" (`desktop/help_text.hpp`).
-
-### Final screen list
+**Main sidebar: 5 groups, 11 screens.** Everything else moves into one
+collapsed **Lab** group, so nothing is deleted.
 
 | Group | Screen | Shows | Built from |
 |---|---|---|---|
-| Today | **Today** | Token, recorder, engine, today's S1 decision (SELL / SKIP and why), IV vs forecast RV, P&L, limits used | Start here, Daily findings, status from Who Does What |
-| Trade | **Terminal** | Market watch, F1/F2 order windows, order book, positions | Terminal, Live Grid |
-| Trade | **Option Chain** | Chain with IV, greeks, IV vs RV, vol cone | Options, Volatility, Analytics |
-| Trade | **Chart** | Price chart | Chart |
-| Straddle | **Straddle Desk** | S1 and shadow live, decision log, forward-test scoreboard (sessions done / 60, P&L, t, each third, placebo) | Models (S1 rows), Strategies |
-| Straddle | **Trades** | Every trade with entry and exit reason, fills, costs; filter by model and day | Strategies' trade tabs, Backtests, Audit Trail, Execution |
-| Straddle | **Vol Forecasts** | HAR / VIX / IV forecast accuracy by day | Forecast (vol part only) |
-| Risk | **Risk** | Margin, lots, day loss vs limit, worst-case gap loss, kill switch | Cost, Risk VaR, Portfolio, Sizing & Limits |
-| System | **Data & Recorder** | Jobs and whether they ran, session completeness, data flow, server | Who Does What, Data Flow, Server |
-| System | **Broker** | FYERS account, funds, link status, static IP | Broker Account, FYERS Primary, Brokers, Link Broker |
-| System | **Research** | Model Atlas as a read-only verdict list, work log | Model Atlas, Work log |
+| Today | **Today** | Token, recorder, engine, router, PAPER/LIVE, today's trades and skips with reasons, P&L, limits used | Start here, Daily findings, Who Does What status |
+| Trade | **Terminal** | Market watch, order windows, order book, positions, **one big PAPER / LIVE switch** | Terminal, Live Grid |
+| Trade | **Option Chain** | Chain, IV, greeks, IV vs HAR RV, vol cone | Options, Volatility, Analytics |
+| Trade | **Order Book** | BANKNIFTY ladder, OBI live, the 4 trade types, strikes | Order Book Imbalance, Microstructure |
+| Models | **Scoreboard** | Every model: status, trades, net P&L, t, holdout, placebo, PAPER/LIVE switch | Models, Model Atlas, Strategies, Backtests |
+| Models | **Trades** | Every trade with entry and exit reason, fills, costs; filter by model and day | Strategies' trade tabs, Audit Trail, Execution |
+| Models | **Vol Forecasts** | HAR, VIX and IV forecasts and their accuracy, the gate state per model | Forecast (vol part) |
+| Risk | **Risk** | Margin used of Rs 1 crore, lots per model, day loss vs limit, worst-case loss, kill switch | Cost, VaR, Portfolio, Sizing & Limits |
+| System | **Data & Recorder** | Jobs, session completeness, data flow, server | Who Does What, Data Flow, Server |
+| System | **Broker** | FYERS account, funds, link, static IP, webhook status | Broker Account, FYERS Primary, Brokers, Link Broker |
+| System | **Work log** | Status, results, git log | Work log |
 
-### Removed pages
-
-Microstructure, Order Book Imbalance, Value DCF, Aggregator, ML Trees,
-Regimes, Forecast (price part), Memory, Neural, Features, Pair Trading,
-Overnight Gap, Basis, Cointegration, Arbitrage, Demo Trading (already
-retired), Threshold, Flagging, About (moves to the Ctrl+K palette), news bar.
+**Lab (collapsed by default):** Pair Trading, Value DCF, Aggregator, ML
+Trees, Regimes, Forecast (price), Memory, Neural, Features, Overnight Gap,
+Basis, Cointegration, Arbitrage, Threshold, Flagging, About. They are reached
+from Lab or the Ctrl+K palette.
 
 ## 8. Roadmap
 
 Rules for the implementer, every phase:
 
-- Commit straight to `main` and push at once. No pending PRs, no leftover
-  branches.
-- Never stop the recorder or the feed during market hours (09:00-15:47 IST
-  weekdays). Server restarts after 15:47.
-- Sell only. Never an opening option buy, in any model or tool.
-- FYERS data only. Never the NSE bhavcopy. If FYERS lacks something, stop and
-  report it.
-- Every trade logs its reason.
-- UI text short.
+- Commit straight to `main` and push at once. Leave no pending PRs and no leftover branches.
+- Never stop the recorder or the feed in market hours (09:00-15:47 IST weekdays).
+- Sell options only; never an opening option buy, in any model or tool. Futures are allowed for pairs and hedges.
+- Use FYERS data only, never the NSE bhavcopy. If FYERS lacks something, stop and report it. Drive ticks are a separate source, labelled `drive-ticks`.
+- Log the reason for every trade and every skip.
+- Keep UI text short.
+- Ship 1 lot per model.
 - After each phase: build, `ctest`, update `docs/STATUS.md`.
 
-### Phase 0: Set the goal and fix CI (1-2 days)
+### Phase 0: Make real orders work and find why OBI does not trade (this week)
 
 | Task | Files | Done when |
 |---|---|---|
-| Put the vision, goal and kill rule (section 5) at the top of `docs/STATUS.md`; link this roadmap | `docs/STATUS.md` | Text on main |
-| Find why CI fails in seconds since 2026-11-09 (a job that fails that fast is usually a workflow syntax error, a missing runner, or Actions billing/disabled) and fix it | `.github/workflows/ci.yml` | CI green on a main push |
-| Freeze notice in `docs/LATENCY.md`: no new latency work; reopen condition from section 4 | `docs/LATENCY.md` | Text on main |
+| Rebuild and restart the server desktop on current main after 15:47 | `ops/build.sh`, DCV session | Desktop build date is today |
+| Run `altair_order_router` as a systemd service that starts with the session | `ops/linux/`, unit file | Router is running at 09:00 every day; Today screen shows it |
+| One always-visible PAPER / LIVE switch in the status bar and the Terminal (typed `LIVE` confirm, expires 15:30) | `desktop/live_trading.hpp`, `desktop/main_window.hpp`, `desktop/terminal.hpp` | Smit sees it without opening any dialog |
+| Smit: register the server's static IP (Elastic IP) in the FYERS API dashboard and use a new-type app | FYERS dashboard (Smit) | FYERS shows the IP |
+| Smit: `sudo ops/linux/fyers_tunnel.sh`, then add the webhook URL from `ops/linux/fyers_webhook_url.sh` in the FYERS dashboard | server, FYERS dashboard | Public callback returns 200, `data/fyers_webhook_events.jsonl` gets a post |
+| First live test: sell 1 lot of a far-OTM NIFTY weekly option LIMIT at a price that will not fill, then cancel | router, `data/live_orders/journal.jsonl` | Order appears in FYERS order book, cancel confirmed by socket or webhook |
+| OBI BANKNIFTY no-trade diagnosis: read the engine's decision logs for a full session, count skips by reason (OBI5 not held, target below costs, no 50-level slot, no fresh quote) | `live/obi_trader.hpp`, `live/obi_signals.hpp`, `data/live/` | A table of skip reasons for one session in `docs/research/obi_no_trade_<date>.md` and the fix for the top reason |
+| Fix CI | `.github/workflows/ci.yml` | CI green on main |
 
-### Phase 1: Make every session count (start now, highest priority)
-
-The S1 verdict is limited by complete sessions, not by code.
-
-| Task | Files | Done when |
-|---|---|---|
-| Session completeness check: after 15:47, mark the day complete only if the BANKNIFTY monthly and NIFTY weekly ATM ±5 chains have quotes every minute 09:15-15:30, and spot, futures and VIX are present | new check in `ops/linux/record_session.py` or `ops/linux/nightly.py`; result in `altair-data` | A `sessions.csv` with one row per day: complete yes/no, gaps |
-| Alert when the recorder or chain saver is down during market hours (desktop status bar + log) | `desktop/feed_status.hpp`, `ops/linux/` | A planted stop raises the alert within 2 minutes |
-| Recorder starts by itself after a reboot and after a token refresh, before 09:15 | `ops/linux/`, systemd units | A reboot test at 08:45 still records from 09:15 |
-
-### Phase 2: Cut (1-2 weeks, after Phase 1)
+### Phase 1: Make every recorded session count (start now)
 
 | Task | Files | Done when |
 |---|---|---|
-| Remove archived models from the live engine | `app/live_engine_main.cpp`, `live/models.hpp`, `live/strategy_keys.hpp` | Engine starts with only S1 models and shadows; option arbitrage, arbitrage and OHL gone from the router path |
-| Move archived code to `research/archive/`, out of default build targets | `models/`, `strategies/`, `live/`, `app/`, the CMakeLists files, `desktop/atlas_data.hpp` paths, `cmake/AtlasAudit.cmake` | Default build and `ctest` pass; archived code still builds with `-DALTAIR_ARCHIVE=ON` |
-| Trim the nightly to vol jobs | `ops/linux/train_all.py`, `ops/linux/nightly.py`, curriculum tracks | Nightly runs only vol_forecast, vol curriculum tracks, vol_premium, regimes, paper_report; runtime drops |
-| Delete dead code | `client/`, `scripts/legacy/`, news, macOS preset | Removed; build passes |
-| Update docs | `docs/STATUS.md`, `docs/DATA_FLOW.md`, `README.md` | They describe only what remains |
+| Completeness check after 15:47: BANKNIFTY monthly and NIFTY weekly ATM ±5 chains quoted every minute 09:15-15:30; BANKNIFTY future depth and prints; spot, futures, VIX | `ops/linux/record_session.py` or `nightly.py`; `altair-data/sessions.csv` | One row per day: complete yes/no, gaps |
+| Alert in the status bar when the recorder or chain saver stops in market hours | `desktop/feed_status.hpp`, `ops/linux/` | A planted stop alerts within 2 minutes |
+| Recorder survives reboot and token refresh | systemd units | Reboot at 08:45 still records from 09:15 |
 
-### Phase 3: Make the S1 forward test automatic (parallel with Phase 2)
+### Phase 2: One scoreboard for every model (by end of December)
 
-| Task | Files | Done when |
-|---|---|---|
-| Pre-register any S1 variant **before** its data exists: candidates are 13:00 entry, skip when move-since-open and OI both trend (from `research/cnn/README.md`), skip on `config/scheduled_events.csv` days. Write rules and pass bar, commit, then run | `research/strategy/HYPOTHESES.md` (new section S1a, S1b ...) | Commit dated before the first session it is judged on |
-| Add the "sell every day" shadow to the engine if missing | `live/straddle.hpp`, `app/live_engine_main.cpp` | Shadow trades every complete session |
-| Nightly scorer: replays every complete session (S1, shadow, variants), writes the scoreboard | turn `research/strategy/option_sessions.py` into a nightly job; output in `altair-data/research/s1/` | Table grows by one row each complete session, unattended |
-| Compare paper fills with the recorded bid/ask to measure slippage | scorer above | Slippage per lot reported |
-| Straddle Desk screen reads the scoreboard | `desktop/` (new `straddle_desk.hpp`) | Shows sessions n/60, net P&L, t, thirds, placebo, shadow |
-| At 60 complete sessions: write the verdict, no tuning before | `research/strategy/RESULTS.md` | PASS or FAIL committed |
-
-### Phase 4: Tail control for short vol (parallel with Phase 3)
-
-Without buying options, the tail is limited only by these. All paper first.
+This replaces archiving: every model keeps training and is judged the same way.
 
 | Task | Files | Done when |
 |---|---|---|
-| Per-straddle stop as a broker-side stop order placed at entry (not only in our process) | `oms/`, `app/live_real_orders.hpp`, FYERS order types | Paper and a FYERS sandbox order confirm the stop rests at the broker |
-| Day loss limit and max lots from margin and drawdown | `risk/`, `config/altair.toml` | Gate refuses a sale that breaches either |
-| Event blackout | `config/scheduled_events.csv`, `live/straddle.hpp` | No sale on listed event days |
-| Futures delta hedge only when straddle lots make it possible (BANKNIFTY needs several lots per futures lot) | `live/straddle.hpp` | Hedge rule documented and logged; off at 1 lot |
-| Stress replay of 6 Nov and 11 Nov with every control on | scorer | Loss on those days reported with and without controls |
+| Common backtest harness: walk-forward, signal strictly before entry, next-tick or next-bar fills at bid/ask, costs from `config/charges.toml`, random-sign placebo, one-bar delay check, planted leak refused, dev then sealed holdout | reuse `research/strategy/study.py` and `backtest/validation.hpp`; new `research/scoreboard/` | Every model in section 6 has a row |
+| **Option-sale expression** of any direction signal: bullish = sell a put, bearish = sell a call, at fixed strikes (ATM, 1 and 2 out), held to the signal's horizon; priced from recorded FYERS chains where they exist, else from a model price marked as such | `research/scoreboard/`, `app/option_chain.hpp` | Each direction model shows futures net and option-sale net side by side |
+| Nightly trains every model (Smit's point 7) and writes the scoreboard | `ops/linux/train_all.py` | Scoreboard in `altair-data/scoreboard/<day>.csv` each night |
+| Status chips per model from the scoreboard | `desktop/live_models.hpp`, Scoreboard screen | Status matches the CSV |
+| Promotion rule (pre-registered in `research/scoreboard/RULES.md` before any run): net P&L per trade > 0 with t >= 2 on the holdout, positive in each third, above the placebo's 95th percentile, then a forward paper test of at least 100 trades or 40 sessions with the same sign | `research/scoreboard/RULES.md` | Committed before the first scoreboard run |
 
-### Phase 5: Tidy UI (2 weeks, after Phase 2)
+### Phase 3: Strategy tracks (parallel, each pre-registered)
+
+Each track writes its hypothesis and pass bar into its own `HYPOTHESES.md`
+**before** it runs. Each shows Smit a backtest report: a trade list, an
+equity curve, net P&L after costs, t, results by year or third, placebo, and
+holdout.
+
+**3A. S1 short straddle (BANKNIFTY monthly, NIFTY weekly).** It keeps its
+fixed forward test (`research/strategy/README.md`). Add the "sell every
+day" shadow and a nightly scorer from `research/strategy/option_sessions.py`.
+Pre-register the variants before their data exists: 13:00 entry, skip trend
+days (move since open plus rising OI), skip event days.
+Done when the 60-session verdict is committed.
+
+**3B. OBI BANKNIFTY, tick by tick, tested on recorded option sessions.**
+- Data: the recorder's FYERS tapes (BANKNIFTY future 5/50-level depth, prints, and the ATM ±5 option quotes). The Drive ticks have no bid/ask or book, so they can train only the trade-flow features (signed volume, arrival rate, HAR), not the order book itself.
+- Model: label every book update with the future's mid move over 1, 5, 30 and 60 s. Train on the OBI5/OFI/microprice/queue features (`models/depth_features.hpp`, `book/flow.hpp`) with ridge and gradient-boosted trees, walk-forward by session. The CNN can be added as one more input.
+- Test: replay each held-out recorded session through the engine (`altair_live_engine --replay`). Trade the option-sell leg on the recorded option bid/ask with the queue fill model (`book/queue_fill.hpp`) and option costs.
+- Data limit: the first verdict needs at least 40 complete sessions (train on the first 25, test on the next 15, then roll). Until then, report results per session as "too few to judge".
+- Done when the 40-session report is committed and the live model uses the trained thresholds instead of the hand-set ones.
+
+**3C. Pair trading, rebuilt for frequent trades.**
+- Why the old version failed: daily bank pairs decayed to -35.5 bp in 2024-2026, and 5-minute basket lead was 1-2 bp gross.
+- New design to test, each piece from the literature and Smit's papers in `research/papers/`:
+  - Intraday pairs on 1-minute FYERS stock and index futures bars.
+  - Hedge ratio by Kalman filter, refit daily (`analytics/kalman.hpp`).
+  - Entry on a z-score of the spread, with the half-life cut to under 60 minutes.
+  - Index-constituent link: the bank basket against the BANKNIFTY future, and NIFTY against BANKNIFTY. This uses the Hayashi-Yoshida lead-lag that the diffusion engine already measures.
+  - HAR gate: trade only when predicted spread vol covers costs by 3x.
+  - Cointegration re-test each morning on the past 20 sessions only.
+- Execution: 1 lot of each leg's future. Costs are 10 bp a round trip per leg (stock futures).
+- Data: FYERS 1-minute history for stocks and indices, and the recorder for stock futures. If FYERS lacks a series, stop and report it.
+- Pass bar as in Phase 2, and at least 5 trades a session on average.
+- Done when the backtest report is in `research/pairs_intraday/RESULTS.md` and the live Pair trading model shows its new status.
+
+**3D. Index forecasting for futures and spot, NIFTY and BANKNIFTY.**
+- Keep every forecaster training on both futures and spot at 1m, 5m, 15m, 60m and 1d (Smit's point 1).
+- Report three targets separately: direction, size of the move, and the day's range.
+- Trade only what passes Phase 2. Size and range forecasts go to the strike choice of option sales (sell beyond the forecast range). Direction goes to the put/call choice.
+- Done when every forecaster shows option-sale net on the scoreboard.
+
+**3E. HAR volatility drives every model (Smit's point 6).**
+- One HAR service per index (`models/vol_forecast.hpp`) publishes, on every bar, the forecast RV for the next 1, 5, 30 and 60 minutes and the rest of the session.
+- Every model reads it as: (a) a gate, skipping when forecast vol cannot cover costs, or when it is too high for option selling; (b) sizing for the future, while live stays at 1 lot now; (c) strike distance for option sales.
+- Each model's scoreboard row shows gated against ungated, to prove the gate helps.
+- Done when every live model logs the HAR value it used for each decision.
+
+### Phase 4: Tail control for option selling
 
 | Task | Files | Done when |
 |---|---|---|
-| New groups and pages per section 7 | `desktop/navigation_registry.hpp`, `workspace_pages.hpp`, `shell_pages.hpp`, `quant_pages.hpp`, `main_window.hpp` | Sidebar shows 5 groups, 11 screens |
-| Old page ids redirect to their new home so saved layouts still open | `navigation_registry.hpp` (alias table, `kRetiredNavigationGroups`), `saved_layouts.hpp` | Every old id resolves; test covers it |
-| Today screen | `start_page.hpp`, `daily_findings_page.hpp` | One screen answers "did S1 sell today, why, and how are we doing" |
-| Text audit | `help_text.hpp`, every kept page | No paragraph visible by default |
-| Screenshots before and after | `/mnt/project-files/ui-tidy/` | Saved |
+| Stop order at the broker placed with every sale (SL-L/SL-M per FYERS order types) | `oms/`, `app/live_real_orders.hpp` | Stop visible in FYERS right after entry |
+| Day loss limit, per-model loss limit, max margin of the Rs 1 crore | `risk/`, `config/altair.toml` | Gate refuses a breach; Risk screen shows use |
+| Event blackout from `config/scheduled_events.csv` | `live/straddle.hpp`, other sellers | No sale on listed event days |
+| Futures delta hedge only where lots allow | `live/straddle.hpp` | Logged; off at 1 lot BANKNIFTY |
+| Stress replay of 6 Nov and 11 Nov with every control on | scorer | Loss with and without controls reported |
 
-### Phase 6: Go live, or stop (after the S1 verdict)
+### Phase 5: UI organise (after Phase 2 so the Scoreboard has data)
 
-**If PASS:**
+| Task | Files | Done when |
+|---|---|---|
+| 5 groups, 11 screens, collapsed Lab group | `desktop/navigation_registry.hpp`, `workspace_pages.hpp`, `shell_pages.hpp`, `quant_pages.hpp`, `main_window.hpp` | Sidebar matches section 7 |
+| Old page ids redirect, saved layouts still open | `navigation_registry.hpp` aliases, `saved_layouts.hpp` | Test covers every old id |
+| Text audit: no visible paragraph | `help_text.hpp`, every page | Screens show numbers and chips only |
+| Before/after screenshots | `/mnt/project-files/ui-tidy/` | Saved |
+
+### Phase 6: Go LIVE, model by model
 
 | Step | Done when |
 |---|---|
-| Prerequisites: static IP registered with FYERS (SEBI rule), real brokerage in `config/charges.toml` from a contract note, Smit's per-trade and per-day loss limits in config | All three in place |
-| LIVE 1 lot BANKNIFTY, S1 only, all Phase 4 controls on, for 20 sessions | Live P&L and slippage within the paper model's range |
-| Scale: add 1 lot per 20 sessions while live drawdown stays under half the limit; never above the margin cap | Sizing rule in config, logged |
-| NIFTY weekly S1 judged on its own 60 sessions before it goes live | Separate verdict |
+| Prerequisites: Phase 0 done, real brokerage from a FYERS contract note in `config/charges.toml`, Smit's per-trade and per-day loss limits in config | All in place |
+| A PAPER-PASS model goes LIVE at 1 lot on Smit's switch, for 20 sessions | Live slippage and P&L inside the paper model's range |
+| Scaling: +1 lot per 20 sessions while live drawdown stays under half its limit, never above the margin cap | Rule in config, logged |
+| A LIVE model that breaks its loss limit or falls outside its paper range goes back to PAPER automatically | Tested by a planted breach |
 
-**If FAIL:** run the pre-registered variants to session 120. If they fail too,
-apply the kill rule (section 5): stop strategy work, keep recording.
+### Phase 7: Colocation (later, Smit's plan)
 
-**A second strategy** is considered only after S1 has a verdict, one at a
-time, pre-registered, and only from what the data supports (volatility, sell
-side). Not before.
+Start only when a LIVE model's own fills show its edge disappears faster
+than our path, measured by markouts at 10 ms, 100 ms and 1 s. Then cost a
+broker with co-lo racks and DMA, the TBT feed and an NNF gateway
+(`docs/NSE_NNF_TBT.md`). Until then, no new latency work.
 
-## 9. Decisions only Smit can make
+## 9. Compute: no GPU needed now
 
-These change results more than any code. The roadmap works without them,
-but slower or with more risk.
+- The curriculum CNN is small (`TrainableTcn<4,8,3,3,16>`). The full Drive tick run (39 M ticks, walk-forward) took about 20 minutes on 4 CPU cores. Ridge and gradient-boosted trees on order-book features are CPU work too.
+- The recorded OBI data is small (days of tapes), so a GPU would sit idle. The limit is sessions, not compute.
+- Where to run:
+  - Research runs and backtests: in the cloud (as for the CNN and combination tests).
+  - Nightly training: on the server.
+  - Drive tick runs: on Smit's PC (`S:\tick_data`) or the cloud, after staging.
+- **A GPU becomes worth it** when a deep sequence model (LSTM or transformer) trains on 50-level books from more than about 100 recorded sessions, or on all Drive ticks with many epochs. At that point a single cloud GPU (one A10 or L4 class instance, rented by the hour) is enough. That is after Phase 3B has 100+ sessions, around April 2027 at the earliest.
+
+## 10. Decisions only Smit can make
 
 1. **Option history.** FYERS has no expired options and the NSE file is
-   banned, so S1 waits months for its own data. A licensed historical option
-   data vendor would allow a backtest now. Your rule stands unless you change
-   it.
-2. **Sell-only and the tail.** Never buying options means a short straddle's
-   loss has no hard cap. Buying far wings (an iron fly) would cap it at a
-   known cost. Your rule stands unless you change it; Phase 4 is the best
-   that can be done within it.
-3. **Capital and limits.** How much capital S1 may use, the per-trade and
-   per-day loss limits, and the max drawdown that ends the live test.
-4. **Colocation.** Only worth discussing after a strategy has a measured
-   edge that decays in milliseconds. Today: no.
+   banned, so option strategies wait months for recorded data. A licensed
+   historical option data vendor would allow backtests now. Your rule stands
+   unless you change it.
+2. **Sell-only and the tail.** Without long wings, a short option's loss has
+   no hard cap. Phase 4 is the best possible within your rule.
+3. **Loss limits.** Per trade, per model, per day, and the drawdown that ends
+   a live test (Phase 6).
+4. **Phase 0 broker steps:** the static IP whitelist, the new-type app, and
+   running the tunnel script. These need your FYERS login and sudo on the
+   server.
