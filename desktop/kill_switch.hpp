@@ -77,6 +77,7 @@
 
 #include "theme.hpp"
 #include "auth.hpp"
+#include "ui_perf.hpp"
 
 #include <QByteArray>
 #include <QDateTime>
@@ -533,11 +534,15 @@ public:
         // rather than showing what this panel last did.
         auto* poll = new QTimer(this);
         poll->setInterval(2000);
-        connect(poll, &QTimer::timeout, this, [this] { refresh(); });
+        connect(poll, &QTimer::timeout, this, [this] { if (on_screen(this)) refresh(); });
         poll->start();
 
         refresh();
     }
+
+protected:
+    // The poll skips a hidden panel; catch up when it shows.
+    void showEvent(QShowEvent* e) override { QWidget::showEvent(e); refresh(); }
 
 private Q_SLOTS:
     void do_request() {

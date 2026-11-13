@@ -33,6 +33,8 @@
 #include <QTimer>
 #include <QWidget>
 
+#include "ui_perf.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -53,8 +55,12 @@ public:
         setCursor(Qt::PointingHandCursor);
         setToolTip(QStringLiteral("Market headlines from free RSS feeds (config/news_feeds.txt). "
                                   "Hover to pause, click to open, right-click for options. Display only: nothing trades on them."));
-        frame_.setTimerType(Qt::PreciseTimer);
-        frame_.setInterval(16);
+        // Low motion (ui_perf.hpp, the default over DCV): one headline at a time,
+        // stepped every few seconds, so the bar is a still picture between
+        // steps. Smooth: scrolled at 60 frames a second.
+        step_ = low_motion();
+        frame_.setTimerType(step_ ? Qt::CoarseTimer : Qt::PreciseTimer);
+        frame_.setInterval(step_ ? kStepMs : 16);
         connect(&frame_, &QTimer::timeout, this, [this] { advance(); });
         refresh_.setInterval(5 * 60 * 1000);
         connect(&refresh_, &QTimer::timeout, this, [this] { fetch(); });
@@ -81,7 +87,12 @@ public:
     [[nodiscard]] bool paused() const noexcept { return paused_ || hover_; }
     void set_paused(bool p) { paused_ = p; }
     /// Pixels per second. Default 60: readable without chasing.
-    void set_speed(double px_per_s) { speed_ = std::clamp(px_per_s, 10.0, 400.0); }
+    void set_speed(double px_per_s) {
+        speed_ = std::clamp(px_per_s, 10.0, 400.0);
+        // Stepping: the same menu sets how long each headline stays (60 px/s = 6 s).
+        if (step_) frame_.setInterval(static_cast<int>(std::clamp(360'000.0 / speed_, 2000.0, 15000.0)));
+    }
+    [[nodiscard]] bool stepping() const noexcept { return step_; }
 
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -97,6 +108,8 @@ protected:
         const int sw = static_cast<int>(strip_.width() / dpr);
         if (sw <= 0) return;
         int x = label_w + static_cast<int>(-offset_);
+        // A status message ("fetching headlines…") is drawn once, not tiled.
+        if (items_.empty()) { p.drawPixmap(label_w, 0, strip_); return; }
         while (x < width()) {
             p.drawPixmap(x, 0, strip_);
             x += sw;
@@ -172,6 +185,9 @@ private:
     bool paused_ = false;
     bool hover_ = false;
     bool watching_window_ = false;
+    bool step_ = false;
+    std::size_t step_at_ = 0;          ///< stepping: the span on show
+    static constexpr int kStepMs = 6000;
     QTimer frame_, refresh_;
     QElapsedTimer clock_;
     QPointer<QProcess> proc_;
@@ -242,6 +258,7 @@ private:
         p.end();
         strip_ = pm;
         offset_ = std::fmod(offset_, static_cast<double>(w));
+        if (step_) { step_at_ = 0; offset_ = spans_.empty() ? 0.0 : spans_.front().x0 - 12.0; }
         update();
     }
 
@@ -254,6 +271,13 @@ private:
     void advance() {
         const qint64 ms = clock_.restart();
         if (paused() || strip_.isNull()) return;
+        if (step_) {
+            if (spans_.empty()) return;
+            step_at_ = (step_at_ + 1) % spans_.size();
+            offset_ = spans_[step_at_].x0 - 12.0;
+            update();
+            return;
+        }
         const double w = strip_.width() / strip_.devicePixelRatio();
         if (w <= 0.0) return;
         // Clamp a long stall (a modal dialog, a breakpoint) to one frame.

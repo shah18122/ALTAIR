@@ -39,6 +39,7 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QProcess>
+#include <QTimer>
 #include <QFile>
 #include <QHash>
 #include <QJsonParseError>
@@ -1255,6 +1256,7 @@ public:
 private:
     QPushButton* quotes_ = nullptr;
     QLabel* quote_age_ = nullptr;
+    bool quotes_busy_ = false;
     QuoteSnapshot quotes_snap_{};
 #ifdef ALTAIR_SOURCE_DIR
     QString quote_path_ = QStringLiteral(ALTAIR_SOURCE_DIR "/data/fyers_watchlist_quotes.json");
@@ -1390,9 +1392,15 @@ private:
             return;
         }
 
+        if (quotes_busy_) return;
+        quotes_busy_ = true;
+        quotes_->setEnabled(false);
         quote_age_->setText(QStringLiteral("fetching %1 instruments...")
                                 .arg(keys.size()));
-        QProcess proc;
+        // Asynchronous: the window keeps painting while FYERS answers (it
+        // used to wait here, up to 30 s with the whole desktop frozen).
+        auto* proc_ptr = new QProcess(this);
+        QProcess& proc = *proc_ptr;
         proc.setProgram(found);
         proc.setArguments({QStringLiteral("--symbols"), keys.join(QLatin1Char(',')),
                            QStringLiteral("--out"), quote_path_,
@@ -1401,22 +1409,39 @@ private:
 #ifdef ALTAIR_SOURCE_DIR
         proc.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
 #endif
+        auto* deadline = new QTimer(proc_ptr);
+        deadline->setSingleShot(true);
+        connect(deadline, &QTimer::timeout, proc_ptr, [proc_ptr] { proc_ptr->kill(); });
+        const auto done = [this, proc_ptr] {
+            proc_ptr->deleteLater();
+            quotes_busy_ = false;
+            quotes_->setEnabled(true);
+        };
+        connect(proc_ptr, &QProcess::finished, this, [this, proc_ptr, deadline, done](int code, QProcess::ExitStatus st) {
+            deadline->stop();
+            done();
+            if (st != QProcess::NormalExit) {
+                quote_age_->setText(QStringLiteral("the fetcher did not finish"));
+                return;
+            }
+            if (code != 0) {
+                // FYERS' own words, not a paraphrase. A daily token that expired
+                // and a symbol FYERS does not know are different problems.
+                quote_age_->setText(
+                    QStringLiteral("fetch failed: %1")
+                        .arg(QString::fromUtf8(proc_ptr->readAll()).trimmed()
+                                 .section(QChar('\n'), -3)));
+                return;
+            }
+            refresh();
+        });
+        connect(proc_ptr, &QProcess::errorOccurred, this, [this, done](QProcess::ProcessError e) {
+            if (e != QProcess::FailedToStart) return;
+            done();
+            quote_age_->setText(QStringLiteral("the fetcher could not start"));
+        });
+        deadline->start(30000);
         proc.start();
-        if (!proc.waitForStarted(5000) || !proc.waitForFinished(30000)) {
-            proc.kill();
-            quote_age_->setText(QStringLiteral("the fetcher did not finish"));
-            return;
-        }
-        if (proc.exitCode() != 0) {
-            // FYERS' own words, not a paraphrase. A daily token that expired
-            // and a symbol FYERS does not know are different problems.
-            quote_age_->setText(
-                QStringLiteral("fetch failed: %1")
-                    .arg(QString::fromUtf8(proc.readAll()).trimmed()
-                             .section(QChar('\n'), -3)));
-            return;
-        }
-        refresh();
     }
 
     void refresh() {

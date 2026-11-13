@@ -728,13 +728,15 @@ private:
         if (mode == QLatin1String("HALTED")) {
             const QString why = terminal_->halt_summary();
             nav_settings_->setValue(QStringLiteral("safety/last_halt"), why);
-            mode_btn_->setText(QStringLiteral("\u25A0 HALTED \u00B7 resume\u2026"));
+            mode_btn_->setText(QStringLiteral("\u25A0 HALTED \u00B7 Resume\u2026"));
             set_variant(mode_btn_, QStringLiteral("halted"));
             mode_btn_->setToolTip(QStringLiteral("%1.\nNo new orders or entries. Click (or F11+F12) to resume; an admin gives the reason.").arg(why));
         } else {
             const QString last = nav_settings_ != nullptr ? nav_settings_->value(QStringLiteral("safety/last_halt")).toString() : QString{};
             const bool live = mode == QLatin1String("LIVE");
-            mode_btn_->setText(live ? QStringLiteral("\u25CF LIVE \u00B7 real orders") : QStringLiteral("PAPER \u00B7 no real orders"));
+            // The label is the mode AND what a click does (it halts): a switch
+            // that read "PAPER · no real orders" and then halted surprised people.
+            mode_btn_->setText(live ? QStringLiteral("\u25CF LIVE \u00B7 Halt\u2026") : QStringLiteral("PAPER \u00B7 Halt\u2026"));
             set_variant(mode_btn_, live ? QStringLiteral("live") : QStringLiteral("paper"));
             mode_btn_->setToolTip(QStringLiteral("%1\nClick to HALT all trading now (asks first). F11+F12 does the same.%2")
                                       .arg(live ? QStringLiteral("LIVE: orders go to FYERS within the Terminal's caps.")
@@ -1882,9 +1884,16 @@ private:
     void build_status() {
         pill_ = new QLabel;
         pill_->setObjectName(QStringLiteral("liveFeedPill"));
+        pill_->setTextFormat(Qt::RichText);
+        set_role(pill_, QStringLiteral("chip"));
+        // Wide enough for its longest state, so the chips beside it never
+        // shift left and right as the seconds count changes.
+        pill_->setMinimumWidth(pill_->fontMetrics().horizontalAdvance(QStringLiteral("● REPLAY · last 99.9 s · STALE")) + 24);
+        pill_->setAlignment(Qt::AlignCenter);
         broker_status_ = new QLabel;
         broker_status_->setObjectName(QStringLiteral("brokerStatus"));
         broker_status_->setTextFormat(Qt::RichText);
+        set_role(broker_status_, QStringLiteral("chip"));
         broker_status_->setCursor(Qt::PointingHandCursor);
         // One quiet line for both brokers; a click opens the Brokers page,
         // where logging in happens.
@@ -1898,6 +1907,7 @@ private:
             label = new QLabel;
             label->setObjectName(QString::fromLatin1(name));
             label->setTextFormat(Qt::RichText);
+            set_role(label, QStringLiteral("chip"));
             label->setCursor(Qt::PointingHandCursor);
             connect(label, &QLabel::linkActivated, this, [this, page] { show_page(page); });
         };
@@ -1934,6 +1944,8 @@ private:
         mode_btn_ = new QPushButton(QStringLiteral("PAPER"));
         mode_btn_->setObjectName(QStringLiteral("tradingModeSwitch"));
         mode_btn_->setCursor(Qt::PointingHandCursor);
+        // One width for PAPER, LIVE and HALTED: the status bar never jumps.
+        mode_btn_->setMinimumWidth(mode_btn_->fontMetrics().horizontalAdvance(QStringLiteral("\u25A0 HALTED \u00B7 Resume\u2026")) + 40);
         connect(mode_btn_, &QPushButton::clicked, this, [this] { mode_clicked(); });
         statusBar()->addPermanentWidget(mode_btn_);
         layout_btn_ = new QToolButton;
@@ -2068,31 +2080,35 @@ private:
         // named by the frames' own flags and are never shown as LIVE.
         const PriceClient* stream = terminal_ != nullptr ? terminal_->stream() : nullptr;
         const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
-        QString text, colour;
+        // Short on purpose: state and age. The tick and gap counts are on hover.
+        QString text, colour, tip;
         if (stream == nullptr || !stream->connected()) {
-            text = QStringLiteral("○ NO FEED · start it in Terminal");
+            text = QStringLiteral("NO FEED");
             colour = QStringLiteral("#6E7681");
+            tip = QStringLiteral("Not connected to the price service. The Terminal reconnects by itself.");
         } else if (live_arrival_ms_ == 0) {
-            text = QStringLiteral("● CONNECTED · waiting for the first tick");
-            colour = QStringLiteral("#B9770B");
+            text = QStringLiteral("CONNECTED · no tick yet");
+            colour = QStringLiteral("#D29922");
+            tip = QStringLiteral("Connected; waiting for the first tick.");
         } else {
             const double age_s = static_cast<double>(now_ms - live_arrival_ms_) / 1000.0;
             const bool stale = age_s > 30.0;
             const QString kind = live_sim_ ? QStringLiteral("SIM")
                                : live_replay_ ? QStringLiteral("REPLAY") : QStringLiteral("LIVE");
-            text = QStringLiteral("● %1 · %2 ticks · %3 gaps · last %4 s%5")
+            // Whole seconds past 10 s: a tenth that changes twice a second is noise.
+            text = QStringLiteral("%1 · last %2 s%3")
                        .arg(kind)
-                       .arg(QLocale().toString(static_cast<qulonglong>(stream->frames())))
-                       .arg(stream->gaps())
-                       .arg(age_s, 0, 'f', 1)
+                       .arg(age_s, 0, 'f', age_s < 10.0 ? 1 : 0)
                        .arg(stale ? QStringLiteral(" · STALE") : QString());
-            colour = stale ? QStringLiteral("#DA3633")
-                   : (live_sim_ || live_replay_) ? QStringLiteral("#B9770B") : QStringLiteral("#238636");
+            colour = stale ? QStringLiteral("#F85149")
+                   : (live_sim_ || live_replay_) ? QStringLiteral("#D29922") : QStringLiteral("#3FB950");
+            tip = QStringLiteral("%1 ticks · %2 gaps")
+                      .arg(QLocale().toString(static_cast<qulonglong>(stream->frames())))
+                      .arg(stream->gaps());
         }
-        pill_->setText(QStringLiteral("  %1  ").arg(text));
-        // Refreshed every 500 ms: re-polish only when the colour changes.
-        set_style_sheet_if_changed(pill_, QStringLiteral("color:#FFFFFF;background:%1;font-weight:700;border-radius:9px;padding:1px 4px;")
-                                              .arg(colour));
+        const QString html = QStringLiteral("<span style='color:%1'>●</span> <b>%2</b>").arg(colour, text.toHtmlEscaped());
+        if (pill_->text() != html) pill_->setText(html);
+        pill_->setToolTip(tip);
 
         // Phase and clock from the FEED's time stamps, never the wall clock:
         // a SIM session at 30x runs its own day.

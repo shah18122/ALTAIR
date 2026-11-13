@@ -28,6 +28,7 @@
 #include "live_market.hpp"
 #include "price_client.hpp"
 #include "theme.hpp"
+#include "ui_perf.hpp"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -258,7 +259,8 @@ public:
         });
         file_timer_.setInterval(1000);
         connect(&file_timer_, &QTimer::timeout, this, [this] {
-            reload();
+            // The tables only matter on screen; showEvent catches up.
+            if (on_screen(this)) reload();
             // Always on: the models start once the feed streams, and again
             // 15 s after they exit (a crash is not retried every second).
             // On the server the engine is a systemd service (altair-engine, in
@@ -290,6 +292,9 @@ public:
     }
     LiveModelsPanel(const LiveModelsPanel&) = delete;
     LiveModelsPanel& operator=(const LiveModelsPanel&) = delete;
+
+    // The file timer skips hidden pages; catch up the moment this one shows.
+    void showEvent(QShowEvent* e) override { QWidget::showEvent(e); reload(); }
 
     /// For tests.
     void reload() {

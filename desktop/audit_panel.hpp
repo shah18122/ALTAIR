@@ -41,6 +41,7 @@
 #pragma once
 
 #include "theme.hpp"
+#include "ui_perf.hpp"
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
@@ -168,9 +169,15 @@ public:
         // reference page, not a tape.
         auto* t = new QTimer(this);
         t->setInterval(500);
-        connect(t, &QTimer::timeout, this, [this] { refresh(); });
+        connect(t, &QTimer::timeout, this, [this] { if (on_screen(this)) refresh(); });
         t->start();
     }
+
+protected:
+    // The timer skips a hidden page; catch up when it shows.
+    void showEvent(QShowEvent* e) override { QWidget::showEvent(e); refresh(); }
+
+public:
 
     /// The replayer's position, pushed in by the shell. The UI does not own a
     /// clock and does not read one -- rule 7 says time comes off the tick.

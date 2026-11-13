@@ -49,6 +49,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QProcess>
+#include <QTimer>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -143,9 +144,12 @@ public Q_SLOTS:
         listen_->setEnabled(false);
         status_->setText(QStringLiteral("listening for %1 s...")
                              .arg(secs_->value()));
-        QApplication::processEvents();
 
-        QProcess proc;
+        // Asynchronous: the window keeps painting while the ticker listens.
+        // (It used to wait here, freezing the whole desktop for the listen
+        // time plus up to 30 s.)
+        auto* proc_ptr = new QProcess(this);
+        QProcess& proc = *proc_ptr;
         proc.setProgram(found);
         QStringList args{QStringLiteral("--seconds"),
                          QString::number(secs_->value()),
@@ -159,25 +163,35 @@ public Q_SLOTS:
         // into the build folder, where nothing reads it, and reports success.
         proc.setWorkingDirectory(QStringLiteral(ALTAIR_SOURCE_DIR));
 #endif
+        auto* deadline = new QTimer(proc_ptr);
+        deadline->setSingleShot(true);
+        connect(deadline, &QTimer::timeout, proc_ptr, [proc_ptr] { proc_ptr->kill(); });
+        connect(proc_ptr, &QProcess::finished, this, [this, proc_ptr, deadline](int code, QProcess::ExitStatus st) {
+            deadline->stop();
+            proc_ptr->deleteLater();
+            listen_->setEnabled(true);
+            if (st != QProcess::NormalExit) {
+                status_->setText(QStringLiteral("the ticker did not finish"));
+                return;
+            }
+            if (code != 0) {
+                status_->setText(
+                    QStringLiteral("feed failed: %1")
+                        .arg(QString::fromUtf8(proc_ptr->readAll()).trimmed()
+                                 .section(QChar('\n'), -2)));
+                return;
+            }
+            status_->clear();
+            reload();
+        });
+        connect(proc_ptr, &QProcess::errorOccurred, this, [this, proc_ptr](QProcess::ProcessError e) {
+            if (e != QProcess::FailedToStart) return;
+            proc_ptr->deleteLater();
+            listen_->setEnabled(true);
+            status_->setText(QStringLiteral("the ticker could not start"));
+        });
+        deadline->start((secs_->value() + 30) * 1000);
         proc.start();
-        const bool ok =
-            proc.waitForStarted(5000)
-            && proc.waitForFinished((secs_->value() + 30) * 1000);
-        listen_->setEnabled(true);
-        if (!ok) {
-            proc.kill();
-            status_->setText(QStringLiteral("the ticker did not finish"));
-            return;
-        }
-        if (proc.exitCode() != 0) {
-            status_->setText(
-                QStringLiteral("feed failed: %1")
-                    .arg(QString::fromUtf8(proc.readAll()).trimmed()
-                             .section(QChar('\n'), -2)));
-            return;
-        }
-        status_->clear();
-        reload();
     }
 
     void reload() {

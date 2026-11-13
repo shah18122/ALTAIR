@@ -76,6 +76,7 @@ qt_add_executable(altair_desktop
     server_page.hpp
     pipeline_page.hpp
     help_text.hpp
+    ui_perf.hpp
     obi_page.hpp
     workspace_pages.hpp
     workspace_layout.hpp

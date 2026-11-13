@@ -8,6 +8,7 @@
 #pragma once
 
 #include "format.hpp"
+#include "ui_perf.hpp"
 
 #include <QDateTime>
 #include <QFile>
@@ -279,7 +280,7 @@ public:
         refresh_.setInterval(250);
         connect(&refresh_, &QTimer::timeout, this, [this] {
             drain();
-            if (++ticks_ % 8 == 0) refresh_demo();   // every two seconds
+            if (++ticks_ % 8 == 0 && on_screen(this)) refresh_demo();   // every two seconds, on screen
         });
         refresh_.start();
 #ifdef ALTAIR_SOURCE_DIR

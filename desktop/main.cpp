@@ -39,6 +39,7 @@
 #include "main_window.hpp"
 #include "panels.hpp"
 #include "theme.hpp"
+#include "ui_perf.hpp"
 
 #include <QApplication>
 #include <QDebug>
@@ -192,6 +193,8 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     // One look for every window, dialog and control -- desktop/theme.hpp.
     altair::ui::apply_app_theme(app);
+    // A still screen between data changes: DCV encodes every moving pixel (ui_perf.hpp).
+    altair::ui::apply_render_settings();
     // Defer the cold-path probe until Qt has completed application setup. A
     // synchronous socket probe before the first event-loop turn can crash some
     // Windows/Qt runtime combinations during DLL/plugin initialization.

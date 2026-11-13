@@ -65,7 +65,13 @@ inline void sweep(QWidget* page) {
             }
             continue;
         }
-        if (l->isHidden() || l->text().isEmpty() || !is_help(l)) continue;
+        if (l->isHidden() || l->text().isEmpty()) continue;
+        // A label already judged "not help" with the same text is skipped:
+        // is_help() parses HTML, and a page has hundreds of status labels.
+        // Re-parsing them all every second was a visible hitch over DCV.
+        const QVariant seen = l->property("altairNotHelp");
+        if (seen.isValid() && seen.toString() == l->text()) continue;
+        if (!is_help(l)) { l->setProperty("altairNotHelp", l->text()); continue; }
         l->setProperty("altairHelp", l->text());
         // A paragraph under its own heading keeps the heading.
         static const QRegularExpression head(QStringLiteral("^\\s*(?:<[^h>][^>]*>\\s*)*(<h[1-4][^>]*>.*?</h[1-4]>)"),

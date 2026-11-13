@@ -172,6 +172,9 @@ QLabel[role="pill-ok"] { color:#FFFFFF; background:#238636; font-weight:700; bor
 QLabel[role="pill-warn"] { color:#FFFFFF; background:#9E6A03; font-weight:700; border-radius:9px; padding:1px 10px; }
 QLabel[role="pill-bad"] { color:#FFFFFF; background:#DA3633; font-weight:700; border-radius:9px; padding:1px 10px; }
 QLabel[role="pill-halt"] { color:#FFFFFF; background:#DA3633; font-weight:700; border-radius:9px; padding:1px 10px; }
+/* Status-bar chips (feed, FYERS, token, recorder, engine): one shape for all,
+   the coloured dot inside carries the state. ui::set_role(label, "chip"). */
+QLabel[role="chip"] { color:#AFC0C9; background:#161B22; border:1px solid #30363D; border-radius:9px; padding:1px 10px; }
 /* Explanation banners above a panel: ui::set_role(label, "banner-info"|"banner-warn"). */
 QLabel[role="banner-info"] { background:#0C2238; color:#C9E3FF; border:1px solid #1F4B7A; border-radius:8px; padding:10px 12px; }
 QLabel[role="banner-warn"] { background:#2B2111; color:#F2DDB4; border:1px solid #6B4F1D; border-radius:8px; padding:10px 12px; }

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "theme.hpp"
+#include "ui_perf.hpp"
 #include <types/broker_log.hpp>
 
 #include <QComboBox>
@@ -296,10 +297,16 @@ public:
                 .arg(projection_.data_primary).arg(projection_.route_revision)); });
         timer_ = new QTimer(this);
         timer_->setInterval(5000);
-        connect(timer_, &QTimer::timeout, this, [this] { reload(); });
+        connect(timer_, &QTimer::timeout, this, [this] { if (on_screen(this)) reload(); });
         timer_->start();
         reload();
     }
+
+protected:
+    // The timer skips a hidden page; catch up when it shows.
+    void showEvent(QShowEvent* e) override { QWidget::showEvent(e); reload(); }
+
+public:
 
     void reload() {
         const auto loaded = read_activity_projection(path_);

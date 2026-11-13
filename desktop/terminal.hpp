@@ -76,6 +76,8 @@
 #include <QShortcut>
 #include <QLabel>
 #include <QHash>
+#include <QSet>
+#include <QTimer>
 #include <QLockFile>
 #include <QSysInfo>
 #include <QMessageBox>
@@ -97,6 +99,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <expected>
+#include <utility>
 #include <memory>
 #if !defined(_WIN32)
 #include <signal.h>
@@ -356,7 +359,10 @@ public:
         live_btn_ = new QPushButton(QStringLiteral("PAPER"), strip);
         live_btn_->setObjectName(QStringLiteral("liveSwitch"));
         live_btn_->setProperty("variant", QStringLiteral("paper"));
-        live_btn_->setMinimumWidth(96);
+        // As wide as its usual LIVE state, so switching PAPER/LIVE never
+        // pushes the strip around.
+        live_btn_->setMinimumWidth(live_btn_->fontMetrics().horizontalAdvance(QStringLiteral("● LIVE · refusing")) + 36);
+        live_btn_->setCursor(Qt::PointingHandCursor);
         live_btn_->setToolTip(QStringLiteral(
             "Paper: orders fill against the live book and nothing reaches a broker. Click to switch LIVE on: "
             "Buy/Sell go to FYERS with real money, within limits you set, until 15:30 or until you switch it off."));
@@ -619,6 +625,9 @@ public:
                 [this] { refresh_stream(); });
         connect(client_, &PriceClient::priceUpdated, this,
                 [this](unsigned tok) { on_price(tok); });
+        strip_timer_.setSingleShot(true);
+        strip_timer_.setInterval(250);
+        connect(&strip_timer_, &QTimer::timeout, this, [this] { flush_ticks(); });
 
         // ---- HOTKEYS ----------------------------------------------------
         //
@@ -1700,12 +1709,18 @@ private:
             : tag == TileTag::Sim
                 ? QStringLiteral(" <span style='color:#F4C95D'>SIM</span>")
                 : QString();
-        t.label->setText(QStringLiteral(
+        const QString html = QStringLiteral(
             "<span style='color:#8A93A2'>%1</span> "
             "<b style='font-family:Consolas'>%2</b> %3%4")
             .arg(t.name)
             .arg(price, 0, 'f', 2)
-            .arg(move, suffix));
+            .arg(move, suffix);
+        if (t.label->text() == html) return;
+        t.label->setText(html);
+        // Grow, never shrink: a price losing a digit must not pull the whole
+        // strip left and back on the next tick.
+        const int w = t.label->sizeHint().width();
+        if (w > t.label->minimumWidth()) t.label->setMinimumWidth(w);
     }
 
     /// Never blank. The last settled close from dataset/ until the stream
@@ -1735,10 +1750,31 @@ private:
         seed(vix_, "INDIA VIX", "indiavix");
     }
 
+    // The stream calls this for EVERY token's tick: hundreds a second with
+    // the option chains subscribed. It used to repaint the index tiles, the
+    // stream label and re-price the whole option chain on each one. Now it
+    // only notes the token, and the strip and chain catch up at most every
+    // 250 ms with each token's latest price (a still strip between updates
+    // is also far cheaper to send over DCV).
     void on_price(unsigned tok) {
-        const LivePrice* p = client_->price(tok);
-        if (p == nullptr) { return; }
-        apply_price(tok, p->last_paise, p->replay, p->exchange_ts_ns, p->simulated);
+        pending_ticks_.insert(tok);
+        if (!strip_timer_.isActive()) strip_timer_.start();
+    }
+    void flush_ticks() {
+        const auto pending = std::exchange(pending_ticks_, {});
+        for (const unsigned tok : pending) {
+            const LivePrice* p = client_->price(tok);
+            if (p == nullptr || p->last_paise <= 0) continue;
+            const std::int64_t ts = p->exchange_ts_ns > 0
+                ? p->exchange_ts_ns : QDateTime::currentMSecsSinceEpoch() * 1'000'000LL;
+            const TileTag tag = p->simulated ? TileTag::Sim : p->replay ? TileTag::Replay : TileTag::Live;
+            const double px = static_cast<double>(p->last_paise) / 100.0;
+            if (tok == 256265u) { move_tile(nifty_, px, ts, tag); }
+            else if (tok == 260105u) { move_tile(bnf_, px, ts, tag); }
+            else if (tok == 264969u) { move_tile(vix_, px, ts, tag); }
+            chain_->set_spot(tok, p->last_paise, p->replay || p->simulated, p->exchange_ts_ns);
+        }
+        refresh_stream();
     }
 
     void refresh_stream() {
@@ -1770,6 +1806,8 @@ private:
     QHash<std::uint32_t, InstrumentDisplay> instrument_names_;
     QLabel* movers_ = nullptr;
     QTimer movers_timer_;
+    QTimer strip_timer_;                      ///< coalesces ticks for the strip and chain
+    QSet<unsigned> pending_ticks_;
     GreekWatchWindow* greek_ = nullptr;
     bool greek_restored_ = false;
     QLabel* toast_ = nullptr;
