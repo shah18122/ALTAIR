@@ -1874,8 +1874,7 @@ private:
         master_loaded_ = true;
         install_master(load_master_scrips(root_ + QStringLiteral("/data/instruments.csv")));
         if (master_.empty()) {
-            note_ = QStringLiteral("No instrument master at data/instruments.csv: run altair_instrument_master --go "
-                                   "to build it, then scrips can be added and any chain opened.");
+            note_ = QStringLiteral("No instrument master (altair_instrument_master --go)");
             refresh_status();
         }
     }
@@ -2047,8 +2046,7 @@ private:
             stream = QStringLiteral("<span style='color:%1'>● NOT CONNECTED</span> <span style='color:%2'>%3</span>")
                          .arg(QStringLiteral("#8A93A2"), muted,
                               feed_ != nullptr ? QStringLiteral("starting the feed…")
-                                               : QStringLiteral("no feed running — the live feed starts by itself 09:00–15:45 IST on "
-                                                                "weekdays; SIMULATION replays a chosen day."));
+                                               : QStringLiteral("no feed · starts 09:00 IST weekdays"));
         } else {
             const LivePrice* n = client_->price(256265u);
             const bool sim = n != nullptr && n->simulated, rep = n != nullptr && n->replay;
@@ -2099,7 +2097,7 @@ private:
             }
         }
         const QString uni = from_file_ ? QString()
-            : QStringLiteral(" &nbsp; <span style='color:%1'>(indices only until a feed writes data/live/universe.csv)</span>").arg(muted);
+            : QStringLiteral(" &nbsp; <span style='color:%1'>indices only</span>").arg(muted);
         const QString note = note_.isEmpty() ? QString()
             : QStringLiteral(" &nbsp; <span style='color:#E3B341'>%1</span>").arg(note_);
         const QString list = QStringLiteral(" &nbsp; <span style='color:%1'>watchlist <b>%2</b> (Ctrl+S)</span>")

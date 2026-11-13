@@ -27,6 +27,7 @@
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QLabel>
+#include <QPushButton>
 #include <QShowEvent>
 #include <QSplitter>
 #include <QTableWidget>
@@ -243,7 +244,16 @@ public:
         v->addWidget(note);
         legend_ = new QLabel(this);
         legend_->setTextFormat(Qt::RichText);
-        v->addWidget(legend_);
+        // Status first (roadmap section 7): the long Reads / Writes / Program
+        // columns are behind Details and in each row's tooltip.
+        auto* top = new QHBoxLayout;
+        top->addWidget(legend_, 1);
+        details_ = new QPushButton(QStringLiteral("Details"), this);
+        details_->setObjectName(QStringLiteral("pipelineDetails"));
+        details_->setCheckable(true);
+        details_->setToolTip(QStringLiteral("Show what each step and model reads and writes"));
+        top->addWidget(details_);
+        v->addLayout(top);
 
         auto* split = new QSplitter(Qt::Vertical, this);
         steps_ = make_table(split, {QStringLiteral("Step"), QStringLiteral("Status"), QStringLiteral("When (IST)"),
@@ -259,6 +269,8 @@ public:
             put(steps_, r, 4, s.writes);
             put(steps_, r, 5, s.who);
             steps_->item(r, 1)->setToolTip(QString::fromUtf8(s.evidence));
+            steps_->item(r, 0)->setToolTip(QStringLiteral("Reads: %1\nWrites: %2\nProgram: %3")
+                .arg(QString::fromUtf8(s.reads), QString::fromUtf8(s.writes), QString::fromUtf8(s.who)));
         }
         models_ = make_table(split, {QStringLiteral("Model"), QStringLiteral("Reads"), QStringLiteral("Trades (paper)"),
                                      QStringLiteral("Trades and reasons go to"), QStringLiteral("See it on")},
@@ -271,12 +283,20 @@ public:
             put(models_, r, 2, m.trades);
             put(models_, r, 3, m.writes);
             put(models_, r, 4, m.page);
+            models_->item(r, 0)->setToolTip(QStringLiteral("Reads: %1\nTrades: %2\nWrites: %3")
+                .arg(QString::fromUtf8(m.reads), QString::fromUtf8(m.trades), QString::fromUtf8(m.writes)));
         }
         for (const auto& [t, widths] : {std::pair{steps_, std::array<int, 5>{150, 150, 170, 330, 330}},
                                         std::pair{models_, std::array<int, 5>{210, 300, 310, 280, 200}}})
             for (int c = 0; c < 5; ++c) t->setColumnWidth(c, widths[static_cast<std::size_t>(c)]);
-        steps_->resizeRowsToContents();
-        models_->resizeRowsToContents();
+        const auto show_details = [this](bool on) {
+            for (const int c : {3, 4, 5}) steps_->setColumnHidden(c, !on);
+            for (const int c : {1, 2, 3}) models_->setColumnHidden(c, !on);
+            steps_->resizeRowsToContents();
+            models_->resizeRowsToContents();
+        };
+        connect(details_, &QPushButton::toggled, this, show_details);
+        show_details(false);
         split->setStretchFactor(0, 3);
         split->setStretchFactor(1, 2);
         v->addWidget(split, 1);
@@ -304,7 +324,7 @@ public:
         legend_->setText(QStringLiteral(
             "<span style='color:%1'>● running now %2</span> &nbsp; <span style='color:%3'>● ran today %4</span> &nbsp; "
             "<span style='color:%5'>● not today %6</span> &nbsp; <span style='color:%7'>● never ran here %8</span>"
-            " &nbsp; <span style='color:#8B949E'>(from each step's own file; hover a status for the file)</span>")
+            )
             .arg(health_colour(StepHealth::Fresh)).arg(counts[3]).arg(health_colour(StepHealth::Today)).arg(counts[2])
             .arg(health_colour(StepHealth::NotToday)).arg(counts[1]).arg(health_colour(StepHealth::Never)).arg(counts[0]));
     }
@@ -334,6 +354,7 @@ private:
 
     QString root_;
     QLabel* legend_ = nullptr;
+    QPushButton* details_ = nullptr;
     QTableWidget* steps_ = nullptr;
     QTableWidget* models_ = nullptr;
     QTimer* timer_ = nullptr;
