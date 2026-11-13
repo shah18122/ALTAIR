@@ -203,9 +203,8 @@ public:
             // One entry per registry identity; uniqueness proves the maximum size.
         }
         applying_ = true;
-        // A model page opened from the Model Atlas is not in the sidebar: the
-        // Atlas stays highlighted, which is where Back (Backspace) returns.
-        const int shown = nav_listed(index) ? index : 32;
+        // A page that is a tab of a main screen highlights that screen.
+        const int shown = nav_listed(index) ? index : (nav_screen_of(index) >= 0 ? nav_screen_of(index) : 32);
         const auto group = static_cast<std::size_t>(kNavigationPages[static_cast<std::size_t>(shown)].group);
         if (changed) groups_[group]->setExpanded(true);
         tree_->setCurrentItem(pages_[static_cast<std::size_t>(shown)]);

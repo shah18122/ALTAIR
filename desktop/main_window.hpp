@@ -96,6 +96,7 @@
 #include <QSettings>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QMainWindow>
 #include <QMenu>
@@ -249,8 +250,19 @@ public:
         if (index >= 0 && index < pages_->count()) {
             const bool changed = pages_->currentIndex() != index;
             if (index != atlas_target_page_) set_atlas_origin(QString(), -1);
-            pages_->setCurrentIndex(index);
+            // Option Chain (45) is the Terminal's live chain, full width; the
+            // Terminal itself opens back on the market watch.
+            if (index == 45) {
+                pages_->setCurrentWidget(terminal_);
+                terminal_->show_view(QStringLiteral("chain"));
+                chain_shown_ = true;
+            } else {
+                if (index == 2 && chain_shown_) terminal_->show_view(QStringLiteral("watch"));
+                chain_shown_ = false;
+                pages_->setCurrentIndex(index);
+            }
             nav_->select_page(index);
+            sync_screen_tabs(index);
             if (changed && index == 1) rebuild_chart();
             refresh_workspace_controls();
             if (requested != index) statusBar()->showMessage(
@@ -259,6 +271,28 @@ public:
                          QString::fromUtf8(kNavigationPages[static_cast<std::size_t>(index)].label)), 10000);
         }
     }
+
+    /// The tabs across the top of a main screen: the pages it is built from.
+    void sync_screen_tabs(int index) {
+        if (screen_tabs_ == nullptr) return;
+        const NavigationScreen* screen = nav_screen(nav_screen_of(index));
+        const QSignalBlocker block(screen_tabs_);
+        while (screen_tabs_->count() > 0) screen_tabs_->removeTab(0);
+        int shown = 0;
+        if (screen != nullptr) {
+            for (const int t : screen->tabs) {
+                if (t < 0) break;
+                const int i = screen_tabs_->addTab(t == screen->page
+                    ? QString::fromUtf8(screen->first_tab)
+                    : QString::fromUtf8(kNavigationPages[static_cast<std::size_t>(t)].label));
+                screen_tabs_->setTabData(i, t);
+                if (t == index) screen_tabs_->setCurrentIndex(i);
+                ++shown;
+            }
+        }
+        screen_tabs_->setVisible(shown > 1);
+    }
+    [[nodiscard]] QTabBar* screen_tabs() const noexcept { return screen_tabs_; }
 
     /// Say whether the tape is real instruments or the synthetic fallback.
     ///
@@ -753,9 +787,12 @@ private:
                          QString::fromUtf8(kNavigationGroups[static_cast<std::size_t>(p.group)].label), [this, i] { show_page(i); }});
         }
         for (int i = 0; i < static_cast<int>(kNavigationPages.size()); ++i) {
-            if (nav_listed(i) || !nav_visible(i)) continue;   // the model pages, reached from the Atlas
+            if (nav_listed(i) || !nav_visible(i)) continue;   // a tab of a main screen
             const auto& p = kNavigationPages[static_cast<std::size_t>(i)];
-            e.push_back({QString::fromUtf8(p.label), QStringLiteral("Page"), QStringLiteral("model page"), [this, i] { show_page(i); }});
+            const int screen = nav_screen_of(i);
+            e.push_back({QString::fromUtf8(p.label), QStringLiteral("Page"),
+                         screen >= 0 ? QString::fromUtf8(kNavigationPages[static_cast<std::size_t>(screen)].label) : QStringLiteral("model page"),
+                         [this, i] { show_page(i); }});
         }
         for (const auto& [view, label] : {std::pair{"watch", "Terminal: market watch"}, std::pair{"chain", "Terminal: option chain"},
                                          std::pair{"models", "Terminal: models"}, std::pair{"positions", "Terminal: net positions"},
@@ -853,6 +890,20 @@ private:
         rv->addWidget(mode_bar_);
         rv->addWidget(news_);
         rv->addWidget(atlas_bar_);
+        screen_tabs_ = new QTabBar(right);
+        screen_tabs_->setObjectName(QStringLiteral("screenTabs"));
+        screen_tabs_->setDrawBase(false);
+        screen_tabs_->setExpanding(false);
+        screen_tabs_->setStyleSheet(QStringLiteral(
+            "QTabBar#screenTabs{background:#0D1117;border-bottom:1px solid #21262D;}"
+            "QTabBar#screenTabs::tab{color:#8B949E;background:transparent;border:0;padding:7px 14px;margin:0 2px;}"
+            "QTabBar#screenTabs::tab:selected{color:#F0B765;border-bottom:2px solid #E3A34A;}"
+            "QTabBar#screenTabs::tab:hover:!selected{color:#E6EDF3;}"));
+        screen_tabs_->hide();
+        connect(screen_tabs_, &QTabBar::tabBarClicked, this, [this](int i) {
+            if (i >= 0) show_page(screen_tabs_->tabData(i).toInt());
+        });
+        rv->addWidget(screen_tabs_);
         rv->addWidget(viewport, 1);
 
         auto* split = new QWidget;
@@ -1773,6 +1824,9 @@ private:
         pages_->addWidget(new ServerPage(source_root()));
         // 44: who does what -- every job and model, what it reads and writes (desktop/pipeline_page.hpp).
         pages_->addWidget(new PipelinePage(source_root()));
+        // 45: Option Chain. show_page() turns it into the Terminal's live
+        // chain; the placeholder keeps the page count equal to the names.
+        pages_->addWidget(new QWidget);
 
         // NAV ROWS AND PAGES MUST BE THE SAME NUMBER, and this is checked
         // rather than trusted.
@@ -2077,6 +2131,8 @@ private:
     BrokerPage* broker_page_ = nullptr;
     QSettings* nav_settings_ = nullptr;
     QWidget* atlas_bar_ = nullptr;
+    QTabBar* screen_tabs_ = nullptr;   // the pages a main screen is built from
+    bool chain_shown_ = false;
     QLabel* atlas_title_ = nullptr;
     QString atlas_origin_;
     int atlas_target_page_ = -1;

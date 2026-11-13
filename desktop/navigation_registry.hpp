@@ -29,33 +29,33 @@ inline constexpr std::array<RetiredNavigationGroup, 6> kRetiredNavigationGroups{
     {"market", "trade"}, {"trades", "models"}, {"strategies", "models"}, {"data", "system"},
 }};
 inline constexpr std::array<int, 6> kNavigationGroupOrder{{0, 1, 2, 3, 4, 5}};
-inline constexpr std::array<NavigationPage, 45> kNavigationPages{{
+inline constexpr std::array<NavigationPage, 46> kNavigationPages{{
     {"market.grid", "Live Grid", 5},
     {"market.chart", "Chart", 5},
     {"market.terminal", "Terminal", 1},
-    {"models.overview", "Models", 5},
-    {"system.data-flow", "Data Flow", 5},
+    {"models.overview", "Models", 2},
+    {"system.data-flow", "Data Flow", 4},
     {"accounts.account", "Broker Account", 5},
-    {"risk.cost", "Cost", 5},
-    {"options.analytics", "Analytics", 5},
+    {"risk.cost", "Cost", 3},
+    {"options.analytics", "Analytics", 1},
     {"strategies.pair-trading", "Pair Trading", 5},
     {"models.dcf", "Value — DCF", 5},
     {"models.aggregator", "Aggregator", 5},
-    {"system.audit", "Audit Trail", 5},
-    {"accounts.execution", "Execution", 5},
+    {"system.audit", "Audit Trail", 2},
+    {"accounts.execution", "Execution", 2},
     {"options.volatility", "Vol Forecasts", 2},
-    {"risk.var", "Risk — VaR", 5},
+    {"risk.var", "Risk — VaR", 3},
     {"risk.portfolio", "Risk", 3},
     {"models.trees", "ML — Trees", 5},
     {"models.regimes", "Regimes", 5},
     {"models.forecast", "Forecast", 5},
-    {"strategies.overview", "Strategies", 5},
+    {"strategies.overview", "Strategies", 2},
     {"strategies.overnight", "Overnight Gap", 5},
-    {"options.chain", "Option Chain", 1},
+    {"options.chain", "Options", 1},
     {"strategies.basis", "Basis", 5},
     {"system.flagging", "Flagging", 5},
-    {"market.microstructure", "Microstructure", 5},
-    {"risk.sizing", "Sizing & Limits", 5},
+    {"market.microstructure", "Microstructure", 1},
+    {"risk.sizing", "Sizing & Limits", 3},
     {"strategies.cointegration", "Cointegration", 5},
     {"models.memory", "Memory", 5},
     {"accounts.connections", "Link Broker", 5},
@@ -70,17 +70,17 @@ inline constexpr std::array<NavigationPage, 45> kNavigationPages{{
     {"system.about", "About", 5},
     {"market.start", "Today", 0},
     {"strategies.backtests", "Trades", 2},
-    {"models.findings", "Daily findings", 5},
+    {"models.findings", "Daily findings", 0},
     {"system.work-log", "Work log", 4},
     {"market.order-book-imbalance", "Order Book", 1},
-    {"system.server", "Server", 5},
+    {"system.server", "Server", 4},
     {"data.pipeline", "Data & Recorder", 4},
+    {"trade.option-chain", "Option Chain", 1},   // 45: the Terminal's live chain
 }};
 /// Labels before the 2026-11-13 tidy; the CLI and saved links still accept them.
-inline constexpr std::array<std::pair<const char*, int>, 9> kLegacyNavigationLabels{{
+inline constexpr std::array<std::pair<const char*, int>, 8> kLegacyNavigationLabels{{
     {"Volatility", 13},
     {"Portfolio", 15},
-    {"Options", 21},
     {"Model Atlas", 32},
     {"Brokers", 34},
     {"Start here", 38},
@@ -90,15 +90,39 @@ inline constexpr std::array<std::pair<const char*, int>, 9> kLegacyNavigationLab
 }};
 // Traversal order is NOT a legacy page index. The eleven main screens in
 // workflow order, then the Lab in alphabetical order. Retired routes (Live
-// Grid, Chart, the three old broker pages, Demo Trading) redirect instead.
-inline constexpr std::array<int, 39> kNavigationOrder{{
+// Grid, Chart, the three old broker pages, Demo Trading) redirect instead;
+// the pages a screen is built from are its tabs (kNavigationScreens).
+inline constexpr std::array<int, 27> kNavigationOrder{{
     38,
-    2, 21, 42,
+    2, 45, 42,
     32, 39, 13,
     15,
     44, 34, 41,
-    37, 10, 7, 31, 11, 22, 26, 6, 40, 4, 12, 30, 23, 18, 27, 24, 16, 3, 29, 20, 8, 17, 14, 43, 25, 19, 36, 9
+    37, 10, 31, 22, 26, 30, 23, 18, 27, 16, 29, 20, 8, 17, 36, 9
 }};
+/// A main screen and the pages it is built from (roadmap section 7), shown
+/// as tabs across the top of the screen. -1 ends a list.
+struct NavigationScreen { int page; const char* first_tab; std::array<int, 4> tabs; };
+inline constexpr std::array<NavigationScreen, 8> kNavigationScreens{{
+    {38, "Status", {38, 40, -1, -1}},            // Today: Start here, Daily findings
+    {45, "Live chain", {45, 21, 7, -1}},         // Option Chain: chain, Options pricer, Analytics
+    {42, "OBI", {42, 24, -1, -1}},               // Order Book: OBI, Microstructure
+    {32, "All models", {32, 3, 19, -1}},         // Scoreboard: Atlas, Models, Strategies
+    {39, "Trade logs", {39, 11, 12, -1}},        // Trades: Backtests, Audit Trail, Execution
+    {15, "Portfolio", {15, 14, 6, 25}},          // Risk: Portfolio, VaR, Cost, Sizing & Limits
+    {44, "Jobs", {44, 4, 43, -1}},               // Data & Recorder: Who Does What, Data Flow, Server
+    {13, "Volatility", {13, -1, -1, -1}},        // Vol Forecasts
+}};
+/// The main screen a page belongs to (itself for a main screen), or -1.
+[[nodiscard]] constexpr int nav_screen_of(int index) noexcept {
+    for (const auto& s : kNavigationScreens)
+        for (const int t : s.tabs) if (t == index) return s.page;
+    return -1;
+}
+[[nodiscard]] constexpr const NavigationScreen* nav_screen(int screen_page) noexcept {
+    for (const auto& s : kNavigationScreens) if (s.page == screen_page) return &s;
+    return nullptr;
+}
 /// A page the sidebar lists (the rest open from the Model Atlas or search).
 [[nodiscard]] constexpr bool nav_listed(int index) noexcept {
     for (const int i : kNavigationOrder) if (i == index) return true;

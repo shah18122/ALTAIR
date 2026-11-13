@@ -27,13 +27,13 @@ void registry_contract() {
         "Live Grid", "Chart", "Terminal", "Models", "Data Flow", "Broker Account",
         "Cost", "Analytics", "Pair Trading", "Value — DCF", "Aggregator", "Audit Trail",
         "Execution", "Vol Forecasts", "Risk — VaR", "Risk", "ML — Trees", "Regimes",
-        "Forecast", "Strategies", "Overnight Gap", "Option Chain", "Basis", "Flagging",
+        "Forecast", "Strategies", "Overnight Gap", "Options", "Basis", "Flagging",
         "Microstructure", "Sizing & Limits", "Cointegration", "Memory", "Link Broker",
         "Neural", "Features", "Arbitrage", "Scoreboard", "FYERS Primary", "Broker",
-        "Demo Trading", "Threshold", "About", "Today", "Trades", "Daily findings", "Work log", "Order Book", "Server", "Data & Recorder"};
-    check(nav_page_names() == expected, "45 stable pages with the 2026-11-13 screen names");
+        "Demo Trading", "Threshold", "About", "Today", "Trades", "Daily findings", "Work log", "Order Book", "Server", "Data & Recorder", "Option Chain"};
+    check(nav_page_names() == expected, "46 stable pages with the 2026-11-13 screen names");
     // Old labels still resolve (CLI, saved links).
-    const std::pair<const char*, int> legacy[]{{"Start here", 38}, {"Options", 21}, {"Order Book Imbalance", 42},
+    const std::pair<const char*, int> legacy[]{{"Start here", 38}, {"Order Book Imbalance", 42},
         {"Model Atlas", 32}, {"Backtests", 39}, {"Volatility", 13}, {"Portfolio", 15}, {"Who Does What", 44}, {"Brokers", 34}};
     for (const auto& [label, index] : legacy)
         check(nav_page_index(QString::fromUtf8(label)) == index, "every old label opens its renamed screen");
@@ -45,17 +45,22 @@ void registry_contract() {
               "label and stable ID resolve to the same legacy page");
     }
     for (const int i : kNavigationOrder) order.insert(i);
-    check(ids.size() == 45 && order.size() == 39 && !ids.contains(QString{}),
-          "45 identities and 39 sidebar destinations (11 main + 28 Lab)");
+    check(ids.size() == 46 && order.size() == 27 && !ids.contains(QString{}),
+          "46 identities and 27 sidebar destinations (11 main + 16 Lab)");
     check(kNavigationOrder.front() == 38, "Today heads the sidebar");
     int main_screens = 0;
     for (const int i : kNavigationOrder)
         main_screens += kNavigationPages[static_cast<std::size_t>(i)].group != static_cast<int>(kLabGroup) ? 1 : 0;
     check(main_screens == 11, "eleven main screens; everything else is in the Lab");
-    for (const int kept : {38, 2, 21, 42, 32, 39, 13, 15, 44, 34, 41})
+    for (const int kept : {38, 2, 45, 42, 32, 39, 13, 15, 44, 34, 41})
         check(nav_listed(kept) && kNavigationPages[static_cast<std::size_t>(kept)].group < 5, "a roadmap screen is in a main group");
-    for (int i = 0; i < 45; ++i)
-        if (nav_visible(i)) check(nav_listed(i), "nothing is lost: every live page is in the sidebar");
+    for (int i = 0; i < 46; ++i)
+        if (nav_visible(i)) check(nav_listed(i) != (nav_screen_of(i) >= 0 && nav_screen_of(i) != i),
+                                  "nothing is lost: every live page is in the sidebar or is a tab of one main screen");
+    for (const auto& screen : kNavigationScreens)
+        check(nav_listed(screen.page) && screen.tabs[0] == screen.page, "every screen with tabs is a main screen and opens on itself");
+    check(nav_screen_of(14) == 15 && nav_screen_of(21) == 45 && nav_screen_of(40) == 38 && nav_screen_of(18) == -1,
+          "VaR is in Risk, the Options pricer in Option Chain, Daily findings in Today; Forecast is Lab");
     for (const int hidden : {0, 1, 5, 28, 33, 35})
         check(!order.contains(hidden) && !nav_visible(hidden), "removed routes never appear in traversal");
     check(nav_page_index(QStringLiteral("  MODEL   ATLAS ")) == 32 &&
@@ -69,7 +74,7 @@ void registry_contract() {
           nav_page_index(QStringLiteral("not a page")) == -1 &&
           nav_page_index(QStringLiteral("market.order-book-imbalance")) == 42 &&
           nav_page_index(QStringLiteral("market.order-flow")) == 42 &&
-          nav_page_id(-1).isEmpty() && nav_page_id(45).isEmpty(), "lookup boundary behavior");
+          nav_page_id(-1).isEmpty() && nav_page_id(46).isEmpty(), "lookup boundary behavior");
 }
 void tree_and_menu() {
     WorkspaceNavigation nav;
@@ -99,7 +104,7 @@ void tree_and_menu() {
     nav.populate_menu(&menu);
     QList<QAction*> actions;
     routes(&menu, actions);
-    check(actions.size() == 39 + nav.recent_pages().size(), "six native submenus and recent routes expose sidebar pages");
+    check(actions.size() == 27 + nav.recent_pages().size(), "six native submenus and recent routes expose sidebar pages");
     int checked = 0;
     for (auto* action : actions) checked += action->isChecked() ? 1 : 0;
     check(checked >= 1, "workspace menus visibly mark the current route");
@@ -122,7 +127,7 @@ void tree_and_menu() {
             check(invoked == entry->data().toInt(), "compact popup retains page mapping");
         }
     }
-    check(compact_routes == 39, "all sidebar pages reachable in compact mode");
+    check(compact_routes == 27, "all sidebar pages reachable in compact mode");
     int compact_checked = 0;
     for (auto* button : buttons)
         for (auto* entry : button->menu()->actions())
@@ -223,7 +228,7 @@ void search_keyboard() {
     search.show();
     auto* query = search.findChild<QLineEdit*>();
     auto* results = search.findChild<QListWidget*>();
-    check(results->count() == 39, "search exposes every canonical destination, model pages included");
+    check(results->count() == 40, "search exposes every canonical destination, model pages included");
     for (const auto& alias : {QStringLiteral("Broker Account"), QStringLiteral("FYERS"), QStringLiteral("Link Broker")}) {
         query->setText(alias);
         check(results->count() == 1 && results->item(0)->data(Qt::UserRole).toInt() == 34,
@@ -400,8 +405,8 @@ void lab_collapsed_by_default() {
     auto* tree = nav.findChild<QTreeWidget*>();
     auto* lab = tree->topLevelItem(tree->topLevelItemCount() - 1);
     check(lab->data(0, Qt::UserRole + 1).toString() == QStringLiteral("lab") && !lab->isExpanded()
-              && lab->childCount() == 28 && tree->topLevelItem(0)->isExpanded(),
-          "Lab is last, collapsed and holds 28 pages; Today is open");
+              && lab->childCount() == 16 && tree->topLevelItem(0)->isExpanded(),
+          "Lab is last, collapsed and holds 16 pages; Today is open");
 }
 } // namespace
 int main(int argc, char** argv) {

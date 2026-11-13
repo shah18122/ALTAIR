@@ -131,6 +131,24 @@ void halt_chord(altair::ui::MainWindow& window) {
     chord->key(Qt::Key_F11, false, false);
     chord->key(Qt::Key_F12, false, false);
 }
+void screen_tabs(altair::ui::MainWindow& window, QStackedWidget* stack) {
+    // Roadmap section 7: a main screen carries the pages it is built from as tabs.
+    auto* tabs = window.screen_tabs();
+    window.show_page(15);   // Risk
+    check(tabs != nullptr && tabs->isVisibleTo(&window) && tabs->count() == 4 && tabs->tabText(0) == QStringLiteral("Portfolio")
+              && tabs->tabText(1) == QStringLiteral("Risk \u2014 VaR"),
+          "Risk shows Portfolio, VaR, Cost and Sizing as tabs");
+    if (tabs == nullptr) return;
+    Q_EMIT tabs->tabBarClicked(2);
+    check(stack->currentIndex() == 6 && tabs->currentIndex() == 2 && tabs->count() == 4, "a tab opens its page and keeps the screen's tabs");
+    window.show_page(41);   // Work log has no tabs
+    check(!tabs->isVisibleTo(&window), "a screen with one page shows no tab strip");
+    window.show_page(45);   // Option Chain: the Terminal's live chain
+    check(stack->currentIndex() == 2 && tabs->isVisibleTo(&window) && tabs->tabText(0) == QStringLiteral("Live chain"),
+          "Option Chain opens the live chain with the Options pricer and Analytics beside it");
+    window.show_page(2);
+    check(stack->currentIndex() == 2 && !tabs->isVisibleTo(&window), "Terminal has no tab strip");
+}
 void workstation(altair::ui::MainWindow& window, QStackedWidget* stack) {
     // Ctrl+K: type, Enter, there.
     auto* palette = window.palette();
@@ -331,6 +349,7 @@ int main(int argc, char** argv) {
         halt_chord(window);
         atlas_back(window, stack);
         workstation(window, stack);
+        screen_tabs(window, stack);
         window.show_page(QStringLiteral("accounts.brokers"));
         QApplication::processEvents();
         auto* brokers = window.findChild<QWidget*>(QStringLiteral("brokerControlCenter"));
