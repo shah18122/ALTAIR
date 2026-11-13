@@ -199,7 +199,8 @@ public:
             it->setData(0, Qt::UserRole, QStringLiteral("git:") + p[0]);
             it->setToolTip(0, QStringLiteral("%1 · %2 · %3").arg(p[0], p[2], p[1]));
         }
-        changes->setExpanded(false);
+        // Open on the changes (short lines, newest first), not a long document.
+        changes->setExpanded(!history_.isEmpty());
         for (const auto& w : items_) {
             auto* it = new QTreeWidgetItem(section(w.section), {w.label, w.when.toString(QStringLiteral("dd MMM yyyy HH:mm"))});
             it->setData(0, Qt::UserRole, w.path);
@@ -207,8 +208,11 @@ public:
             if (w.path == keep) tree_->setCurrentItem(it);
         }
         apply_filter();
+        if (tree_->currentItem() == nullptr && changes->childCount() > 0
+            && !changes->child(0)->data(0, Qt::UserRole).toString().isEmpty())
+            tree_->setCurrentItem(changes->child(0));
         if (tree_->currentItem() == nullptr && !items_.empty()) {
-            // Open on the status page when there is one.
+            // No history: open on the status page when there is one.
             for (QTreeWidgetItemIterator i(tree_); *i; ++i)
                 if ((*i)->data(0, Qt::UserRole).toString().endsWith(QLatin1String("STATUS.md"))) { tree_->setCurrentItem(*i); break; }
         }
