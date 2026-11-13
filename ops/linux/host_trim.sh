@@ -29,7 +29,7 @@
 #   chrony-wait.service enabled               time-sync.target means the clock IS synced at boot
 #   snap refresh window                       Saturday 02:00-04:00 only
 #   motd-news, apt news, ESM ads              off
-#   networkd-wait-online --any                boot no longer waits 2 min for the DPDK ENI
+#   systemd-networkd-wait-online masked      (NetworkManager owns the NICs; it failed every boot)
 #
 # Refused in market hours (08:45-15:50 IST weekdays) unless --force: a purge can
 # trigger triggers and services restarts.
@@ -78,6 +78,7 @@ if [ "$undo" = 1 ]; then
         run systemctl unmask $(cat "$masked_list")
         run rm -f "$masked_list"
     fi
+    run systemctl unmask systemd-networkd-wait-online.service
     run systemctl daemon-reload
     run systemctl try-restart systemd-journald chrony
     command -v snap >/dev/null && run snap unset system refresh.timer
@@ -145,10 +146,10 @@ RateLimitIntervalSec=0
 RateLimitBurst=0'
 write "$f_chrony" '# ALTAIR: the Amazon Time Sync Service (link-local, every EC2 instance), preferred.
 server 169.254.169.123 prefer iburst minpoll 4 maxpoll 4'
-write "$f_wo" '# ALTAIR: the spare ENI belongs to DPDK and never comes up; one interface online is enough
-[Service]
-ExecStart=
-ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any --timeout=30'
+# NetworkManager runs the interfaces (network-online comes from NetworkManager-wait-online);
+# networkd's waiter has nothing to wait for and fails every boot after 2 min.
+run rm -f "$f_wo"
+if systemctl is-active -q NetworkManager 2>/dev/null; then run systemctl mask systemd-networkd-wait-online.service; fi
 run systemctl daemon-reload
 run systemctl enable chrony-wait.service
 run systemctl restart systemd-journald
