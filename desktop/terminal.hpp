@@ -296,21 +296,37 @@ public:
         // What a trader glances at between everything else: where the index
         // is, whether the prices on screen are live, and which key does what.
         auto* strip = new QWidget(this);
+        strip_ = strip;
         strip->setObjectName(QStringLiteral("strip"));
         strip->setAttribute(Qt::WA_StyledBackground, true);
-        auto* h = new QHBoxLayout(strip);
-        h->setContentsMargins(14, 8, 14, 8);
+        // Two groups: the indices, stream and movers on the left; the views
+        // and the PAPER / LIVE switch on the right. When the window is too
+        // narrow for both on one line the buttons drop to a second line
+        // (relayout_strip). Squeezing one line below its minimum made Qt
+        // draw the index tiles on top of each other.
+        strip_layout_ = new QBoxLayout(QBoxLayout::LeftToRight, strip);
+        strip_layout_->setContentsMargins(14, 8, 14, 8);
+        strip_layout_->setSpacing(14);
+        strip_layout_->setSizeConstraint(QLayout::SetNoConstraint);
+        strip_info_ = new QWidget(strip);
+        strip_controls_ = new QWidget(strip);
+        auto* h = new QHBoxLayout(strip_info_);
+        h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(14);
-        // Groups, left to right: the indices · the stream and the movers ·
-        // the views · the PAPER / LIVE switch, set apart at the far right
-        // because it is the one control on the strip that spends money.
-        const auto rule = [strip, h] {
+        auto* ctl = new QHBoxLayout(strip_controls_);
+        ctl->setContentsMargins(0, 0, 0, 0);
+        ctl->setSpacing(14);
+        strip_layout_->addWidget(strip_info_, 1);
+        strip_layout_->addWidget(strip_controls_, 0, Qt::AlignRight);
+        strip->installEventFilter(this);
+        const auto rule_in = [strip](QHBoxLayout* into) {
             auto* r = new QFrame(strip);
             r->setProperty("role", QStringLiteral("rule"));
             r->setFrameShape(QFrame::NoFrame);
             r->setFixedWidth(1);
-            h->addWidget(r);
+            into->addWidget(r);
         };
+        const auto rule = [&rule_in, h] { rule_in(h); };
         auto* title = new QLabel(QStringLiteral(
             "<span style='color:#F0B765;font-weight:800;letter-spacing:2px'>"
             "TERMINAL</span>"), strip);
@@ -334,11 +350,14 @@ public:
         movers_->setTextFormat(Qt::RichText);
         movers_->setToolTip(QStringLiteral("Top gainers and losers of the streamed stocks, every 2 s. Click for the top ten."));
         movers_->setText(QStringLiteral("<span style='color:#6E7681'>movers: waiting for prices</span>"));
+        // Movers and the toast take what is left and are cut off first.
+        movers_->setMinimumWidth(1);
         h->addWidget(movers_);
         h->addStretch();
         toast_ = new QLabel(strip);
         toast_->setObjectName(QStringLiteral("terminalToast"));
         toast_->setTextFormat(Qt::RichText);
+        toast_->setMinimumWidth(1);
         h->addWidget(toast_);
         // The market watch is home; Enter on a scrip opens its option chain.
         // Models toggles the live models over it (Ctrl+M; F4 back).
@@ -346,14 +365,14 @@ public:
         models_btn_->setCheckable(true);
         models_btn_->setToolTip(QStringLiteral(
             "Ctrl+M · live models and their paper trades. F4: the market watch."));
-        h->addWidget(models_btn_);
+        ctl->addWidget(models_btn_);
         // Simple / Advanced, for the watch, the chain and the models alike.
-        h->addWidget(simple_mode::button(strip));
-        rule();
+        ctl->addWidget(simple_mode::button(strip));
+        rule_in(ctl);
         live_orders_btn_ = new QPushButton(QStringLiteral("Live orders"), strip);
         live_orders_btn_->setObjectName(QStringLiteral("liveOrdersButton"));
         live_orders_btn_->setToolTip(QStringLiteral("Every order sent to FYERS today and what became of it; cancel from here"));
-        h->addWidget(live_orders_btn_);
+        ctl->addWidget(live_orders_btn_);
         // LIVE: off by default. On sends Buy/Sell to FYERS through the order
         // router after a typed confirmation (live_trading.hpp).
         live_btn_ = new QPushButton(QStringLiteral("PAPER"), strip);
@@ -366,7 +385,7 @@ public:
         live_btn_->setToolTip(QStringLiteral(
             "Paper: orders fill against the live book and nothing reaches a broker. Click to switch LIVE on: "
             "Buy/Sell go to FYERS with real money, within limits you set, until 15:30 or until you switch it off."));
-        h->addWidget(live_btn_);
+        ctl->addWidget(live_btn_);
         v->addWidget(strip);
 
         // ---- ACCOUNT-FIRST SURFACE -------------------------------------
@@ -1286,6 +1305,7 @@ public:
 
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override {
+        if (obj == strip_ && e->type() == QEvent::Resize) relayout_strip();
         if (obj == movers_ && e->type() == QEvent::MouseButtonRelease) { show_movers(); return true; }
         return QWidget::eventFilter(obj, e);
     }
@@ -1687,20 +1707,23 @@ private:
         // ABSENCE IS NOT ZERO. With no prior close the change is unknown, and
         // "+0.00 (0.00%)" -- what the first version printed -- is a claim
         // that the market did not move.
-        QString move = QStringLiteral(
-            "<span style='color:#6B7380'>— no prior close</span>");
+        // Short on the strip (percent only); the points are on hover.
+        QString move = QStringLiteral("<span style='color:#6B7380'>—</span>");
+        QString tip = QStringLiteral("No prior close, so no change is shown.");
         if (t.close > 0.0) {
             const double chg = price - t.close;
             const double pct = 100.0 * chg / t.close;
             const QString col = chg > 0 ? QStringLiteral("#7FD17F")
                               : chg < 0 ? QStringLiteral("#F07A6A")
                                         : QStringLiteral("#D0D6DE");
-            move = QStringLiteral("<span style='color:%1'>%2%3 (%4%)</span>")
-                       .arg(col)
-                       .arg(chg >= 0 ? QStringLiteral("+") : QString())
-                       .arg(chg, 0, 'f', 2)
-                       .arg(pct, 0, 'f', 2);
+            const QString sign = chg >= 0 ? QStringLiteral("+") : QString();
+            move = QStringLiteral("<span style='color:%1'>%2%3%</span>")
+                       .arg(col, sign).arg(pct, 0, 'f', 2);
+            tip = QStringLiteral("%1%2 since close %3")
+                      .arg(sign).arg(chg, 0, 'f', 2).arg(t.close, 0, 'f', 2);
         }
+        if (t.label->toolTip() != tip && !t.label->toolTip().startsWith(QStringLiteral("The daily file")))
+            t.label->setToolTip(tip);
         const QString suffix =
             tag == TileTag::Close
                 ? QStringLiteral(" <span style='color:#6B7380'>close</span>")
@@ -1711,7 +1734,7 @@ private:
                 : QString();
         const QString html = QStringLiteral(
             "<span style='color:#8A93A2'>%1</span> "
-            "<b style='font-family:Consolas'>%2</b> %3%4")
+            "<b>%2</b> %3%4")
             .arg(t.name)
             .arg(price, 0, 'f', 2)
             .arg(move, suffix);
@@ -1775,6 +1798,23 @@ private:
             chain_->set_spot(tok, p->last_paise, p->replay || p->simulated, p->exchange_ts_ns);
         }
         refresh_stream();
+        relayout_strip();   // a tile may have grown
+    }
+
+    /// One line when the indices and the buttons both fit, two when not.
+    void relayout_strip() {
+        if (strip_layout_ == nullptr) return;
+        const QMargins m = strip_layout_->contentsMargins();
+        const int info = strip_info_->minimumSizeHint().width();
+        const int ctl = strip_controls_->sizeHint().width();
+        const int min_w = m.left() + m.right() + ctl;
+        if (strip_->minimumWidth() != min_w) strip_->setMinimumWidth(min_w);
+        const auto dir = strip_->width() >= m.left() + m.right() + info + strip_layout_->spacing() + ctl
+            ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom;
+        if (strip_layout_->direction() != dir) {
+            strip_layout_->setDirection(dir);
+            strip_->updateGeometry();
+        }
     }
 
     void refresh_stream() {
@@ -1858,6 +1898,10 @@ private:
     QLabel* stream_state_ = nullptr;
     QPushButton* stream_btn_ = nullptr;
     Tile nifty_, bnf_, vix_;
+    QWidget* strip_ = nullptr;
+    QBoxLayout* strip_layout_ = nullptr;
+    QWidget* strip_info_ = nullptr;
+    QWidget* strip_controls_ = nullptr;
     // ---- LIVE ----
     QString user_;
     QString live_root_;

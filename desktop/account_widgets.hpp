@@ -74,12 +74,9 @@ public:
         v->addWidget(l);
 
         auto* n = new QLabel(value, this);
-        // Tabular figures, so a column of cards does not jitter as values
-        // change width. Without it the rupee amounts dance on every refresh.
         n->setStyleSheet(QStringLiteral(
             "color:%1;font-size:%2px;font-weight:600;border:none;"
-            "font-family:'Segoe UI',sans-serif;"
-            "font-variant-numeric:tabular-nums;")
+            "font-family:'Segoe UI',sans-serif;")
                              .arg(fg).arg(tone == 2 ? 22 : 17));
         n->setTextInteractionFlags(Qt::TextSelectableByMouse);
         v->addWidget(n);
