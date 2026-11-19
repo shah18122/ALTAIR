@@ -203,16 +203,28 @@ So a hybrid must not be another direction predictor. Use the models to
 | 5 | Stage A state labels on long history | your PC |
 | 6 | Stage B per-state OBI thresholds, walk-forward on tapes | your PC |
 | 7 | Stage C stacking vs CNN, only if 6 shows a result | your PC |
-| 8 | Holdout run, once (about 40 clean sessions, around early Jan 2027) | your PC |
+| 8 | Holdout run, once (about 40 clean sessions incl. 6+ NIFTY weekly expiry days, around early Jan 2027) | your PC |
 
 Steps 1-4 can start now and are useful even before there's enough tape. Steps 5-7 can be
 built and dry-run on the sessions we have, but their numbers count only on the holdout.
 
-## Decisions for you
-1. **Instrument first:** BANKNIFTY monthly (your main subscription, deeper book) or
-   NIFTY weekly (more expiries, closer to your goal)? Suggest **BANKNIFTY first**, NIFTY
-   weekly second once more expiry days are on tape.
-2. **50-level book:** the recorder runs `--depth50 1`, one slot. FYERS Prime allows 15
-   (`--depth50 15`: BANKNIFTY and NIFTY futures plus the strikes nearest the money).
-   That gives much better option queue estimates, but it needs the Prime plan and a
-   recorder setting change.
+## Decisions (Smit, 2026-11-19)
+1. **NIFTY weekly first.** Weekly expiry gives more theta decay for the option seller.
+   The OBI signal comes from the NIFTY near future's 5-level book, and the trades are
+   NIFTY weekly options, ATM / 1-OTM. BANKNIFTY monthly comes second.
+   - The holdout must include **at least 6 weekly expiry days (Tuesdays)**.
+   - Results are reported separately for expiry day and the other days, because they
+     behave differently.
+2. **No FYERS Prime needed.** The 5-level book plus tick-by-tick prints are enough:
+   - OBI A-D already read **OBI5** (5 levels). The NIFTY future and ATM ±10 strikes
+     have 5-level books on every tape, and every strike has top-of-book quotes.
+   - We trade 1 lot (65 NIFTY). That is small against the size shown in the top 5
+     levels, so a sell at the bid fills within level 1-2. The extra 45 levels would barely
+     change the fill estimate.
+   - The queue estimate from the 5 levels is conservative (it can't see cancellations
+     ahead), which errs on the safe side.
+   - Drive tick data has prints only, no book, so it can't replace depth. But it isn't
+     needed for depth: it's used for the long-history state labels (stage A).
+   - Only revisit this if the sim shows fills limited by depth beyond level 5. That would
+     mean upgrading to FYERS API Prime (5 symbols of 50-level per connection, up to 3
+     connections) and setting the recorder to `--depth50 15`.
