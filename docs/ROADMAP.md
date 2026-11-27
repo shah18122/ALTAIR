@@ -199,7 +199,7 @@ Rules for the implementer, every phase:
 - Commit straight to `main` and push at once. Leave no pending PRs and no leftover branches.
 - Never stop the recorder or the feed in market hours (09:00-15:47 IST weekdays).
 - Sell options only; never an opening option buy, in any model or tool. Futures are allowed for pairs and hedges.
-- Use FYERS data only, never the NSE bhavcopy. If FYERS lacks something, stop and report it. Drive ticks are a separate source, labelled `drive-ticks`.
+- Use FYERS data only, never the banned exchange file (docs/DATA_POLICY.md). If FYERS lacks something, stop and report it. Drive ticks are a separate source, labelled `drive-ticks`.
 - Log the reason for every trade and every skip.
 - Keep UI text short.
 - Ship 1 lot per model.
