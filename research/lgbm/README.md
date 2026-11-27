@@ -10,7 +10,7 @@ Bank/ICICI vs Bank Nifty futures), labels net of costs, meta-labeling on top
 **Data.** Drive ticks (source `drive-ticks`, NOT FYERS, see
 docs/DATA_POLICY.md): front-month BANKNIFTY future plus 12 bank stocks on the
 1-second grid from `research/signals/load.py`. Dev = 2020 + 2022, holdout =
-2023 (scored once). No bhavcopy.
+2023 (scored once). FYERS-or-Drive only, nothing else.
 
 What the Drive data can and cannot give:
 
