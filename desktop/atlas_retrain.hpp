@@ -231,6 +231,8 @@ inline constexpr AtlasRetrain kAtlasRetrain[] = {
         "Registry; nothing to train."},
     {"DCF valuation", "Not retrained",
         "Needs fundamentals."},
+    {"Pair trading (10 bank-stock pairs)", "Not retrained",
+        "Added after the retrain; its fixed rule was tested on dev + the 2023 holdout (research/equity), paper only."},
 };
 
 /// The 2026-11-11 retrain entry for a model, or nullptr.
