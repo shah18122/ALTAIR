@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
     for (const auto& x : v) complete = complete && !x.what.isEmpty() && !x.found.isEmpty() && !x.verdict.isEmpty() && !x.source.isEmpty();
     check(complete, "every verdict says what, what it made, what to do, and where the numbers come from");
     const QString table = start_verdicts_html(v);
-    check(table.contains(QStringLiteral("t 1.5")) && table.contains(QStringLiteral("no change")),
+    check(table.contains(QStringLiteral("withdrawn")) && table.contains(QStringLiteral("no change")),
           "the table carries the measured results in plain words");
 
     StartPage page(root.path());

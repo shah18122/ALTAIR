@@ -47,8 +47,9 @@ std::vector<std::uint8_t> frame(std::uint32_t topic, std::uint64_t seq, std::int
     return f;
 }
 
-/// One session tape: two RELIANCE listings, a gap of 5.5 bp at 10:00:01 that
-/// closes at 10:00:30.
+/// One session tape: two RELIANCE listings, a gap of 8.5 bp at 10:00:01 that
+/// closes at 10:00:30. The model pays four fills (two entries, two exits) at
+/// the test's 1.5 bp a fill: 6 bp, so 8.5 bp clears 6 + 1 and 6 + 2, not 6 + 3.
 void write_tape(const fs::path& path, const std::string& day, bool sim) {
     live::TapeWriter w(path.string());
     const std::string uni = std::string(live::kLiveUniverseHeader) + "\n"
@@ -78,10 +79,10 @@ void write_tape(const fs::path& path, const std::string& day, bool sim) {
     trade(1, 100000, t0);
     trade(2, 100000, t0);
     quote(1, 100000, 100010, t0 + kSec);
-    quote(2, 99935, 99945, t0 + kSec);        // NSE bid 1000.00 over BSE ask 999.45: 5.5 bp
+    quote(2, 99905, 99915, t0 + kSec);        // NSE bid 1000.00 over BSE ask 999.15: 8.5 bp
     trade(1, 100000, t0 + 30 * kSec);
-    quote(2, 99945, 99955, t0 + 30 * kSec);   // they meet
-    quote(1, 99945, 99955, t0 + 30 * kSec);
+    quote(2, 99950, 99955, t0 + 30 * kSec);   // they meet: the BSE long sells at 999.50,
+    quote(1, 99945, 99950, t0 + 30 * kSec);   // the NSE short buys back at 999.50: 8.5 bp gross, 2.5 net
     w.flush();
 }
 
@@ -134,9 +135,9 @@ int main() {
         if (arb.points[i].at("min_profit_bps") == 1.0) in1 = i;
         if (arb.points[i].at("min_profit_bps") == 3.0) in3 = i;
     }
-    check(d.trips[in1] == 1 && d.net[in1] > 0.0 && d.trips[in3] == 0 && d.net[in3] == 0.0,
-          "5.5 bp clears the two fills' 3 bp + 1, not + 3: each point trades as its rule says (one netted pair)");
-    check(d.trips[arb.defaults] == 1, "the defaults (2 bp) take it too");
+    check(d.trips[in1] == 2 && d.net[in1] > 0.0 && d.trips[in3] == 0 && d.net[in3] == 0.0,
+          "8.5 bp clears the four fills' 6 bp + 1, not + 3: each point trades as its rule says (two legs, each its own round trip)");
+    check(d.trips[arb.defaults] == 2, "the defaults (2 bp) take it too");
     write_tape(root / "sim.tape", "2026-10-06", true);
     tn::DayRun s;
     check(tn::run_tape(root / "sim.tape", arb, cost, s, err) && s.simulated, "a SIM tape says so (and is left out unless asked)");
@@ -212,9 +213,9 @@ int main() {
         // The engine runs an OBI grid through the same tape pass as the others.
         std::vector<tn::DayRun> runs;
         check(tn::run_tape_group(root / "2026-10-05-100000.tape", {&arb, &og.front()}, cost, runs, err) && runs.size() == 2
-                  && runs[0].trips[arb.defaults] == 1 && runs[1].net.size() == og.front().points.size(),
+                  && runs[0].trips[arb.defaults] == 2 && runs[1].net.size() == og.front().points.size(),
               "several grids share one pass of a tape; each gets its own day");
-        check(runs[0].rec[in1].trade_net.size() == 1 && runs[0].rec[in1].markout_n[0] == 2 && runs[0].rec[in1].markout_n[2] == 0,
+        check(runs[0].rec[in1].trade_net.size() == 2 && runs[0].rec[in1].markout_n[0] == 2 && runs[0].rec[in1].markout_n[2] == 0,
               "every round trip, and each entry leg's markout once its horizon has passed (the 60 s one has not)");
         tn::FeedLag lag;
         std::vector<tn::DayRun> r2;

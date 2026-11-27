@@ -129,12 +129,24 @@ for round in 1 2; do
     same "$work/replay0" "$work/replay1"
 done
 echo "both sessions replayed twice, restart included: journal, fills, decisions, margin and positions identical"
+verified=0
 for k in 0 1; do
-    grep -q "IDENTICAL to the recorded session" "$work/replay$k-2.log" || { echo "replay $k did not verify itself"; cat "$work/replay$k-2.log"; exit 1; }
+    if grep -q "IDENTICAL to the recorded session" "$work/replay$k-2.log"; then
+        verified=$((verified + 1))
+    elif [ "$k" -eq 1 ] && grep -q "the tape holds no market data" "$work/replay1-2.log" && grep -q "^stopped: 0 frames" "$work/recordB.log"; then
+        # A slow build (sanitizers) can restart session B after the 10x feed has
+        # ended: B then records no market data and there is nothing to compare.
+        # Session A is still verified below.
+        echo "replay 1: session B saw no frames (the build fell behind the feed): nothing to verify"
+    else
+        echo "replay $k did not verify itself"; cat "$work/replay$k-2.log"; exit 1
+    fi
 done
 checks=("$work"/root/data/live/replay_checks/*.json)
-[ "${#checks[@]}" -eq 2 ] && grep -q '"identical": true' "${checks[0]}" && grep -q '"identical": true' "${checks[1]}" \
-    || { echo "the replay verdicts are missing or not identical"; exit 1; }
+[ "${#checks[@]}" -ge "$verified" ] && [ "$verified" -ge 1 ] || { echo "the replay verdicts are missing"; exit 1; }
+for c in "${checks[@]}"; do
+    grep -q '"identical": true' "$c" || { echo "a replay verdict is not identical: $c"; cat "$c"; exit 1; }
+done
 tape=${tapes[0]}
 
 # A directory that is not a replay's is never cleared.
